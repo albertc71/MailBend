@@ -1,11 +1,41 @@
-# Native boundary
+# Native boundary: mailbend-tls
 
-This directory is reserved for the minimal Linux TLS bridge needed by Bend.
+`mailbend-tls.c` is MailBend's only native code: sockets, TLS and login.
+Which commands to send, and what the answers mean, is decided by the Bend
+core. It links only against OpenSSL.
 
-It must not contain mail policy or MCP logic. Those belong in Bend.
+```sh
+cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto
+```
 
-The bridge will expose only byte-stream primitives needed for:
-- implicit TLS IMAP on port 993
-- STARTTLS SMTP on port 587
+## Contract
 
-OpenSSL peer/hostname verification is mandatory.
+```text
+mailbend-tls imap   < tagged IMAP commands   > server transcript
+mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
+```
+
+- **TLS**: TLS 1.2+, peer certificate required, chain verified against the
+  system trust store (or `MAILBEND_CA_FILE`, which replaces it), host name
+  verified (`SSL_set1_host`), SNI sent. There is no way to skip verification.
+  SMTP must offer STARTTLS; the helper refuses to authenticate without it.
+- **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
+  environment only. The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
+  (SMTP) itself, wipes its copies, and never writes them to stdout or stderr.
+- **IMAP script**: CRLF lines in IMAP wire form; a line ending in `{N}` is
+  followed by N literal bytes. Tags `L` and `Z` are reserved, and LOGIN,
+  AUTHENTICATE, STARTTLS and LOGOUT are refused. Each command waits for its
+  tagged answer; the first `NO`/`BAD` stops the run (later commands are never
+  sent), then the helper logs out.
+- **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
+  message, `.`. EHLO, STARTTLS, AUTH and QUIT are the helper's own and are
+  refused in the envelope. Any non-2xx reply stops the run.
+- **Output**: the server's bytes; bytes 0x80-0xFF are written as the UTF-8
+  encoding of U+0080-U+00FF, so the core reads one character per byte and
+  literal lengths stay exact. Server literals are copied as raw bytes, so
+  message content can never be mistaken for a tagged reply.
+- **Limits**: connect and per-read timeout `MAILBEND_TIMEOUT_MS` (default
+  30 s), 1 MiB per line, 64 MiB per literal and per script, 128 MiB per
+  transcript.
+- **Exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
+  4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.

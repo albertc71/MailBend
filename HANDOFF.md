@@ -8,6 +8,33 @@ Repository: `albertc71/MailBend` (private).
 
 The intended primary development branch is **`main`**. The repository was initially created on `master`; `main` has since been created from that history. If GitHub still reports `master` as the default branch, change the repository default branch to `main` in GitHub settings when administrative access is available.
 
+## Status (2026-09-27)
+
+Milestones 1-6 and 8 are implemented; end-to-end verification against a
+local TLS IMAP/SMTP server (`tests/fake_mail_server.py`) is in progress; see
+`plans/260927-0319-mailbend-core-implementation/plan.md`.
+
+- Bend 2.0.29 core in `main.bend` + `src/*.bend`; safety laws in `LAWS.bend`,
+  proofs in `PROOF.bend` (`bend PROOF.bend` is the gate).
+- `native/mailbend-tls.c`: the only native code (OpenSSL, verified TLS,
+  login, lock-step command execution). The earlier `openssl s_client`
+  scripts are gone.
+- 14 tools over MCP stdio and a CLI (`scripts/mailbend`); install with
+  `scripts/install.sh`.
+- Tests: `tests/run-unit.sh`, `tests/test-transport.sh`, `tests/test-e2e.py`.
+
+Not done yet:
+
+1. **Live iCloud run** (milestone 2's live half and the "ready to use"
+   checklist): the build sandbox had no outbound IMAP/SMTP and no credentials.
+   Follow docs/CLOUD_AGENT.md section 5 in the target Cursor Cloud Agent.
+   Record the authenticated CAPABILITY and the special-use folders.
+2. **Milestone 7, monitoring**: `mail_get_new` provides the
+   `UIDVALIDITY + UID` checkpoint; the watcher (IDLE/polling, filters,
+   ledger) is not written.
+3. Check whether iCloud files SMTP-sent mail in "Sent Messages" by itself;
+   add an optional copy to Sent only if it does not.
+
 ## Why this exists
 
 Apple does not provide a Gmail-style public REST API for iCloud Mail. The supported interoperability path is standard email protocols:
@@ -269,39 +296,18 @@ albertc71/MailBend
 
 `main` was created from the original `master` history.
 
-Files added/updated during the prototype work include:
+The first prototype commit added a Bend command model, `LAWS.bend`, docs and
+`openssl s_client` shell scripts. Those scripts were replaced by
+`native/mailbend-tls.c`; `docs/PROTOTYPE.md` became `docs/ARCHITECTURE.md`.
+The non-mutating connectivity check is now the `mail_probe` tool (CAPABILITY
+after login + LIST; it opens no mailbox).
 
-- `README.md`
-- `.gitignore`
-- `.env.example`
-- `AGENTS.md`
-- `main.bend`
-- `LAWS.bend`
-- `docs/PROTOTYPE.md`
-- `docs/CLOUD_AGENT.md`
-- `native/README.md`
-- `native/mailbend-tls.sh`
-- `scripts/smoke.sh`
-- `scripts/imap-probe.sh`
+## History
 
-Review the actual repository state rather than assuming every experimental draft is correct.
-
-The current shell IMAP probe was intentionally designed to do only:
-
-1. LOGIN
-2. CAPABILITY
-3. LIST
-4. LOGOUT
-
-It should not select/read/mutate/delete messages.
-
-## Current blocker/history
-
-An attempt was made from ChatGPT's GitHub connector to commit a fuller executable mailbox runtime/MCP implementation. The connector's write safety guard rejected the executable mailbox-authentication code, including a reduced read-only runtime.
-
-That is a limitation of the ChatGPT-to-GitHub write path used during this conversation, **not a design requirement for MailBend**.
-
-Continue implementation from Cursor Cloud Agent or another normal development environment where the repository can be cloned, compiled, and tested.
+An earlier attempt from ChatGPT's GitHub connector to commit the runtime was
+rejected by that connector's write guard. That was a limitation of that write
+path, not a design requirement; the implementation was then done in a normal
+development environment.
 
 Do not weaken MailBend's security model to work around that connector restriction.
 
