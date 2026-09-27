@@ -11,7 +11,7 @@ The intended primary development branch is **`main`**. The repository was initia
 ## Status (2026-09-27)
 
 Milestones 1-6 and 8 are implemented and verified end to end against a local
-TLS IMAP/SMTP server (`tests/fake_mail_server.py`): 99 e2e checks, 18
+TLS IMAP/SMTP server (`tests/fake_mail_server.py`): 104 e2e checks, 19
 transport checks, 4 unit suites, 26 proven laws. See
 `plans/260927-0319-mailbend-core-implementation/plan.md`.
 

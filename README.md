@@ -43,7 +43,7 @@ git clone https://github.com/albertc71/MailBend.git && cd MailBend
 scripts/install.sh
 ```
 
-`scripts/install.sh` builds `bin/mailbend-tls`, checks the safety proofs with
+`scripts/install.sh` builds `bin/mailbend-tls` and `bin/mailbend-attach`, checks the safety proofs with
 `bend PROOF.bend`, and compiles the core to `bin/mailbend-core`. Run
 `scripts/install.sh --install-bend` to let it install Bend too.
 
@@ -64,7 +64,7 @@ Optional variables are listed in [.env.example](.env.example): server
 overrides, `MAILBEND_READ_ONLY=1` (refuse every tool that changes mail),
 `MAILBEND_ATTACH_DIR` (the only directory attachments may come from;
 attachments are off without it), `MAILBEND_TIMEOUT_MS`, and
-`MAILBEND_TLS_HELPER`.
+`MAILBEND_TLS_HELPER` / `MAILBEND_ATTACH_HELPER`.
 
 ## Use
 
@@ -117,9 +117,10 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 - **Folders by role, not by name.** Trash and Drafts come from special-use
   attributes; names are used only on servers that mark no folder at all.
 - **No file exfiltration.** Attachments are read only from
-  `MAILBEND_ATTACH_DIR` (off without it). The helper opens them beneath that
-  directory with `openat2`, refusing any symlink or `..`, and checks the
-  opened file itself, so a prompt-injected message cannot make the agent mail
+  `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
+  `mailbend-attach`, a separate program with no credentials. It opens them
+  beneath that directory with `openat2`, refusing any symlink or `..`, and
+  checks the opened file itself, so a prompt-injected message cannot make the agent mail
   out `~/.ssh` keys or `/proc/self/environ`, even by racing a path swap.
 - Commands run one at a time and stop at the first rejection; message
   contents are framed as IMAP literals, so a message cannot spoof a server
@@ -135,11 +136,14 @@ flowchart LR
     tools["14 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
-  core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (C, OpenSSL)<br/>verified TLS, login, lock-step commands,<br/>safe attachment reads"]
+  core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (C, OpenSSL)<br/>verified TLS, login,<br/>lock-step commands"]
   helper -- "transcript on stdout" --> core
   helper <--> imap[("imap.mail.me.com:993")]
   helper <--> smtp[("smtp.mail.me.com:587")]
   secrets[["MAILBEND_APP_PASSWORD"]] -. "read by the helper only" .-> helper
+  core -- "dir, path, byte budget" --> reader["mailbend-attach (C)<br/>no credentials, openat2"]
+  reader -- "file bytes" --> core
+  reader --> files[("MAILBEND_ATTACH_DIR")]
 ```
 
 Each tool call runs one or two short IMAP sessions (login, a few commands,

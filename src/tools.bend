@@ -889,61 +889,113 @@ def pure_att(+a: AttR) -> IO(AttR):
 def att_proc(+p: Proc, +name: String, +ctype: String) -> AttR:
   match p:
     case ProcFail{m}:
-      AttErr{"cannot run the TLS helper: " ++ m}
+      AttErr{"cannot run mailbend-attach: " ++ m}
     case ProcOk{code, out, err}:
-      Bool.pick(AttR, U32.is_zero(code), AttOk{M.Attach{name, ctype, out}}, AttErr{helper_msg(err)})
+      Bool.pick(AttR, U32.is_zero(code), AttOk{M.Attach{name, ctype, out}}, AttErr{strip_prefix(helper_msg(err), "mailbend-attach: ")})
 
-def att_read(+helper: String, +dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
+# `budget` is what is left of the 25 MB all attachments may take together;
+# the reader refuses a file larger than that before reading it.
+def att_read(+helper: String, +dir: String, +path: String, +name: String, +ctype: String, +budget: U32) -> IO(AttR):
   do IO<AttR>:
-    r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run(helper, ["attach", dir, path], "", 60000000, 60000)
+    r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run(helper, [dir, path, U32.show(budget)], "", 60000000, 60000)
     return att_proc(proc_of(r), name, ctype)
 
-def att_at(+helper: String, +dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
+def att_at(+helper: String, +dir: String, +path: String, +name: String, +ctype: String, +budget: U32) -> IO(AttR):
   match helper:
     case SCon{'/', t}:
-      att_read(helper, dir, path, name, ctype)
+      att_read(helper, dir, path, name, ctype, budget)
     case _:
-      pure_att(AttErr{"MAILBEND_TLS_HELPER must be the absolute path of mailbend-tls (scripts/mailbend sets it)"})
+      pure_att(AttErr{"MAILBEND_ATTACH_HELPER must be the absolute path of mailbend-attach (scripts/mailbend sets it)"})
 
 # Attachments come only from MAILBEND_ATTACH_DIR and are off without it: an
 # agent tricked by a message must not mail out files such as
-# /proc/self/environ (which holds the app password) or ~/.ssh keys. The
-# helper opens the file beneath that directory with no symlinks allowed and
-# checks the opened descriptor itself, so a path swapped mid-way cannot
-# redirect the read.
-def att_dir(+dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
+# /proc/self/environ (which holds the app password) or ~/.ssh keys. They are
+# read by mailbend-attach, a separate program that holds no credentials: it
+# opens the file beneath that directory with no symlinks allowed and checks
+# the opened descriptor itself, so a path swapped mid-way cannot redirect
+# the read.
+def att_dir(+dir: String, +path: String, +name: String, +ctype: String, +budget: U32) -> IO(AttR):
   match dir:
     case SNil{}:
       pure_att(AttErr{"attachments are disabled: set MAILBEND_ATTACH_DIR to the directory whose files may be attached"})
     case SCon{h, t}:
       do IO<AttR>:
-        helper : String <- env_or("MAILBEND_TLS_HELPER", "")
-        att_at(helper, dir, path, name, ctype)
+        helper : String <- env_or("MAILBEND_ATTACH_HELPER", "")
+        att_at(helper, dir, path, name, ctype, budget)
 
-def att_path(+missing: Bool, +path: String, +name: String, +ctype: String) -> IO(AttR):
+def att_path(+missing: Bool, +path: String, +name: String, +ctype: String, +budget: U32) -> IO(AttR):
   match missing:
     case True{}:
       pure_att(AttErr{"each attachment needs a \"path\""})
     case False{}:
       do IO<AttR>:
         dir : String <- env_or("MAILBEND_ATTACH_DIR", "")
-        att_dir(dir, path, name, ctype)
+        att_dir(dir, path, name, ctype, budget)
 
-def att_named(+path: String, +name: String, +ctype: String) -> IO(AttR):
-  att_path(String.is_empty(path), path, name, ctype)
+def att_named(+path: String, +name: String, +ctype: String, +budget: U32) -> IO(AttR):
+  att_path(String.is_empty(path), path, name, ctype, budget)
 
-def att_one(+a: J.Json) -> IO(AttR):
-  att_named(str_arg(a, "path", ""), str_arg(a, "filename", basename(str_arg(a, "path", ""))), str_arg(a, "content_type", ext_type(str_arg(a, "filename", basename(str_arg(a, "path", ""))))))
+def att_one(+a: J.Json, +budget: U32) -> IO(AttR):
+  att_named(str_arg(a, "path", ""), str_arg(a, "filename", basename(str_arg(a, "path", ""))), str_arg(a, "content_type", ext_type(str_arg(a, "filename", basename(str_arg(a, "path", ""))))), budget)
 
-def atts_read(+xs: List<&2, J.Json>) -> IO(List<&2, AttR>):
+def max_attachments() -> U32:
+  32
+
+# Bytes in a byte string (one char per byte), counted in a U32.
+def byte_count(s: String, +n: U32) -> U32:
+  match s:
+    case SNil{}:
+      n
+    case SCon{c, t}:
+      byte_count(t, (n + 1 : U32))
+
+def att_size(+a: AttR) -> U32:
+  match a:
+    case AttOk{M.Attach{n, c, data}}:
+      byte_count(data, 0)
+    case AttErr{m}:
+      0
+
+def att_ok(+a: AttR) -> Bool:
+  match a:
+    case AttOk{x}:
+      True{}
+    case AttErr{m}:
+      False{}
+
+def att_gated(+too_many: Bool, +spent: Bool, +a: J.Json, +budget: U32) -> IO(AttR):
+  match too_many:
+    case True{}:
+      pure_att(AttErr{"at most 32 attachments"})
+    case False{}:
+      match spent:
+        case True{}:
+          pure_att(AttErr{"attachments may total at most 25 MB"})
+        case False{}:
+          att_one(a, budget)
+
+# Reads the next attachment only while everything before it was read, the
+# 25 MB total budget is not spent and there are at most 32; once one fails
+# the rest are never read (a placeholder keeps the first error first).
+def att_gate(+go: Bool, +n: U32, +a: J.Json, +budget: U32) -> IO(AttR):
+  match go:
+    case False{}:
+      pure_att(AttErr{"not read"})
+    case True{}:
+      att_gated(U32.is_ge(n, max_attachments()), U32.is_zero(budget), a, budget)
+
+def atts_go(+xs: List<&2, J.Json>, +go: Bool, +n: U32, +budget: U32) -> IO(List<&2, AttR>):
   match xs:
     case Nil{}:
       IO.pure(List<&2, AttR>, [])
     case Con{a, t}:
       do IO<List<&2, AttR>>:
-        one : AttR <- att_one(a)
-        rest : List<&2, AttR> <- atts_read(t)
-        return one <> rest
+        +o : AttR <- att_gate(go, n, a, budget)
+        rest : List<&2, AttR> <- atts_go(t, go && att_ok(o), (n + 1 : U32), (budget - att_size(o) : U32))
+        return o <> rest
+
+def atts_read(+xs: List<&2, J.Json>) -> IO(List<&2, AttR>):
+  atts_go(xs, True{}, 0, max_attachment())
 
 def atts_cons(+a: M.Attach, +rest: Atts) -> Atts:
   match rest:

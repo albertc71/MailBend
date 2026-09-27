@@ -61,8 +61,18 @@ def Laws.fetch_items_never_set_seen(item):
     case I.IFull{max}:
       {==}
 
+def new_if_writes_nothing(at_end: Bool, mbox: String, since: U32) -> {I.any_writes(Ops.plan_new_if(at_end, mbox, since)) == False{} : Bool}:
+  match at_end:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def new_writes_nothing(mbox: String, +since: U32) -> {I.any_writes(Ops.plan_new(mbox, since)) == False{} : Bool}:
+  new_if_writes_nothing(U32.is_eq(since, Ops.max_uid()), mbox, since)
+
 def Laws.get_new_writes_nothing(mbox, since):
-  {==}
+  new_writes_nothing(mbox, since)
 
 def Laws.mark_never_deletes(mbox, uids, seen, uidv):
   match seen:

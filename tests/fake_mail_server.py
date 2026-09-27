@@ -163,6 +163,7 @@ class State:
         self.lock = threading.RLock()
         self.state_path = state_path
         self.echo_login = False
+        self.lowercase_codes = False
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -732,7 +733,8 @@ class IMAPSession:
         self.send(self.FLAGS_LINE)
         self.send(f'* {count} EXISTS\r\n')
         self.send('* 0 RECENT\r\n')
-        self.send(f'* OK [UIDVALIDITY {uidvalidity}] UIDs valid\r\n')
+        ok = '* ok [uidvalidity' if self.state.lowercase_codes else '* OK [UIDVALIDITY'
+        self.send(f'{ok} {uidvalidity}] UIDs valid\r\n')
         self.send(f'* OK [UIDNEXT {uidnext}] Predicted next UID\r\n')
         mode, verb_name = ('READ-ONLY', 'EXAMINE') if readonly else ('READ-WRITE', 'SELECT')
         self.send(f'{tag} OK [{mode}] {verb_name} completed\r\n')
@@ -1229,12 +1231,14 @@ def main():
     ap.add_argument('--cert-name', default='server')
     ap.add_argument('--silent-port', action='store_true')
     ap.add_argument('--echo-login', action='store_true', help='echo the credentials in login replies')
+    ap.add_argument('--lowercase-codes', action='store_true', help='send response codes in lower case')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
         fixture = json.load(f)
     state = State(fixture, args.state)
     state.echo_login = args.echo_login
+    state.lowercase_codes = args.lowercase_codes
     logger = Logger(args.log)
     caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
     ctx = make_ssl_context(args.certdir, args.cert_name)

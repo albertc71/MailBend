@@ -1,13 +1,17 @@
-# Native boundary: mailbend-tls
+# Native boundary: mailbend-tls and mailbend-attach
 
-`mailbend-tls.c` is MailBend's only native code: sockets, TLS and login,
-plus one safe file read for attachments (Bend cannot open a file without
-following symlinks).
-Which commands to send, and what the answers mean, is decided by the Bend
-core. It links only against OpenSSL.
+MailBend has two small native programs:
+
+- `mailbend-tls.c`: sockets, TLS and login, the only code that reads the
+  password. Which commands to send, and what the answers mean, is decided
+  by the Bend core. It links only against OpenSSL.
+- `mailbend-attach.c`: reads one attachment file safely (Bend cannot open a
+  file without following symlinks). It holds no credentials: it clears its
+  environment first and opens no connection.
 
 ```sh
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto
+cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
 ```
 
 ## Contract
@@ -15,7 +19,7 @@ cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -l
 ```text
 mailbend-tls imap   < tagged IMAP commands   > server transcript
 mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
-mailbend-tls attach <dir> <path>             > the file's bytes
+mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 ```
 
 - **TLS**: TLS 1.2+, peer certificate required, chain verified against the
@@ -38,14 +42,16 @@ mailbend-tls attach <dir> <path>             > the file's bytes
   `=EXPECT-WORD <word>` asks for `<word>` as a whole word (any case) in one
   of those lines; the core uses it to confirm UIDPLUS before anything is
   marked `\Deleted`.
-- **Attachments**: `attach` resolves `<dir>` once with `realpath` and opens
+- **Attachments** (`mailbend-attach`): clears its environment, resolves
+  `<dir>` once with `realpath` and opens
   that canonical path with `RESOLVE_NO_SYMLINKS` (so swapping a component
   for a symlink afterwards fails), then opens `<path>` (relative to `<dir>`,
   or absolute inside it) with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS |
   RESOLVE_NO_MAGICLINKS)`, so no symlink or `..` leads outside `<dir>`, then
-  checks the opened descriptor is a regular file of at most 25 MiB before
-  reading it. It reads no credentials and opens no connection. Needs Linux
-  5.6+.
+  checks the opened descriptor is a regular file of at most `<max-bytes>`
+  (the core passes what is left of the 25 MiB all attachments may total)
+  before reading it. Exit 2 with the reason on stderr when refused. Needs
+  Linux 5.6+.
 - **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
   message, `.`. EHLO, STARTTLS, AUTH and QUIT are the helper's own and are
   refused in the envelope. Any non-2xx reply stops the run.
