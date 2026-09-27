@@ -109,6 +109,7 @@ def main() -> IO(Unit):
     IO.print(Bool.show(String.eq(M.param("attachment; " ++ String.concat(String.split(M.name_param("filename", long_name()), '\n')), "filename"), long_name())) ++ " " ++ Bool.show(U32.is_lt(max_line(M.name_param("filename", long_name()), 0, 0), 80)))
     IO.print(M.param("attachment; filename=\"Q1; final \\\"v2\\\".pdf\"; size=3", "filename") ++ " | " ++ M.main_value("text/plain ; charset=\"a;b\"") ++ " | " ++ M.addr_spec("john@example.com (Doe, John)"))
     IO.print(M.addr_spec("\"a <evil@x.com>\" <real@y.com>") ++ " " ++ M.addr_spec("plain@z.com"))
+    IO.print(M.encode_addr("\"Sales < Europe\" <sales@example.com>") ++ " | " ++ M.encode_addr("Ann <a@x.com>") ++ " | " ++ Bool.show(String.ends_with(M.att_part("B", M.Attach{"m.eml", "message/rfc822", "Subject: x\r\n\r\nhi\r\n"}), "hi\r\n\r\n")))
     IO.print(Bool.show(M.addr_ok("A <a@b.c>")) ++ " " ++ Bool.show(M.addr_ok("a@b.c\r\nRCPT TO:<x@y>")) ++ " " ++ Bool.show(M.addr_ok("no-at")) ++ " " ++ Bool.show(M.addr_ok("a@b@c")))
     IO.print(M.param("attachment; filename*0=\"Q1 \"; filename*1=\"final.pdf\"", "filename") ++ " | " ++ M.param("attachment; filename*0*=utf-8''r%C3%A9; filename*1=\" sum.pdf\"", "filename") ++ " | " ++ M.decode_header("=?UTF-8?Q?caf=C3=A9?=\t=?UTF-8?Q?_cr=C3=A8me?= ok"))
 
@@ -130,5 +131,6 @@ def main() -> IO(Unit):
 #|True True
 #|Q1; final "v2".pdf | text/plain | john@example.com
 #|real@y.com plain@z.com
+#|"Sales < Europe" <sales@example.com> | "Ann" <a@x.com> | True
 #|True False False False
 #|Q1 final.pdf | ré sum.pdf | café crème ok

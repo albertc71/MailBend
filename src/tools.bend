@@ -1449,15 +1449,16 @@ def tool_list(+m: Maybe<&2, J.Json>) -> J.Json:
     case _:
       J.JEnd{}
 
-def props_for(+m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
+def input_of(+m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
   match m:
     case Some{t}:
-      J.get(Maybe.default(&2, J.Json, J.get(t, "inputSchema"), J.JNull{}), "properties")
+      J.get(t, "inputSchema")
     case None{}:
       None{}
 
-def tool_props(+name: String) -> Maybe<&2, J.Json>:
-  props_for(tool_named(tool_list(J.parse(Schema.tool_defs())), name))
+# The tool's inputSchema (properties and required list); None for no tool.
+def tool_input(+name: String) -> Maybe<&2, J.Json>:
+  input_of(tool_named(tool_list(J.parse(Schema.tool_defs())), name))
 
 def digits(+s: String) -> Bool:
   match s:
@@ -1525,6 +1526,13 @@ def prop_problem(+p: Maybe<&2, J.Json>, +k: String, +v: J.Json, +tool: String) -
     case Some{+s}:
       Bool.pick(String, value_ok(want_of(s), item_of(s), v), "", "\"" ++ k ++ "\" must be " ++ type_words(want_of(s), item_of(s)))
 
+def is_some_json(+m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case Some{x}:
+      True{}
+    case None{}:
+      False{}
+
 def first_of(+a: String, +b: String) -> String:
   Bool.pick(String, String.is_empty(a), b, a)
 
@@ -1554,19 +1562,44 @@ def att_check(+m: Maybe<&2, J.Json>, +props: J.Json, +tool: String) -> String:
     case _:
       ""
 
-def args_obj_problem(+args: J.Json, +props: J.Json, +tool: String) -> String:
+def required_msg(+k: String) -> String:
+  Bool.pick(String, String.eq(k, "uidvalidity"), uidv_missing(),
+    Bool.pick(String, String.eq(k, "confirm"), "\"confirm\" is required: it must be exactly \"permanently-delete\"",
+      "\"" ++ k ++ "\" is required"))
+
+# The first required argument that is missing; an omitted field must not
+# be read as its default (a reply with no body would still send).
+def missing_problem(+req: J.Json, +kvs: J.Json) -> String:
+  match req:
+    case J.JCons{J.JStr{+k}, t}:
+      first_of(Bool.pick(String, is_some_json(J.find(kvs, k)), "", required_msg(k)), missing_problem(t, kvs))
+    case J.JCons{v, t}:
+      missing_problem(t, kvs)
+    case _:
+      ""
+
+def req_list(+m: Maybe<&2, J.Json>) -> J.Json:
+  match m:
+    case Some{J.JArr{xs}}:
+      xs
+    case _:
+      J.JEnd{}
+
+def args_obj_problem(+args: J.Json, +input: J.Json, +tool: String) -> String:
   match args:
     case J.JObj{+kvs}:
-      first_of(args_problem(props, kvs, tool), att_check(J.find(kvs, "attachments"), props, tool))
+      first_of(args_problem(Maybe.default(&2, J.Json, J.get(input, "properties"), J.JNull{}), kvs, tool),
+        first_of(missing_problem(req_list(J.get(input, "required")), kvs),
+          att_check(J.find(kvs, "attachments"), Maybe.default(&2, J.Json, J.get(input, "properties"), J.JNull{}), tool)))
     case _:
       "the arguments must be a JSON object"
 
-def schema_problem(+props: Maybe<&2, J.Json>, +args: J.Json, +tool: String) -> String:
-  match props:
+def schema_problem(+input: Maybe<&2, J.Json>, +args: J.Json, +tool: String) -> String:
+  match input:
     case None{}:
       ""
-    case Some{p}:
-      args_obj_problem(args, p, tool)
+    case Some{i}:
+      args_obj_problem(args, i, tool)
 
 def call_checked(+problem: String, +name: String, +args: J.Json) -> IO(Out):
   match problem:
@@ -1577,4 +1610,4 @@ def call_checked(+problem: String, +name: String, +args: J.Json) -> IO(Out):
 
 # Runs the named tool with its JSON arguments, once they match its schema.
 def call(+name: String, +args: J.Json) -> IO(Out):
-  call_checked(schema_problem(tool_props(name), args, name), name, args)
+  call_checked(schema_problem(tool_input(name), args, name), name, args)
