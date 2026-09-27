@@ -610,9 +610,24 @@ def quote_esc(+s: String) -> String:
 def encode_display(+name: String) -> String:
   Bool.pick(String, C.is_plain(name) && Nat.is_le(String.length(name), 200n), "\"" ++ quote_esc(name) ++ "\"", encode_as(False{}, name))
 
+# The text before the last "<" outside a quoted string: the display name
+# that goes with the address addr_spec takes (so "Sales < Europe" stays
+# whole).
+def display_go(+s: String, +cur: String, +best: String, +q: Bool, +esc: Bool) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(best)
+    case SCon{c, t}:
+      display_go(t, SCon{c, cur}, Bool.pick(String, Bool.not(q) && Char.is_eq(c, '<'), cur, best),
+        Bool.pick(Bool, Bool.not(esc) && Char.is_eq(c, '"'), Bool.not(q), q),
+        Bool.not(esc) && q && Char.is_eq(c, '\\'))
+
+def display_part(+a: String) -> String:
+  display_go(a, "", "", False{}, False{})
+
 # "Name <addr>" with the display name encoded when needed.
 def encode_addr(+a: String) -> String:
-  +name = String.trim(before_lt(a))
+  +name = String.trim(display_part(a))
   Bool.pick(String, String.contains(a, "<") && Bool.not(String.is_empty(name)),
     encode_display(unquote(name)) ++ " <" ++ addr_spec(a) ++ ">", addr_spec(a))
 
@@ -743,12 +758,20 @@ def att_head(+b: String, +ctype: String, +name: String, +cte: String) -> String:
 
 # RFC 2046 allows only 7bit/8bit/binary for message/rfc822: a 7-bit clean
 # message is included as is; anything else goes as an opaque base64 file.
+# The CRLF after a raw message always belongs to the next boundary, so the
+# message's own final CRLF survives decoding. Only the chosen encoding is
+# built (a match, not Bool.pick, which would build both).
+def att_body(+raw: Bool, +b: String, +ctype: String, +name: String, +data: String) -> String:
+  match raw:
+    case True{}:
+      att_head(b, "message/rfc822", name, "7bit") ++ data ++ "\r\n"
+    case False{}:
+      att_head(b, Bool.pick(String, String.eq(safe_ctype(ctype), "message/rfc822"), "application/octet-stream", safe_ctype(ctype)), name, "base64") ++ C.wrap76(C.b64_encode(data, False{}), 0)
+
 def att_part(+b: String, +a: Attach) -> String:
   match a:
-    case Attach{name, ctype, data}:
-      Bool.pick(String, String.eq(safe_ctype(ctype), "message/rfc822") && seven_bit(data, 0),
-        att_head(b, "message/rfc822", name, "7bit") ++ data ++ Bool.pick(String, String.ends_with(data, "\r\n"), "", "\r\n"),
-        att_head(b, Bool.pick(String, String.eq(safe_ctype(ctype), "message/rfc822"), "application/octet-stream", safe_ctype(ctype)), name, "base64") ++ C.wrap76(C.b64_encode(data, False{}), 0))
+    case Attach{name, +ctype, +data}:
+      att_body(String.eq(safe_ctype(ctype), "message/rfc822") && seven_bit(data, 0), b, ctype, name, data)
 
 def att_parts(+b: String, +xs: List<&2, Attach>) -> String:
   match xs:
