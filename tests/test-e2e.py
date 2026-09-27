@@ -348,6 +348,8 @@ def compose(srv):
     ok = c == 0 and len(sent) == n + 1
     data = sent[-1]["data"] if ok else ""
     check("reply sends to the original sender", ok and sent[-1]["rcpt_to"] == ["jose@example.com"], r)
+    check("reply result says the quote covers the whole original", r.get("quoted_original_truncated") is False
+          and r.get("quoted_bytes") == r.get("original_bytes") and r.get("quoted_bytes", 0) > 0, r)
     check("reply threads: In-Reply-To, References, Re: subject", ("In-Reply-To: " + orig_id) in data and orig_id in data.split("References:", 1)[-1]
           and "Subject: Re: " in data.replace("=?UTF-8?B?", "Subject: Re: ") , data[:500])
     c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "draft reply", "as_draft": True})
@@ -367,6 +369,9 @@ def compose(srv):
     c2, g2 = tool(srv, "mail_get", {"folder": "Drafts", "uid": r.get("uid", 0)})
     check("reply to an original over 256 KB says its quote may be incomplete", c == 0 and "Big original text" in g2.get("text", "")
           and "only its start was read" in g2.get("text", ""), (r, g2.get("text", "")[:600]))
+    check("reply result marks the truncated quote (quoted_original_truncated, quoted_bytes, original_bytes)",
+          r.get("quoted_original_truncated") is True and r.get("quoted_bytes") == 262144
+          and r.get("original_bytes", 0) > 262144, r)
     c, r = tool(srv, "mail_save_draft", {"to": ["list@example.com", "Bob <BOB@example.com>"],
                                          "cc": ["bob@example.com", FIX["user"], "List <list@example.com>", "carol@example.com"],
                                          "subject": "team", "body": "hello team"})

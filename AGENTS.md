@@ -1,13 +1,28 @@
 # MailBend agent instructions
 
 MailBend is a small Linux-first iCloud Mail connector (IMAP/SMTP) for AI
-agents: a Bend 2 core plus one C/OpenSSL TLS helper.
+agents: a Bend 2 core plus two small native helpers (`native/mailbend-tls.c`,
+`native/mailbend-attach.c`).
+
+## Native boundaries
+
+Keep product/mail policy in Bend 2. Native helpers exist only where the
+Bend runtime cannot safely provide the required OS/protocol boundary.
+
+- `mailbend-tls`: verified TLS, sockets, authentication, protocol framing,
+  literal-safe I/O, and lock-step execution of Bend-generated command plans.
+  It may enforce expectations supplied by Bend and stop on protocol failure,
+  but must never choose, reorder, synthesize, or alter mail operations.
+- `mailbend-attach`: credential-free, sandboxed attachment-file access.
+  It must not implement mail policy or network access.
+
+Bend remains authoritative for which operations run, command plans,
+rendering, response interpretation, MIME behavior, and agent-visible results.
 
 ## Constraints
-- Keep the core in Bend 2. Keep the native boundary (`native/mailbend-tls.c`)
-  to TLS, sockets and login only.
-- Never log, print, commit, persist, or return MAILBEND_APP_PASSWORD. Only the
-  helper reads it; the Bend core must not.
+- Keep the core in Bend 2, and the native helpers within the boundaries above.
+- Never log, print, commit, persist, or return MAILBEND_APP_PASSWORD. Only
+  `mailbend-tls` reads it; the Bend core and `mailbend-attach` must not.
 - TLS peer and hostname verification are mandatory; never add a way around it.
 - Read operations must not mutate message flags: EXAMINE, never SELECT; fetch
   bodies only with BODY.PEEK.

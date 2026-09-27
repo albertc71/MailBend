@@ -75,9 +75,13 @@ the MCP process).
 
 ## 5. First live run, safely
 
-1. With `MAILBEND_READ_ONLY=1`: `mail_probe`, `mail_list_folders`,
-   `mail_search`, `mail_get` on a known message; confirm in Mail.app that it
-   is still unread.
+1. **Compatibility gate (non-destructive).** With `MAILBEND_READ_ONLY=1`,
+   which refuses every tool that changes or sends mail: `mail_probe`,
+   `mail_list_folders`, `mail_search`, `mail_get_new`, and `mail_get` on a
+   known unread message; confirm in Mail.app that it is still unread. Record
+   the authenticated capabilities from `mail_probe` (MOVE, UIDPLUS,
+   SPECIAL-USE, IDLE) and the special-use folders it found. Treat this step
+   as the gate before using MailBend with a real account.
 2. Unset read-only and use a test message you sent yourself:
    `mail_mark_read`, `mail_mark_unread`, `mail_move` to a scratch folder,
    `mail_trash`, then `mail_delete` with `"confirm": "permanently-delete"`;
