@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # Builds MailBend in place:
-#   bin/mailbend-tls   the TLS helper (C, OpenSSL)
-#   bin/mailbend-core  the Bend core, compiled (needs clang 14+)
+#   bin/mailbend-tls     the TLS helper (C, OpenSSL)
+#   bin/mailbend-attach  the attachment reader (C, no credentials)
+#   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install Bend with its
 # official installer (https://bend-lang.com/install.sh) when it is missing.
 set -eu
@@ -24,14 +25,17 @@ if ! command -v bend >/dev/null 2>&1; then
 fi
 
 command -v cc >/dev/null 2>&1 || fail "a C compiler is needed (apt-get install build-essential)"
-printf '#include <openssl/ssl.h>\nint main(void){return 0;}\n' > /tmp/mailbend-ssl-check.c
-cc /tmp/mailbend-ssl-check.c -o /tmp/mailbend-ssl-check -lssl -lcrypto 2>/dev/null \
+probe=$(mktemp -d)
+trap 'rm -rf "$probe"' EXIT
+printf '#include <openssl/ssl.h>\nint main(void){return 0;}\n' > "$probe/check.c"
+cc "$probe/check.c" -o "$probe/check" -lssl -lcrypto 2>/dev/null \
   || fail "OpenSSL headers are needed (apt-get install libssl-dev)"
-rm -f /tmp/mailbend-ssl-check.c /tmp/mailbend-ssl-check
 
 mkdir -p bin
 say "building bin/mailbend-tls"
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto
+say "building bin/mailbend-attach"
+cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
 
 say "checking the safety laws (bend PROOF.bend)"
 bend PROOF.bend

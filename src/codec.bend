@@ -7,7 +7,7 @@ import Base
 # Decoder state: the code point so far and how many continuation bytes are
 # still expected. Invalid sequences decode to U+FFFD.
 type U8St is Data:
-  U8St{cp: U32, need: U32, out: String}
+  U8St{cp: U32, need: U32, min: U32, out: String}
 
 type B64St is Data:
   B64St{acc: U32, bits: U32, out: String}
@@ -54,15 +54,15 @@ def repl() -> Char:
   chr(65533)
 
 def u8_lead(+b: U32, +out: String) -> U8St:
-  Bool.pick(U8St, U32.is_lt(b, 128), U8St{0, 0, SCon{chr(b), out}},
-    Bool.pick(U8St, between(b, 194, 223), U8St{(b .&. 31 : U32), 1, out},
-      Bool.pick(U8St, between(b, 224, 239), U8St{(b .&. 15 : U32), 2, out},
-        Bool.pick(U8St, between(b, 240, 244), U8St{(b .&. 7 : U32), 3, out},
-          U8St{0, 0, SCon{repl(), out}}))))
+  Bool.pick(U8St, U32.is_lt(b, 128), U8St{0, 0, 0, SCon{chr(b), out}},
+    Bool.pick(U8St, between(b, 194, 223), U8St{(b .&. 31 : U32), 1, 128, out},
+      Bool.pick(U8St, between(b, 224, 239), U8St{(b .&. 15 : U32), 2, 2048, out},
+        Bool.pick(U8St, between(b, 240, 244), U8St{(b .&. 7 : U32), 3, 65536, out},
+          U8St{0, 0, 0, SCon{repl(), out}}))))
 
-# Overlong, surrogate and out-of-range results become U+FFFD. (A 3-byte
-# sequence below U+0800 or a 4-byte one below U+10000 is also overlong; the
-# lead-byte ranges above already exclude the 2-byte overlongs.)
+# Overlong, surrogate and out-of-range results become U+FFFD. A sequence is
+# overlong when its value is below the least one of its width needs: U+0080
+# for 2 bytes, U+0800 for 3, U+10000 for 4.
 def u8_put(+bad: Bool, +cp: U32, out: String) -> String:
   match bad:
     case True{}:
@@ -70,34 +70,34 @@ def u8_put(+bad: Bool, +cp: U32, out: String) -> String:
     case False{}:
       SCon{chr(cp), out}
 
-def u8_emit(+cp: U32, out: String) -> String:
-  u8_put(between(cp, 55296, 57343) || U32.is_gt(cp, 1114111) || U32.is_lt(cp, 128), cp, out)
+def u8_emit(+cp: U32, +min: U32, out: String) -> String:
+  u8_put(between(cp, 55296, 57343) || U32.is_gt(cp, 1114111) || U32.is_lt(cp, min), cp, out)
 
-def u8_more(+last: Bool, +cp: U32, +need: U32, out: String) -> U8St:
+def u8_more(+last: Bool, +cp: U32, +need: U32, +min: U32, out: String) -> U8St:
   match last:
     case True{}:
-      U8St{0, 0, u8_emit(cp, out)}
+      U8St{0, 0, 0, u8_emit(cp, min, out)}
     case False{}:
-      U8St{cp, (need - 1 : U32), out}
+      U8St{cp, (need - 1 : U32), min, out}
 
-def u8_cont(+ok: Bool, +b: U32, +cp: U32, +need: U32, out: String) -> U8St:
+def u8_cont(+ok: Bool, +b: U32, +cp: U32, +need: U32, +min: U32, out: String) -> U8St:
   match ok:
     case True{}:
-      u8_more(U32.is_eq(need, 1), ((cp << 6n) .|. (b .&. 63) : U32), need, out)
+      u8_more(U32.is_eq(need, 1), ((cp << 6n) .|. (b .&. 63) : U32), need, min, out)
     case False{}:
       u8_lead(b, SCon{repl(), out})
 
-def u8_next(+idle: Bool, +b: U32, +cp: U32, +need: U32, out: String) -> U8St:
+def u8_next(+idle: Bool, +b: U32, +cp: U32, +need: U32, +min: U32, out: String) -> U8St:
   match idle:
     case True{}:
       u8_lead(b, out)
     case False{}:
-      u8_cont(between(b, 128, 191), b, cp, need, out)
+      u8_cont(between(b, 128, 191), b, cp, need, min, out)
 
 def u8_step(st: U8St, +b: U32) -> U8St:
   match st:
-    case U8St{+cp, +need, out}:
-      u8_next(U32.is_zero(need), b, cp, need, out)
+    case U8St{+cp, +need, +min, out}:
+      u8_next(U32.is_zero(need), b, cp, need, min, out)
 
 def u8_go(s: String, st: U8St) -> U8St:
   match s:
@@ -108,12 +108,12 @@ def u8_go(s: String, st: U8St) -> U8St:
 
 def u8_end(st: U8St) -> String:
   match st:
-    case U8St{cp, +need, +out}:
+    case U8St{cp, +need, min, +out}:
       String.reverse(Bool.pick(String, U32.is_zero(need), out, SCon{repl(), out}))
 
 # UTF-8 bytes to text.
 def utf8_decode(bytes: String) -> String:
-  u8_end(u8_go(bytes, U8St{0, 0, ""}))
+  u8_end(u8_go(bytes, U8St{0, 0, 0, ""}))
 
 # Windows-1252 differs from Latin-1 only in 0x80..0x9F.
 def cp1252_hi(+b: U32) -> U32:

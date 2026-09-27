@@ -51,6 +51,7 @@ class Server:
         e.pop("MAILBEND_READ_ONLY", None)
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
+        e.pop("MAILBEND_ATTACH_HELPER", None)
         for k, v in over.items():
             if v is None:
                 e.pop(k, None)
@@ -176,6 +177,9 @@ def reads(srv):
     check("get_new: a checkpoint UID needs its UIDVALIDITY", c != 0 and "uidvalidity" in r.get("error", ""), r)
     c, r = tool(srv, "mail_get_new", {"since_uid": 2, "uidvalidity": 1700000001, "limit": 2})
     check("get_new: limit and has_more", c == 0 and [m["uid"] for m in r["messages"]] == [3, 4] and r["has_more"] and r["next_since_uid"] == 4, r)
+    c, r = tool(srv, "mail_get_new", {"since_uid": 4294967295, "uidvalidity": 1700000001})
+    check("get_new: a checkpoint at the largest UID is empty, not a server error", c == 0 and r["messages"] == []
+          and r["next_since_uid"] == 4294967295 and not r["uidvalidity_changed"], r)
     c, r = tool(srv, "mail_get_new", {"since_uid": 3, "uidvalidity": 42})
     check("get_new: UIDVALIDITY change resets the checkpoint", c == 0 and r["uidvalidity_changed"] and r["next_since_uid"] == 0, r)
 
@@ -272,6 +276,12 @@ def compose(srv):
     c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": link}]},
                 MAILBEND_ATTACH_DIR=srv.work)
     check("a symlink cannot escape MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
+    c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": "report.txt"}] * 33},
+                MAILBEND_ATTACH_DIR=srv.work)
+    check("at most 32 attachments per message", c != 0 and "32 attachments" in r.get("error", "") and not srv.st().get("sent"), r)
+    p = subprocess.run([str(ROOT / "bin" / "mailbend-attach"), srv.work, "report.txt", "5"], capture_output=True, text=True)
+    check("the reader refuses a file larger than the budget left, before reading it", p.returncode == 2
+          and "exceed" in p.stderr and p.stdout == "", (p.returncode, p.stderr))
     c, r = tool(srv, "mail_save_draft", {"to": ["José Q <jose@example.com>"], "bcc": ["secret@example.com"], "subject": "Brouillon é",
                                          "body": "Draft body é\n.leading dot",
                                          "attachments": [{"path": att}, {"path": "report.txt", "filename": "rapport é.txt"}]},
@@ -376,10 +386,13 @@ def mcp(srv):
         '{"jsonrpc": "2.0" "id": 9, "method": "ping"}',
         {"jsonrpc": "2.0", "id": 5, "method": "resources/list"},
         {"jsonrpc": "2.0", "id": 6, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "mail_save_draft", "arguments": "invalid"}},
+        {"id": 8},
+        5,
     ]
     res, code = mcp_session(srv, reqs)
     by_id = {r.get("id"): r for r in res}
-    check("mcp: exactly one answer per request (none for the notification)", len(res) == 8, res)
+    check("mcp: exactly one answer per request (none for the notification)", len(res) == 11, res)
     init = by_id.get(1, {}).get("result", {})
     check("mcp: initialize", init.get("protocolVersion") == "2025-06-18" and "tools" in init.get("capabilities", {})
           and init.get("serverInfo", {}).get("name") == "mailbend", init)
@@ -400,6 +413,9 @@ def mcp(srv):
           sum(1 for r in res if r.get("error", {}).get("code") == -32700) == 2 and 9 not in by_id, res)
     check("mcp: unknown method answered with -32601", by_id.get(5, {}).get("error", {}).get("code") == -32601, by_id.get(5))
     check("mcp: ping", by_id.get(6, {}).get("result") == {}, by_id.get(6))
+    check("mcp: non-object tool arguments are refused, not cleared", by_id.get(7, {}).get("error", {}).get("code") == -32602, by_id.get(7))
+    check("mcp: malformed envelopes answered with -32600", by_id.get(8, {}).get("error", {}).get("code") == -32600
+          and any(r.get("id") is None and r.get("error", {}).get("code") == -32600 for r in res), res)
     check("mcp: exits cleanly when stdin closes", code == 0, code)
 
 

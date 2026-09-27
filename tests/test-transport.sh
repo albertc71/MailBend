@@ -476,6 +476,25 @@ case18() {
 }
 
 # =========================================================================
+# Case 19: =EXPECT compares response keywords in any case (IMAP keywords are
+# case-insensitive) but still needs the exact value.
+# =========================================================================
+case19() {
+  start_server case19 --lowercase-codes || { fail 19 "server did not start"; return; }
+  ok=1; detail=""
+  call_imap $'a1 SELECT INBOX\r\n=EXPECT * OK [UIDVALIDITY 1700000001]\r\na2 NOOP\r\n'
+  if [ "$CODE" -ne 0 ] || ! grep -aq "a2 OK" "$OUT"; then ok=0; detail="match: exit=$CODE"; fi
+  call_imap $'a1 SELECT INBOX\r\n=EXPECT * OK [UIDVALIDITY 1700000009]\r\na2 NOOP\r\n'
+  if [ "$CODE" -ne 5 ] || grep -aq "a2 OK" "$OUT"; then ok=0; detail="$detail mismatch: exit=$CODE"; fi
+  if [ "$ok" -eq 1 ]; then
+    pass "19 =EXPECT ignores keyword case, not the value"
+  else
+    fail "19 =EXPECT ignores keyword case, not the value" "$detail"
+  fi
+  stop_server
+}
+
+# =========================================================================
 # Case 2: the fixture password never leaks, and LOGIN/AUTH are redacted in
 # the log. Aggregates over every call made by every other case above, so it
 # runs last.
@@ -515,6 +534,7 @@ case15
 case16
 case17
 case18
+case19
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"

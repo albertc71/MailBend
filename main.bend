@@ -59,10 +59,30 @@ def args_of(+m: Maybe<&2, J.Json>) -> J.Json:
     case _:
       J.obj([])
 
-def send_call(+id: J.Json, +params: J.Json) -> IO(Unit):
+# Tool arguments are an object, or absent (no arguments).
+def args_ok(+m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case None{}:
+      True{}
+    case Some{J.JObj{items}}:
+      True{}
+    case _:
+      False{}
+
+def run_call(+id: J.Json, +params: J.Json) -> IO(Unit):
   do IO<Unit>:
     o : T.Out <- T.call(T.str_arg(params, "name", ""), args_of(J.get(params, "arguments")))
     IO.print(rpc_result(id, call_result(o)))
+
+def send_call_if(+ok: Bool, +id: J.Json, +params: J.Json) -> IO(Unit):
+  match ok:
+    case True{}:
+      run_call(id, params)
+    case False{}:
+      IO.print(rpc_error(id, "-32602", "invalid params: \"arguments\" must be an object"))
+
+def send_call(+id: J.Json, +params: J.Json) -> IO(Unit):
+  send_call_if(args_ok(J.get(params, "arguments")), id, params)
 
 def respond_as(+is_call: Bool, +id: J.Json, +method: String, +params: J.Json) -> IO(Unit):
   match is_call:

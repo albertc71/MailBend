@@ -24,6 +24,7 @@ def main() -> IO(Unit):
     IO.print(vis(C.qp_encode(C.utf8_encode("café = crème \r\nend "), 0)))
     IO.print(vis(C.qp_encode("tab\t", 0)))
     IO.print(C.utf8_decode("ok \u{C3}\u{28} bad"))
+    IO.print(C.utf8_decode("\u{E0}\u{82}\u{80}|\u{F0}\u{8F}\u{BF}\u{BF}|\u{E2}\u{82}\u{AC}"))
     IO.print(C.charset_decode("ISO-8859-1", "caf\u{E9}") ++ " " ++ C.charset_decode("windows-1252", "\u{93}q\u{94}"))
     IO.print(U32.show(C.utf8_len("aé日😀")))
     IO.print(Bool.show(C.is_plain("abc\tdef")) ++ " " ++ Bool.show(C.is_plain("a\r\n")) ++ " " ++ Bool.show(C.is_plain("é")))
@@ -40,6 +41,7 @@ def main() -> IO(Unit):
 #|end=20
 #|tab=09
 #|ok �( bad
+#|�|�|€
 #|café “q”
 #|10
 #|True False False

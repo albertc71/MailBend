@@ -28,13 +28,6 @@
  * lines. The Bend core uses them to pin UIDVALIDITY and to confirm an
  * extension (such as UIDPLUS) in the same session that changes messages.
  *
- * "mailbend-tls attach <dir> <path>" writes one file to stdout (same byte
- * encoding): <path> is relative to <dir>, or absolute inside it. It is
- * opened with openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS), so no symlink
- * or ".." can lead outside <dir>, and only a regular file of at most 25 MiB
- * is read, checked on the opened descriptor itself. This mode reads no
- * credentials and opens no connection.
- *
  * SMTP stdin: envelope lines (MAIL FROM, RCPT TO, ...), then DATA and the
  * dot-stuffed message ending in a "." line. EHLO, STARTTLS and AUTH are
  * done by the helper.
@@ -61,10 +54,6 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <limits.h>
-#include <sys/stat.h>
-#include <sys/syscall.h>
-#include <linux/openat2.h>
 
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -385,7 +374,8 @@ static int imap_wait(const char *tag, int want_cont) {
     emit(line, (size_t)n);
     if (line[0] == '*' && expect_len &&
         (expect_word ? has_word(line, (size_t)n, expect, expect_len)
-                     : (size_t)n >= expect_len && memcmp(line, expect, expect_len) == 0))
+                     : (size_t)n >= expect_len &&
+                           strncasecmp((const char *)line, (const char *)expect, expect_len) == 0))
       expect_seen = 1;
     if (line[0] == '*') {
       /* an untagged line may carry literals; each is followed by more line */
@@ -576,65 +566,6 @@ static int run_imap(void) {
   raw_write("Z LOGOUT\r\n", 10);
   imap_wait("Z", 0);
   return status;
-}
-
-/* ---- attachments ------------------------------------------------------ */
-
-#define MAX_ATTACHMENT (25u << 20)
-
-static int run_attach(const char *dir, const char *path) {
-  char root[PATH_MAX];
-  if (!realpath(dir, root)) die(EX_USAGE, "MAILBEND_ATTACH_DIR does not exist");
-  const char *rel = path;
-  if (path[0] == '/') {
-    size_t rl = strlen(root), dl = strlen(dir);
-    while (dl > 1 && dir[dl - 1] == '/') dl--;
-    if (strncmp(path, root, rl) == 0 && path[rl] == '/') rel = path + rl + 1;
-    else if (strncmp(path, dir, dl) == 0 && path[dl] == '/') rel = path + dl + 1;
-    else die(EX_USAGE, "attachment %s is outside MAILBEND_ATTACH_DIR", path);
-  }
-  if (!*rel) die(EX_USAGE, "attachment path names no file");
-  /* `root` is canonical, so it holds no symlink; opening it with
-   * RESOLVE_NO_SYMLINKS fails if a component was swapped for one since
-   * realpath() read it. */
-  struct open_how how;
-  memset(&how, 0, sizeof how);
-  how.flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
-  how.resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS;
-  int dfd = (int)syscall(SYS_openat2, AT_FDCWD, root, &how, sizeof how);
-  if (dfd < 0) {
-    if (errno == ENOSYS) die(EX_USAGE, "attachments need Linux 5.6+ (openat2)");
-    if (errno == ELOOP) die(EX_USAGE, "MAILBEND_ATTACH_DIR changed while it was opened");
-    die(EX_USAGE, "cannot open MAILBEND_ATTACH_DIR");
-  }
-  memset(&how, 0, sizeof how);
-  how.flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY;
-  how.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS;
-  int fd = (int)syscall(SYS_openat2, dfd, rel, &how, sizeof how);
-  if (fd < 0) {
-    if (errno == ENOSYS) die(EX_USAGE, "attachments need Linux 5.6+ (openat2)");
-    if (errno == ENOENT) die(EX_USAGE, "attachment not found: %s", path);
-    if (errno == EXDEV || errno == ELOOP)
-      die(EX_USAGE, "attachment %s is outside MAILBEND_ATTACH_DIR or reached through a symlink", path);
-    die(EX_USAGE, "cannot open attachment %s: %s", path, strerror(errno));
-  }
-  struct stat st;
-  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die(EX_USAGE, "attachment %s is not a regular file", path);
-  if (st.st_size > (off_t)MAX_ATTACHMENT) die(EX_USAGE, "attachment %s is larger than 25 MB", path);
-  unsigned char buf[65536];
-  unsigned long long total = 0;
-  for (;;) {
-    ssize_t r = read(fd, buf, sizeof buf);
-    if (r < 0 && errno == EINTR) continue;
-    if (r < 0) die(EX_USAGE, "cannot read attachment %s", path);
-    if (r == 0) break;
-    total += (unsigned long long)r;
-    if (total > MAX_ATTACHMENT) die(EX_USAGE, "attachment %s is larger than 25 MB", path);
-    emit(buf, (size_t)r);
-  }
-  close(fd);
-  close(dfd);
-  return EX_OK;
 }
 
 /* ---- SMTP -------------------------------------------------------------- */
@@ -852,8 +783,7 @@ int main(int argc, char **argv) {
   int r = EX_USAGE;
   if (argc == 2 && strcmp(argv[1], "imap") == 0) r = run_imap();
   else if (argc == 2 && strcmp(argv[1], "smtp") == 0) r = run_smtp();
-  else if (argc == 4 && strcmp(argv[1], "attach") == 0) r = run_attach(argv[2], argv[3]);
-  else die(EX_USAGE, "usage: mailbend-tls imap|smtp, or mailbend-tls attach <dir> <path>");
+  else die(EX_USAGE, "usage: mailbend-tls imap|smtp");
   fflush(stdout);
   if (in) { wipe(in, in_len); free(in); }
   return r;

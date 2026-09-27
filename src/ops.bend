@@ -105,8 +105,20 @@ def plan_folders() -> List<&2, I.Cmd>:
 def plan_search(+mbox: String, +keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CSearch{keys}]
 
+def max_uid() -> U32:
+  4294967295
+
+# No UID follows the largest one, so a checkpoint there only examines the
+# folder (for its UIDVALIDITY): since + 1 would wrap to the invalid UID 0.
+def plan_new_if(+at_end: Bool, +mbox: String, +since: U32) -> List<&2, I.Cmd>:
+  match at_end:
+    case True{}:
+      [I.CExamine{mbox}]
+    case False{}:
+      [I.CExamine{mbox}, I.CSearch{[I.KUidFrom{(since + 1 : U32)}]}]
+
 def plan_new(+mbox: String, +since: U32) -> List<&2, I.Cmd>:
-  [I.CExamine{mbox}, I.CSearch{[I.KUidFrom{(since + 1 : U32)}]}]
+  plan_new_if(U32.is_eq(since, max_uid()), mbox, since)
 
 def plan_headers(+mbox: String, +uids: List<&2, U32>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CFetch{uids, [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]}]
