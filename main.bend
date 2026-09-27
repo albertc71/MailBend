@@ -316,6 +316,14 @@ def share(xs: List<String>) -> List<&2, String>:
     case Con{h, t}:
       h <> share(t)
 
+# IO.args answers the program as invoked first, like C's argv[0].
+def command_args(xs: List<String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{prog, t}:
+      share(t)
+
 def cli(+args: List<&2, String>) -> IO(Unit):
   match args:
     case Con{"mcp", Nil{}}:
@@ -334,4 +342,4 @@ def cli(+args: List<&2, String>) -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    cli(share(args))
+    cli(command_args(args))
