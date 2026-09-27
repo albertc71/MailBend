@@ -56,6 +56,7 @@ type Cmd is Data:
   CExpunge{uids: List<&2, U32>}
   CAppend{mbox: String, flags: List<&2, Flag>, msg: String}
   CExpect{text: String}
+  CExpectWord{word: String}
 
 type M7 is Data:
   M7{out: String, run: String}
@@ -133,6 +134,8 @@ def writes(+c: Cmd) -> Bool:
     case CAppend{m, f, b}:
       True{}
     case CExpect{e}:
+      False{}
+    case CExpectWord{w}:
       False{}
 
 # Whether a command permanently removes messages (UID EXPUNGE).
@@ -489,6 +492,8 @@ def cmd_str(+c: Cmd) -> String:
       "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") {" ++ U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
     case CExpect{e}:
       e
+    case CExpectWord{w}:
+      w
 
 def tag(+n: U32) -> String:
   "a" ++ U32.show(n)
@@ -499,13 +504,22 @@ def is_expect(+c: Cmd) -> Bool:
   match c:
     case CExpect{e}:
       True{}
+    case CExpectWord{w}:
+      True{}
     case _:
       False{}
+
+def expect_kw(+c: Cmd) -> String:
+  match c:
+    case CExpectWord{w}:
+      "=EXPECT-WORD "
+    case _:
+      "=EXPECT "
 
 def line_of(+expect: Bool, +c: Cmd, +n: U32) -> String:
   match expect:
     case True{}:
-      "=EXPECT " ++ cmd_str(c)
+      expect_kw(c) ++ cmd_str(c)
     case False{}:
       tag(n) ++ " " ++ cmd_str(c)
 

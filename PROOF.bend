@@ -139,3 +139,20 @@ def Laws.delete_is_pinned(mbox, uids, confirm, uidplus, uidv):
 
 def Laws.draft_never_removes(drafts, msg):
   {==}
+
+def delete_if_checks_uidplus(confirm: Bool, mbox: String, uids: List<&2, U32>, uidplus: Bool, uidv: U32) -> {Ops.checks_uidplus_or_empty(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) == True{} : Bool}:
+  match confirm:
+    case True{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case False{}:
+      {==}
+
+def Laws.delete_checks_uidplus(mbox, uids, confirm, uidplus, uidv):
+  delete_if_checks_uidplus(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
+
+def Laws.copy_move_checks_uidplus(mbox, uids, dest, uidv):
+  {==}

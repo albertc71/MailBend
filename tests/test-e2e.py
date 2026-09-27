@@ -215,6 +215,8 @@ def mutations(srv):
     s = srv.st()
     check("move with UID MOVE", c == 0 and r.get("method") == "UID MOVE" and 3 not in msgs(s, "INBOX")
           and len(s["mailboxes"]["Archive"]["messages"]) == 1, r)
+    c, r = tool(srv, "mail_move", {"uids": [5], "destination": "inbox", "uidvalidity": V})
+    check("INBOX is case-insensitive: no self-move", c != 0 and "different folder" in r.get("error", ""), r)
     c, r = tool(srv, "mail_move", {"uids": [5], "destination": "Nope", "uidvalidity": V})
     check("move to a missing folder is rejected", c != 0 and "rejected" in r.get("error", "") and 5 in msgs(srv.st(), "INBOX"), r)
 
@@ -242,6 +244,9 @@ def mutations(srv):
     trash_uids = [m["uid"] for m in s["mailboxes"]["Deleted Messages"]["messages"]]
     check("delete with confirmation expunges exactly that UID", c == 0 and r.get("permanently_deleted") and 4 not in msgs(s, "INBOX")
           and 5 in msgs(s, "INBOX") and len(trash_uids) == 1, r)
+    new = srv.log_lines()[n_log:]
+    sel = [i for i, l in enumerate(new) if " SELECT " in l]
+    check("delete confirms UIDPLUS in its own session before SELECT", sel and any("CAPABILITY" in l for l in new[:sel[-1]][-3:]), new)
     check("delete uses UID EXPUNGE, not EXPUNGE", any(l.endswith("UID EXPUNGE 4") for l in srv.log_lines()[n_log:])
           and not any(l.split(" ", 1)[-1] == "EXPUNGE" for l in srv.log_lines()))
 
@@ -257,6 +262,9 @@ def compose(srv):
                 MAILBEND_ATTACH_DIR=srv.work)
     check("attachments outside MAILBEND_ATTACH_DIR are refused (/proc/self/environ)", c != 0 and "outside" in r.get("error", "")
           and not srv.st().get("sent"), r)
+    c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": "../../../etc/hostname"}]},
+                MAILBEND_ATTACH_DIR=srv.work)
+    check("'..' cannot leave MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
     link = os.path.join(srv.work, "link")
     os.symlink("/proc/self/environ", link)
     c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": link}]},
@@ -264,7 +272,7 @@ def compose(srv):
     check("a symlink cannot escape MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
     c, r = tool(srv, "mail_save_draft", {"to": ["José Q <jose@example.com>"], "subject": "Brouillon é",
                                          "body": "Draft body é\n.leading dot",
-                                         "attachments": [{"path": att}, {"path": att, "filename": "rapport é.txt"}]},
+                                         "attachments": [{"path": att}, {"path": "report.txt", "filename": "rapport é.txt"}]},
                 MAILBEND_ATTACH_DIR=srv.work)
     s = srv.st()
     drafts = s["mailboxes"]["Drafts"]["messages"]
@@ -276,7 +284,7 @@ def compose(srv):
     c, r = tool(srv, "mail_get", {"folder": "Drafts", "uid": drafts[-1]["uid"] if drafts else 1})
     check("draft reads back: subject, body, attachment", c == 0 and r.get("subject") == "Brouillon é" and "Draft body é" in r.get("text", "")
           and any(a["filename"] == "report.txt" for a in r.get("attachments", [])), r)
-    check("non-ASCII attachment names use RFC 2231 and read back", "filename*=utf-8''rapport%20%C3%A9.txt" in raw
+    check("non-ASCII attachment names use RFC 2231 and read back", "filename*0*=utf-8''rapport%20%C3%A9.txt" in raw
           and "=?UTF-8?" not in raw.split("filename", 1)[-1].split("\r\n\r\n", 1)[0]
           and any(a["filename"] == "rapport é.txt" for a in r.get("attachments", [])), [a["filename"] for a in r.get("attachments", [])])
 
@@ -302,6 +310,10 @@ def compose(srv):
     check("send needs a recipient", c != 0 and "recipient" in r.get("error", ""), r)
 
     c, r = tool(srv, "mail_reply", {"uid": 2, "body": "Sounds good"})
+    check("reply requires the folder's UIDVALIDITY", c != 0 and "uidvalidity" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 42, "to": ["boss@example.com"]})
+    check("forward with a stale UIDVALIDITY sends nothing", c != 0 and "UIDVALIDITY" in r.get("error", "") and len(srv.st().get("sent", [])) == n, r)
+    c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "Sounds good"})
     sent = srv.st().get("sent", [])
     orig_id = next(l for l in msgs(srv.st(), "INBOX")[2]["raw"].split("\r\n") if l.lower().startswith("message-id:")).split(":", 1)[1].strip()
     ok = c == 0 and len(sent) == n + 1
@@ -309,15 +321,15 @@ def compose(srv):
     check("reply sends to the original sender", ok and sent[-1]["rcpt_to"] == ["jose@example.com"], r)
     check("reply threads: In-Reply-To, References, Re: subject", ("In-Reply-To: " + orig_id) in data and orig_id in data.split("References:", 1)[-1]
           and "Subject: Re: " in data.replace("=?UTF-8?B?", "Subject: Re: ") , data[:500])
-    c, r = tool(srv, "mail_reply", {"uid": 2, "body": "draft reply", "as_draft": True})
+    c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "draft reply", "as_draft": True})
     check("reply as draft goes to Drafts", c == 0 and r.get("saved_to") == "Drafts" and len(srv.st()["mailboxes"]["Drafts"]["messages"]) == n_drafts + 2, r)
 
-    c, r = tool(srv, "mail_forward", {"uid": 2, "to": ["boss@example.com"], "body": "FYI"})
+    c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["boss@example.com"], "body": "FYI"})
     sent = srv.st().get("sent", [])
     data = sent[-1]["data"] if sent else ""
     check("forward attaches a 7-bit original as message/rfc822", c == 0 and sent[-1]["rcpt_to"] == ["boss@example.com"]
           and "Content-Type: message/rfc822" in data and "Content-Transfer-Encoding: 7bit" in data and "forwarded-message.eml" in data, r)
-    c, r = tool(srv, "mail_forward", {"uid": 5, "to": ["boss@example.com"], "body": "FYI"})
+    c, r = tool(srv, "mail_forward", {"uid": 5, "uidvalidity": 1700000001, "to": ["boss@example.com"], "body": "FYI"})
     sent = srv.st().get("sent", [])
     data = sent[-1]["data"] if sent else ""
     check("forward attaches an 8-bit original as base64 (RFC 2046 forbids encoded message/rfc822)", c == 0

@@ -14,7 +14,7 @@ UIDV = {"type": "integer", "minimum": 1,
         "description": "The folder's UIDVALIDITY returned with the UIDs (mail_search, mail_get, mail_get_new). Checked in the same session as the change; if the folder changed since, nothing is changed."}
 ATTS = {"type": "array", "description": "Files to attach. Only regular files inside MAILBEND_ATTACH_DIR are allowed; attachments are off when it is not set.",
         "items": {"type": "object", "required": ["path"], "additionalProperties": False, "properties": {
-            "path": {"type": "string", "description": "Path of a file inside MAILBEND_ATTACH_DIR (max 25 MB)."},
+            "path": {"type": "string", "description": "A file in MAILBEND_ATTACH_DIR: relative to it, or absolute inside it (max 25 MB, no symlinks)."},
             "filename": {"type": "string", "description": "Name shown to the recipient. Default: the file name."},
             "content_type": {"type": "string", "description": "MIME type. Default: guessed from the extension."}}}}
 
@@ -70,15 +70,15 @@ TOOLS = [
     ("mail_send", "Compose and send a message over SMTP (STARTTLS, verified). From is MAILBEND_EMAIL.",
      obj(COMPOSE), ann(False, open_world=True)),
     ("mail_reply", "Reply to a message (sets In-Reply-To/References, quotes the original). Sends unless as_draft is true.",
-     obj({"folder": FOLDER, "uid": {"type": "integer", "minimum": 1}, "body": {"type": "string"},
+     obj({"folder": FOLDER, "uid": {"type": "integer", "minimum": 1}, "uidvalidity": UIDV, "body": {"type": "string"},
           "reply_all": {"type": "boolean", "description": "Also answer the original To and Cc. Default false."},
           "bcc": ADDRS, "attachments": ATTS, "as_draft": {"type": "boolean", "description": "Save to Drafts instead of sending."}},
-         ["uid", "body"]), ann(False, open_world=True)),
+         ["uid", "uidvalidity", "body"]), ann(False, open_world=True)),
     ("mail_forward", "Forward a message, attached whole as a .eml file. Sends unless as_draft is true.",
-     obj({"folder": FOLDER, "uid": {"type": "integer", "minimum": 1}, "to": ADDRS, "cc": ADDRS, "bcc": ADDRS,
+     obj({"folder": FOLDER, "uid": {"type": "integer", "minimum": 1}, "uidvalidity": UIDV, "to": ADDRS, "cc": ADDRS, "bcc": ADDRS,
           "body": {"type": "string", "description": "Note above the forwarded message."}, "attachments": ATTS,
           "as_draft": {"type": "boolean", "description": "Save to Drafts instead of sending."}},
-         ["uid", "to"]), ann(False, open_world=True)),
+         ["uid", "uidvalidity", "to"]), ann(False, open_world=True)),
 ]
 
 tools = [{"name": n, "description": d, "inputSchema": s, "annotations": a} for n, d, s, a in TOOLS]
