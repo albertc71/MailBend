@@ -165,6 +165,7 @@ class State:
         self.echo_login = False
         self.lowercase_codes = False
         self.special_on_request = False
+        self.special_return_fails = False
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -711,6 +712,9 @@ class IMAPSession:
             names = list(self.state.data['mailboxes'].keys())
             specials = {n: list(self.state.data['mailboxes'][n]['special']) for n in names}
         asked = any(astring_val(a).upper() == 'RETURN' for a in args)
+        if asked and self.state.special_return_fails:
+            self.send(f'{tag} NO [UNAVAILABLE] special-use lookup failed\r\n')
+            return
         # --special-on-request: special-use attributes only for LIST ... RETURN (SPECIAL-USE)
         show = 'SPECIAL-USE' in self.caps and (asked or not self.state.special_on_request)
         for name in names:
@@ -1247,6 +1251,8 @@ def main():
     ap.add_argument('--lowercase-codes', action='store_true', help='send response codes in lower case')
     ap.add_argument('--special-on-request', action='store_true',
                     help='mark special-use folders only for LIST ... RETURN (SPECIAL-USE)')
+    ap.add_argument('--special-return-fails', action='store_true',
+                    help='answer NO to LIST ... RETURN (SPECIAL-USE)')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1255,6 +1261,7 @@ def main():
     state.echo_login = args.echo_login
     state.lowercase_codes = args.lowercase_codes
     state.special_on_request = args.special_on_request
+    state.special_return_fails = args.special_return_fails
     logger = Logger(args.log)
     caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
     ctx = make_ssl_context(args.certdir, args.cert_name)

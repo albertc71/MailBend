@@ -496,6 +496,23 @@ def fallback(work):
         check("SPECIAL-USE marked only on request: trash uses the requested roles", c == 0 and 3 not in msgs(srv.st(), "INBOX"), r)
     finally:
         srv.stop()
+    srv = Server(work, extra=["--special-on-request", "--special-return-fails"])
+    try:
+        before = srv.st()
+        c, r = tool(srv, "mail_probe")
+        check("role lookup fails: probe reports it instead of guessing names",
+              c != 0 and "special-use folder roles" in r.get("error", ""), r)
+        c, r = tool(srv, "mail_list_folders")
+        check("role lookup fails: folder list reports it", c != 0 and "special-use folder roles" in r.get("error", ""), r)
+        c, r = tool(srv, "mail_trash", {"uids": [3], "uidvalidity": 1700000001})
+        check("role lookup fails: trash refused, nothing moved",
+              c != 0 and "special-use folder roles" in r.get("error", "") and srv.st() == before, r)
+        c, r = tool(srv, "mail_save_draft", {"to": ["bob@example.com"], "subject": "s", "body": "t"})
+        check("role lookup fails: no draft saved",
+              c != 0 and "special-use folder roles" in r.get("error", "") and srv.st() == before
+              and not any(" APPEND " in l for l in srv.log_lines()), r)
+    finally:
+        srv.stop()
     srv = Server(work)
     try:
         c, r = tool(srv, "mail_probe")
