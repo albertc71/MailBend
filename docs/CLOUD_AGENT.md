@@ -80,7 +80,7 @@ the MCP process).
    is still unread.
 2. Unset read-only and use a test message you sent yourself:
    `mail_mark_read`, `mail_mark_unread`, `mail_move` to a scratch folder,
-   `mail_trash`, then `mail_delete` with `"confirm": "permanently-delete"` and
-   the `uidvalidity` that `mail_search` reported.
+   `mail_trash`, then `mail_delete` with `"confirm": "permanently-delete"`;
+   each takes the `uidvalidity` that `mail_search` reported.
 3. `mail_save_draft`, then `mail_send` to your own address; check whether
    iCloud filed the sent copy in "Sent Messages".

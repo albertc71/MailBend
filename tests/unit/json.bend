@@ -1,5 +1,4 @@
-# JSON parser and serializer round trips. The parser does not validate
-# separators (":" and ","), so {"a" 1} reads as {"a":1}.
+# JSON parser and serializer round trips, including rejected inputs.
 import Base
 import ../../src/json.bend as J
 
@@ -32,6 +31,8 @@ def main() -> IO(Unit):
     IO.print(rt("{\"a\" 1}"))
     IO.print(rt("[1] [2]"))
     IO.print(rt("nope"))
+    IO.print(String.join([rt("[1 2]"), rt("[1,]"), rt("{\"a\":1,}"), rt("{,}"), rt("{\"a\"::1}"), rt("[,1]")], " "))
+    IO.print(String.join([rt("01"), rt("1-2"), rt("-"), rt("1."), rt("1e"), rt("[-0.5e+3, 0, 10, 2E-2]")], " "))
     IO.print(J.show(J.str("ctl\u{1}")))
     checks(Maybe.default(&2, J.Json, J.parse("{\"uid\": 42, \"name\": \"INBOX\", \"flag\": true, \"list\": [\"a\",\"b\"]}"), J.JNull{}))
 
@@ -40,9 +41,11 @@ def main() -> IO(Unit):
 #|{}
 #|"tab\tnl\né😀"
 #|PARSE-ERROR
-#|{"a":1}
 #|PARSE-ERROR
 #|PARSE-ERROR
+#|PARSE-ERROR
+#|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
+#|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR [-0.5e+3,0,10,2E-2]
 #|"ctl\u0001"
 #|INBOX
 #|42

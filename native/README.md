@@ -26,7 +26,10 @@ mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
   followed by N literal bytes. Tags `L` and `Z` are reserved, and LOGIN,
   AUTHENTICATE, STARTTLS and LOGOUT are refused. Each command waits for its
   tagged answer; the first `NO`/`BAD` stops the run (later commands are never
-  sent), then the helper logs out.
+  sent), then the helper logs out. A line `=EXPECT <text>` right after a
+  command is not sent: the run stops (exit 5) unless one of that command's
+  untagged replies starts with `<text>`. The core uses it to pin a folder's
+  UIDVALIDITY after `SELECT`, in the same session that changes messages.
 - **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
   message, `.`. EHLO, STARTTLS, AUTH and QUIT are the helper's own and are
   refused in the envelope. Any non-2xx reply stops the run.

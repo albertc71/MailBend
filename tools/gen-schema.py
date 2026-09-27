@@ -11,7 +11,7 @@ FOLDER = {"type": "string", "description": "Folder (IMAP mailbox) name. Default:
 ADDRS = {"type": "array", "items": {"type": "string"},
          "description": "Addresses like name@example.com or \"Name <name@example.com>\"."}
 UIDV = {"type": "integer", "minimum": 1,
-        "description": "The folder's UIDVALIDITY from mail_search/mail_get; if the folder changed since, the call is refused."}
+        "description": "The folder's UIDVALIDITY returned with the UIDs (mail_search, mail_get, mail_get_new). Checked in the same session as the change; if the folder changed since, nothing is changed."}
 ATTS = {"type": "array", "description": "Files to attach. Only regular files inside MAILBEND_ATTACH_DIR are allowed; attachments are off when it is not set.",
         "items": {"type": "object", "required": ["path"], "additionalProperties": False, "properties": {
             "path": {"type": "string", "description": "Path of a file inside MAILBEND_ATTACH_DIR (max 25 MB)."},
@@ -54,14 +54,14 @@ TOOLS = [
           "uidvalidity": {"type": "integer", "minimum": 0, "description": "UIDVALIDITY from the previous call; if it changed, the checkpoint restarts at 0."},
           "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50."}}), READ),
     ("mail_mark_read", "Mark messages as read (add the \\Seen flag).",
-     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids"]), ann(False, idempotent=True)),
+     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False, idempotent=True)),
     ("mail_mark_unread", "Mark messages as unread (remove the \\Seen flag).",
-     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids"]), ann(False, idempotent=True)),
+     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False, idempotent=True)),
     ("mail_move", "Move messages to another folder (apply a 'label'). Uses UID MOVE, or copy + expunge of exactly these UIDs with UIDPLUS.",
      obj({"folder": FOLDER, "uids": UIDS, "destination": {"type": "string", "description": "Target folder name."}, "uidvalidity": UIDV},
-         ["uids", "destination"]), ann(False)),
+         ["uids", "destination", "uidvalidity"]), ann(False)),
     ("mail_trash", "Move messages to the Trash folder (found by its special use). Recoverable; does not delete permanently.",
-     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids"]), ann(False)),
+     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False)),
     ("mail_delete", "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly these UIDs). Cannot be undone; prefer mail_trash. Requires confirm = \"permanently-delete\" and the folder's uidvalidity.",
      obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV, "confirm": {"type": "string", "enum": ["permanently-delete"]}},
          ["uids", "uidvalidity", "confirm"]), ann(False, destructive=True)),

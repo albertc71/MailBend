@@ -116,36 +116,41 @@ def plan_get(+mbox: String, +uid: U32, +max: U32) -> List<&2, I.Cmd>:
 
 # ---- plans for changes ------------------------------------------------------------
 
-def plan_mark(+mbox: String, +uids: List<&2, U32>, +seen: Bool) -> List<&2, I.Cmd>:
-  [I.CSelect{mbox}, I.CStore{uids, seen, I.FSeen{}}]
+# Every change to existing messages opens with the same guard, in the same
+# session as the change: SELECT, then an expectation that the folder still
+# has the caller's UIDVALIDITY (the helper stops the run otherwise, so stale
+# UIDs never touch other messages), then a read-only UID SEARCH that reports
+# which of the UIDs exist.
+def plan_mark(+mbox: String, +uids: List<&2, U32>, +seen: Bool, +uidv: U32) -> List<&2, I.Cmd>:
+  [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CStore{uids, seen, I.FSeen{}}]
 
 # Moves with UID MOVE when the server has it. Otherwise copies, then marks
 # and expunges exactly those UIDs, which needs UIDPLUS (a plain EXPUNGE
 # could remove other messages marked \Deleted). With neither, no plan.
-def plan_move(+mbox: String, +uids: List<&2, U32>, +dest: String, +move: Bool, +uidplus: Bool) -> List<&2, I.Cmd>:
+def plan_move(+mbox: String, +uids: List<&2, U32>, +dest: String, +move: Bool, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
   match move:
     case True{}:
-      [I.CSelect{mbox}, I.CMove{uids, dest}]
+      [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CMove{uids, dest}]
     case False{}:
       match uidplus:
         case True{}:
-          [I.CSelect{mbox}, I.CCopy{uids, dest}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
+          [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CCopy{uids, dest}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
         case False{}:
           []
 
 # Trash is a move into the Trash mailbox; it never deletes on its own.
-def plan_trash(+mbox: String, +uids: List<&2, U32>, +trash: String, +move: Bool, +uidplus: Bool) -> List<&2, I.Cmd>:
-  plan_move(mbox, uids, trash, move, uidplus)
+def plan_trash(+mbox: String, +uids: List<&2, U32>, +trash: String, +move: Bool, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
+  plan_move(mbox, uids, trash, move, uidplus, uidv)
 
 def confirm_word() -> String:
   "permanently-delete"
 
-def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus: Bool) -> List<&2, I.Cmd>:
+def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
   match confirm:
     case True{}:
       match uidplus:
         case True{}:
-          [I.CSelect{mbox}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
+          [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
         case False{}:
           []
     case False{}:
@@ -154,8 +159,8 @@ def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus
 # Permanent deletion needs the caller's confirmation, exactly the word
 # "permanently-delete", and UIDPLUS (to expunge only these UIDs). Without
 # both there is no plan.
-def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: String, +uidplus: Bool) -> List<&2, I.Cmd>:
-  plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus)
+def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: String, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
+  plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
 
 def plan_draft(+drafts: String, +msg: String) -> List<&2, I.Cmd>:
   [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]
@@ -193,3 +198,20 @@ def has_prefix(+p: String, +s: String) -> Bool:
 # pure metadata (non-PEEK BODY[...] or RFC822/RFC822.TEXT would set \Seen).
 def peek_safe(+s: String) -> Bool:
   has_prefix("BODY.PEEK[", s) || String.eq(s, "UID") || String.eq(s, "FLAGS") || String.eq(s, "INTERNALDATE") || String.eq(s, "RFC822.SIZE")
+
+# Whether a plan opens with the UIDVALIDITY guard: SELECT, then an
+# expectation of the folder's UIDVALIDITY reply.
+def pinned(+cs: List<&2, I.Cmd>) -> Bool:
+  match cs:
+    case Con{I.CSelect{m}, Con{I.CExpect{e}, t}}:
+      has_prefix("* OK [UIDVALIDITY ", e)
+    case _:
+      False{}
+
+# Pinned, or no plan at all (a refused operation sends nothing).
+def pinned_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
+  match cs:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      pinned(cs)

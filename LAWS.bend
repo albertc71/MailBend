@@ -78,7 +78,8 @@ law mark_never_deletes:
   for mbox: String
   for uids: List<&2, U32>
   for seen: Bool
-  {Bool.or(I.any_marks_deleted(Ops.plan_mark(mbox, uids, seen)), I.any_expunges(Ops.plan_mark(mbox, uids, seen))) == False{} : Bool}
+  for uidv: U32
+  {Bool.or(I.any_marks_deleted(Ops.plan_mark(mbox, uids, seen, uidv)), I.any_expunges(Ops.plan_mark(mbox, uids, seen, uidv))) == False{} : Bool}
 
 # Moving and trashing never lose mail: whatever server capabilities, no
 # message is expunged before it has been copied.
@@ -88,7 +89,8 @@ law move_never_loses_mail:
   for dest: String
   for move: Bool
   for uidplus: Bool
-  {Ops.loses_mail(Ops.plan_move(mbox, uids, dest, move, uidplus)) == False{} : Bool}
+  for uidv: U32
+  {Ops.loses_mail(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)) == False{} : Bool}
 
 law trash_never_loses_mail:
   for mbox: String
@@ -96,7 +98,8 @@ law trash_never_loses_mail:
   for trash: String
   for move: Bool
   for uidplus: Bool
-  {Ops.loses_mail(Ops.plan_trash(mbox, uids, trash, move, uidplus)) == False{} : Bool}
+  for uidv: U32
+  {Ops.loses_mail(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv)) == False{} : Bool}
 
 # Unless the confirmation is exactly "permanently-delete", deletion does
 # nothing at all.
@@ -106,7 +109,44 @@ law delete_needs_confirmation:
   for confirm: String
   for wrong: {String.eq(confirm, Ops.confirm_word()) == False{} : Bool}
   for uidplus: Bool
-  {Ops.plan_delete(mbox, uids, confirm, uidplus) == [] : List<&2, I.Cmd>}
+  for uidv: U32
+  {Ops.plan_delete(mbox, uids, confirm, uidplus, uidv) == [] : List<&2, I.Cmd>}
+
+# Every change to existing messages is pinned to the folder's UIDVALIDITY in
+# the same session (SELECT, then the expectation the helper enforces), so
+# UIDs read before the folder was recreated can never touch other messages.
+law mark_is_pinned:
+  for mbox: String
+  for uids: List<&2, U32>
+  for seen: Bool
+  for uidv: U32
+  {Ops.pinned(Ops.plan_mark(mbox, uids, seen, uidv)) == True{} : Bool}
+
+law move_is_pinned:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.pinned_or_empty(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)) == True{} : Bool}
+
+law trash_is_pinned:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.pinned_or_empty(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv)) == True{} : Bool}
+
+law delete_is_pinned:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.pinned_or_empty(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) == True{} : Bool}
 
 # Saving a draft only appends; it never removes anything.
 law draft_never_removes:

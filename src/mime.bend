@@ -153,7 +153,6 @@ def unquote(+s: String) -> String:
   Bool.pick(String, String.starts_with(t, "\"") && String.ends_with(t, "\"") && Nat.is_gt(String.length(t), 1n),
     String.take(String.drop(t, 1n), Nat.sub(String.length(t), 2n)), t)
 
-# The main value before the first ';', lower-cased.
 def first_item(+xs: List<&2, String>) -> String:
   match xs:
     case Con{h, t}:
@@ -161,6 +160,7 @@ def first_item(+xs: List<&2, String>) -> String:
     case Nil{}:
       ""
 
+# The main value before the first ';', lower-cased.
 def main_value(+v: String) -> String:
   String.to_lower(String.trim(first_item(String.split(v, ';'))))
 
@@ -173,7 +173,6 @@ def pct_decode(+s: String) -> String:
     case SCon{c, t}:
       SCon{c, pct_decode(t)}
 
-# RFC 2231 "charset'lang'%XX..." to text.
 def ext_parts(+ps: List<&2, String>, +v: String) -> String:
   match ps:
     case Con{cs, Con{lang, Con{text, Nil{}}}}:
@@ -181,12 +180,12 @@ def ext_parts(+ps: List<&2, String>, +v: String) -> String:
     case _:
       v
 
+# RFC 2231 "charset'lang'%XX..." to text.
 def ext_value(+v: String) -> String:
   ext_parts(String.split(v, '\''), v)
 
-def param_one(+key: String, +val: String, +name: String, +rest: String) -> String:
-  Bool.pick(String, String.eq(key, name), decode_header(unquote(val)),
-    Bool.pick(String, String.eq(key, name ++ "*"), ext_value(unquote(val)), rest))
+def param_only(+key: String, +val: String, +name: String, +rest: String) -> String:
+  Bool.pick(String, String.eq(key, name), val, rest)
 
 def before_eq(+s: String) -> String:
   match s:
@@ -206,6 +205,18 @@ def after_eq(+s: String) -> String:
     case SCon{c, t}:
       after_eq(t)
 
+# The raw value of exactly the parameter `name`, or "".
+def param_raw(+ps: List<&2, String>, +name: String) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case Con{p, t}:
+      param_only(String.to_lower(String.trim(before_eq(p))), after_eq(p), name, param_raw(t, name))
+
+def param_one(+key: String, +val: String, +name: String, +rest: String) -> String:
+  Bool.pick(String, String.eq(key, name), decode_header(unquote(val)),
+    Bool.pick(String, String.eq(key, name ++ "*"), ext_value(unquote(val)), rest))
+
 def param_go(+ps: List<&2, String>, +name: String) -> String:
   match ps:
     case Nil{}:
@@ -213,7 +224,6 @@ def param_go(+ps: List<&2, String>, +name: String) -> String:
     case Con{p, t}:
       param_one(String.to_lower(String.trim(before_eq(p))), after_eq(p), name, param_go(t, name))
 
-# A parameter of a structured header value, e.g. param(ct, "charset").
 def rest_items(+xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Con{h, t}:
@@ -221,8 +231,11 @@ def rest_items(+xs: List<&2, String>) -> List<&2, String>:
     case Nil{}:
       []
 
+# A parameter of a structured header value, e.g. param(ct, "charset"). An
+# RFC 2231 extended value ("name*=") wins over a plain fallback ("name=").
 def param(+v: String, +name: String) -> String:
-  param_go(rest_items(String.split(v, ';')), name)
+  +ext = param_raw(rest_items(String.split(v, ';')), name ++ "*")
+  Bool.pick(String, String.is_empty(ext), param_go(rest_items(String.split(v, ';')), name), ext_value(unquote(ext)))
 
 # ---- bodies ----------------------------------------------------------------------
 
@@ -406,9 +419,18 @@ def ew_encode(+chunks: List<&2, String>) -> String:
     case Con{c, t}:
       "=?UTF-8?B?" ++ C.b64_encode(C.utf8_encode(c), False{}) ++ "?=\r\n " ++ ew_encode(t)
 
-# Header text as-is when it is plain ASCII, else as encoded words.
+def encode_as(+raw: Bool, +s: String) -> String:
+  match raw:
+    case True{}:
+      s
+    case False{}:
+      ew_encode(ew_chunks(s, "", 0))
+
+# Header text as-is when it is short plain ASCII, else as encoded words,
+# which fold into lines of at most 76 characters (a header line may not
+# pass 998).
 def encode_header(+s: String) -> String:
-  Bool.pick(String, C.is_plain(s), s, ew_encode(ew_chunks(s, "", 0)))
+  encode_as(C.is_plain(s) && Nat.is_le(String.length(s), 900n), s)
 
 def before_lt(+s: String) -> String:
   match s:
@@ -496,7 +518,7 @@ def quote_esc(+s: String) -> String:
       SCon{c, quote_esc(t)}
 
 def encode_display(+name: String) -> String:
-  Bool.pick(String, C.is_plain(name), "\"" ++ quote_esc(name) ++ "\"", encode_header(name))
+  Bool.pick(String, C.is_plain(name) && Nat.is_le(String.length(name), 200n), "\"" ++ quote_esc(name) ++ "\"", encode_as(False{}, name))
 
 # "Name <addr>" with the display name encoded when needed.
 def encode_addr(+a: String) -> String:
@@ -536,6 +558,19 @@ def one_line(+s: String) -> String:
     case SCon{c, t}:
       SCon{Bool.pick(Char, C.between(C.u(c), 32, 126), c, ' '), one_line(t)}
 
+# A one-line header value that fits a header line, or "" (dropped).
+def short_line(+s: String) -> String:
+  Bool.pick(String, Nat.is_le(String.length(s), 900n), s, "")
+
+# Message IDs folded one per line, so References never passes 998 chars.
+def fold_ids(+ids: List<&2, String>) -> String:
+  match ids:
+    case Nil{}:
+      ""
+    case Con{i, t}:
+      +rest = fold_ids(t)
+      Bool.pick(String, String.is_empty(i), "", short_line(i) ++ Bool.pick(String, String.is_empty(rest), "", "\r\n ")) ++ rest
+
 def opt_header(+name: String, +v: String) -> String:
   Bool.pick(String, String.is_empty(v), "", name ++ ": " ++ v ++ "\r\n")
 
@@ -571,8 +606,38 @@ def seven_bit(+s: String, +col: U32) -> Bool:
     case SCon{c, t}:
       Bool.not(U32.is_gt(C.u(c), 126) || U32.is_zero(C.u(c)) || Char.is_eq(c, '\r') || Char.is_eq(c, '\n') || U32.is_ge(col, 998)) && seven_bit(t, (col + 1 : U32))
 
+# An RFC 2231 attr-char: kept as is in an extended parameter value.
+def attr_char(+c: Char) -> Bool:
+  Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '!') || Char.is_eq(c, '#') || Char.is_eq(c, '$') || Char.is_eq(c, '&') || Char.is_eq(c, '+') || Char.is_eq(c, '-') || Char.is_eq(c, '.') || Char.is_eq(c, '^') || Char.is_eq(c, '_') || Char.is_eq(c, '`') || Char.is_eq(c, '|') || Char.is_eq(c, '~')
+
+def pct_char(+c: Char) -> String:
+  Bool.pick(String, U32.is_lt(C.u(c), 128) && attr_char(c), SCon{c, SNil{}}, "%" ++ SCon{C.hex_up((C.u(c) >> 4n : U32)), SCon{C.hex_up((C.u(c) .&. 15 : U32)), SNil{}}})
+
+def pct_encode(+bytes: String) -> String:
+  match bytes:
+    case SNil{}:
+      ""
+    case SCon{c, t}:
+      pct_char(c) ++ pct_encode(t)
+
+# An ASCII stand-in for a non-ASCII name (for readers without RFC 2231).
+def ascii_name(+s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{c, t}:
+      SCon{Bool.pick(Char, C.between(C.u(c), 32, 126) && Bool.not(Char.is_eq(c, '"') || Char.is_eq(c, '\\')), c, '_'), ascii_name(t)}
+
+# A file name parameter: quoted when it is short plain ASCII, else an
+# RFC 2231 extended value (UTF-8, percent-encoded) after an ASCII fallback.
+# Encoded words are not allowed inside parameters.
+def name_param(+key: String, +name: String) -> String:
+  Bool.pick(String, C.is_plain(name) && Nat.is_le(String.length(name), 200n),
+    key ++ "=\"" ++ quote_esc(name) ++ "\"",
+    key ++ "=\"" ++ ascii_name(String.take(name, 60n)) ++ "\";\r\n " ++ key ++ "*=utf-8''" ++ pct_encode(C.utf8_encode(name)))
+
 def att_head(+b: String, +ctype: String, +name: String, +cte: String) -> String:
-  "--" ++ b ++ "\r\nContent-Type: " ++ ctype ++ "; name=\"" ++ quote_esc(encode_header(name)) ++ "\"\r\nContent-Disposition: attachment; filename=\"" ++ quote_esc(encode_header(name)) ++ "\"\r\nContent-Transfer-Encoding: " ++ cte ++ "\r\n\r\n"
+  "--" ++ b ++ "\r\nContent-Type: " ++ ctype ++ "; " ++ name_param("name", name) ++ "\r\nContent-Disposition: attachment; " ++ name_param("filename", name) ++ "\r\nContent-Transfer-Encoding: " ++ cte ++ "\r\n\r\n"
 
 # RFC 2046 allows only 7bit/8bit/binary for message/rfc822: a 7-bit clean
 # message is included as is; anything else goes as an opaque base64 file.
@@ -608,8 +673,8 @@ def compose(+d: Draft, +b: String) -> String:
       "Subject: " ++ encode_header(subject) ++ "\r\n" ++
       "Date: " ++ date ++ "\r\n" ++
       "Message-ID: " ++ msgid ++ "\r\n" ++
-      opt_header("In-Reply-To", String.trim(one_line(irt))) ++
-      opt_header("References", String.trim(one_line(refs))) ++
+      opt_header("In-Reply-To", short_line(String.trim(one_line(irt)))) ++
+      opt_header("References", fold_ids(String.split(String.trim(one_line(refs)), ' '))) ++
       "MIME-Version: 1.0\r\n" ++
       body_section(b, text, atts)
 
