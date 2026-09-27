@@ -69,7 +69,7 @@ TOOLS = [
      obj(COMPOSE), ann(False)),
     ("mail_send", "Compose and send a message over SMTP (STARTTLS, verified). From is MAILBEND_EMAIL.",
      obj(COMPOSE), ann(False, open_world=True)),
-    ("mail_reply", "Reply to a message (sets In-Reply-To/References, quotes the original). Sends unless as_draft is true.",
+    ("mail_reply", "Reply to a message (sets In-Reply-To/References, quotes the original). Sends unless as_draft is true. Only the first 256 KB of the original is read: the result reports quoted_original_truncated, quoted_bytes and original_bytes, and a truncated quote also says so in the text.",
      obj({"folder": FOLDER, "uid": {"type": "integer", "minimum": 1}, "uidvalidity": UIDV, "body": {"type": "string"},
           "reply_all": {"type": "boolean", "description": "Also answer the original To and Cc. Default false."},
           "bcc": ADDRS, "attachments": ATTS, "as_draft": {"type": "boolean", "description": "Save to Drafts instead of sending."}},

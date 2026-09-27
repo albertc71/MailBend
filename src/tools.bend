@@ -1301,10 +1301,23 @@ def reply_to(+hs: List<&2, M.Hdr>) -> List<&2, String>:
 def cut_note(+cut: Bool) -> String:
   Bool.pick(String, cut, "> [the original is larger than 256 KB and only its start was read, so this quote may be incomplete]\n", "")
 
-def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +cut: Bool, +args: J.Json, +me: String) -> IO(Out):
+# Adds fields to a successful result object.
+def with_fields(+o: Out, +extra: List<&2, J.Json>) -> Out:
+  match o:
+    case Ok{J.JObj{items}}:
+      Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
+    case _:
+      o
+
+# A reply also says whether its quote covers the whole original: how many
+# bytes of the original were read and quoted, and how large it is.
+def quote_fields(+cut: Bool, +quoted: U32, +size: U32) -> List<&2, J.Json>:
+  [J.kv("quoted_original_truncated", J.bool(cut)), J.kv("quoted_bytes", J.num(quoted)), J.kv("original_bytes", J.num(size))]
+
+def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +cut: Bool, +quoted: U32, +size: U32, +args: J.Json, +me: String) -> IO(Out):
   do IO<Out>:
     rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
-    with_atts(atts_collect(rs),
+    o : Out <- with_atts(atts_collect(rs),
       fresh(reply_to(hs), []),
       Bool.pick(List<&2, String>, bool_arg(args, "reply_all", False{}), fresh(List.append(&2, String, hdr_addrs(hs, "to"), hdr_addrs(hs, "cc")), spec_key(me) <> spec_keys(reply_to(hs))), []),
       strs_arg(args, "bcc"),
@@ -1313,6 +1326,7 @@ def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +cut: Bool, +args: J.Json, +me
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
       bool_arg(args, "as_draft", False{}))
+    return with_fields(o, quote_fields(cut, quoted, size))
 
 def fwd_note(+hs: List<&2, M.Hdr>) -> String:
   "\n\n---------- Forwarded message ----------\nFrom: " ++ hdr_text(hs, "from") ++ "\nDate: " ++ hdr_text(hs, "date") ++ "\nSubject: " ++ hdr_text(hs, "subject") ++ "\nTo: " ++ hdr_text(hs, "to") ++ "\n"
@@ -1326,10 +1340,10 @@ def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
       str_arg(args, "body", "") ++ fwd_note(hs),
       "", "", bool_arg(args, "as_draft", False{}))
 
-def respond_to(+reply: Bool, +too_big: Bool, +body: String, +args: J.Json, +me: String) -> IO(Out):
+def respond_to(+reply: Bool, +too_big: Bool, +size: U32, +body: String, +args: J.Json, +me: String) -> IO(Out):
   match reply:
     case True{}:
-      reply_want(M.headers(M.head_of(M.split(body))), M.parts(body), too_big, args, me)
+      reply_want(M.headers(M.head_of(M.split(body))), M.parts(body), too_big, byte_count(body, 0), size, args, me)
     case False{}:
       match too_big:
         case True{}:
@@ -1343,8 +1357,8 @@ def orig_msg(+ms: List<&2, I.Msg>, +args: J.Json, +mode: U32, +max: U32, +me: St
   match ms:
     case Nil{}:
       pure_out(Err{"no message with UID " ++ U32.show(u32_arg(args, "uid", 0)) ++ " in " ++ folder_arg(args)})
-    case Con{I.Msg{uid, flags, date, size, headers, body}, t}:
-      respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), body, args, me)
+    case Con{I.Msg{uid, flags, date, +size, headers, body}, t}:
+      respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), size, body, args, me)
 
 def orig_checked(+stale: Bool, +lines: List<&2, I.RLine>, +args: J.Json, +mode: U32, +max: U32, +me: String) -> IO(Out):
   match stale:

@@ -230,8 +230,10 @@ Notes:
   following symlinks) and checked on the opened descriptor.
 - A `mail_get_new` checkpoint is a UID with its UIDVALIDITY: `since_uid`
   without `uidvalidity` is refused.
-- Replies read the first 256 KB of the original; a larger original gets a
-  note in the quote that it may be incomplete.
+- Replies read the first 256 KB of the original. The result reports
+  `quoted_original_truncated`, `quoted_bytes` and `original_bytes`, and a
+  larger original also gets a note in the quote that it may be incomplete,
+  so a partial quote is never mistaken for the whole message.
 - Saved drafts keep a `Bcc:` header (a mail client sends them later); sent
   mail never carries one, Bcc goes only into the SMTP envelope.
 - Every tool call (MCP or CLI) is checked against the tool's input schema
