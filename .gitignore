@@ -17,3 +17,6 @@ bin/
 
 # python
 __pycache__/
+
+# local plans, reports and journals
+plans/*
