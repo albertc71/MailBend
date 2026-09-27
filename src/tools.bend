@@ -1,0 +1,1463 @@
+import Base
+import ./codec.bend as C
+import ./json.bend as J
+import ./imap.bend as I
+import ./mime.bend as M
+import ./smtp.bend as S
+import ./ops.bend as Ops
+
+# The mail tools: JSON arguments in, JSON results out. IMAP work goes
+# through the plans in ops.bend and the TLS helper; this module never reads
+# MAILBEND_APP_PASSWORD (only the helper does), so no tool result can hold it.
+
+type Out is Data:
+  Ok{j: J.Json}
+  Err{msg: String}
+
+
+
+# ---- the TLS helper --------------------------------------------------------------------
+
+type Proc is Data:
+  ProcOk{code: U32, out: String, err: String}
+  ProcFail{msg: String}
+
+
+
+type Run is Data:
+  RunOk{lines: List<&2, I.RLine>}
+  RunErr{msg: String}
+
+
+
+type Uids is Data:
+  UidsOk{uids: List<&2, U32>}
+  UidsErr{msg: String}
+
+
+
+# ---- mail_search ----------------------------------------------------------------------------
+
+type Keys is Data:
+  KeysOk{keys: List<&2, I.Key>}
+  KeysErr{msg: String}
+
+
+
+type DateKey is Data:
+  DateOk{keys: List<&2, I.Key>}
+  DateBad{msg: String}
+
+
+
+# ---- composing: attachments, stamps ----------------------------------------------------------
+
+type AttR is Data:
+  AttOk{a: M.Attach}
+  AttErr{msg: String}
+
+
+
+type Atts is Data:
+  AttsOk{xs: List<&2, M.Attach>}
+  AttsErr{msg: String}
+
+
+
+# A date, a unique token (for Message-ID and the MIME boundary).
+type Stamp is Data:
+  Stamp{date: String, token: String}
+
+
+
+# ---- composing: send or save as draft ------------------------------------------------------
+
+# What the tools want composed; Bcc goes only into the SMTP envelope.
+type Want is Data:
+  Want{to: List<&2, String>, cc: List<&2, String>, bcc: List<&2, String>, subject: String, text: String, irt: String, refs: String, atts: List<&2, M.Attach>, draft: Bool}
+
+
+
+# ---- environment -------------------------------------------------------------------
+
+def env_pick(r: Result<&1, &1, U32 & String, String>, +d: String) -> String:
+  match r:
+    case Done{+v}:
+      Bool.pick(String, String.is_empty(v), d, v)
+    case Fail{e}:
+      d
+
+
+
+def env_or(+name: String, +d: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
+    return env_pick(r, d)
+
+
+
+def truthy(+v: String) -> Bool:
+  String.eq(v, "1") || String.eq(String.to_lower(v), "true")
+
+
+# MAILBEND_READ_ONLY=1 refuses every tool that could change the mailbox or
+# send mail, for trying MailBend safely against a real account.
+def read_only_mode() -> IO(Bool):
+  do IO<Bool>:
+    v : String <- env_or("MAILBEND_READ_ONLY", "")
+    return truthy(v)
+
+
+
+def proc_of(r: Result<&1, &1, U32 & String, U32 & (String & String)>) -> Proc:
+  match r:
+    case Done{(code, (out, err))}:
+      ProcOk{code, out, err}
+    case Fail{(code, msg)}:
+      ProcFail{msg}
+
+
+
+def helper(+mode: String, +input: String) -> IO(Proc):
+  do IO<Proc>:
+    path : String <- env_or("MAILBEND_TLS_HELPER", "./bin/mailbend-tls")
+    r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run(path, [mode], input, 134217728, 300000)
+    return proc_of(r)
+
+
+
+def strip_prefix(+s: String, +p: String) -> String:
+  Bool.pick(String, String.starts_with(s, p), String.drop(s, String.length(p)), s)
+
+
+
+# The helper's own message (its stderr never holds credentials).
+def helper_msg(+err: String) -> String:
+  strip_prefix(String.trim(String.join(List.reverse(&2, String, String.lines(String.trim(err))), " | ")), "mailbend-tls: ")
+
+
+
+def helper_error(+code: U32, +err: String) -> String:
+  Bool.pick(String, U32.is_eq(code, 2), "configuration error: ",
+    Bool.pick(String, U32.is_eq(code, 3), "connection or TLS verification failed: ",
+      Bool.pick(String, U32.is_eq(code, 4), "authentication failed (check MAILBEND_EMAIL and the app-specific password): ",
+        "mail server error: "))) ++ helper_msg(err)
+
+
+
+def imap_code(+code: U32, +lines: List<&2, I.RLine>, +err: String) -> Run:
+  Bool.pick(Run, U32.is_zero(code), RunOk{lines},
+    Bool.pick(Run, U32.is_eq(code, 5), RunErr{"the server rejected a command: " ++ String.trim(I.first_failure(lines))},
+      RunErr{helper_error(code, err)}))
+
+
+
+def imap_result(p: Proc) -> Run:
+  match p:
+    case ProcFail{m}:
+      RunErr{"cannot run the TLS helper (set MAILBEND_TLS_HELPER): " ++ m}
+    case ProcOk{code, out, err}:
+      imap_code(code, I.frame(out), err)
+
+
+
+# Runs one IMAP session: the helper logs in, runs the plan, logs out.
+def imap_run(+cmds: List<&2, I.Cmd>) -> IO(Run):
+  do IO<Run>:
+    p : Proc <- helper("imap", I.script(cmds))
+    return imap_result(p)
+
+
+
+def smtp_code(+code: U32, +out: String, +err: String) -> Out:
+  Bool.pick(Out, U32.is_zero(code), Ok{J.str(S.last_ok(String.lines(out), ""))},
+    Bool.pick(Out, U32.is_eq(code, 5), Err{"the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")},
+      Err{helper_error(code, err)}))
+
+
+
+def smtp_result(p: Proc) -> Out:
+  match p:
+    case ProcFail{m}:
+      Err{"cannot run the TLS helper (set MAILBEND_TLS_HELPER): " ++ m}
+    case ProcOk{code, out, err}:
+      smtp_code(code, out, err)
+
+
+
+def smtp_run(+envelope: String) -> IO(Out):
+  do IO<Out>:
+    p : Proc <- helper("smtp", envelope)
+    return smtp_result(p)
+
+
+
+# ---- arguments ---------------------------------------------------------------------------
+
+def str_arg(+args: J.Json, +key: String, +d: String) -> String:
+  Maybe.default(&2, String, J.as_str(J.get(args, key)), d)
+
+
+
+def bool_arg(+args: J.Json, +key: String, +d: Bool) -> Bool:
+  Maybe.default(&2, Bool, J.as_bool(J.get(args, key)), d)
+
+
+
+def u32_arg(+args: J.Json, +key: String, +d: U32) -> U32:
+  Maybe.default(&2, U32, J.as_u32(J.get(args, key)), d)
+
+
+
+def folder_arg(+args: J.Json) -> String:
+  str_arg(args, "folder", "INBOX")
+
+
+
+def clamp(+n: U32, +lo: U32, +hi: U32) -> U32:
+  U32.max(lo, U32.min(n, hi))
+
+
+
+def json_strs(+xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{J.JStr{s}, t}:
+      s <> json_strs(t)
+    case Con{x, t}:
+      json_strs(t)
+
+
+
+def strs_of(+m: Maybe<&2, J.Json>) -> List<&2, String>:
+  match m:
+    case Some{J.JStr{s}}:
+      Bool.pick(List<&2, String>, String.is_empty(String.trim(s)), [], [s])
+    case Some{J.JArr{items}}:
+      json_strs(J.unchain(items))
+    case _:
+      []
+
+
+
+# A list of strings; a single string counts as a one-element list.
+def strs_arg(+args: J.Json, +key: String) -> List<&2, String>:
+  strs_of(J.get(args, key))
+
+
+
+def uid_cons(+m: Maybe<&2, U32>, +rest: Maybe<&2, List<&2, U32>>) -> Maybe<&2, List<&2, U32>>:
+  match m:
+    case Some{u}:
+      match rest:
+        case Some{r}:
+          Bool.pick(Maybe<&2, List<&2, U32>>, U32.is_zero(u), None{}, Some{u <> r})
+        case None{}:
+          None{}
+    case None{}:
+      None{}
+
+
+
+def uids_go(+xs: List<&2, J.Json>) -> Maybe<&2, List<&2, U32>>:
+  match xs:
+    case Nil{}:
+      Some{[]}
+    case Con{x, t}:
+      uid_cons(J.as_u32(Some{x}), uids_go(t))
+
+
+
+def uids_of(+m: Maybe<&2, List<&2, U32>>) -> Uids:
+  match m:
+    case Some{Nil{}}:
+      UidsErr{"\"uids\" must list at least one UID"}
+    case Some{xs}:
+      UidsOk{xs}
+    case None{}:
+      UidsErr{"\"uids\" must be an array of positive integer UIDs"}
+
+
+
+def one_uid(+m: Maybe<&2, J.Json>) -> List<&2, J.Json>:
+  match m:
+    case Some{x}:
+      [x]
+    case None{}:
+      []
+
+
+
+def uids_from(+m: Maybe<&2, List<&2, J.Json>>, +args: J.Json) -> Uids:
+  match m:
+    case Some{xs}:
+      uids_of(uids_go(xs))
+    case None{}:
+      uids_of(uids_go(one_uid(J.get(args, "uid"))))
+
+
+
+# The "uids" argument (an array), or "uid" (one number).
+def uids_arg(+args: J.Json) -> Uids:
+  uids_from(J.as_list(J.get(args, "uids")), args)
+
+
+
+def uids_items(+xs: List<&2, U32>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      J.num(x) <> uids_items(t)
+
+
+
+# ---- JSON helpers --------------------------------------------------------------------------
+
+def uids_json(+xs: List<&2, U32>) -> J.Json:
+  J.arr(uids_items(xs))
+
+
+
+def maybe_str(+m: Maybe<&2, String>) -> J.Json:
+  match m:
+    case Some{s}:
+      J.str(s)
+    case None{}:
+      J.JNull{}
+
+
+
+def maybe_num(+m: Maybe<&2, U32>) -> J.Json:
+  match m:
+    case Some{n}:
+      J.num(n)
+    case None{}:
+      J.JNull{}
+
+
+
+def ok_obj(+kvs: List<&2, J.Json>) -> Out:
+  Ok{J.obj(kvs)}
+
+
+
+def pure_out(+o: Out) -> IO(Out):
+  IO.pure(Out, o)
+
+
+
+# ---- folders ----------------------------------------------------------------------------
+
+def trash_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  Maybe.or(&2, String, I.special(fs, "\\Trash"), Maybe.or(&2, String, I.named(fs, "Deleted Messages"), I.named(fs, "Trash")))
+
+
+
+def drafts_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  Maybe.or(&2, String, I.special(fs, "\\Drafts"), I.named(fs, "Drafts"))
+
+
+
+def sent_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  Maybe.or(&2, String, I.special(fs, "\\Sent"), Maybe.or(&2, String, I.named(fs, "Sent Messages"), I.named(fs, "Sent")))
+
+
+
+def junk_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  Maybe.or(&2, String, I.special(fs, "\\Junk"), I.named(fs, "Junk"))
+
+
+
+def archive_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  Maybe.or(&2, String, I.special(fs, "\\Archive"), I.named(fs, "Archive"))
+
+
+
+def special_json(+fs: List<&2, I.Folder>) -> J.Json:
+  J.obj([J.kv("inbox", maybe_str(I.named(fs, "INBOX"))), J.kv("drafts", maybe_str(drafts_of(fs))), J.kv("sent", maybe_str(sent_of(fs))), J.kv("trash", maybe_str(trash_of(fs))), J.kv("junk", maybe_str(junk_of(fs))), J.kv("archive", maybe_str(archive_of(fs)))])
+
+
+
+def role_of(+attrs: List<&2, String>) -> J.Json:
+  Bool.pick(J.Json, I.has_attr(attrs, "\\Drafts"), J.str("drafts"),
+    Bool.pick(J.Json, I.has_attr(attrs, "\\Sent"), J.str("sent"),
+      Bool.pick(J.Json, I.has_attr(attrs, "\\Trash"), J.str("trash"),
+        Bool.pick(J.Json, I.has_attr(attrs, "\\Junk"), J.str("junk"),
+          Bool.pick(J.Json, I.has_attr(attrs, "\\Archive"), J.str("archive"),
+            Bool.pick(J.Json, I.has_attr(attrs, "\\All"), J.str("all"),
+              Bool.pick(J.Json, I.has_attr(attrs, "\\Flagged"), J.str("flagged"), J.JNull{})))))))
+
+
+
+def folder_json(+f: I.Folder) -> J.Json:
+  match f:
+    case I.Folder{name, delim, attrs}:
+      J.obj([J.kv("name", J.str(name)), J.kv("delimiter", J.str(delim)), J.kv("attributes", J.strs(attrs)), J.kv("special_use", role_of(attrs)), J.kv("selectable", J.bool(Bool.not(I.has_attr(attrs, "\\Noselect") || I.has_attr(attrs, "\\NonExistent"))))])
+
+
+
+def folders_json(+fs: List<&2, I.Folder>) -> List<&2, J.Json>:
+  match fs:
+    case Nil{}:
+      []
+    case Con{f, t}:
+      folder_json(f) <> folders_json(t)
+
+
+
+# ---- message summaries --------------------------------------------------------------------
+
+def has_flag(+flags: List<&2, String>, +f: String) -> Bool:
+  I.has_attr(flags, f)
+
+
+
+def hdr_text(+hs: List<&2, M.Hdr>, +name: String) -> String:
+  M.decode_header(M.header(hs, name))
+
+
+
+def summary_hs(+m: I.Msg, +hs: List<&2, M.Hdr>) -> J.Json:
+  match m:
+    case I.Msg{uid, flags, date, size, headers, body}:
+      J.obj([J.kv("uid", J.num(uid)), J.kv("date", J.str(hdr_text(hs, "date"))), J.kv("from", J.str(hdr_text(hs, "from"))), J.kv("to", J.str(hdr_text(hs, "to"))), J.kv("cc", J.str(hdr_text(hs, "cc"))), J.kv("subject", J.str(hdr_text(hs, "subject"))), J.kv("message_id", J.str(M.header(hs, "message-id"))), J.kv("internal_date", J.str(date)), J.kv("size", J.num(size)), J.kv("flags", J.strs(flags)), J.kv("seen", J.bool(has_flag(flags, "\\Seen"))), J.kv("flagged", J.bool(has_flag(flags, "\\Flagged")))])
+
+
+
+def summary(+m: I.Msg) -> J.Json:
+  match m:
+    case I.Msg{uid, flags, date, size, headers, body}:
+      summary_hs(m, M.headers(headers))
+
+
+
+def summaries(+ms: List<&2, I.Msg>) -> List<&2, J.Json>:
+  match ms:
+    case Nil{}:
+      []
+    case Con{m, t}:
+      summary(m) <> summaries(t)
+
+
+
+def msg_uid(+m: I.Msg) -> U32:
+  match m:
+    case I.Msg{uid, f, d, s, h, b}:
+      uid
+
+
+
+def newest_first(+ms: List<&2, I.Msg>) -> List<&2, I.Msg>:
+  List.sort(~I.Msg, ~(a => b => U32.is_ge(msg_uid(a), msg_uid(b))), ms)
+
+
+
+def oldest_first(+ms: List<&2, I.Msg>) -> List<&2, I.Msg>:
+  List.sort(~I.Msg, ~(a => b => U32.is_le(msg_uid(a), msg_uid(b))), ms)
+
+
+
+def desc(+xs: List<&2, U32>) -> List<&2, U32>:
+  List.sort(~U32, ~(a => b => U32.is_ge(a, b)), xs)
+
+
+
+def asc(+xs: List<&2, U32>) -> List<&2, U32>:
+  List.sort(~U32, ~(a => b => U32.is_le(a, b)), xs)
+
+
+
+# ---- mail_probe / mail_list_folders ----------------------------------------------------------
+
+def probe_out(r: Run, +host: String, +email: String) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{+lines}:
+      ok_obj([J.kv("ok", J.bool(True{})), J.kv("account", J.str(email)), J.kv("imap_host", J.str(host)), J.kv("tls_verified", J.bool(True{})), J.kv("capabilities", J.strs(I.caps(lines))), J.kv("idle", J.bool(I.has_cap(I.caps(lines), "IDLE"))), J.kv("move", J.bool(I.has_cap(I.caps(lines), "MOVE"))), J.kv("uidplus", J.bool(I.has_cap(I.caps(lines), "UIDPLUS"))), J.kv("special_use", special_json(I.folders(lines))), J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, I.folders(lines)))))])
+
+
+
+def t_probe(+args: J.Json) -> IO(Out):
+  do IO<Out>:
+    r : Run <- imap_run(Ops.plan_probe())
+    host : String <- env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com")
+    email : String <- env_or("MAILBEND_EMAIL", "")
+    return probe_out(r, host, email)
+
+
+
+def folders_out(r: Run) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{+lines}:
+      ok_obj([J.kv("folders", J.arr(folders_json(I.folders(lines))))])
+
+
+
+def t_folders(+args: J.Json) -> IO(Out):
+  do IO<Out>:
+    r : Run <- imap_run(Ops.plan_folders())
+    return folders_out(r)
+
+
+
+def str_key(+args: J.Json, +name: String) -> List<&2, I.Key>:
+  +v = str_arg(args, name, "")
+  Bool.pick(List<&2, I.Key>, String.is_empty(v), [],
+    Bool.pick(List<&2, I.Key>, String.eq(name, "from"), [I.KFrom{v}],
+      Bool.pick(List<&2, I.Key>, String.eq(name, "to"), [I.KTo{v}],
+        Bool.pick(List<&2, I.Key>, String.eq(name, "cc"), [I.KCc{v}],
+          Bool.pick(List<&2, I.Key>, String.eq(name, "subject"), [I.KSubject{v}],
+            Bool.pick(List<&2, I.Key>, String.eq(name, "body"), [I.KBody{v}], [I.KText{v}]))))))
+
+
+
+def flag_keys(+args: J.Json) -> List<&2, I.Key>:
+  List.concat(&2, I.Key, [
+    Bool.pick(List<&2, I.Key>, bool_arg(args, "unseen", False{}), [I.KUnseen{}], []),
+    Bool.pick(List<&2, I.Key>, bool_arg(args, "seen", False{}), [I.KSeen{}], []),
+    Bool.pick(List<&2, I.Key>, bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])])
+
+
+
+def date_key_of(+m: Maybe<&2, String>, +name: String) -> DateKey:
+  match m:
+    case Some{d}:
+      DateOk{Bool.pick(List<&2, I.Key>, String.eq(name, "since"), [I.KSince{d}], [I.KBefore{d}])}
+    case None{}:
+      DateBad{"\"" ++ name ++ "\" must be a date like 2026-02-01"}
+
+
+
+def date_key(+args: J.Json, +name: String) -> DateKey:
+  +v = str_arg(args, name, "")
+  Bool.pick(DateKey, String.is_empty(v), DateOk{[]}, date_key_of(I.imap_date(v), name))
+
+
+
+def keys_join(+a: DateKey, +b: DateKey, +rest: List<&2, I.Key>) -> Keys:
+  match a:
+    case DateBad{m}:
+      KeysErr{m}
+    case DateOk{ka}:
+      match b:
+        case DateBad{m}:
+          KeysErr{m}
+        case DateOk{kb}:
+          KeysOk{List.concat(&2, I.Key, [rest, ka, kb])}
+
+
+
+def keys_of(+args: J.Json) -> Keys:
+  keys_join(date_key(args, "since"), date_key(args, "before"),
+    List.concat(&2, I.Key, [str_key(args, "from"), str_key(args, "to"), str_key(args, "cc"), str_key(args, "subject"), str_key(args, "body"), str_key(args, "text"), flag_keys(args)]))
+
+
+
+def list_out(+folder: String, +uidv: Maybe<&2, U32>, +total: U32, +ms: List<&2, J.Json>) -> Out:
+  ok_obj([J.kv("folder", J.str(folder)), J.kv("uidvalidity", maybe_num(uidv)), J.kv("total", J.num(total)), J.kv("messages", J.arr(ms))])
+
+
+
+def search_headers(r: Run, +folder: String, +uidv: Maybe<&2, U32>, +total: U32) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{+lines}:
+      list_out(folder, uidv, total, summaries(newest_first(I.fetched(lines))))
+
+
+
+def search_fetch(+uids: List<&2, U32>, +folder: String, +uidv: Maybe<&2, U32>, +total: U32) -> IO(Out):
+  match uids:
+    case Nil{}:
+      pure_out(list_out(folder, uidv, total, []))
+    case Con{h, t}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_headers(folder, uids))
+        return search_headers(r, folder, uidv, total)
+
+
+
+def search_found(r: Run, +folder: String, +limit: U32) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      search_fetch(List.take(&2, U32, desc(I.search_uids(lines)), U32.to_nat(limit)), folder, I.ok_code(lines, "UIDVALIDITY"), U32.from_nat(List.length(&2, U32, I.search_uids(lines))))
+
+
+
+def search_keys(+ks: Keys, +folder: String, +limit: U32) -> IO(Out):
+  match ks:
+    case KeysErr{m}:
+      pure_out(Err{m})
+    case KeysOk{keys}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_search(folder, keys))
+        search_found(r, folder, limit)
+
+
+
+def t_search(+args: J.Json) -> IO(Out):
+  search_keys(keys_of(args), folder_arg(args), clamp(u32_arg(args, "limit", 20), 1, 200))
+
+
+
+def atts_json(+xs: List<&2, M.Att>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{M.Att{n, t, s}, r}:
+      J.obj([J.kv("filename", J.str(n)), J.kv("content_type", J.str(t)), J.kv("size", J.num(s))]) <> atts_json(r)
+
+
+
+# ---- mail_get --------------------------------------------------------------------------------
+
+def get_json(+m: I.Msg, +folder: String, +uidv: Maybe<&2, U32>, +max: U32, +hs: List<&2, M.Hdr>, +p: M.Parts) -> Out:
+  match m:
+    case I.Msg{uid, flags, date, size, headers, body}:
+      match p:
+        case M.Parts{text, html, atts}:
+          ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)), J.kv("uidvalidity", maybe_num(uidv)), J.kv("flags", J.strs(flags)), J.kv("seen", J.bool(has_flag(flags, "\\Seen"))), J.kv("internal_date", J.str(date)), J.kv("size", J.num(size)), J.kv("truncated", J.bool(U32.is_gt(size, max))),
+            J.kv("from", J.str(hdr_text(hs, "from"))), J.kv("to", J.str(hdr_text(hs, "to"))), J.kv("cc", J.str(hdr_text(hs, "cc"))), J.kv("reply_to", J.str(hdr_text(hs, "reply-to"))), J.kv("subject", J.str(hdr_text(hs, "subject"))), J.kv("date", J.str(hdr_text(hs, "date"))), J.kv("message_id", J.str(M.header(hs, "message-id"))), J.kv("in_reply_to", J.str(M.header(hs, "in-reply-to"))), J.kv("references", J.str(M.header(hs, "references"))),
+            J.kv("text", J.str(Bool.pick(String, String.is_empty(text), M.html_text(html), text))), J.kv("html_available", J.bool(Bool.not(String.is_empty(html)))), J.kv("attachments", J.arr(atts_json(atts)))])
+
+
+
+def msg_body(+m: I.Msg) -> String:
+  match m:
+    case I.Msg{uid, f, d, s, h, body}:
+      body
+
+
+
+# The FETCH response for `uid` (a server may also send unsolicited FETCHes).
+def with_uid(+ms: List<&2, I.Msg>, +uid: U32) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case Con{m, t}:
+      Bool.pick(List<&2, I.Msg>, U32.is_eq(msg_uid(m), uid), [m], with_uid(t, uid))
+
+
+def get_msg(+ms: List<&2, I.Msg>, +folder: String, +uid: U32, +uidv: Maybe<&2, U32>, +max: U32) -> Out:
+  match ms:
+    case Nil{}:
+      Err{"no message with UID " ++ U32.show(uid) ++ " in " ++ folder}
+    case Con{m, t}:
+      get_json(m, folder, uidv, max, M.headers(M.head_of(M.split(msg_body(m)))), M.parts(msg_body(m)))
+
+
+
+def get_out(r: Run, +folder: String, +uid: U32, +max: U32) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{+lines}:
+      get_msg(with_uid(I.fetched(lines), uid), folder, uid, I.ok_code(lines, "UIDVALIDITY"), max)
+
+
+
+def get_uid(+u: Uids, +folder: String, +max: U32) -> IO(Out):
+  match u:
+    case UidsOk{Con{uid, Nil{}}}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_get(folder, uid, max))
+        return get_out(r, folder, uid, max)
+    case UidsOk{xs}:
+      pure_out(Err{"mail_get reads one message: pass a single \"uid\""})
+    case UidsErr{m}:
+      pure_out(Err{m})
+
+
+
+def t_get(+args: J.Json) -> IO(Out):
+  get_uid(uids_arg(args), folder_arg(args), clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
+
+
+
+# ---- mail_get_new ---------------------------------------------------------------------------
+
+def above(+xs: List<&2, U32>, +since: U32) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      Bool.pick(List<&2, U32>, U32.is_gt(x, since), x <> above(t, since), above(t, since))
+
+
+
+def last_or(+xs: List<&2, U32>, +d: U32) -> U32:
+  Maybe.default(&2, U32, List.last(&2, U32, xs), d)
+
+
+
+def new_out(+folder: String, +uidv: U32, +changed: Bool, +next: U32, +more: Bool, +ms: List<&2, J.Json>) -> Out:
+  ok_obj([J.kv("folder", J.str(folder)), J.kv("uidvalidity", J.num(uidv)), J.kv("uidvalidity_changed", J.bool(changed)), J.kv("next_since_uid", J.num(next)), J.kv("has_more", J.bool(more)), J.kv("messages", J.arr(ms))])
+
+
+
+def new_headers(r: Run, +folder: String, +uidv: U32, +next: U32, +more: Bool) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{+lines}:
+      new_out(folder, uidv, False{}, next, more, summaries(oldest_first(I.fetched(lines))))
+
+
+
+def new_fetch(+uids: List<&2, U32>, +folder: String, +uidv: U32, +since: U32, +more: Bool) -> IO(Out):
+  match uids:
+    case Nil{}:
+      pure_out(new_out(folder, uidv, False{}, since, False{}, []))
+    case Con{h, t}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_headers(folder, uids))
+        return new_headers(r, folder, uidv, last_or(uids, since), more)
+
+
+
+def new_reset(+changed: Bool, +uidv: U32, +uids: List<&2, U32>, +folder: String, +since: U32, +limit: U32) -> IO(Out):
+  match changed:
+    case True{}:
+      pure_out(new_out(folder, uidv, True{}, 0, True{}, []))
+    case False{}:
+      new_fetch(List.take(&2, U32, uids, U32.to_nat(limit)), folder, uidv, since, Nat.is_gt(List.length(&2, U32, uids), U32.to_nat(limit)))
+
+
+
+def new_check(+uidv: U32, +uids: List<&2, U32>, +folder: String, +since: U32, +known: U32, +limit: U32) -> IO(Out):
+  new_reset(Bool.not(U32.is_zero(known)) && Bool.not(U32.is_eq(known, uidv)), uidv, uids, folder, since, limit)
+
+
+
+# When UIDVALIDITY changed, every stored UID is void: report it and restart
+# the checkpoint at 0 instead of guessing which messages are new.
+def new_found(r: Run, +folder: String, +since: U32, +known: U32, +limit: U32) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      new_check(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0), asc(above(I.search_uids(lines), since)), folder, since, known, limit)
+
+
+
+def t_get_new(+args: J.Json) -> IO(Out):
+  do IO<Out>:
+    r : Run <- imap_run(Ops.plan_new(folder_arg(args), u32_arg(args, "since_uid", 0)))
+    new_found(r, folder_arg(args), u32_arg(args, "since_uid", 0), u32_arg(args, "uidvalidity", 0), clamp(u32_arg(args, "limit", 50), 1, 500))
+
+
+
+# ---- flags ---------------------------------------------------------------------------------
+
+def done_out(r: Run, +result: J.Json) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{lines}:
+      Ok{result}
+
+
+
+def mark_uids(+u: Uids, +folder: String, +seen: Bool) -> IO(Out):
+  match u:
+    case UidsErr{m}:
+      pure_out(Err{m})
+    case UidsOk{uids}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_mark(folder, uids, seen))
+        return done_out(r, J.obj([J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("uids", uids_json(uids)), J.kv("seen", J.bool(seen))]))
+
+
+
+def t_mark(+args: J.Json, +seen: Bool) -> IO(Out):
+  mark_uids(uids_arg(args), folder_arg(args), seen)
+
+
+
+# ---- move / trash / delete -------------------------------------------------------------------
+
+def method_name(+move: Bool) -> String:
+  Bool.pick(String, move, "UID MOVE", "UID COPY + UID EXPUNGE")
+
+
+
+def move_plan(+plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>, +dest: String, +move: Bool) -> IO(Out):
+  match plan:
+    case Nil{}:
+      pure_out(Err{"the server supports neither MOVE nor UIDPLUS; refusing to move with a plain EXPUNGE, which could remove other messages"})
+    case Con{h, t}:
+      do IO<Out>:
+        r : Run <- imap_run(plan)
+        return done_out(r, J.obj([J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("destination", J.str(dest)), J.kv("uids", uids_json(uids)), J.kv("method", J.str(method_name(move)))]))
+
+
+
+def move_caps(r: Run, +folder: String, +uids: List<&2, U32>, +dest: String) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      move_plan(Ops.plan_move(folder, uids, dest, I.has_cap(I.caps(lines), "MOVE"), I.has_cap(I.caps(lines), "UIDPLUS")), folder, uids, dest, I.has_cap(I.caps(lines), "MOVE"))
+
+
+
+def move_to(+same: Bool, +folder: String, +uids: List<&2, U32>, +dest: String) -> IO(Out):
+  match same:
+    case True{}:
+      pure_out(Err{"\"destination\" must name a different folder"})
+    case False{}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_probe())
+        move_caps(r, folder, uids, dest)
+
+
+
+def move_uids(+u: Uids, +folder: String, +dest: String) -> IO(Out):
+  match u:
+    case UidsErr{m}:
+      pure_out(Err{m})
+    case UidsOk{uids}:
+      move_to(String.is_empty(dest) || String.eq(dest, folder), folder, uids, dest)
+
+
+
+def t_move(+args: J.Json) -> IO(Out):
+  move_uids(uids_arg(args), folder_arg(args), str_arg(args, "destination", ""))
+
+
+
+def trash_into(+same: Bool, +t: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+  match same:
+    case True{}:
+      pure_out(Err{"these messages are already in " ++ t ++ "; use mail_delete to remove them permanently"})
+    case False{}:
+      move_plan(Ops.plan_trash(folder, uids, t, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS")), folder, uids, t, I.has_cap(caps, "MOVE"))
+
+
+
+def trash_to(+trash: Maybe<&2, String>, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+  match trash:
+    case None{}:
+      pure_out(Err{"no Trash folder found (no \\Trash special-use folder, \"Deleted Messages\" or \"Trash\")"})
+    case Some{t}:
+      trash_into(String.eq(String.to_lower(t), String.to_lower(folder)), t, caps, folder, uids)
+
+
+
+def trash_found(r: Run, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      trash_to(trash_of(I.folders(lines)), I.caps(lines), folder, uids)
+
+
+
+def trash_uids(+u: Uids, +folder: String) -> IO(Out):
+  match u:
+    case UidsErr{m}:
+      pure_out(Err{m})
+    case UidsOk{uids}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_probe())
+        trash_found(r, folder, uids)
+
+
+
+def t_trash(+args: J.Json) -> IO(Out):
+  trash_uids(uids_arg(args), folder_arg(args))
+
+
+
+def delete_plan(+plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+  match plan:
+    case Nil{}:
+      pure_out(Err{"the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"})
+    case Con{h, t}:
+      do IO<Out>:
+        r : Run <- imap_run(plan)
+        return done_out(r, J.obj([J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("uids", uids_json(uids)), J.kv("permanently_deleted", J.bool(True{}))]))
+
+
+
+def delete_caps(r: Run, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      delete_plan(Ops.plan_delete(folder, uids, True{}, I.has_cap(I.caps(lines), "UIDPLUS")), folder, uids)
+
+
+
+def delete_uids(+u: Uids, +folder: String, +confirm: Bool) -> IO(Out):
+  match u:
+    case UidsErr{m}:
+      pure_out(Err{m})
+    case UidsOk{uids}:
+      match confirm:
+        case False{}:
+          pure_out(Err{"mail_delete permanently removes messages and cannot be undone; pass \"confirm\": \"permanently-delete\" to proceed (use mail_trash to move them to Trash instead)"})
+        case True{}:
+          do IO<Out>:
+            r : Run <- imap_run(Ops.plan_probe())
+            delete_caps(r, folder, uids)
+
+
+
+def t_delete(+args: J.Json) -> IO(Out):
+  delete_uids(uids_arg(args), folder_arg(args), String.eq(str_arg(args, "confirm", ""), "permanently-delete"))
+
+
+
+def bytes_str(+xs: List<&2, U32>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{x, t}:
+      SCon{C.chr(x), bytes_str(t)}
+
+
+
+def basename(+path: String) -> String:
+  Maybe.default(&2, String, List.last(&2, String, String.split(path, '/')), path)
+
+
+
+def ext_type(+name: String) -> String:
+  +n = String.to_lower(name)
+  Bool.pick(String, String.ends_with(n, ".pdf"), "application/pdf",
+    Bool.pick(String, String.ends_with(n, ".txt") || String.ends_with(n, ".md") || String.ends_with(n, ".log"), "text/plain",
+      Bool.pick(String, String.ends_with(n, ".csv"), "text/csv",
+        Bool.pick(String, String.ends_with(n, ".html") || String.ends_with(n, ".htm"), "text/html",
+          Bool.pick(String, String.ends_with(n, ".json"), "application/json",
+            Bool.pick(String, String.ends_with(n, ".png"), "image/png",
+              Bool.pick(String, String.ends_with(n, ".jpg") || String.ends_with(n, ".jpeg"), "image/jpeg",
+                Bool.pick(String, String.ends_with(n, ".gif"), "image/gif",
+                  Bool.pick(String, String.ends_with(n, ".zip"), "application/zip",
+                    Bool.pick(String, String.ends_with(n, ".eml"), "message/rfc822", "application/octet-stream"))))))))))
+
+
+
+def max_attachment() -> U32:
+  26214400
+
+
+
+def att_read(m: File & Result<&1, &1, U32 & String, List<&2, U32>>, +path: String, +name: String, +ctype: String) -> IO(AttR):
+  (f, r) = m
+  match r:
+    case Done{+xs}:
+      do IO<AttR>:
+        File.close(f)
+        return Bool.pick(AttR, Nat.is_gt(List.length(&2, U32, xs), U32.to_nat(max_attachment())), AttErr{"attachment " ++ path ++ " is larger than 25 MB"}, AttOk{M.Attach{name, ctype, bytes_str(xs)}})
+    case Fail{(code, msg)}:
+      do IO<AttR>:
+        File.close(f)
+        return AttErr{"cannot read attachment " ++ path ++ ": " ++ msg}
+
+
+
+def pure_att(+a: AttR) -> IO(AttR):
+  IO.pure(AttR, a)
+
+
+
+def att_open(r: Result<&1, &1, U32 & String, File>, +path: String, +name: String, +ctype: String) -> IO(AttR):
+  match r:
+    case Done{f}:
+      do IO<AttR>:
+        m : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, (max_attachment() + 1 : U32))
+        att_read(m, path, name, ctype)
+    case Fail{(code, msg)}:
+      pure_att(AttErr{"cannot open attachment " ++ path ++ ": " ++ msg})
+
+
+
+def att_path(+missing: Bool, +path: String, +name: String, +ctype: String) -> IO(AttR):
+  match missing:
+    case True{}:
+      pure_att(AttErr{"each attachment needs a \"path\""})
+    case False{}:
+      do IO<AttR>:
+        r : Result<&1, &1, U32 & String, File> <- File.open(path, "r")
+        att_open(r, path, name, ctype)
+
+
+
+def att_named(+path: String, +name: String, +ctype: String) -> IO(AttR):
+  att_path(String.is_empty(path), path, name, ctype)
+
+
+
+def att_one(+a: J.Json) -> IO(AttR):
+  att_named(str_arg(a, "path", ""), str_arg(a, "filename", basename(str_arg(a, "path", ""))), str_arg(a, "content_type", ext_type(str_arg(a, "filename", basename(str_arg(a, "path", ""))))))
+
+
+
+def atts_read(+xs: List<&2, J.Json>) -> IO(List<&2, AttR>):
+  match xs:
+    case Nil{}:
+      IO.pure(List<&2, AttR>, [])
+    case Con{a, t}:
+      do IO<List<&2, AttR>>:
+        one : AttR <- att_one(a)
+        rest : List<&2, AttR> <- atts_read(t)
+        return one <> rest
+
+
+
+def atts_cons(+a: M.Attach, +rest: Atts) -> Atts:
+  match rest:
+    case AttsOk{xs}:
+      AttsOk{a <> xs}
+    case AttsErr{m}:
+      AttsErr{m}
+
+
+
+def atts_collect(+rs: List<&2, AttR>) -> Atts:
+  match rs:
+    case Nil{}:
+      AttsOk{[]}
+    case Con{AttErr{m}, t}:
+      AttsErr{m}
+    case Con{AttOk{a}, t}:
+      atts_cons(a, atts_collect(t))
+
+
+
+def hexd(+n: U32) -> String:
+  SCon{C.chr(Bool.pick(U32, U32.is_lt(n, 10), (n + 48 : U32), (n + 87 : U32))), SNil{}}
+
+
+
+def hex8(+n: U32) -> String:
+  String.concat([hexd((n >> 28n : U32)), hexd(((n >> 24n) .&. 15 : U32)), hexd(((n >> 20n) .&. 15 : U32)), hexd(((n >> 16n) .&. 15 : U32)), hexd(((n >> 12n) .&. 15 : U32)), hexd(((n >> 8n) .&. 15 : U32)), hexd(((n >> 4n) .&. 15 : U32)), hexd((n .&. 15 : U32))])
+
+
+
+def secs_of(p: Proc) -> U32:
+  match p:
+    case ProcOk{code, out, err}:
+      Maybe.default(&2, U32, U32.read(String.trim(out)), 0)
+    case ProcFail{m}:
+      0
+
+
+
+def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
+  match r:
+    case Done{n}:
+      n
+    case Fail{e}:
+      0
+
+
+
+def stamp_of(+secs: U32, +a: U32, +b: U32) -> Stamp:
+  Stamp{M.rfc5322_date(secs), hex8(secs) ++ "." ++ hex8(a) ++ hex8(b)}
+
+
+
+def stamp() -> IO(Stamp):
+  do IO<Stamp>:
+    r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run("/bin/date", ["+%s"], "", 64, 5000)
+    a : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
+    b : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
+    return stamp_of(secs_of(proc_of(r)), rand_of(a), rand_of(b))
+
+
+
+def domain_of(+addr: String) -> String:
+  Maybe.default(&2, String, List.last(&2, String, String.split(M.addr_spec(addr), '@')), "mailbend.invalid")
+
+
+
+def draft_of(+w: Want, +from: String, +st: Stamp) -> M.Draft:
+  match w:
+    case Want{to, cc, bcc, subject, text, irt, refs, atts, d}:
+      match st:
+        case Stamp{date, token}:
+          M.Draft{from, to, cc, subject, text, date, "<" ++ token ++ "@" ++ domain_of(from) ++ ">", irt, refs, atts}
+
+
+
+def msgid_of(+d: M.Draft) -> String:
+  match d:
+    case M.Draft{f, t, c, s, x, dt, msgid, i, r, a}:
+      msgid
+
+
+
+def boundary_of(+st: Stamp) -> String:
+  match st:
+    case Stamp{d, token}:
+      "mailbend-" ++ token
+
+
+
+def all_rcpts(+w: Want) -> List<&2, String>:
+  match w:
+    case Want{to, cc, bcc, s, x, i, r, a, d}:
+      List.concat(&2, String, [to, cc, bcc])
+
+
+
+def is_draft(+w: Want) -> Bool:
+  match w:
+    case Want{t, c, b, s, x, i, r, a, draft}:
+      draft
+
+
+
+def specs(+xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      M.addr_spec(x) <> specs(t)
+
+
+
+# "[APPENDUID <uidvalidity> <uid>]" in the APPEND's tagged OK.
+def appenduid(+ws: List<&2, String>) -> J.Json:
+  match ws:
+    case Con{code, Con{v, Con{uid, Nil{}}}}:
+      Bool.pick(J.Json, String.eq(String.to_upper(code), "APPENDUID"), maybe_num(U32.read(uid)), J.JNull{})
+    case _:
+      J.JNull{}
+
+
+
+def appended_uid(+lines: List<&2, I.RLine>) -> J.Json:
+  appenduid(String.split(I.resp_code(I.status_text(lines, 1)), ' '))
+
+
+
+def draft_saved(r: Run, +drafts: String, +msgid: String) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{+lines}:
+      ok_obj([J.kv("ok", J.bool(True{})), J.kv("saved_to", J.str(drafts)), J.kv("uid", appended_uid(lines)), J.kv("message_id", J.str(msgid))])
+
+
+
+def draft_append(+m: Maybe<&2, String>, +msg: String, +msgid: String) -> IO(Out):
+  match m:
+    case None{}:
+      pure_out(Err{"no Drafts folder found (no \\Drafts special-use folder or \"Drafts\")"})
+    case Some{drafts}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_draft(drafts, msg))
+        return draft_saved(r, drafts, msgid)
+
+
+
+def draft_folder(r: Run, +msg: String, +msgid: String) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      draft_append(drafts_of(I.folders(lines)), msg, msgid)
+
+
+
+def sent_out(+o: Out, +msgid: String, +n: U32) -> Out:
+  match o:
+    case Err{m}:
+      Err{m}
+    case Ok{reply}:
+      ok_obj([J.kv("ok", J.bool(True{})), J.kv("sent", J.bool(True{})), J.kv("message_id", J.str(msgid)), J.kv("recipients", J.num(n)), J.kv("server_reply", reply)])
+
+
+
+def deliver_as(+draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
+  match draft:
+    case True{}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_probe())
+        draft_folder(r, M.compose(draft_of(w, from, st), boundary_of(st)), msgid_of(draft_of(w, from, st)))
+    case False{}:
+      do IO<Out>:
+        o : Out <- smtp_run(S.envelope(M.addr_spec(from), specs(all_rcpts(w)), M.compose(draft_of(w, from, st), boundary_of(st))))
+        return sent_out(o, msgid_of(draft_of(w, from, st)), U32.from_nat(List.length(&2, String, all_rcpts(w))))
+
+
+
+def deliver(+w: Want, +from: String, +st: Stamp) -> IO(Out):
+  deliver_as(is_draft(w), w, from, st)
+
+
+
+def check_want(+w: Want, +from: String) -> String:
+  Bool.pick(String, Bool.not(M.addr_ok(from)), "MAILBEND_EMAIL is not a valid address",
+    Bool.pick(String, Bool.not(M.all_addrs_ok(all_rcpts(w))), "every recipient must be an address like name@example.com or \"Name <name@example.com>\"",
+      Bool.pick(String, List.is_empty(&2, String, all_rcpts(w)) && Bool.not(is_draft(w)), "at least one recipient (to, cc or bcc) is needed", "")))
+
+
+
+def compose_checked(+problem: String, +w: Want, +from: String) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      do IO<Out>:
+        st : Stamp <- stamp()
+        deliver(w, from, st)
+
+
+
+def compose_go(+w: Want, +from: String) -> IO(Out):
+  compose_checked(check_want(w, from), w, from)
+
+
+
+def with_atts(+a: Atts, +to: List<&2, String>, +cc: List<&2, String>, +bcc: List<&2, String>, +subject: String, +text: String, +irt: String, +refs: String, +draft: Bool) -> IO(Out):
+  match a:
+    case AttsErr{m}:
+      pure_out(Err{m})
+    case AttsOk{xs}:
+      do IO<Out>:
+        from : String <- env_or("MAILBEND_EMAIL", "")
+        compose_go(Want{to, cc, bcc, subject, text, irt, refs, xs, draft}, from)
+
+
+
+# Composes from the common arguments: to, cc, bcc, subject, body,
+# in_reply_to, references and attachments ([{path, filename?, content_type?}]).
+def t_compose(+args: J.Json, +draft: Bool) -> IO(Out):
+  do IO<Out>:
+    rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
+    with_atts(atts_collect(rs), strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"), str_arg(args, "subject", ""), str_arg(args, "body", ""), str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft)
+
+
+
+# ---- reply / forward -------------------------------------------------------------------------
+
+def prefixed(+p: String, +subject: String) -> String:
+  Bool.pick(String, String.starts_with(String.to_lower(String.trim(subject)), String.to_lower(p)), subject, p ++ " " ++ subject)
+
+
+
+def quote_lines(+ls: List<&2, String>) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case Con{l, t}:
+      "> " ++ l ++ "\n" ++ quote_lines(t)
+
+
+
+def not_me(+xs: List<&2, String>, +me: String) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      Bool.pick(List<&2, String>, String.eq(String.to_lower(M.addr_spec(x)), String.to_lower(me)), not_me(t, me), x <> not_me(t, me))
+
+
+
+def addr_push(+cur: String, +acc: List<&2, String>) -> List<&2, String>:
+  +a = String.trim(String.reverse(cur))
+  Bool.pick(List<&2, String>, String.is_empty(a), acc, a <> acc)
+
+
+
+def addr_split(+s: String, +cur: String, +q: Bool, +acc: List<&2, String>) -> List<&2, String>:
+  match s:
+    case SNil{}:
+      List.reverse(&2, String, addr_push(cur, acc))
+    case SCon{'"', t}:
+      addr_split(t, SCon{'"', cur}, Bool.not(q), acc)
+    case SCon{',', t}:
+      Bool.pick(List<&2, String>, q, addr_split(t, SCon{',', cur}, q, acc), addr_split(t, "", q, addr_push(cur, acc)))
+    case SCon{c, t}:
+      addr_split(t, SCon{c, cur}, q, acc)
+
+
+
+# Splits a header address list at commas outside quotes and angle brackets.
+def addr_list(+s: String) -> List<&2, String>:
+  addr_split(s, "", False{}, [])
+
+
+
+def body_text(+p: M.Parts) -> String:
+  match p:
+    case M.Parts{text, html, a}:
+      Bool.pick(String, String.is_empty(text), M.html_text(html), text)
+
+
+
+def decoded(+xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      M.decode_header(x) <> decoded(t)
+
+
+# The addresses of a header, split before RFC 2047 decoding (a decoded name
+# may contain commas).
+def hdr_addrs(+hs: List<&2, M.Hdr>, +name: String) -> List<&2, String>:
+  decoded(addr_list(M.header(hs, name)))
+
+
+def reply_to(+hs: List<&2, M.Hdr>) -> List<&2, String>:
+  hdr_addrs(hs, Bool.pick(String, String.is_empty(M.header(hs, "reply-to")), "from", "reply-to"))
+
+
+
+def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +args: J.Json, +me: String) -> IO(Out):
+  do IO<Out>:
+    rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
+    with_atts(atts_collect(rs),
+      reply_to(hs),
+      Bool.pick(List<&2, String>, bool_arg(args, "reply_all", False{}), not_me(List.append(&2, String, hdr_addrs(hs, "to"), hdr_addrs(hs, "cc")), me), []),
+      strs_arg(args, "bcc"),
+      prefixed("Re:", hdr_text(hs, "subject")),
+      str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_text(hs, "date") ++ ", " ++ hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(body_text(p))),
+      M.header(hs, "message-id"),
+      String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
+      bool_arg(args, "as_draft", False{}))
+
+
+
+def fwd_note(+hs: List<&2, M.Hdr>) -> String:
+  "\n\n---------- Forwarded message ----------\nFrom: " ++ hdr_text(hs, "from") ++ "\nDate: " ++ hdr_text(hs, "date") ++ "\nSubject: " ++ hdr_text(hs, "subject") ++ "\nTo: " ++ hdr_text(hs, "to") ++ "\n"
+
+
+
+def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
+  do IO<Out>:
+    rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
+    with_atts(atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
+      strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
+      prefixed("Fwd:", hdr_text(hs, "subject")),
+      str_arg(args, "body", "") ++ fwd_note(hs),
+      "", "", bool_arg(args, "as_draft", False{}))
+
+
+
+def respond_to(+reply: Bool, +too_big: Bool, +body: String, +args: J.Json, +me: String) -> IO(Out):
+  match reply:
+    case True{}:
+      reply_want(M.headers(M.head_of(M.split(body))), M.parts(body), args, me)
+    case False{}:
+      match too_big:
+        case True{}:
+          pure_out(Err{"the original is larger than 25 MB and cannot be forwarded whole"})
+        case False{}:
+          fwd_want(M.headers(M.head_of(M.split(body))), body, args)
+
+
+
+# Fetches the original (read-only, PEEK), then replies (mode 0) or
+# forwards (mode 1).
+def orig_msg(+ms: List<&2, I.Msg>, +args: J.Json, +mode: U32, +max: U32, +me: String) -> IO(Out):
+  match ms:
+    case Nil{}:
+      pure_out(Err{"no message with UID " ++ U32.show(u32_arg(args, "uid", 0)) ++ " in " ++ folder_arg(args)})
+    case Con{I.Msg{uid, flags, date, size, headers, body}, t}:
+      respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), body, args, me)
+
+
+
+def orig_found(r: Run, +args: J.Json, +mode: U32, +max: U32, +me: String) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0)), args, mode, max, me)
+
+
+
+def respond_uid(+missing: Bool, +args: J.Json, +mode: U32, +max: U32) -> IO(Out):
+  match missing:
+    case True{}:
+      pure_out(Err{"\"uid\" (the message to answer) is required"})
+    case False{}:
+      do IO<Out>:
+        me : String <- env_or("MAILBEND_EMAIL", "")
+        r : Run <- imap_run(Ops.plan_get(folder_arg(args), u32_arg(args, "uid", 0), max))
+        orig_found(r, args, mode, max, me)
+
+
+
+def t_respond(+args: J.Json, +mode: U32) -> IO(Out):
+  respond_uid(U32.is_zero(u32_arg(args, "uid", 0)), args, mode, Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()))
+
+
+
+# ---- dispatch ----------------------------------------------------------------------------------
+
+def run_op(+op: Ops.Op, +args: J.Json) -> IO(Out):
+  match op:
+    case Ops.OProbe{}:
+      t_probe(args)
+    case Ops.OListFolders{}:
+      t_folders(args)
+    case Ops.OSearch{}:
+      t_search(args)
+    case Ops.OGet{}:
+      t_get(args)
+    case Ops.OGetNew{}:
+      t_get_new(args)
+    case Ops.OMarkRead{}:
+      t_mark(args, True{})
+    case Ops.OMarkUnread{}:
+      t_mark(args, False{})
+    case Ops.OMove{}:
+      t_move(args)
+    case Ops.OTrash{}:
+      t_trash(args)
+    case Ops.ODelete{}:
+      t_delete(args)
+    case Ops.OSaveDraft{}:
+      t_compose(args, True{})
+    case Ops.OSend{}:
+      t_compose(args, False{})
+    case Ops.OReply{}:
+      t_respond(args, 0)
+    case Ops.OForward{}:
+      t_respond(args, 1)
+
+
+
+def gate(+refuse: Bool, +op: Ops.Op, +args: J.Json) -> IO(Out):
+  match refuse:
+    case True{}:
+      pure_out(Err{Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set"})
+    case False{}:
+      run_op(op, args)
+
+
+
+def gated(+op: Ops.Op, +args: J.Json, +ro: Bool) -> IO(Out):
+  gate(ro && Bool.not(Ops.is_read_only(op)), op, args)
+
+
+
+def call_op(+m: Maybe<&2, Ops.Op>, +name: String, +args: J.Json) -> IO(Out):
+  match m:
+    case None{}:
+      pure_out(Err{"unknown tool: " ++ name})
+    case Some{op}:
+      do IO<Out>:
+        ro : Bool <- read_only_mode()
+        gated(op, args, ro)
+
+
+
+# Runs the named tool with its JSON arguments.
+def call(+name: String, +args: J.Json) -> IO(Out):
+  call_op(Ops.from_name(name), name, args)

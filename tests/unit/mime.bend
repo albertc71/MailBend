@@ -1,0 +1,98 @@
+# MIME parsing and composition.
+import Base
+import ../../src/mime.bend as M
+import ../../src/codec.bend as C
+
+def msg() -> String:
+  String.concat([
+    "From: =?UTF-8?B?Sm9zw6k=?= <jose@example.com>\r\n",
+    "Subject: =?utf-8?q?Caf=C3=A9?= =?utf-8?q?_menu?= today\r\n",
+    "To: a@example.com,\r\n b@example.com\r\n",
+    "Content-Type: multipart/mixed; boundary=\"XX\"\r\n",
+    "\r\n",
+    "preamble\r\n",
+    "--XX\r\n",
+    "Content-Type: multipart/alternative; boundary=YY\r\n",
+    "\r\n",
+    "--YY\r\n",
+    "Content-Type: text/plain; charset=utf-8\r\n",
+    "Content-Transfer-Encoding: quoted-printable\r\n",
+    "\r\n",
+    "Bonjour =C3=A0 tous\r\n",
+    "--YY\r\n",
+    "Content-Type: text/html\r\n",
+    "\r\n",
+    "<p>Bonjour &amp; <b>tous</b></p>\r\n",
+    "--YY--\r\n",
+    "--XX\r\n",
+    "Content-Type: application/pdf\r\n",
+    "Content-Disposition: attachment; filename*=utf-8''r%C3%A9sum%C3%A9.pdf\r\n",
+    "Content-Transfer-Encoding: base64\r\n",
+    "\r\n",
+    "JVBERi0xLjQK\r\n",
+    "--XX--\r\n"])
+
+def show_atts(xs: List<&2, M.Att>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{M.Att{n, t, s}, r}:
+      n ++ "|" ++ t ++ "|" ++ U32.show(s) ++ ";" ++ show_atts(r)
+
+def show_parts(p: M.Parts) -> String:
+  match p:
+    case M.Parts{t, h, a}:
+      "text=" ++ String.trim(t) ++ " html=" ++ String.trim(M.html_text(h)) ++ " atts=" ++ show_atts(a)
+
+def check(+hs: List<&2, M.Hdr>) -> IO(Unit):
+  do IO<Unit>:
+    IO.print(M.decode_header(M.header(hs, "from")))
+    IO.print(M.decode_header(M.header(hs, "subject")))
+    IO.print(M.header(hs, "to"))
+    IO.print(M.main_value(M.header(hs, "content-type")) ++ " " ++ M.param(M.header(hs, "content-type"), "boundary"))
+
+def draft() -> M.Draft:
+  M.Draft{"Tester <tester@example.com>", ["José Q <jose@example.com>", "b@example.com"], [], "Résumé attached", "Line one\nligne deux é\n", "Sun, 27 Sep 2026 03:19:30 +0000", "<1@example.com>", "", "", [M.Attach{"notes.txt", "text/plain", "hello"}]}
+
+# Whether a message is 7-bit: printable ASCII, tabs and CRLF only.
+def crlf_plain(+s: String) -> Bool:
+  C.is_plain(String.concat(String.split(String.concat(String.split(s, '\r')), '\n')))
+
+def roundtrip(+m: String) -> IO(Unit):
+  do IO<Unit>:
+    IO.print(Bool.show(crlf_plain(m)))
+    IO.print(M.decode_header(M.header(M.headers(M.head_of(M.split(m))), "to")))
+    IO.print(M.decode_header(M.header(M.headers(M.head_of(M.split(m))), "subject")))
+    IO.print(show_parts(M.parts(m)))
+
+# Caller-supplied threading headers and content types cannot add header lines.
+def evil() -> M.Draft:
+  M.Draft{"t@example.com", ["a@example.com"], [], "s", "b", "d", "<1@x>", "<x@y>\r\nBcc: evil@example.com", "", [M.Attach{"f.txt", "text/plain\r\nX-Evil: 1", "hi"}]}
+
+def no_evil(+m: String) -> Bool:
+  Bool.not(String.contains(m, "\r\nBcc:") || String.contains(m, "\r\nX-Evil:"))
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    check(M.headers(M.head_of(M.split(msg()))))
+    IO.print(show_parts(M.parts(msg())))
+    IO.print(show_parts(M.parts("Subject: plain\r\n\r\nJust text\r\n")))
+    roundtrip(M.compose(draft(), "b0undary"))
+    IO.print(M.rfc5322_date(0) ++ " / " ++ M.rfc5322_date(951782400) ++ " / " ++ M.rfc5322_date(1790480370) ++ " / " ++ M.rfc5322_date(4102444799))
+    IO.print(Bool.show(no_evil(M.compose(evil(), "b"))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
+    IO.print(Bool.show(M.addr_ok("A <a@b.c>")) ++ " " ++ Bool.show(M.addr_ok("a@b.c\r\nRCPT TO:<x@y>")) ++ " " ++ Bool.show(M.addr_ok("no-at")) ++ " " ++ Bool.show(M.addr_ok("a@b@c")))
+
+#|José <jose@example.com>
+#|Café menu today
+#|a@example.com, b@example.com
+#|multipart/mixed XX
+#|text=Bonjour à tous html=Bonjour & tous atts=résumé.pdf|application/pdf|9;
+#|text=Just text html= atts=
+#|True
+#|José Q <jose@example.com>, b@example.com
+#|Résumé attached
+#|text=Line one
+#|ligne deux é html= atts=notes.txt|text/plain|5;
+#|Thu, 1 Jan 1970 00:00:00 +0000 / Tue, 29 Feb 2000 00:00:00 +0000 / Sun, 27 Sep 2026 03:39:30 +0000 / Thu, 31 Dec 2099 23:59:59 +0000
+#|True text/plain application/octet-stream True False
+#|True False False False

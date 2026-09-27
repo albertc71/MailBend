@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+# MailBend launcher: runs the compiled core (bin/mailbend-core) with the TLS
+# helper next to it. Falls back to `bend main.bend` (slower start) when the
+# core was not compiled. Usage: scripts/mailbend mcp | tools | call <tool> [json]
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+: "${MAILBEND_TLS_HELPER:=$root/bin/mailbend-tls}"
+export MAILBEND_TLS_HELPER
+export BEND_NO_TELEMETRY=1
+if [ -x "$root/bin/mailbend-core" ]; then
+  exec "$root/bin/mailbend-core" "$@"
+fi
+if command -v bend >/dev/null 2>&1; then
+  exec bend "$root/main.bend" "$@"
+fi
+if [ -x "$HOME/.bend/bin/bend" ]; then
+  exec "$HOME/.bend/bin/bend" "$root/main.bend" "$@"
+fi
+echo "mailbend: not built; run scripts/install.sh" >&2
+exit 2

@@ -1,61 +1,147 @@
 # MailBend
 
-Lightweight, Linux-first iCloud Mail connector for AI agents, with the core written in Bend 2.
+Lightweight, Linux-first iCloud Mail connector for AI agents. The core is
+written in [Bend 2](https://github.com/bendlang/bend); a ~700-line C helper
+does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 
-> Experimental prototype. Use a test mailbox until live transport and destructive-operation tests pass.
+> **Status: prototype.** Every tool passes an end-to-end suite against a local
+> TLS IMAP/SMTP server, but it has not yet been run against a live iCloud
+> account. Start with a test mailbox, or set `MAILBEND_READ_ONLY=1`.
 
-## Target
+## What it can do
 
-MailBend is being designed for Cursor Cloud Agent / Grok Bot first, while keeping the mail layer reusable by other MCP-capable assistants.
+| Tool | What it does | Changes mail? |
+| --- | --- | --- |
+| `mail_probe` | Verified TLS login, server capabilities, special folders | no |
+| `mail_list_folders` | Folders (iCloud's "labels") with special use | no |
+| `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no |
+| `mail_get` | Read one message: headers, text, attachment list | no |
+| `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
+| `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
+| `mail_move` | Move to another folder | yes |
+| `mail_trash` | Move to Trash (recoverable) | yes |
+| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` | yes |
+| `mail_save_draft` | Compose into Drafts (with attachments) | yes |
+| `mail_send` | Compose and send over SMTP (to/cc/bcc, attachments) | sends |
+| `mail_reply` | Reply or reply-all, threaded; or save as draft | sends |
+| `mail_forward` | Forward with the original attached; or save as draft | sends |
 
-```text
-Cursor Cloud Agent / Grok Bot
-            |
-        MCP adapter
-            |
-          Bend 2
-   domain + IMAP/SMTP
-            |
-    minimal Linux TLS bridge
-            |
-        iCloud Mail
-```
+Read tools open folders with `EXAMINE` and fetch with `BODY.PEEK`, so reading
+never marks mail as read. The safety rules are laws checked by the Bend
+compiler (see [Safety](#safety)).
 
-Apple Mail operations are represented through IMAP and SMTP. iCloud folders are the closest equivalent to Gmail labels.
+## Install (Linux)
 
-## Prototype operations
-
-- list folders
-- search and read without changing unread state
-- mark read/unread
-- move to folders ("labels")
-- trash and explicit delete
-- save drafts
-- compose/send
-- reply/forward and attachments after live transport is proven
-
-## Configuration
-
-Copy `.env.example` conceptually into your Cloud Agent secrets/environment. Never commit the real values.
+Needs a C compiler, OpenSSL headers, and Bend 2 (clang 14+ to compile the
+core; without clang the core runs through `bend` with a slower start).
 
 ```sh
-export MAILBEND_EMAIL='you@icloud.com'
-export MAILBEND_APP_PASSWORD='xxxx-xxxx-xxxx-xxxx'
+sudo apt-get install -y build-essential libssl-dev clang   # if missing
+curl -fsSL https://bend-lang.com/install.sh | sh             # installs Bend to ~/.bend
+git clone https://github.com/albertc71/MailBend.git && cd MailBend
+scripts/install.sh
 ```
 
-The password must be an Apple app-specific password.
+`scripts/install.sh` builds `bin/mailbend-tls`, checks the safety proofs with
+`bend PROOF.bend`, and compiles the core to `bin/mailbend-core`. Run
+`scripts/install.sh --install-bend` to let it install Bend too.
 
-## Security
+## Configure
 
-- credentials are environment-only
-- TLS certificate and hostname verification are mandatory
-- reads and mutations are separate operations
-- message access will use stable IMAP UIDs
-- server capabilities and special-use folders are discovered
-- no credential logging
+1. Turn on two-factor authentication for your Apple Account, then create an
+   **app-specific password** at <https://account.apple.com> → Sign-In and
+   Security → App-Specific Passwords.
+2. Provide these as environment variables or agent secrets (never in files,
+   prompts or command lines):
+
+   ```sh
+   export MAILBEND_EMAIL='you@icloud.com'
+   export MAILBEND_APP_PASSWORD='xxxx-xxxx-xxxx-xxxx'
+   ```
+
+Optional variables are listed in [.env.example](.env.example): server
+overrides, `MAILBEND_READ_ONLY=1` (refuse every tool that changes mail),
+`MAILBEND_TIMEOUT_MS`, and `MAILBEND_TLS_HELPER`.
+
+## Use
+
+Check the connection first:
+
+```sh
+scripts/mailbend call mail_probe
+scripts/mailbend call mail_search '{"from": "apple", "limit": 5}'
+scripts/mailbend call mail_get '{"uid": 1234}'
+scripts/mailbend tools        # the tool list with JSON schemas
+```
+
+Register the MCP server (stdio) with your agent, using the absolute path:
+
+```json
+{
+  "mcpServers": {
+    "mailbend": {
+      "command": "/absolute/path/to/MailBend/scripts/mailbend",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from its
+environment. Cursor Cloud Agent / Grok Bot setup, including secrets and
+passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
+
+## Safety
+
+- **TLS is always verified**: certificate chain and host name, TLS 1.2+, with
+  no option to turn verification off. SMTP requires STARTTLS.
+- **Credentials stay in the helper.** Only `mailbend-tls` reads the password;
+  it sends it only to the verified server and never prints it. The Bend core
+  never sees it, so no tool result or log can contain it.
+- **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
+  every read plan (probe, folders, search, get, new mail) contains no command
+  that can change a mailbox, for every argument.
+- **Nothing is lost by accident.** Move and trash never expunge before copying
+  (proven for every server capability). Permanent delete needs explicit
+  confirmation (proven: without it the plan is empty) and UIDPLUS, so only
+  the given UIDs are expunged.
+- Commands run one at a time and stop at the first rejection; message
+  contents are framed as IMAP literals, so a message cannot spoof a server
+  reply.
+
+## How it works
+
+```text
+agent ── MCP (stdio JSON-RPC) ──▶ Bend core: tools, command plans, parsing, MIME
+                                     │  IMAP script / SMTP envelope on stdin
+                                     ▼
+                             mailbend-tls (C, OpenSSL): verified TLS, login
+                                     │
+                                     ▼
+                       imap.mail.me.com:993 · smtp.mail.me.com:587
+```
+
+Each tool call runs one or two short IMAP sessions (login, a few commands,
+logout); nothing runs in the background. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Development
 
-The current commit establishes the Bend command model and transport contract. Next milestone: compile on Linux and add the smallest verified TLS bridge, then perform an authenticated iCloud IMAP CAPABILITY smoke test.
+```sh
+bend PROOF.bend              # the safety laws: must print "All terms check."
+sh tests/run-unit.sh         # Bend unit tests (JSON, codecs, IMAP, MIME)
+sh tests/test-transport.sh   # TLS helper against a local TLS server
+python3 tests/test-e2e.py    # every tool, CLI and MCP, against the local server
+```
 
-See [docs/PROTOTYPE.md](docs/PROTOTYPE.md) and [AGENTS.md](AGENTS.md).
+`tests/fake_mail_server.py` is a small IMAP/SMTP server over TLS with a
+throwaway CA; it records every command and the mailbox state so the tests can
+check what really happened. Tool schemas are generated by
+`tools/gen-schema.py`. See [AGENTS.md](AGENTS.md) for contributor rules.
+
+## Not yet
+
+- A live run against iCloud (the steps are in docs/CLOUD_AGENT.md).
+- Monitoring: a watcher with IDLE/polling, filters and a delivery ledger.
+  `mail_get_new` already provides the checkpoint semantics it needs.
+- Folder create/delete, and copying sent mail into Sent (check first whether
+  iCloud already files SMTP-sent mail there).
