@@ -37,7 +37,7 @@ rendering, response interpretation, MIME behavior, and agent-visible results.
 ## When using Bend
 - run `bend guide` to learn it (Bend 2 differs from the old Bend/HVM language)
 - use `LAWS.bend` to keep important rules; do not weaken a law to make code pass
-- run `bend PROOF.bend` before committing: it must print "All terms check."
+- run `bend PROOF.bend` before committing: it must print "ALL PROOFS CHECK"
 - Bend has no mutual recursion, `match` only inspects parameters, and defs
   must be declared before use; `Bool.pick` evaluates both branches, so never
   put a recursive call in both (that is exponential): recurse once and pick
@@ -50,6 +50,9 @@ sh tests/run-unit.sh
 bash tests/test-transport.sh
 scripts/install.sh && python3 tests/test-e2e.py
 ```
+
+CI (`.github/workflows/ci.yml`) runs these checks on a pinned Bend
+release; bump `BEND_VERSION` and `BEND_SHA256` there together.
 
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`.
