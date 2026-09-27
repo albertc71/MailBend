@@ -12,19 +12,20 @@ The intended primary development branch is **`main`**. The repository was initia
 
 Milestones 1-6 and 8 are implemented and verified end to end against a local
 TLS IMAP/SMTP server (`tests/fake_mail_server.py`): 118 e2e checks, 20
-transport checks, 5 unit suites, 27 proven laws. See
-`plans/260927-0319-mailbend-core-implementation/plan.md`.
+transport checks, 5 unit suites, 27 proven laws. The architecture, with
+diagrams, is in `docs/ARCHITECTURE.md`.
 
 - Bend 2.0.29 core in `main.bend` + `src/*.bend`; safety laws in `LAWS.bend`,
   proofs in `PROOF.bend` (`bend PROOF.bend` is the gate).
-- `native/mailbend-tls.c`: the only native code (OpenSSL, verified TLS,
-  login, lock-step command execution). The earlier `openssl s_client`
-  scripts are gone.
+- `native/mailbend-tls.c` (OpenSSL: verified TLS, login, lock-step
+  execution of Bend-generated plans) and `native/mailbend-attach.c`
+  (credential-free attachment reads) are the only native code; see
+  "Native boundaries" in AGENTS.md. The earlier `openssl s_client` scripts
+  are gone.
 - 14 tools over MCP stdio and a CLI (`scripts/mailbend`); install with
   `scripts/install.sh`.
 - Tests: `tests/run-unit.sh`, `tests/test-transport.sh`, `tests/test-e2e.py`.
-- A security review (plans/reports/code-reviewer-260927-0319-security-review.md)
-  found an attachment-path exfiltration route and a helper literal bug; both
+- A security review found an attachment-path exfiltration route and a helper literal bug; both
   are fixed (attachments only from `MAILBEND_ATTACH_DIR`). A Codex review on
   PR #1 led to UIDVALIDITY pinning inside the changing session, an absolute
   helper path, strict JSON, RFC 2231 filenames and header folding; a second
