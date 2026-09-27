@@ -65,6 +65,7 @@ def check(+ls: List<&2, I.RLine>) -> IO(Unit):
     IO.print(Bool.show(I.has_cap(I.caps(ls), "IDLE")))
     IO.print(show_folders(I.folders(ls)))
     IO.print(Maybe.default(&2, String, I.special(I.folders(ls), "\\Trash"), "-"))
+    IO.print(Maybe.default(&2, String, I.named(I.folders(ls), "inbox"), "-") ++ " " ++ Maybe.default(&2, String, I.named(I.folders(ls), "deleted messages"), "-") ++ " " ++ Maybe.default(&2, String, I.named(I.folders(ls), "Work"), "-"))
     IO.print(U32.show(Maybe.default(&2, U32, I.ok_code(ls, "UIDVALIDITY"), 0)) ++ " " ++ U32.show(Maybe.default(&2, U32, I.exists(ls), 0)))
     IO.print(show_nums(I.search_uids(ls)))
     IO.print(show_msgs(I.fetched(ls)))
@@ -91,6 +92,7 @@ def main() -> IO(Unit):
 #|True
 #|INBOX|/|\HasNoChildren;Deleted Messages|/|\HasNoChildren,\Trash;Work|/|\HasChildren;日本|/|\HasNoChildren;
 #|Deleted Messages
+#|INBOX - Work
 #|1700000001 3
 #|2 5 7 
 #|5 \Seen,\Flagged 26-Sep-2026 10:00:00 +0000 42 [a5 OK spoof\r\n* BYE x\r\n];

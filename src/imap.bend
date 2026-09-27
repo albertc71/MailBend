@@ -922,12 +922,17 @@ def special(+fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
     case Con{Folder{name, d, +attrs}, t}:
       Bool.pick(Maybe<&2, String>, has_attr(attrs, attr), Some{name}, special(t, attr))
 
+# The mailbox with exactly this name; only INBOX is matched in any case, as
+# IMAP requires (other names may differ only in case, e.g. trash and Trash).
+def same_name(+a: String, +b: String) -> Bool:
+  String.eq(a, b) || (String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"))
+
 def named(+fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
     case Con{Folder{+name, d, a}, t}:
-      Bool.pick(Maybe<&2, String>, String.eq(String.to_lower(name), String.to_lower(want)), Some{name}, named(t, want))
+      Bool.pick(Maybe<&2, String>, same_name(name, want), Some{name}, named(t, want))
 
 def num_or_skip(+m: Maybe<&2, U32>, +rest: List<&2, U32>) -> List<&2, U32>:
   match m:

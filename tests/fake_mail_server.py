@@ -1059,6 +1059,10 @@ class SMTPSession:
                 self.logger.log('smtp', text)
             if not self.handle_line(text):
                 return
+            if getattr(self, 'closing', False):
+                self.conn.sock.shutdown(socket.SHUT_RDWR)
+                self.conn.sock.close()
+                return
 
     def handle_line(self, text: str) -> bool:
         if self.auth_login_stage == 1:
@@ -1176,6 +1180,11 @@ class SMTPSession:
         addr = m.group(1)
         if addr.lower() == 'reject@example.com':
             self.send('550 5.1.1 mailbox unavailable\r\n')
+            return
+        if addr.lower() == 'closing@example.com':
+            # a closing rejection: the server hangs up right after replying
+            self.send('421 4.3.2 service shutting down\r\n')
+            self.closing = True
             return
         self.rcpt_to.append(addr)
         self.send('250 2.1.5 OK\r\n')

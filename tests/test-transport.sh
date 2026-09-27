@@ -495,6 +495,22 @@ case19() {
 }
 
 # =========================================================================
+# Case 20: a closing SMTP rejection (421, then the server hangs up) is
+# reported as a rejection, not replaced by a transport error from QUIT.
+# =========================================================================
+case20() {
+  start_server case20 || { fail 20 "server did not start"; return; }
+  body=$'Subject: x\r\n\r\nhi\r\n'
+  call_smtp $'MAIL FROM:<'"$USER"$'>\r\nRCPT TO:<closing@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  if [ "$CODE" -eq 5 ] && grep -aq "^421" "$OUT"; then
+    pass "20 a closing 421 stays a rejection"
+  else
+    fail "20 a closing 421 stays a rejection" "exit=$CODE $(tr -d '\r' <"$ERR")"
+  fi
+  stop_server
+}
+
+# =========================================================================
 # Case 2: the fixture password never leaks, and LOGIN/AUTH are redacted in
 # the log. Aggregates over every call made by every other case above, so it
 # runs last.
@@ -535,6 +551,7 @@ case16
 case17
 case18
 case19
+case20
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"
