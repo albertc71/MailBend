@@ -1,0 +1,16 @@
+# credentials
+.env
+.env.*
+!.env.example
+
+# native/build output
+build/
+bin/
+*.o
+*.so
+*.a
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
