@@ -162,6 +162,7 @@ class State:
     def __init__(self, fixture: dict, state_path: str):
         self.lock = threading.RLock()
         self.state_path = state_path
+        self.echo_login = False
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -693,7 +694,8 @@ class IMAPSession:
             ok = user == self.state.data['user'] and pw == self.state.data['password']
         if ok:
             self.authenticated = True
-            self.send(f'{tag} OK LOGIN completed\r\n')
+            echo = f' as {user} with {pw}' if self.state.echo_login else ''
+            self.send(f'{tag} OK LOGIN completed{echo}\r\n')
         else:
             self.send(f'{tag} NO [AUTHENTICATIONFAILED] invalid credentials\r\n')
 
@@ -1033,6 +1035,11 @@ class SMTPSession:
         except Exception:
             return ''
 
+    def _echo(self) -> str:
+        if not self.state.echo_login:
+            return ''
+        return ' as ' + self.state.data['user'] + ' with ' + self.state.data['password']
+
     def _check_creds(self, user: str, pw: str) -> bool:
         with self.state.lock:
             return user == self.state.data['user'] and pw == self.state.data['password']
@@ -1062,7 +1069,7 @@ class SMTPSession:
             self.auth_login_stage = 0
             if self._check_creds(self._pending_user or '', pw):
                 self.authenticated = True
-                self.send('235 2.7.0 Authentication successful\r\n')
+                self.send('235 2.7.0 Authentication successful' + self._echo() + '\r\n')
             else:
                 self.send('535 5.7.8 Authentication failed\r\n')
             return True
@@ -1133,7 +1140,7 @@ class SMTPSession:
                 return
             if self._check_creds(user.decode('utf-8', 'replace'), pw.decode('utf-8', 'replace')):
                 self.authenticated = True
-                self.send('235 2.7.0 Authentication successful\r\n')
+                self.send('235 2.7.0 Authentication successful' + self._echo() + '\r\n')
             else:
                 self.send('535 5.7.8 Authentication failed\r\n')
         elif mech == 'LOGIN':
@@ -1221,11 +1228,13 @@ def main():
     ap.add_argument('--no-starttls', action='store_true')
     ap.add_argument('--cert-name', default='server')
     ap.add_argument('--silent-port', action='store_true')
+    ap.add_argument('--echo-login', action='store_true', help='echo the credentials in login replies')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
         fixture = json.load(f)
     state = State(fixture, args.state)
+    state.echo_login = args.echo_login
     logger = Logger(args.log)
     caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
     ctx = make_ssl_context(args.certdir, args.cert_name)

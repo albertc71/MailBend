@@ -318,6 +318,8 @@ def qp_encode(bytes: String, +col: U32) -> String:
       qp_brk(col, 3) ++ "=09\r\n" ++ qp_encode(t, 0)
     case SCon{' ', SNil{}}:
       qp_brk(col, 3) ++ "=20"
+    case SCon{'\t', SNil{}}:
+      qp_brk(col, 3) ++ "=09"
     case SCon{+c, t}:
       +tok = qp_token(c)
       +w = U32.from_nat(String.length(tok))

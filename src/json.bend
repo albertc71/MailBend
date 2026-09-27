@@ -231,10 +231,14 @@ def word_tok(+w: String) -> Tok:
     Bool.pick(Tok, String.eq(w, "false"), TFalse{},
       Bool.pick(Tok, String.eq(w, "null"), TNull{}, TBad{})))
 
+# JSON whitespace: space, tab, CR and LF only (RFC 8259).
+def is_ws(+c: Char) -> Bool:
+  Char.is_eq(c, ' ') || Char.is_eq(c, '\t') || Char.is_eq(c, '\r') || Char.is_eq(c, '\n')
+
 def norm_other(+c: Char, +toks: List<&2, Tok>) -> Lx:
   Bool.pick(Lx, Char.is_digit(c) || Char.is_eq(c, '-'), Lx{LNum{SCon{c, SNil{}}}, toks},
     Bool.pick(Lx, Char.is_alpha(c), Lx{LWord{SCon{c, SNil{}}}, toks},
-      Bool.pick(Lx, Char.is_space(c), Lx{LNorm{}, toks}, Lx{LNorm{}, TBad{} <> toks})))
+      Bool.pick(Lx, is_ws(c), Lx{LNorm{}, toks}, Lx{LNorm{}, TBad{} <> toks})))
 
 def norm(+c: Char, toks: List<&2, Tok>) -> Lx:
   match c:

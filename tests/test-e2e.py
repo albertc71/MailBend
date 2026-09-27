@@ -272,7 +272,7 @@ def compose(srv):
     c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": link}]},
                 MAILBEND_ATTACH_DIR=srv.work)
     check("a symlink cannot escape MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
-    c, r = tool(srv, "mail_save_draft", {"to": ["José Q <jose@example.com>"], "subject": "Brouillon é",
+    c, r = tool(srv, "mail_save_draft", {"to": ["José Q <jose@example.com>"], "bcc": ["secret@example.com"], "subject": "Brouillon é",
                                          "body": "Draft body é\n.leading dot",
                                          "attachments": [{"path": att}, {"path": "report.txt", "filename": "rapport é.txt"}]},
                 MAILBEND_ATTACH_DIR=srv.work)
@@ -283,6 +283,7 @@ def compose(srv):
     raw = drafts[-1]["raw"] if drafts else ""
     check("draft is 7-bit MIME with the attachment", all(ord(ch) < 128 for ch in raw) and "report.txt" in raw
           and "multipart/mixed" in raw and "=?UTF-8?B?" in raw, raw[:400])
+    check("a saved draft keeps its Bcc recipients", "\r\nBcc: secret@example.com\r\n" in raw, raw[:400])
     c, r = tool(srv, "mail_get", {"folder": "Drafts", "uid": drafts[-1]["uid"] if drafts else 1})
     check("draft reads back: subject, body, attachment", c == 0 and r.get("subject") == "Brouillon é" and "Draft body é" in r.get("text", "")
           and any(a["filename"] == "report.txt" for a in r.get("attachments", [])), r)

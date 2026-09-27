@@ -994,16 +994,19 @@ def stamp() -> IO(Stamp):
 def domain_of(+addr: String) -> String:
   Maybe.default(&2, String, List.last(&2, String, String.split(M.addr_spec(addr), '@')), "mailbend.invalid")
 
-def draft_of(+w: Want, +from: String, +st: Stamp) -> M.Draft:
+# A saved draft keeps its Bcc header (a mail client sends it later and drops
+# the header); a sent message never carries one, Bcc goes only into the
+# SMTP envelope.
+def draft_of(+w: Want, +from: String, +st: Stamp, +keep_bcc: Bool) -> M.Draft:
   match w:
     case Want{to, cc, bcc, subject, text, irt, refs, atts, d}:
       match st:
         case Stamp{date, token}:
-          M.Draft{from, to, cc, subject, text, date, "<" ++ token ++ "@" ++ domain_of(from) ++ ">", irt, refs, atts}
+          M.Draft{from, to, cc, Bool.pick(List<&2, String>, keep_bcc, bcc, []), subject, text, date, "<" ++ token ++ "@" ++ domain_of(from) ++ ">", irt, refs, atts}
 
 def msgid_of(+d: M.Draft) -> String:
   match d:
-    case M.Draft{f, t, c, s, x, dt, msgid, i, r, a}:
+    case M.Draft{f, t, c, bc, s, x, dt, msgid, i, r, a}:
       msgid
 
 def boundary_of(+st: Stamp) -> String:
@@ -1074,11 +1077,11 @@ def deliver_as(+draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
     case True{}:
       do IO<Out>:
         r : Run <- imap_run(Ops.plan_probe())
-        draft_folder(r, M.compose(draft_of(w, from, st), boundary_of(st)), msgid_of(draft_of(w, from, st)))
+        draft_folder(r, M.compose(draft_of(w, from, st, True{}), boundary_of(st)), msgid_of(draft_of(w, from, st, True{})))
     case False{}:
       do IO<Out>:
-        o : Out <- smtp_run(S.envelope(M.addr_spec(from), specs(all_rcpts(w)), M.compose(draft_of(w, from, st), boundary_of(st))))
-        return sent_out(o, msgid_of(draft_of(w, from, st)), U32.from_nat(List.length(&2, String, all_rcpts(w))))
+        o : Out <- smtp_run(S.envelope(M.addr_spec(from), specs(all_rcpts(w)), M.compose(draft_of(w, from, st, False{}), boundary_of(st))))
+        return sent_out(o, msgid_of(draft_of(w, from, st, False{})), U32.from_nat(List.length(&2, String, all_rcpts(w))))
 
 def deliver(+w: Want, +from: String, +st: Stamp) -> IO(Out):
   deliver_as(is_draft(w), w, from, st)

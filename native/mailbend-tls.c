@@ -101,7 +101,12 @@ static const char *env_or(const char *name, const char *fallback) {
 
 /* ---- output ------------------------------------------------------------ */
 
+/* Set while authenticating: those replies are consumed, never forwarded, so
+ * a server that echoes the credentials cannot pass them to the core. */
+static int quiet = 0;
+
 static void emit(const unsigned char *p, size_t n) {
+  if (quiet) return;
   out_total += n;
   if (out_total > MAX_OUTPUT) die(EX_PROTO, "transcript exceeds the output limit");
   for (size_t i = 0; i < n; i++) {
@@ -522,7 +527,9 @@ static int run_imap(void) {
     raw_write(cmd, n);
     wipe(cmd, cap);
     free(cmd);
+    quiet = 1;
     int st = imap_wait("L", 0);
+    quiet = 0;
     if (st != ST_OK) die(EX_AUTH, "IMAP login rejected");
   }
 
@@ -709,6 +716,7 @@ static char *b64(const unsigned char *p, size_t n) {
 }
 
 static void smtp_auth(const char *ehlo) {
+  quiet = 1;
   if (has_auth(ehlo, "PLAIN")) {
     size_t ul = strlen(user), pl = strlen(pass), n = ul + pl + 2;
     unsigned char *raw = malloc(n);
@@ -739,6 +747,7 @@ static void smtp_auth(const char *ehlo) {
     die(EX_AUTH, "server offers neither AUTH PLAIN nor AUTH LOGIN");
   }
   if (smtp_reply(NULL) != 235) die(EX_AUTH, "SMTP authentication rejected");
+  quiet = 0;
 }
 
 /* Validates the whole envelope before connecting: CRLF lines, none of the
