@@ -25,6 +25,8 @@ mailbend-tls attach <dir> <path>             > the file's bytes
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
   environment only. The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
   (SMTP) itself, wipes its copies, and never writes them to stdout or stderr.
+  The server's replies to the login are checked but not forwarded either, so
+  a server that echoes the credentials cannot pass them to the core.
 - **IMAP script**: CRLF lines in IMAP wire form; a line ending in `{N}` is
   followed by N literal bytes. Tags `L` and `Z` are reserved, and LOGIN,
   AUTHENTICATE, STARTTLS and LOGOUT are refused. Each command waits for its

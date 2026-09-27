@@ -9,6 +9,147 @@ protocols. MailBend uses IMAP for mailboxes and SMTP for delivery:
 - SMTP: `smtp.mail.me.com:587`, STARTTLS
 - login: the iCloud address and an Apple app-specific password
 
+## Diagrams
+
+### Components and trust boundaries
+
+The Bend core decides everything (which commands run, how they are
+rendered, what the replies mean); the helper is the only code that touches
+the password, the network and attachment files.
+
+```mermaid
+flowchart TB
+  agent["AI agent (MCP client)"]
+  cli["CLI: scripts/mailbend call / tools"]
+  env[["Environment or agent secrets<br/>MAILBEND_EMAIL, MAILBEND_APP_PASSWORD"]]
+
+  subgraph core["Bend core process: never reads the password"]
+    direction TB
+    main["main.bend<br/>MCP JSON-RPC server and CLI<br/>8 MiB line cap, envelope check"]
+    json["src/json.bend<br/>strict JSON parser"]
+    tools["src/tools.bend<br/>14 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
+    ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
+    laws["LAWS.bend + PROOF.bend<br/>26 laws proven over the plans"]
+    imap["src/imap.bend<br/>render script, parse transcript"]
+    mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
+    smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
+  end
+
+  subgraph helper["mailbend-tls (C, OpenSSL): the only reader of the password"]
+    direction TB
+    validate["Validate the whole script<br/>before connecting"]
+    tls["TLS 1.2+, chain and host name verified<br/>login; login replies not forwarded"]
+    lock["Lock-step: one command at a time<br/>stop at the first NO/BAD or unmet =EXPECT"]
+    attach["attach: openat2 beneath the directory<br/>no symlinks, no .., regular file up to 25 MiB"]
+  end
+
+  imapsrv[("imap.mail.me.com:993<br/>implicit TLS")]
+  smtpsrv[("smtp.mail.me.com:587<br/>STARTTLS required")]
+  files[("MAILBEND_ATTACH_DIR<br/>attachments off without it")]
+
+  agent -- "JSON-RPC lines on stdio" --> main
+  cli --> main
+  main --> json
+  main --> tools
+  tools --> ops
+  laws -. "proves" .-> ops
+  ops --> imap
+  tools --> mime
+  mime --> smtp
+  imap -- "IMAP script on stdin" --> validate
+  smtp -- "SMTP envelope on stdin" --> validate
+  validate --> tls
+  tls --> lock
+  lock <--> imapsrv
+  lock <--> smtpsrv
+  lock -- "transcript on stdout" --> imap
+  tools -- "attach dir path" --> attach
+  attach --> files
+  attach -- "file bytes on stdout" --> tools
+  env -. "read by the helper only" .-> tls
+```
+
+The password is in the environment of both processes (the core starts the
+helper, which inherits it), but only the helper reads it; see
+[Credentials](#credentials).
+
+### A read (mail_get)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Agent
+  participant C as Bend core
+  participant H as mailbend-tls
+  participant S as iCloud IMAP
+  A->>C: tools/call mail_get with uid
+  C->>C: plan_get gives EXAMINE and UID FETCH with BODY.PEEK
+  C->>H: rendered script on stdin
+  H->>S: TLS handshake, verify chain and host name
+  H->>S: LOGIN (reply consumed, not forwarded)
+  H->>S: EXAMINE folder (read-only, no flag changes)
+  S-->>H: untagged replies, UIDVALIDITY
+  H->>S: UID FETCH uid with FLAGS, sizes and BODY.PEEK[] up to max bytes
+  S-->>H: message as a literal, read as raw bytes
+  H->>S: LOGOUT
+  H-->>C: transcript on stdout, exit 0
+  C->>C: parse transcript, then MIME: headers, text, attachment list
+  C-->>A: JSON result with uidvalidity
+```
+
+### A change (mail_trash)
+
+Every change runs two sessions: a read-only preflight, then the change
+itself, pinned to the caller's UIDVALIDITY inside the changing session.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Agent
+  participant C as Bend core
+  participant H as mailbend-tls
+  participant S as iCloud IMAP
+  A->>C: tools/call mail_trash with uids and uidvalidity
+  C->>C: refuse if MAILBEND_READ_ONLY or uidvalidity missing
+  C->>H: preflight: CAPABILITY, LIST, EXAMINE folder
+  H->>S: login, then the commands one at a time
+  S-->>H: capabilities, folders with special-use, UIDVALIDITY
+  H-->>C: transcript
+  C->>C: Trash from the \Trash attribute, MOVE or UIDPLUS, UIDVALIDITY matches
+  C->>H: plan_trash: SELECT, =EXPECT UIDVALIDITY, UID SEARCH, UID MOVE
+  H->>S: SELECT folder
+  S-->>H: OK [UIDVALIDITY v]
+  alt the folder has another UIDVALIDITY
+    H-->>C: exit 5 before any change
+    C-->>A: error: the UIDs are stale
+  else it matches
+    H->>S: UID SEARCH UID uids (which exist)
+    H->>S: UID MOVE uids Trash
+    S-->>H: OK
+    H-->>C: transcript
+    C-->>A: result with changed and missing UIDs
+  end
+```
+
+Without MOVE the plan copies, marks `\Deleted` and runs `UID EXPUNGE` of
+exactly those UIDs, after `CAPABILITY` and `=EXPECT-WORD UIDPLUS` in the same
+session; without UIDPLUS as well, there is no plan and nothing is sent.
+
+### Where each safety rule is enforced
+
+| Rule | Enforced in | Checked by |
+| --- | --- | --- |
+| TLS chain and host name always verified | `native/mailbend-tls.c` | transport tests (bad CA, wrong host, expired, self-signed) |
+| Only the helper reads the password; no output contains it | helper (login, login replies not forwarded) | transport cases 2 and 18, e2e output scan |
+| Reads never change mail (`EXAMINE`, `BODY.PEEK`) | `src/ops.bend` read plans | laws in `LAWS.bend`, e2e server log |
+| Move and trash never expunge before copying | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail` |
+| Delete needs `permanently-delete` and UIDPLUS | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus` |
+| Stale UIDs never touch other messages | `=EXPECT` after `SELECT` in every change plan | laws `*_is_pinned`, e2e stale-UIDVALIDITY cases |
+| No plain `EXPUNGE` | plans use `UID EXPUNGE` only | e2e server log |
+| Attachments only from `MAILBEND_ATTACH_DIR` | helper `attach` (openat2) | e2e (symlink, `..`, `/proc/self/environ`) |
+| Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
+| Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
+
 ## Layers
 
 ```text
@@ -32,7 +173,12 @@ the transcript. The core parses the transcript into results. Tools that need
 server facts first (capabilities, special folders, the original of a reply)
 run a short discovery session before the action session.
 
-The core never reads `MAILBEND_APP_PASSWORD`; only the helper does.
+## Credentials
+
+The core never reads `MAILBEND_APP_PASSWORD`; only the helper does. The
+helper wipes its copies after login and does not forward the server's
+login replies, so no transcript, tool result or log can contain the
+password.
 
 ## Semantics
 
@@ -79,6 +225,10 @@ Notes:
   without `uidvalidity` is refused.
 - Replies read the first 256 KB of the original; a larger original gets a
   note in the quote that it may be incomplete.
+- Saved drafts keep a `Bcc:` header (a mail client sends them later); sent
+  mail never carries one, Bcc goes only into the SMTP envelope.
+- The MCP server accepts request lines up to 8 MiB and answers malformed
+  JSON with `-32700` and a malformed JSON-RPC envelope with `-32600`.
 - Search and new-mail fetch in a second session and require it to report
   the same UIDVALIDITY; reply and forward require the caller's
   `uidvalidity` to match the session that fetched the original.

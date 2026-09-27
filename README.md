@@ -127,18 +127,25 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 
 ## How it works
 
-```text
-agent ── MCP (stdio JSON-RPC) ──▶ Bend core: tools, command plans, parsing, MIME
-                                     │  IMAP script / SMTP envelope on stdin
-                                     ▼
-                             mailbend-tls (C, OpenSSL): verified TLS, login
-                                     │
-                                     ▼
-                       imap.mail.me.com:993 · smtp.mail.me.com:587
+```mermaid
+flowchart LR
+  agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
+  subgraph core["Bend core: never reads the password"]
+    direction TB
+    tools["14 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
+  end
+  core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (C, OpenSSL)<br/>verified TLS, login, lock-step commands,<br/>safe attachment reads"]
+  helper -- "transcript on stdout" --> core
+  helper <--> imap[("imap.mail.me.com:993")]
+  helper <--> smtp[("smtp.mail.me.com:587")]
+  secrets[["MAILBEND_APP_PASSWORD"]] -. "read by the helper only" .-> helper
 ```
 
 Each tool call runs one or two short IMAP sessions (login, a few commands,
-logout); nothing runs in the background. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+logout); nothing runs in the background. The detailed component diagram,
+the read and change sequences, and a table of where each safety rule is
+enforced are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#diagrams).
 
 ## Development
 
