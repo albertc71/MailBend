@@ -10,8 +10,9 @@ The intended primary development branch is **`main`**. The repository was initia
 
 ## Status (2026-09-27)
 
-Milestones 1-6 and 8 are implemented; end-to-end verification against a
-local TLS IMAP/SMTP server (`tests/fake_mail_server.py`) is in progress; see
+Milestones 1-6 and 8 are implemented and verified end to end against a local
+TLS IMAP/SMTP server (`tests/fake_mail_server.py`): 84 e2e checks, 17
+transport checks, 4 unit suites, all laws proven. See
 `plans/260927-0319-mailbend-core-implementation/plan.md`.
 
 - Bend 2.0.29 core in `main.bend` + `src/*.bend`; safety laws in `LAWS.bend`,
@@ -22,6 +23,10 @@ local TLS IMAP/SMTP server (`tests/fake_mail_server.py`) is in progress; see
 - 14 tools over MCP stdio and a CLI (`scripts/mailbend`); install with
   `scripts/install.sh`.
 - Tests: `tests/run-unit.sh`, `tests/test-transport.sh`, `tests/test-e2e.py`.
+- A security review (plans/reports/code-reviewer-260927-0319-security-review.md)
+  found an attachment-path exfiltration route and a helper literal bug; both
+  are fixed (attachments only from `MAILBEND_ATTACH_DIR`; mutations check
+  UIDVALIDITY, delete requires it).
 
 Not done yet:
 

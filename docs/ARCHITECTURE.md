@@ -47,7 +47,7 @@ The core never reads `MAILBEND_APP_PASSWORD`; only the helper does.
 | mark read / unread | `SELECT` + `UID STORE +FLAGS.SILENT (\Seen)` / `-FLAGS.SILENT` |
 | move | `UID MOVE`; else `UID COPY` + `UID STORE +FLAGS.SILENT (\Deleted)` + `UID EXPUNGE` (UIDPLUS); else refused |
 | trash | move to the `\Trash` folder (else "Deleted Messages" or "Trash" by name) |
-| delete | explicit confirmation, then `\Deleted` + `UID EXPUNGE` of exactly those UIDs (UIDPLUS); else refused |
+| delete | confirmation word + matching UIDVALIDITY (checked by an EXAMINE preflight), then `\Deleted` + `UID EXPUNGE` of exactly those UIDs (UIDPLUS); else refused |
 | save draft | `APPEND` to the `\Drafts` folder with `(\Draft \Seen)` |
 | send / reply / forward | MIME composition + SMTP via STARTTLS |
 
@@ -64,6 +64,10 @@ Notes:
   quoted-printable text, base64 attachments. Bcc goes only into the envelope.
 - A plain `EXPUNGE` is never sent: it would also remove messages another
   client marked `\Deleted`.
+- Mutations accept the folder's `uidvalidity` (delete requires it); a
+  read-only preflight (`CAPABILITY`, `LIST`, `EXAMINE`) refuses stale UIDs.
+- Attachments come only from `MAILBEND_ATTACH_DIR`: paths are resolved with
+  `realpath -e`, must stay inside it, and must be regular files.
 
 ## Safety laws
 
@@ -71,11 +75,14 @@ Notes:
 `PROOF.bend` proves them, and `bend PROOF.bend` fails if any stops holding:
 
 - `Read`/`Search` are read-only, `Delete` is not, `Trash` is not destructive;
-- the probe, folder, search, summary, read and new-mail plans contain no
-  command that can change a mailbox, for all arguments;
+- the probe, preflight, folder, search, summary, read and new-mail plans
+  contain no command that can change a mailbox, for all arguments;
+- rendered read scripts start with `EXAMINE`, and every fetch item renders as
+  `BODY.PEEK[...]` or metadata;
 - marking read/unread never marks `\Deleted` or expunges;
 - move and trash never expunge before copying, for every capability set;
-- delete without confirmation is the empty plan;
+- delete is the empty plan unless the confirmation is exactly
+  `permanently-delete` (the tool passes the caller's string straight in);
 - saving a draft never removes anything.
 
 Fetch items are a closed type with no non-PEEK body item, so a read cannot

@@ -34,6 +34,33 @@ def Laws.get_writes_nothing(mbox, uid, max):
 def Laws.headers_write_nothing(mbox, uids):
   {==}
 
+def Laws.preflight_writes_nothing(mbox):
+  {==}
+
+def Laws.examine_renders_examine(mbox):
+  {==}
+
+def Laws.search_script_examines(mbox, keys):
+  {==}
+
+def Laws.get_script_examines(mbox, uid, max):
+  {==}
+
+def Laws.fetch_items_never_set_seen(item):
+  match item:
+    case I.IUid{}:
+      {==}
+    case I.IFlags{}:
+      {==}
+    case I.IDate{}:
+      {==}
+    case I.ISize{}:
+      {==}
+    case I.IHeaders{}:
+      {==}
+    case I.IFull{max}:
+      {==}
+
 def Laws.get_new_writes_nothing(mbox, since):
   {==}
 
@@ -66,7 +93,8 @@ def Laws.trash_never_loses_mail(mbox, uids, trash, move, uidplus):
         case False{}:
           {==}
 
-def Laws.delete_needs_confirmation(mbox, uids, uidplus):
+def Laws.delete_needs_confirmation(mbox, uids, confirm, wrong, uidplus):
+  %Equal.sym(Bool, String.eq(confirm, Ops.confirm_word()), False{}, wrong) : {Ops.plan_delete_if(_, mbox, uids, uidplus) == [] : List<&2, I.Cmd>}
   {==}
 
 def Laws.draft_never_removes(drafts, msg):

@@ -43,6 +43,31 @@ law headers_write_nothing:
   for uids: List<&2, U32>
   {I.any_writes(Ops.plan_headers(mbox, uids)) == False{} : Bool}
 
+law preflight_writes_nothing:
+  for mbox: String
+  {I.any_writes(Ops.plan_preflight(mbox)) == False{} : Bool}
+
+# What reaches the wire: read plans open the folder with EXAMINE, and every
+# fetch item renders as BODY.PEEK or metadata, so no read can set \Seen.
+law examine_renders_examine:
+  for mbox: String
+  {Ops.has_prefix("EXAMINE ", I.cmd_str(I.CExamine{mbox})) == True{} : Bool}
+
+law search_script_examines:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  {Ops.has_prefix("a1 EXAMINE ", I.script(Ops.plan_search(mbox, keys))) == True{} : Bool}
+
+law get_script_examines:
+  for mbox: String
+  for uid: U32
+  for max: U32
+  {Ops.has_prefix("a1 EXAMINE ", I.script(Ops.plan_get(mbox, uid, max))) == True{} : Bool}
+
+law fetch_items_never_set_seen:
+  for item: I.Item
+  {Ops.peek_safe(I.item_str(item)) == True{} : Bool}
+
 law get_new_writes_nothing:
   for mbox: String
   for since: U32
@@ -73,12 +98,15 @@ law trash_never_loses_mail:
   for uidplus: Bool
   {Ops.loses_mail(Ops.plan_trash(mbox, uids, trash, move, uidplus)) == False{} : Bool}
 
-# Without explicit confirmation, deletion does nothing at all.
+# Unless the confirmation is exactly "permanently-delete", deletion does
+# nothing at all.
 law delete_needs_confirmation:
   for mbox: String
   for uids: List<&2, U32>
+  for confirm: String
+  for wrong: {String.eq(confirm, Ops.confirm_word()) == False{} : Bool}
   for uidplus: Bool
-  {Ops.plan_delete(mbox, uids, False{}, uidplus) == [] : List<&2, I.Cmd>}
+  {Ops.plan_delete(mbox, uids, confirm, uidplus) == [] : List<&2, I.Cmd>}
 
 # Saving a draft only appends; it never removes anything.
 law draft_never_removes:

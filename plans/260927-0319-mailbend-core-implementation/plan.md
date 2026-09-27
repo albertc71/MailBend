@@ -22,7 +22,8 @@ credentials), the monitoring watcher (milestone 7), marketplace packaging.
 - [x] helper builds warning-free (gcc, clang) and verifies chain + host name
 - [x] unit tests: JSON, codecs, IMAP rendering/parsing, MIME
 - [x] transport tests: TLS failures, lock-step stop, literal framing, SMTP STARTTLS
-- [x] e2e: every tool via CLI and MCP stdio against the fake server; reads never add \Seen
+- [x] e2e: every tool via CLI and MCP stdio against the fake server; reads never add \Seen (84 checks)
+- [x] security review findings fixed (attachment allowlist, helper literal guard, UIDVALIDITY checks, rendered-command laws)
 - [x] `scripts/install.sh` builds everything; README has install/configure/test steps
 - [ ] live iCloud run (docs/CLOUD_AGENT.md section 5)
 
@@ -43,3 +44,6 @@ credentials), the monitoring watcher (milestone 7), marketplace packaging.
 - No plain EXPUNGE ever: move falls back to COPY + UID EXPUNGE only with
   UIDPLUS; delete requires UIDPLUS and `confirm = "permanently-delete"`.
 - `MAILBEND_READ_ONLY=1` for safe first runs against a real mailbox.
+- Attachments only from `MAILBEND_ATTACH_DIR` (resolved with realpath,
+  regular files): the core's environment holds the app password, so an
+  unrestricted path could mail out /proc/self/environ.
