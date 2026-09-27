@@ -602,6 +602,20 @@ static int smtp_reply(char **ext) {
 
 static void smtp_send(const char *s) { raw_write(s, strlen(s)); }
 
+/* Like raw_write, but reports failure instead of exiting: for the closing
+ * QUIT, which must not replace an earlier rejection with a transport error. */
+static int try_write(const char *s) {
+  size_t n = strlen(s);
+  const unsigned char *b = (const unsigned char *)s;
+  while (n > 0) {
+    int w = SSL_write(ssl, b, n > 65536 ? 65536 : (int)n);
+    if (w <= 0) return 0;
+    b += w;
+    n -= (size_t)w;
+  }
+  return 1;
+}
+
 static int has_ext(const char *ehlo, const char *word) {
   size_t wl = strlen(word);
   for (const char *l = ehlo; *l;) {
@@ -730,7 +744,7 @@ static int run_smtp(void) {
   smtp_auth(ehlo);
   free(ehlo);
 
-  int status = EX_OK;
+  int status = EX_OK, last = 0;
   size_t p = 0;
   while (p < in_len && status == EX_OK) {
     unsigned char *nl = memchr(in + p, '\n', in_len - p);
@@ -745,6 +759,7 @@ static int run_smtp(void) {
     raw_write(in + p, ln);
     p += ln;
     int code = smtp_reply(NULL);
+    last = code;
     if (!data) {
       if (code / 100 != 2) status = EX_REJECTED;
       continue;
@@ -763,17 +778,21 @@ static int run_smtp(void) {
       if (dot) { ended = 1; break; }
     }
     if (!ended) die(EX_USAGE, "message does not end in a \".\" line");
-    if (smtp_reply(NULL) / 100 != 2) status = EX_REJECTED;
+    last = smtp_reply(NULL);
+    if (last / 100 != 2) status = EX_REJECTED;
   }
   if (status != EX_OK) fputs("mailbend-tls: SMTP command rejected\n", stderr);
-  smtp_send("QUIT\r\n");
-  unsigned char *line;
-  long n;
-  while ((n = read_line(&line)) >= 0) {
-    emit(line, (size_t)n);
-    int last = n < 4 || line[3] != '-';
-    free(line);
-    if (last) break;
+  /* QUIT is best effort: after a 421 the server has already closed, and a
+   * failed QUIT must not turn the rejection into a transport error. */
+  if (last != 421 && try_write("QUIT\r\n")) {
+    unsigned char *line;
+    long n;
+    while ((n = read_line(&line)) >= 0) {
+      emit(line, (size_t)n);
+      int end = n < 4 || line[3] != '-';
+      free(line);
+      if (end) break;
+    }
   }
   return status;
 }

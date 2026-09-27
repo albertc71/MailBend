@@ -276,6 +276,10 @@ def compose(srv):
     c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": link}]},
                 MAILBEND_ATTACH_DIR=srv.work)
     check("a symlink cannot escape MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
+    c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": "environ"}]},
+                MAILBEND_ATTACH_DIR="/proc/self")
+    check("MAILBEND_ATTACH_DIR=/proc/self cannot mail out the environment", c != 0 and PASSWORD not in json.dumps(r)
+          and not srv.st().get("sent"), r)
     c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": "report.txt"}] * 33},
                 MAILBEND_ATTACH_DIR=srv.work)
     check("at most 32 attachments per message", c != 0 and "32 attachments" in r.get("error", "") and not srv.st().get("sent"), r)
@@ -351,6 +355,17 @@ def compose(srv):
     c2, g2 = tool(srv, "mail_get", {"folder": "Drafts", "uid": r.get("uid", 0)})
     check("reply to an original over 256 KB says its quote may be incomplete", c == 0 and "Big original text" in g2.get("text", "")
           and "only its start was read" in g2.get("text", ""), (r, g2.get("text", "")[:600]))
+    c, r = tool(srv, "mail_save_draft", {"to": ["list@example.com", "Bob <BOB@example.com>"],
+                                         "cc": ["bob@example.com", FIX["user"], "List <list@example.com>", "carol@example.com"],
+                                         "subject": "team", "body": "hello team"})
+    team_uid = r.get("uid", 0)
+    c, r = tool(srv, "mail_reply", {"folder": "Drafts", "uid": team_uid, "uidvalidity": g.get("uidvalidity") or 0,
+                                    "body": "re team", "reply_all": True, "as_draft": True})
+    team = next((m["raw"] for m in srv.st()["mailboxes"]["Drafts"]["messages"] if m["uid"] == r.get("uid")), "")
+    cc = next((l for l in team.split("\r\n\r\n", 1)[0].replace("\r\n ", " ").split("\r\n") if l.startswith("Cc:")), "")
+    check("reply-all lists each recipient once and leaves out the sender's own address",
+          c == 0 and cc.lower().count("list@example.com") == 1 and cc.lower().count("bob@example.com") == 1
+          and "carol@example.com" in cc and FIX["user"] not in cc, (r, cc))
 
     c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["boss@example.com"], "body": "FYI"})
     sent = srv.st().get("sent", [])

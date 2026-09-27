@@ -6,8 +6,9 @@ MailBend has two small native programs:
   password. Which commands to send, and what the answers mean, is decided
   by the Bend core. It links only against OpenSSL.
 - `mailbend-attach.c`: reads one attachment file safely (Bend cannot open a
-  file without following symlinks). It holds no credentials: it clears its
-  environment first and opens no connection.
+  file without following symlinks). It holds no credentials: it first
+  re-executes itself with an empty environment (so even
+  `/proc/self/environ` is empty) and opens no connection.
 
 ```sh
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto
@@ -42,7 +43,8 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   `=EXPECT-WORD <word>` asks for `<word>` as a whole word (any case) in one
   of those lines; the core uses it to confirm UIDPLUS before anything is
   marked `\Deleted`.
-- **Attachments** (`mailbend-attach`): clears its environment, resolves
+- **Attachments** (`mailbend-attach`): re-executes itself with an empty
+  environment, refuses files on procfs or sysfs, resolves
   `<dir>` once with `realpath` and opens
   that canonical path with `RESOLVE_NO_SYMLINKS` (so swapping a component
   for a symlink afterwards fails), then opens `<path>` (relative to `<dir>`,

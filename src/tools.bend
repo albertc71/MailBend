@@ -737,7 +737,7 @@ def move_caps(r: Run, +folder: String, +uids: List<&2, U32>, +dest: String, +uid
 # Whether two names denote the same mailbox; INBOX is case-insensitive in
 # IMAP, other names are compared as given.
 def same_mailbox(+a: String, +b: String) -> Bool:
-  String.eq(a, b) || (String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"))
+  I.same_name(a, b)
 
 def move_request(+uidv: U32, +folder: String, +dest: String) -> String:
   Bool.pick(String, String.is_empty(dest) || same_mailbox(dest, folder), "\"destination\" must name a different folder",
@@ -1183,12 +1183,32 @@ def quote_lines(+ls: List<&2, String>) -> String:
     case Con{l, t}:
       "> " ++ l ++ "\n" ++ quote_lines(t)
 
-def not_me(+xs: List<&2, String>, +me: String) -> List<&2, String>:
+# An address as a comparison key: its addr-spec, lower-cased.
+def spec_key(+a: String) -> String:
+  String.to_lower(M.addr_spec(a))
+
+def spec_keys(+xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
     case Con{x, t}:
-      List.append(&2, String, Bool.pick(List<&2, String>, String.eq(String.to_lower(M.addr_spec(x)), String.to_lower(me)), [], [x]), not_me(t, me))
+      spec_key(x) <> spec_keys(t)
+
+def key_in(+k: String, +ks: List<&2, String>) -> Bool:
+  match ks:
+    case Nil{}:
+      False{}
+    case Con{h, t}:
+      String.eq(h, k) || key_in(k, t)
+
+# The addresses whose addr-spec is not in `seen` and not repeated, in order.
+def fresh(+xs: List<&2, String>, +seen: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{+x, t}:
+      List.append(&2, String, Bool.pick(List<&2, String>, key_in(spec_key(x), seen), [], [x]),
+        fresh(t, Bool.pick(List<&2, String>, key_in(spec_key(x), seen), seen, spec_key(x) <> seen)))
 
 def addr_push(+cur: String, +acc: List<&2, String>) -> List<&2, String>:
   +a = String.trim(String.reverse(cur))
@@ -1242,8 +1262,8 @@ def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +cut: Bool, +args: J.Json, +me
   do IO<Out>:
     rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
     with_atts(atts_collect(rs),
-      reply_to(hs),
-      Bool.pick(List<&2, String>, bool_arg(args, "reply_all", False{}), not_me(List.append(&2, String, hdr_addrs(hs, "to"), hdr_addrs(hs, "cc")), me), []),
+      fresh(reply_to(hs), []),
+      Bool.pick(List<&2, String>, bool_arg(args, "reply_all", False{}), fresh(List.append(&2, String, hdr_addrs(hs, "to"), hdr_addrs(hs, "cc")), spec_key(me) <> spec_keys(reply_to(hs))), []),
       strs_arg(args, "bcc"),
       prefixed("Re:", hdr_text(hs, "subject")),
       str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_text(hs, "date") ++ ", " ++ hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(body_text(p))) ++ cut_note(cut),

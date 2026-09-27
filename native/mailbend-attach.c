@@ -4,9 +4,11 @@
  *   mailbend-attach <dir> <path> <max-bytes>   > file bytes
  *
  * Kept apart from mailbend-tls so the credential-bearing helper never reads
- * files: this program opens no connection, and it clears its environment
- * before anything else, so the app password it may have inherited is gone
- * before a caller-chosen path is touched.
+ * files: this program opens no connection, and before anything else it
+ * re-executes itself with an empty environment. (Clearing environ is not
+ * enough: /proc/self/environ shows the environment the process started
+ * with, which may hold the app password.) Files on procfs or sysfs are
+ * refused as well.
  *
  * <path> is relative to <dir>, or absolute inside it. <dir> is resolved once
  * with realpath() and opened by that canonical path with
@@ -31,9 +33,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <linux/magic.h>
 #include <linux/openat2.h>
+
+extern char **environ;
 
 #define EX_REFUSED 2
 #define MAX_ATTACHMENT (25ull << 20)
@@ -78,7 +84,11 @@ static unsigned long long parse_max(const char *s) {
 }
 
 int main(int argc, char **argv) {
-  clearenv();
+  if (environ && environ[0]) {
+    char *empty[] = {NULL};
+    execve("/proc/self/exe", argv, empty);
+    die("cannot drop the inherited environment");
+  }
   if (argc != 4) die("usage: mailbend-attach <dir> <path> <max-bytes>");
   const char *dir = argv[1], *path = argv[2];
   unsigned long long max = parse_max(argv[3]);
@@ -115,6 +125,9 @@ int main(int argc, char **argv) {
   }
   struct stat st;
   if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die("attachment %s is not a regular file", path);
+  struct statfs fs;
+  if (fstatfs(fd, &fs) != 0 || fs.f_type == PROC_SUPER_MAGIC || fs.f_type == SYSFS_MAGIC)
+    die("attachment %s is a kernel file (procfs or sysfs)", path);
   if ((unsigned long long)st.st_size > max) die("attachments would exceed %llu bytes (at %s)", max, path);
 
   unsigned char buf[65536];
