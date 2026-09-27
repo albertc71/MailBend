@@ -36,7 +36,7 @@ type Attach is Data:
 # A message to compose. `to`, `cc` may hold "Name <addr>" forms; Bcc is
 # never written into the message.
 type Draft is Data:
-  Draft{from: String, to: List<&2, String>, cc: List<&2, String>, subject: String, text: String, date: String, msgid: String, in_reply_to: String, refs: String, atts: List<&2, Attach>}
+  Draft{from: String, to: List<&2, String>, cc: List<&2, String>, bcc: List<&2, String>, subject: String, text: String, date: String, msgid: String, in_reply_to: String, refs: String, atts: List<&2, Attach>}
 
 # Splits at the first empty line (CRLF CRLF, or LF LF).
 def split_go(+s: String, +acc: String) -> Split:
@@ -142,9 +142,19 @@ def ew_join(+ws: List<&2, String>, +prev_ew: Bool, +first: Bool) -> String:
     case Con{w, t}:
       Bool.pick(String, first || (prev_ew && is_ew(w)), "", " ") ++ ew_word(w) ++ ew_join(t, is_ew(w), False{})
 
+def tab_to_space(+s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\t', t}:
+      SCon{' ', tab_to_space(t)}
+    case SCon{c, t}:
+      SCon{c, tab_to_space(t)}
+
 # A raw header value to text: encoded words decoded, raw 8-bit read as UTF-8.
+# Space and tab are both linear whitespace between words.
 def decode_header(+v: String) -> String:
-  ew_join(String.split(v, ' '), False{}, True{})
+  ew_join(String.split(tab_to_space(v), ' '), False{}, True{})
 
 # ---- parameters (Content-Type, Content-Disposition) ----------------------------------------
 
@@ -283,6 +293,16 @@ def cont_join(fuel: Nat, +ps: List<&2, String>, +name: String, +n: U32) -> Strin
       Bool.pick(String, String.is_empty(enc) && String.is_empty(plain), "",
         Bool.pick(String, String.is_empty(enc), pct_encode(C.utf8_encode(plain)), unquote(enc)) ++ cont_join(f, ps, name, (n + 1 : U32)))
 
+# A joined continuation to text. Only an encoded first segment ("name*0*=")
+# carries the charset'lang' prefix; without it the value is plain text
+# (encoded segments decoded as UTF-8).
+def cont_value(+first_enc: Bool, +cont: String) -> String:
+  match first_enc:
+    case True{}:
+      ext_value(cont)
+    case False{}:
+      C.utf8_decode(pct_decode(cont))
+
 # A parameter of a structured header value, e.g. param(ct, "charset"). An
 # RFC 2231 extended value ("name*=", or continuations "name*0*=", ...) wins
 # over a plain fallback ("name=").
@@ -291,7 +311,7 @@ def param(+v: String, +name: String) -> String:
   +ext = unquote(param_raw(ps, name ++ "*"))
   +cont = cont_join(64n, ps, name, 0)
   Bool.pick(String, Bool.not(String.is_empty(ext)), ext_value(ext),
-    Bool.pick(String, Bool.not(String.is_empty(cont)), ext_value(cont), param_go(ps, name)))
+    Bool.pick(String, Bool.not(String.is_empty(cont)), cont_value(Bool.not(String.is_empty(param_raw(ps, name ++ "*0*"))), cont), param_go(ps, name)))
 
 # ---- bodies ----------------------------------------------------------------------
 
@@ -748,10 +768,11 @@ def body_section(+b: String, +text: String, +atts: List<&2, Attach>) -> String:
 # multipart boundary to use when there are attachments.
 def compose(+d: Draft, +b: String) -> String:
   match d:
-    case Draft{from, to, cc, subject, text, date, msgid, irt, refs, atts}:
+    case Draft{from, to, cc, bcc, subject, text, date, msgid, irt, refs, atts}:
       "From: " ++ encode_addr(from) ++ "\r\n" ++
       opt_header("To", encode_addrs(to)) ++
       opt_header("Cc", encode_addrs(cc)) ++
+      opt_header("Bcc", encode_addrs(bcc)) ++
       "Subject: " ++ encode_header(subject) ++ "\r\n" ++
       "Date: " ++ date ++ "\r\n" ++
       "Message-ID: " ++ msgid ++ "\r\n" ++

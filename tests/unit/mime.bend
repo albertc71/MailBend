@@ -63,7 +63,7 @@ def check(+hs: List<&2, M.Hdr>) -> IO(Unit):
     IO.print(M.main_value(M.header(hs, "content-type")) ++ " " ++ M.param(M.header(hs, "content-type"), "boundary"))
 
 def draft() -> M.Draft:
-  M.Draft{"Tester <tester@example.com>", ["José Q <jose@example.com>", "b@example.com"], [], "Résumé attached", "Line one\nligne deux é\n", "Sun, 27 Sep 2026 03:19:30 +0000", "<1@example.com>", "", "", [M.Attach{"notes.txt", "text/plain", "hello"}]}
+  M.Draft{"Tester <tester@example.com>", ["José Q <jose@example.com>", "b@example.com"], [], [], "Résumé attached", "Line one\nligne deux é\n", "Sun, 27 Sep 2026 03:19:30 +0000", "<1@example.com>", "", "", [M.Attach{"notes.txt", "text/plain", "hello"}]}
 
 # Whether a message is 7-bit: printable ASCII, tabs and CRLF only.
 def crlf_plain(+s: String) -> Bool:
@@ -78,7 +78,7 @@ def roundtrip(+m: String) -> IO(Unit):
 
 # Caller-supplied threading headers and content types cannot add header lines.
 def evil() -> M.Draft:
-  M.Draft{"t@example.com", ["a@example.com"], [], "s", "b", "d", "<1@x>", "<x@y>\r\nBcc: evil@example.com", "", [M.Attach{"f.txt", "text/plain\r\nX-Evil: 1", "hi"}]}
+  M.Draft{"t@example.com", ["a@example.com"], [], [], "s", "b", "d", "<1@x>", "<x@y>\r\nBcc: evil@example.com", "", [M.Attach{"f.txt", "text/plain\r\nX-Evil: 1", "hi"}]}
 
 def no_evil(+m: String) -> Bool:
   Bool.not(String.contains(m, "\r\nBcc:") || String.contains(m, "\r\nX-Evil:"))
@@ -110,6 +110,7 @@ def main() -> IO(Unit):
     IO.print(M.param("attachment; filename=\"Q1; final \\\"v2\\\".pdf\"; size=3", "filename") ++ " | " ++ M.main_value("text/plain ; charset=\"a;b\"") ++ " | " ++ M.addr_spec("john@example.com (Doe, John)"))
     IO.print(M.addr_spec("\"a <evil@x.com>\" <real@y.com>") ++ " " ++ M.addr_spec("plain@z.com"))
     IO.print(Bool.show(M.addr_ok("A <a@b.c>")) ++ " " ++ Bool.show(M.addr_ok("a@b.c\r\nRCPT TO:<x@y>")) ++ " " ++ Bool.show(M.addr_ok("no-at")) ++ " " ++ Bool.show(M.addr_ok("a@b@c")))
+    IO.print(M.param("attachment; filename*0=\"Q1 \"; filename*1=\"final.pdf\"", "filename") ++ " | " ++ M.param("attachment; filename*0*=utf-8''r%C3%A9; filename*1=\" sum.pdf\"", "filename") ++ " | " ++ M.decode_header("=?UTF-8?Q?caf=C3=A9?=\t=?UTF-8?Q?_cr=C3=A8me?= ok"))
 
 #|José <jose@example.com>
 #|Café menu today
@@ -130,3 +131,4 @@ def main() -> IO(Unit):
 #|Q1; final "v2".pdf | text/plain | john@example.com
 #|real@y.com plain@z.com
 #|True False False False
+#|Q1 final.pdf | ré sum.pdf | café crème ok

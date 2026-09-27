@@ -452,6 +452,30 @@ case17() {
 }
 
 # =========================================================================
+# Case 18: a server that echoes the credentials in its login replies cannot
+# pass them on: authentication replies never reach the transcript.
+# =========================================================================
+case18() {
+  start_server case18 --echo-login || { fail 18 "server did not start"; return; }
+  ok=1; detail=""
+  call_imap $'a1 NOOP\r\n'
+  if [ "$CODE" -ne 0 ] || grep -aq -- "$PASSWORD" "$OUT" || grep -aq "LOGIN completed" "$OUT"; then
+    ok=0; detail="imap exit=$CODE"
+  fi
+  body=$'Subject: echo\r\n\r\nhi\r\n'
+  call_smtp $'MAIL FROM:<'"$USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  if [ "$CODE" -ne 0 ] || grep -aq -- "$PASSWORD" "$OUT" || grep -aq "^235" "$OUT"; then
+    ok=0; detail="$detail smtp exit=$CODE"
+  fi
+  if [ "$ok" -eq 1 ]; then
+    pass "18 echoed credentials never reach the transcript"
+  else
+    fail "18 echoed credentials never reach the transcript" "$detail"
+  fi
+  stop_server
+}
+
+# =========================================================================
 # Case 2: the fixture password never leaks, and LOGIN/AUTH are redacted in
 # the log. Aggregates over every call made by every other case above, so it
 # runs last.
@@ -490,6 +514,7 @@ case14
 case15
 case16
 case17
+case18
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"
