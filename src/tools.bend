@@ -25,6 +25,11 @@ type Run is Data:
   RunOk{lines: List<&2, I.RLine>}
   RunErr{msg: String}
 
+# The folders, or why their special-use roles could not be read.
+type Fs is Data:
+  FsOk{fs: List<&2, I.Folder>}
+  FsErr{msg: String}
+
 type Uids is Data:
   UidsOk{uids: List<&2, U32>}
   UidsErr{msg: String}
@@ -296,24 +301,27 @@ def role(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) -> Mayb
 # The folders with their roles. A server may advertise SPECIAL-USE yet mark
 # folders only when LIST asks with RETURN (SPECIAL-USE); then a second,
 # read-only session asks, so roles never fall back to names needlessly.
-def roles_of(r: Run, +fallback: List<&2, I.Folder>) -> List<&2, I.Folder>:
+# When that session fails the roles are unknown, not absent: falling back to
+# the unmarked list would let `role` guess by name on a server that supports
+# special-use discovery, so the failure is reported instead.
+def roles_of(r: Run, +fallback: List<&2, I.Folder>) -> Fs:
   match r:
     case RunErr{m}:
-      fallback
+      FsErr{"cannot read the special-use folder roles the server advertises: " ++ m}
     case RunOk{+lines}:
-      Bool.pick(List<&2, I.Folder>, any_special(I.folders(lines)), I.folders(lines), fallback)
+      FsOk{Bool.pick(List<&2, I.Folder>, any_special(I.folders(lines)), I.folders(lines), fallback)}
 
-def roles_if(+ask: Bool, +fs: List<&2, I.Folder>) -> IO(List<&2, I.Folder>):
+def roles_if(+ask: Bool, +fs: List<&2, I.Folder>) -> IO(Fs):
   match ask:
     case False{}:
-      IO.pure(List<&2, I.Folder>, fs)
+      IO.pure(Fs, FsOk{fs})
     case True{}:
-      do IO<List<&2, I.Folder>>:
+      do IO<Fs>:
         r : Run <- imap_run(Ops.plan_roles())
         return roles_of(r, fs)
 
 # `lines` must come from a session that ran CAPABILITY and LIST.
-def folders_io(+lines: List<&2, I.RLine>) -> IO(List<&2, I.Folder>):
+def folders_io(+lines: List<&2, I.RLine>) -> IO(Fs):
   roles_if(I.has_cap(I.caps(lines), "SPECIAL-USE") && Bool.not(any_special(I.folders(lines))), I.folders(lines))
 
 def trash_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
@@ -402,14 +410,21 @@ def asc(+xs: List<&2, U32>) -> List<&2, U32>:
 def probe_json(+lines: List<&2, I.RLine>, +fs: List<&2, I.Folder>, +host: String, +email: String) -> Out:
   ok_obj([J.kv("ok", J.bool(True{})), J.kv("account", J.str(email)), J.kv("imap_host", J.str(host)), J.kv("tls_verified", J.bool(True{})), J.kv("capabilities", J.strs(I.caps(lines))), J.kv("idle", J.bool(I.has_cap(I.caps(lines), "IDLE"))), J.kv("move", J.bool(I.has_cap(I.caps(lines), "MOVE"))), J.kv("uidplus", J.bool(I.has_cap(I.caps(lines), "UIDPLUS"))), J.kv("special_use", special_json(fs)), J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs))))])
 
+def probe_fs(+f: Fs, +lines: List<&2, I.RLine>, +host: String, +email: String) -> Out:
+  match f:
+    case FsErr{m}:
+      Err{m}
+    case FsOk{+fs}:
+      probe_json(lines, fs, host, email)
+
 def probe_out(r: Run, +host: String, +email: String) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
       do IO<Out>:
-        fs : List<&2, I.Folder> <- folders_io(lines)
-        return probe_json(lines, fs, host, email)
+        f : Fs <- folders_io(lines)
+        return probe_fs(f, lines, host, email)
 
 def t_probe(+args: J.Json) -> IO(Out):
   do IO<Out>:
@@ -418,14 +433,21 @@ def t_probe(+args: J.Json) -> IO(Out):
     email : String <- env_or("MAILBEND_EMAIL", "")
     probe_out(r, host, email)
 
+def folders_fs(+f: Fs) -> Out:
+  match f:
+    case FsErr{m}:
+      Err{m}
+    case FsOk{+fs}:
+      ok_obj([J.kv("folders", J.arr(folders_json(fs)))])
+
 def folders_out(r: Run) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
       do IO<Out>:
-        fs : List<&2, I.Folder> <- folders_io(lines)
-        return ok_obj([J.kv("folders", J.arr(folders_json(fs)))])
+        f : Fs <- folders_io(lines)
+        return folders_fs(f)
 
 def t_folders(+args: J.Json) -> IO(Out):
   do IO<Out>:
@@ -807,14 +829,21 @@ def trash_to(+trash: Maybe<&2, String>, +caps: List<&2, String>, +folder: String
     case Some{t}:
       trash_into(same_mailbox(t, folder), t, caps, folder, uids, uidv)
 
+def trash_fs(+f: Fs, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
+  match f:
+    case FsErr{m}:
+      pure_out(Err{m ++ "; nothing was changed"})
+    case FsOk{+fs}:
+      trash_to(trash_of(fs), caps, folder, uids, uidv)
+
 def trash_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
       do IO<Out>:
-        fs : List<&2, I.Folder> <- folders_io(lines)
-        trash_to(trash_of(fs), I.caps(lines), folder, uids, uidv)
+        f : Fs <- folders_io(lines)
+        trash_fs(f, I.caps(lines), folder, uids, uidv)
 
 def trash_found(r: Run, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match r:
@@ -1146,14 +1175,21 @@ def draft_append(+m: Maybe<&2, String>, +msg: String, +msgid: String) -> IO(Out)
         r : Run <- imap_run(Ops.plan_draft(drafts, msg))
         return draft_saved(r, drafts, msgid)
 
+def draft_fs(+f: Fs, +msg: String, +msgid: String) -> IO(Out):
+  match f:
+    case FsErr{m}:
+      pure_out(Err{m ++ "; no draft was saved"})
+    case FsOk{+fs}:
+      draft_append(drafts_of(fs), msg, msgid)
+
 def draft_folder(r: Run, +msg: String, +msgid: String) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
       do IO<Out>:
-        fs : List<&2, I.Folder> <- folders_io(lines)
-        draft_append(drafts_of(fs), msg, msgid)
+        f : Fs <- folders_io(lines)
+        draft_fs(f, msg, msgid)
 
 def sent_out(+o: Out, +msgid: String, +n: U32) -> Out:
   match o:
