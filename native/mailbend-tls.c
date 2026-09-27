@@ -587,9 +587,19 @@ static int run_attach(const char *dir, const char *path) {
     else die(EX_USAGE, "attachment %s is outside MAILBEND_ATTACH_DIR", path);
   }
   if (!*rel) die(EX_USAGE, "attachment path names no file");
-  int dfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  if (dfd < 0) die(EX_USAGE, "cannot open MAILBEND_ATTACH_DIR");
+  /* `root` is canonical, so it holds no symlink; opening it with
+   * RESOLVE_NO_SYMLINKS fails if a component was swapped for one since
+   * realpath() read it. */
   struct open_how how;
+  memset(&how, 0, sizeof how);
+  how.flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+  how.resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS;
+  int dfd = (int)syscall(SYS_openat2, AT_FDCWD, root, &how, sizeof how);
+  if (dfd < 0) {
+    if (errno == ENOSYS) die(EX_USAGE, "attachments need Linux 5.6+ (openat2)");
+    if (errno == ELOOP) die(EX_USAGE, "MAILBEND_ATTACH_DIR changed while it was opened");
+    die(EX_USAGE, "cannot open MAILBEND_ATTACH_DIR");
+  }
   memset(&how, 0, sizeof how);
   how.flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY;
   how.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS;

@@ -634,10 +634,22 @@ def new_found(r: Run, +folder: String, +since: U32, +known: U32, +limit: U32) ->
     case RunOk{+lines}:
       new_check(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0), asc(above(I.search_uids(lines), since)), folder, since, known, limit)
 
+# A checkpoint is a UID together with its UIDVALIDITY: a UID alone could
+# belong to a recreated folder and skip or repeat messages.
+def new_request(+since: U32, +known: U32) -> String:
+  Bool.pick(String, Bool.not(U32.is_zero(since)) && U32.is_zero(known), "\"uidvalidity\" is required with \"since_uid\": pass the uidvalidity returned with that checkpoint", "")
+
+def new_asked(+problem: String, +args: J.Json) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_new(folder_arg(args), u32_arg(args, "since_uid", 0)))
+        new_found(r, folder_arg(args), u32_arg(args, "since_uid", 0), u32_arg(args, "uidvalidity", 0), clamp(u32_arg(args, "limit", 50), 1, 500))
+
 def t_get_new(+args: J.Json) -> IO(Out):
-  do IO<Out>:
-    r : Run <- imap_run(Ops.plan_new(folder_arg(args), u32_arg(args, "since_uid", 0)))
-    new_found(r, folder_arg(args), u32_arg(args, "since_uid", 0), u32_arg(args, "uidvalidity", 0), clamp(u32_arg(args, "limit", 50), 1, 500))
+  new_asked(new_request(u32_arg(args, "since_uid", 0), u32_arg(args, "uidvalidity", 0)), args)
 
 # The preflight's early check (the plans check again in the changing session).
 def uidv_problem(+lines: List<&2, I.RLine>, +want: U32, +folder: String) -> String:
@@ -762,7 +774,7 @@ def trash_to(+trash: Maybe<&2, String>, +caps: List<&2, String>, +folder: String
     case None{}:
       pure_out(Err{"no Trash folder: the server marks none as \\Trash (and names are only used on servers without special-use folders)"})
     case Some{t}:
-      trash_into(String.eq(String.to_lower(t), String.to_lower(folder)), t, caps, folder, uids, uidv)
+      trash_into(same_mailbox(t, folder), t, caps, folder, uids, uidv)
 
 def trash_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match problem:
@@ -1166,7 +1178,12 @@ def hdr_addrs(+hs: List<&2, M.Hdr>, +name: String) -> List<&2, String>:
 def reply_to(+hs: List<&2, M.Hdr>) -> List<&2, String>:
   hdr_addrs(hs, Bool.pick(String, String.is_empty(M.header(hs, "reply-to")), "from", "reply-to"))
 
-def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +args: J.Json, +me: String) -> IO(Out):
+# Replies read only the first 256 KB of the original; when it is larger the
+# quote says so instead of silently quoting a truncated copy.
+def cut_note(+cut: Bool) -> String:
+  Bool.pick(String, cut, "> [the original is larger than 256 KB and only its start was read, so this quote may be incomplete]\n", "")
+
+def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +cut: Bool, +args: J.Json, +me: String) -> IO(Out):
   do IO<Out>:
     rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
     with_atts(atts_collect(rs),
@@ -1174,7 +1191,7 @@ def reply_want(+hs: List<&2, M.Hdr>, +p: M.Parts, +args: J.Json, +me: String) ->
       Bool.pick(List<&2, String>, bool_arg(args, "reply_all", False{}), not_me(List.append(&2, String, hdr_addrs(hs, "to"), hdr_addrs(hs, "cc")), me), []),
       strs_arg(args, "bcc"),
       prefixed("Re:", hdr_text(hs, "subject")),
-      str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_text(hs, "date") ++ ", " ++ hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(body_text(p))),
+      str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_text(hs, "date") ++ ", " ++ hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(body_text(p))) ++ cut_note(cut),
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
       bool_arg(args, "as_draft", False{}))
@@ -1194,7 +1211,7 @@ def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
 def respond_to(+reply: Bool, +too_big: Bool, +body: String, +args: J.Json, +me: String) -> IO(Out):
   match reply:
     case True{}:
-      reply_want(M.headers(M.head_of(M.split(body))), M.parts(body), args, me)
+      reply_want(M.headers(M.head_of(M.split(body))), M.parts(body), too_big, args, me)
     case False{}:
       match too_big:
         case True{}:

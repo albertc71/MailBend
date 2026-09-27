@@ -310,6 +310,18 @@ def esc_step(+c: Char, acc: String, +hi: U32) -> LexSt:
     case _:
       LErr{}
 
+def is_hex(+c: Char) -> Bool:
+  +u = Char.to_u32(c)
+  Char.is_digit(c) || in_range(u, 97, 102) || in_range(u, 65, 70)
+
+# A raw control character (below U+0020) inside a string is invalid JSON.
+def str_char(ctl: Bool, +c: Char, acc: String, +hi: U32) -> LexSt:
+  match ctl:
+    case True{}:
+      LErr{}
+    case False{}:
+      LStr{SCon{c, flush_hi(acc, hi)}, 0}
+
 def str_step(+c: Char, acc: String, +hi: U32, toks: List<&2, Tok>) -> Lx:
   match c:
     case '"':
@@ -317,9 +329,9 @@ def str_step(+c: Char, acc: String, +hi: U32, toks: List<&2, Tok>) -> Lx:
     case '\\':
       Lx{LEsc{acc, hi}, toks}
     case _:
-      Lx{LStr{SCon{c, flush_hi(acc, hi)}, 0}, toks}
+      Lx{str_char(U32.is_lt(Char.to_u32(c), 32), c, acc, hi), toks}
 
-def uni_step(n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
+def uni_digit(n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
   match n:
     case 1n+0n:
       uni_done(acc, hi, (code * 16 + hex_val(c) : U32))
@@ -327,6 +339,17 @@ def uni_step(n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
       LUni{acc, hi, p, (code * 16 + hex_val(c) : U32)}
     case 0n:
       LStr{acc, hi}
+
+# \u takes exactly four hex digits; anything else rejects the input.
+def uni_hex(ok: Bool, n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
+  match ok:
+    case True{}:
+      uni_digit(n, c, acc, hi, code)
+    case False{}:
+      LErr{}
+
+def uni_step(n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
+  uni_hex(is_hex(c), n, c, acc, hi, code)
 
 # JSON number grammar (RFC 8259) as a state machine. States: 0 start,
 # 1 after '-', 2 a leading 0, 3 integer digits, 4 after '.', 5 fraction

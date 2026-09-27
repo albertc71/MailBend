@@ -172,7 +172,9 @@ def reads(srv):
     check("get_new: from zero, oldest first", c == 0 and [m["uid"] for m in r["messages"]] == [1, 2, 3, 4, 5, 6] and r["next_since_uid"] == 6, r)
     c, r = tool(srv, "mail_get_new", {"since_uid": 6, "uidvalidity": 1700000001})
     check("get_new: nothing after the checkpoint", c == 0 and r["messages"] == [] and r["next_since_uid"] == 6, r)
-    c, r = tool(srv, "mail_get_new", {"since_uid": 2, "limit": 2})
+    c, r = tool(srv, "mail_get_new", {"since_uid": 2})
+    check("get_new: a checkpoint UID needs its UIDVALIDITY", c != 0 and "uidvalidity" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_get_new", {"since_uid": 2, "uidvalidity": 1700000001, "limit": 2})
     check("get_new: limit and has_more", c == 0 and [m["uid"] for m in r["messages"]] == [3, 4] and r["has_more"] and r["next_since_uid"] == 4, r)
     c, r = tool(srv, "mail_get_new", {"since_uid": 3, "uidvalidity": 42})
     check("get_new: UIDVALIDITY change resets the checkpoint", c == 0 and r["uidvalidity_changed"] and r["next_since_uid"] == 0, r)
@@ -323,6 +325,21 @@ def compose(srv):
           and "Subject: Re: " in data.replace("=?UTF-8?B?", "Subject: Re: ") , data[:500])
     c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "draft reply", "as_draft": True})
     check("reply as draft goes to Drafts", c == 0 and r.get("saved_to") == "Drafts" and len(srv.st()["mailboxes"]["Drafts"]["messages"]) == n_drafts + 2, r)
+
+    alias = os.path.join(srv.work, "attach-alias")
+    os.symlink(srv.work, alias)
+    big = os.path.join(srv.work, "big.bin")
+    pathlib.Path(big).write_bytes(b"x" * 300000)
+    c, r = tool(srv, "mail_save_draft", {"to": "a@example.com", "subject": "big", "body": "Big original text",
+                                         "attachments": [{"path": "big.bin"}]}, MAILBEND_ATTACH_DIR=alias)
+    check("MAILBEND_ATTACH_DIR may itself be reached through a symlink", c == 0 and isinstance(r.get("uid"), int), r)
+    big_uid = r.get("uid", 0)
+    c, g = tool(srv, "mail_get", {"folder": "Drafts", "uid": big_uid})
+    c, r = tool(srv, "mail_reply", {"folder": "Drafts", "uid": big_uid, "uidvalidity": g.get("uidvalidity") or 0,
+                                    "body": "re big", "as_draft": True})
+    c2, g2 = tool(srv, "mail_get", {"folder": "Drafts", "uid": r.get("uid", 0)})
+    check("reply to an original over 256 KB says its quote may be incomplete", c == 0 and "Big original text" in g2.get("text", "")
+          and "only its start was read" in g2.get("text", ""), (r, g2.get("text", "")[:600]))
 
     c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["boss@example.com"], "body": "FYI"})
     sent = srv.st().get("sent", [])

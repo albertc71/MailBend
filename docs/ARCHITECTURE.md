@@ -73,7 +73,12 @@ Notes:
   never from a path relative to the working directory.
 - Attachments come only from `MAILBEND_ATTACH_DIR`, read by
   `mailbend-tls attach` with `openat2` beneath that directory (no symlinks,
-  no `..`) and checked on the opened descriptor.
+  no `..`; the directory itself is opened by its canonical path without
+  following symlinks) and checked on the opened descriptor.
+- A `mail_get_new` checkpoint is a UID with its UIDVALIDITY: `since_uid`
+  without `uidvalidity` is refused.
+- Replies read the first 256 KB of the original; a larger original gets a
+  note in the quote that it may be incomplete.
 - Search and new-mail fetch in a second session and require it to report
   the same UIDVALIDITY; reply and forward require the caller's
   `uidvalidity` to match the session that fetched the original.
