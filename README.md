@@ -155,7 +155,7 @@ enforced are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#diagrams).
 
 ```sh
 bend PROOF.bend              # the safety laws: must print "All terms check."
-sh tests/run-unit.sh         # Bend unit tests (JSON, codecs, IMAP, MIME)
+sh tests/run-unit.sh         # Bend unit tests (JSON, codecs, IMAP, MIME, addresses)
 bash tests/test-transport.sh # TLS helper against a local TLS server
 python3 tests/test-e2e.py    # every tool, CLI and MCP, against the local server
 ```

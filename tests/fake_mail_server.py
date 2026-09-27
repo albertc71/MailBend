@@ -164,6 +164,7 @@ class State:
         self.state_path = state_path
         self.echo_login = False
         self.lowercase_codes = False
+        self.special_on_request = False
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -709,10 +710,13 @@ class IMAPSession:
         with self.state.lock:
             names = list(self.state.data['mailboxes'].keys())
             specials = {n: list(self.state.data['mailboxes'][n]['special']) for n in names}
+        asked = any(astring_val(a).upper() == 'RETURN' for a in args)
+        # --special-on-request: special-use attributes only for LIST ... RETURN (SPECIAL-USE)
+        show = 'SPECIAL-USE' in self.caps and (asked or not self.state.special_on_request)
         for name in names:
             has_children = any(other != name and other.startswith(name + '/') for other in names)
             attrs = ['\\HasChildren' if has_children else '\\HasNoChildren']
-            if 'SPECIAL-USE' in self.caps:
+            if show:
                 attrs.extend(specials[name])
             self.send(f'* LIST ({" ".join(attrs)}) "/" {imap_quote(mutf7_encode(name))}\r\n')
         self.send(f'{tag} OK LIST completed\r\n')
@@ -1241,6 +1245,8 @@ def main():
     ap.add_argument('--silent-port', action='store_true')
     ap.add_argument('--echo-login', action='store_true', help='echo the credentials in login replies')
     ap.add_argument('--lowercase-codes', action='store_true', help='send response codes in lower case')
+    ap.add_argument('--special-on-request', action='store_true',
+                    help='mark special-use folders only for LIST ... RETURN (SPECIAL-USE)')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1248,6 +1254,7 @@ def main():
     state = State(fixture, args.state)
     state.echo_login = args.echo_login
     state.lowercase_codes = args.lowercase_codes
+    state.special_on_request = args.special_on_request
     logger = Logger(args.log)
     caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
     ctx = make_ssl_context(args.certdir, args.cert_name)

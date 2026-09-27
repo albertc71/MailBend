@@ -97,13 +97,21 @@ def respond_as(+is_call: Bool, +id: J.Json, +method: String, +params: J.Json) ->
 def respond(+id: J.Json, +method: String, +params: J.Json) -> IO(Unit):
   respond_as(String.eq(method, "tools/call"), id, method, params)
 
+# Method parameters are an object, or absent.
+def respond_if(+ok: Bool, +id: J.Json, +req: J.Json) -> IO(Unit):
+  match ok:
+    case True{}:
+      respond(id, T.str_arg(req, "method", ""), args_of(J.get(req, "params")))
+    case False{}:
+      IO.print(rpc_error(id, "-32602", "invalid params: \"params\" must be an object"))
+
 # A request carries an id; a notification (no id) gets no answer.
 def request(+req: J.Json, +id: Maybe<&2, J.Json>) -> IO(Unit):
   match id:
     case None{}:
       IO.pure(Unit, Unit{})
     case Some{i}:
-      respond(i, T.str_arg(req, "method", ""), args_of(J.get(req, "params")))
+      respond_if(args_ok(J.get(req, "params")), i, req)
 
 # A JSON-RPC id is a string, a number or null.
 def id_ok(+id: Maybe<&2, J.Json>) -> Bool:
@@ -171,8 +179,18 @@ def handle_text(+blank: Bool, +text: String) -> IO(Unit):
 
 # A complete line of UTF-8 bytes (decoded only once whole, so a read that
 # ends inside a multi-byte character cannot corrupt it).
+# JSON-RPC messages are UTF-8: a line that does not round-trip through the
+# decoder (invalid bytes become U+FFFD) is a parse error, not a request.
+def handle_decoded(+valid: Bool, +text: String) -> IO(Unit):
+  match valid:
+    case True{}:
+      handle_text(is_blank(text), text)
+    case False{}:
+      IO.print(rpc_error(J.JNull{}, "-32700", "parse error: the line is not valid UTF-8"))
+
 def handle_line(+line: String) -> IO(Unit):
-  handle_text(is_blank(C.utf8_decode(line)), C.utf8_decode(line))
+  +text = C.utf8_decode(line)
+  handle_decoded(String.eq(C.utf8_encode(text), line), text)
 
 def handle_lines(+ls: List<&2, String>) -> IO(Unit):
   match ls:

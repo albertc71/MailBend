@@ -100,7 +100,12 @@ def plan_preflight(+mbox: String) -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}, I.CExamine{mbox}]
 
 def plan_folders() -> List<&2, I.Cmd>:
-  [I.CList{}]
+  [I.CCapability{}, I.CList{}]
+
+# A server may advertise SPECIAL-USE yet mark folders only when LIST asks
+# for them (RFC 6154 RETURN option); tools use this plan then.
+def plan_roles() -> List<&2, I.Cmd>:
+  [I.CListRoles{}]
 
 def plan_search(+mbox: String, +keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CSearch{keys}]

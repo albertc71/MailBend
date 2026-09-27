@@ -138,6 +138,20 @@ static void raw_write(const void *p, size_t n) {
     n -= (size_t)w;
   }
 }
+/* Like raw_write, but reports failure instead of exiting: for the closing
+ * LOGOUT and QUIT, which must not replace the outcome of the commands that
+ * already ran with a transport error. */
+static int try_write(const char *s) {
+  size_t n = strlen(s);
+  const unsigned char *b = (const unsigned char *)s;
+  while (n > 0) {
+    int w = SSL_write(ssl, b, n > 65536 ? 65536 : (int)n);
+    if (w <= 0) return 0;
+    b += w;
+    n -= (size_t)w;
+  }
+  return 1;
+}
 
 static int fill(void) {
   if (rpos < rlen) return 1;
@@ -563,8 +577,18 @@ static int run_imap(void) {
     p = next;
   }
 
-  raw_write("Z LOGOUT\r\n", 10);
-  imap_wait("Z", 0);
+  /* LOGOUT is best effort: the commands' outcome is already known (after an
+   * APPEND, reporting a failure here could lead to a duplicate draft). */
+  if (try_write("Z LOGOUT\r\n")) {
+    unsigned char *line;
+    long n;
+    while ((n = read_line(&line)) >= 0) {
+      emit(line, (size_t)n);
+      int done = n >= 2 && line[0] == 'Z' && line[1] == ' ';
+      free(line);
+      if (done) break;
+    }
+  }
   return status;
 }
 
@@ -602,19 +626,6 @@ static int smtp_reply(char **ext) {
 
 static void smtp_send(const char *s) { raw_write(s, strlen(s)); }
 
-/* Like raw_write, but reports failure instead of exiting: for the closing
- * QUIT, which must not replace an earlier rejection with a transport error. */
-static int try_write(const char *s) {
-  size_t n = strlen(s);
-  const unsigned char *b = (const unsigned char *)s;
-  while (n > 0) {
-    int w = SSL_write(ssl, b, n > 65536 ? 65536 : (int)n);
-    if (w <= 0) return 0;
-    b += w;
-    n -= (size_t)w;
-  }
-  return 1;
-}
 
 static int has_ext(const char *ehlo, const char *word) {
   size_t wl = strlen(word);
