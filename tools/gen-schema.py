@@ -51,7 +51,7 @@ TOOLS = [
          ["uid"]), READ),
     ("mail_get_new", "List messages that arrived after a checkpoint (UIDVALIDITY + UID), oldest first. Pass back next_since_uid and uidvalidity on the next call. Does not use or change read/unread state.",
      obj({"folder": FOLDER, "since_uid": {"type": "integer", "minimum": 0, "description": "Last UID already processed. Default 0."},
-          "uidvalidity": {"type": "integer", "minimum": 0, "description": "UIDVALIDITY from the previous call; if it changed, the checkpoint restarts at 0."},
+          "uidvalidity": {"type": "integer", "minimum": 0, "description": "UIDVALIDITY from the previous call; required when since_uid is set. If it changed, the checkpoint restarts at 0."},
           "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50."}}), READ),
     ("mail_mark_read", "Mark messages as read (add the \\Seen flag).",
      obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False, idempotent=True)),

@@ -36,8 +36,10 @@ mailbend-tls attach <dir> <path>             > the file's bytes
   `=EXPECT-WORD <word>` asks for `<word>` as a whole word (any case) in one
   of those lines; the core uses it to confirm UIDPLUS before anything is
   marked `\Deleted`.
-- **Attachments**: `attach` opens `<path>` (relative to `<dir>`, or absolute
-  inside it) with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS |
+- **Attachments**: `attach` resolves `<dir>` once with `realpath` and opens
+  that canonical path with `RESOLVE_NO_SYMLINKS` (so swapping a component
+  for a symlink afterwards fails), then opens `<path>` (relative to `<dir>`,
+  or absolute inside it) with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS |
   RESOLVE_NO_MAGICLINKS)`, so no symlink or `..` leads outside `<dir>`, then
   checks the opened descriptor is a regular file of at most 25 MiB before
   reading it. It reads no credentials and opens no connection. Needs Linux
