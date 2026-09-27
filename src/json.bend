@@ -42,6 +42,7 @@ type LexSt is Data:
   LUni{acc: String, hi: U32, n: Nat, code: U32}
   LNum{acc: String}
   LWord{acc: String}
+  LErr{}
 
 type Lx is Data:
   Lx{st: LexSt, toks: List<&2, Tok>}
@@ -300,8 +301,14 @@ def esc_step(+c: Char, acc: String, +hi: U32) -> LexSt:
       LStr{SCon{Char.from_u32(8), flush_hi(acc, hi)}, 0}
     case 'f':
       LStr{SCon{Char.from_u32(12), flush_hi(acc, hi)}, 0}
-    case _:
+    case '"':
       LStr{SCon{c, flush_hi(acc, hi)}, 0}
+    case '\\':
+      LStr{SCon{c, flush_hi(acc, hi)}, 0}
+    case '/':
+      LStr{SCon{c, flush_hi(acc, hi)}, 0}
+    case _:
+      LErr{}
 
 def str_step(+c: Char, acc: String, +hi: U32, toks: List<&2, Tok>) -> Lx:
   match c:
@@ -371,6 +378,8 @@ def lex_step(+c: Char, lx: Lx) -> Lx:
       num_step(c, acc, toks)
     case Lx{LWord{acc}, toks}:
       word_step(c, acc, toks)
+    case Lx{LErr{}, toks}:
+      Lx{LErr{}, toks}
 
 def lex_end(lx: Lx) -> List<&2, Tok>:
   match lx:

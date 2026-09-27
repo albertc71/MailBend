@@ -148,10 +148,19 @@ def decode_header(+v: String) -> String:
 
 # ---- parameters (Content-Type, Content-Disposition) ----------------------------------------
 
+def unescape(+s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\\', SCon{c, t}}:
+      SCon{c, unescape(t)}
+    case SCon{c, t}:
+      SCon{c, unescape(t)}
+
 def unquote(+s: String) -> String:
   +t = String.trim(s)
   Bool.pick(String, String.starts_with(t, "\"") && String.ends_with(t, "\"") && Nat.is_gt(String.length(t), 1n),
-    String.take(String.drop(t, 1n), Nat.sub(String.length(t), 2n)), t)
+    unescape(String.take(String.drop(t, 1n), Nat.sub(String.length(t), 2n))), t)
 
 def first_item(+xs: List<&2, String>) -> String:
   match xs:
@@ -160,9 +169,25 @@ def first_item(+xs: List<&2, String>) -> String:
     case Nil{}:
       ""
 
+def sp_go(+s: String, +cur: String, +q: Bool, +esc: Bool, +acc: List<&2, String>) -> List<&2, String>:
+  match s:
+    case SNil{}:
+      List.reverse(&2, String, String.reverse(cur) <> acc)
+    case SCon{c, t}:
+      +cut = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, ';')
+      sp_go(t, Bool.pick(String, cut, "", SCon{c, cur}),
+        Bool.pick(Bool, Bool.not(esc) && Char.is_eq(c, '"'), Bool.not(q), q),
+        Bool.not(esc) && q && Char.is_eq(c, '\\'),
+        Bool.pick(List<&2, String>, cut, String.reverse(cur) <> acc, acc))
+
+# Splits a structured header value at ';' outside quoted strings (which may
+# hold "\"" escapes), so 'filename="Q1; final.pdf"' stays one parameter.
+def split_params(+s: String) -> List<&2, String>:
+  sp_go(s, "", False{}, False{}, [])
+
 # The main value before the first ';', lower-cased.
 def main_value(+v: String) -> String:
-  String.to_lower(String.trim(first_item(String.split(v, ';'))))
+  String.to_lower(String.trim(first_item(split_params(v))))
 
 def pct_decode(+s: String) -> String:
   match s:
@@ -231,11 +256,42 @@ def rest_items(+xs: List<&2, String>) -> List<&2, String>:
     case Nil{}:
       []
 
+# An RFC 2231 attr-char: kept as is in an extended parameter value.
+def attr_char(+c: Char) -> Bool:
+  Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '!') || Char.is_eq(c, '#') || Char.is_eq(c, '$') || Char.is_eq(c, '&') || Char.is_eq(c, '+') || Char.is_eq(c, '-') || Char.is_eq(c, '.') || Char.is_eq(c, '^') || Char.is_eq(c, '_') || Char.is_eq(c, '`') || Char.is_eq(c, '|') || Char.is_eq(c, '~')
+
+def pct_char(+c: Char) -> String:
+  Bool.pick(String, U32.is_lt(C.u(c), 128) && attr_char(c), SCon{c, SNil{}}, "%" ++ SCon{C.hex_up((C.u(c) >> 4n : U32)), SCon{C.hex_up((C.u(c) .&. 15 : U32)), SNil{}}})
+
+def pct_encode(+bytes: String) -> String:
+  match bytes:
+    case SNil{}:
+      ""
+    case SCon{c, t}:
+      pct_char(c) ++ pct_encode(t)
+
+# An RFC 2231 continuation value ("name*0*=...;name*1*=..."), joined in
+# order and percent-encoded throughout, so ext_value can decode it; "" when
+# there is none. Plain (unencoded) segments are percent-encoded first.
+def cont_join(fuel: Nat, +ps: List<&2, String>, +name: String, +n: U32) -> String:
+  match fuel:
+    case 0n:
+      ""
+    case 1n+f:
+      +enc = param_raw(ps, name ++ "*" ++ U32.show(n) ++ "*")
+      +plain = unquote(param_raw(ps, name ++ "*" ++ U32.show(n)))
+      Bool.pick(String, String.is_empty(enc) && String.is_empty(plain), "",
+        Bool.pick(String, String.is_empty(enc), pct_encode(C.utf8_encode(plain)), unquote(enc)) ++ cont_join(f, ps, name, (n + 1 : U32)))
+
 # A parameter of a structured header value, e.g. param(ct, "charset"). An
-# RFC 2231 extended value ("name*=") wins over a plain fallback ("name=").
+# RFC 2231 extended value ("name*=", or continuations "name*0*=", ...) wins
+# over a plain fallback ("name=").
 def param(+v: String, +name: String) -> String:
-  +ext = param_raw(rest_items(String.split(v, ';')), name ++ "*")
-  Bool.pick(String, String.is_empty(ext), param_go(rest_items(String.split(v, ';')), name), ext_value(unquote(ext)))
+  +ps = rest_items(split_params(v))
+  +ext = unquote(param_raw(ps, name ++ "*"))
+  +cont = cont_join(64n, ps, name, 0)
+  Bool.pick(String, Bool.not(String.is_empty(ext)), ext_value(ext),
+    Bool.pick(String, Bool.not(String.is_empty(cont)), ext_value(cont), param_go(ps, name)))
 
 # ---- bodies ----------------------------------------------------------------------
 
@@ -463,8 +519,22 @@ def last_angle(+s: String, +found: String) -> String:
 def inside_angle(+s: String) -> String:
   last_angle(s, "")
 
+# The text without "(comments)" (nested, outside quotes).
+def strip_comments(+s: String, +depth: U32, +q: Bool) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{c, t}:
+      +open = Bool.not(q) && Char.is_eq(c, '(')
+      +close = Bool.not(q) && Char.is_eq(c, ')') && Bool.not(U32.is_zero(depth))
+      +keep = U32.is_zero(depth) && Bool.not(open)
+      Bool.pick(String, keep, SCon{c, SNil{}}, "") ++ strip_comments(t,
+        Bool.pick(U32, open, (depth + 1 : U32), Bool.pick(U32, close, (depth - 1 : U32), depth)),
+        Bool.pick(Bool, U32.is_zero(depth) && Char.is_eq(c, '"'), Bool.not(q), q))
+
+# The bare address of "Name <addr>" or "addr (comment)".
 def addr_spec(+a: String) -> String:
-  Bool.pick(String, String.contains(a, "<"), String.trim(inside_angle(a)), String.trim(a))
+  Bool.pick(String, String.contains(a, "<"), String.trim(inside_angle(a)), String.trim(strip_comments(a, 0, False{})))
 
 def addr_char_ok(+c: Char) -> Bool:
   C.between(C.u(c), 33, 126) && Bool.not(Char.is_eq(c, '<') || Char.is_eq(c, '>') || Char.is_eq(c, '"') || Char.is_eq(c, ',') || Char.is_eq(c, ';') || Char.is_eq(c, '\\'))
@@ -606,20 +676,6 @@ def seven_bit(+s: String, +col: U32) -> Bool:
     case SCon{c, t}:
       Bool.not(U32.is_gt(C.u(c), 126) || U32.is_zero(C.u(c)) || Char.is_eq(c, '\r') || Char.is_eq(c, '\n') || U32.is_ge(col, 998)) && seven_bit(t, (col + 1 : U32))
 
-# An RFC 2231 attr-char: kept as is in an extended parameter value.
-def attr_char(+c: Char) -> Bool:
-  Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '!') || Char.is_eq(c, '#') || Char.is_eq(c, '$') || Char.is_eq(c, '&') || Char.is_eq(c, '+') || Char.is_eq(c, '-') || Char.is_eq(c, '.') || Char.is_eq(c, '^') || Char.is_eq(c, '_') || Char.is_eq(c, '`') || Char.is_eq(c, '|') || Char.is_eq(c, '~')
-
-def pct_char(+c: Char) -> String:
-  Bool.pick(String, U32.is_lt(C.u(c), 128) && attr_char(c), SCon{c, SNil{}}, "%" ++ SCon{C.hex_up((C.u(c) >> 4n : U32)), SCon{C.hex_up((C.u(c) .&. 15 : U32)), SNil{}}})
-
-def pct_encode(+bytes: String) -> String:
-  match bytes:
-    case SNil{}:
-      ""
-    case SCon{c, t}:
-      pct_char(c) ++ pct_encode(t)
-
 # An ASCII stand-in for a non-ASCII name (for readers without RFC 2231).
 def ascii_name(+s: String) -> String:
   match s:
@@ -628,13 +684,39 @@ def ascii_name(+s: String) -> String:
     case SCon{c, t}:
       SCon{Bool.pick(Char, C.between(C.u(c), 32, 126) && Bool.not(Char.is_eq(c, '"') || Char.is_eq(c, '\\')), c, '_'), ascii_name(t)}
 
-# A file name parameter: quoted when it is short plain ASCII, else an
-# RFC 2231 extended value (UTF-8, percent-encoded) after an ASCII fallback.
-# Encoded words are not allowed inside parameters.
+def pct_tokens(+bytes: String) -> List<&2, String>:
+  match bytes:
+    case SNil{}:
+      []
+    case SCon{c, t}:
+      pct_char(c) <> pct_tokens(t)
+
+# Groups percent-encoded tokens into pieces of at most 50 characters,
+# never splitting a %XX escape.
+def pct_pieces(+ts: List<&2, String>, +cur: String, +n: U32) -> List<&2, String>:
+  match ts:
+    case Nil{}:
+      Bool.pick(List<&2, String>, String.is_empty(cur), [], [cur])
+    case Con{tok, t}:
+      +w = U32.from_nat(String.length(tok))
+      +full = U32.is_gt((n + w : U32), 50)
+      List.append(&2, String, Bool.pick(List<&2, String>, full, [cur], []),
+        pct_pieces(t, Bool.pick(String, full, tok, cur ++ tok), Bool.pick(U32, full, w, (n + w : U32))))
+
+def cont_params(+key: String, +pieces: List<&2, String>, +i: U32) -> String:
+  match pieces:
+    case Nil{}:
+      ""
+    case Con{p, t}:
+      ";\r\n " ++ key ++ "*" ++ U32.show(i) ++ "*=" ++ Bool.pick(String, U32.is_zero(i), "utf-8''", "") ++ p ++ cont_params(key, t, (i + 1 : U32))
+
+# A file name parameter: quoted when it is short plain ASCII, else an ASCII
+# fallback plus RFC 2231 continuations of the UTF-8 name, percent-encoded,
+# one short line each (encoded words are not allowed inside parameters).
 def name_param(+key: String, +name: String) -> String:
   Bool.pick(String, C.is_plain(name) && Nat.is_le(String.length(name), 200n),
     key ++ "=\"" ++ quote_esc(name) ++ "\"",
-    key ++ "=\"" ++ ascii_name(String.take(name, 60n)) ++ "\";\r\n " ++ key ++ "*=utf-8''" ++ pct_encode(C.utf8_encode(name)))
+    key ++ "=\"" ++ ascii_name(String.take(name, 60n)) ++ "\"" ++ cont_params(key, pct_pieces(pct_tokens(C.utf8_encode(name)), "", 0), 0))
 
 def att_head(+b: String, +ctype: String, +name: String, +cte: String) -> String:
   "--" ++ b ++ "\r\nContent-Type: " ++ ctype ++ "; " ++ name_param("name", name) ++ "\r\nContent-Disposition: attachment; " ++ name_param("filename", name) ++ "\r\nContent-Transfer-Encoding: " ++ cte ++ "\r\n\r\n"

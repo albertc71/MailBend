@@ -461,12 +461,37 @@ def requested(+ms: List<&2, I.Msg>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
     case Con{m, t}:
       List.append(&2, I.Msg, Bool.pick(List<&2, I.Msg>, uid_in(msg_uid(m), uids), [m], []), requested(t, uids))
 
+# ---- flags ---------------------------------------------------------------------------------
+
+# ---- UID checks -------------------------------------------------------------------------------
+
+def uidv_is(+have: Maybe<&2, U32>, +want: U32) -> Bool:
+  match have:
+    case Some{n}:
+      U32.is_eq(n, want)
+    case None{}:
+      False{}
+
+def same_uidv(+a: Maybe<&2, U32>, +b: Maybe<&2, U32>) -> Bool:
+  match a:
+    case Some{x}:
+      uidv_is(b, x)
+    case None{}:
+      Maybe.is_none(&2, U32, b)
+
+def moved_msg() -> String:
+  "the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again"
+
+# The fetch runs in a second session: its EXAMINE must report the same
+# UIDVALIDITY as the search, or the UIDs may name other messages.
 def search_headers(r: Run, +folder: String, +uidv: Maybe<&2, U32>, +total: U32, +uids: List<&2, U32>) -> Out:
   match r:
     case RunErr{m}:
       Err{m}
     case RunOk{+lines}:
-      list_out(folder, uidv, total, summaries(newest_first(requested(I.fetched(lines), uids))))
+      Bool.pick(Out, same_uidv(uidv, I.ok_code(lines, "UIDVALIDITY")),
+        list_out(folder, uidv, total, summaries(newest_first(requested(I.fetched(lines), uids)))),
+        Err{moved_msg()})
 
 def search_fetch(+uids: List<&2, U32>, +folder: String, +uidv: Maybe<&2, U32>, +total: U32) -> IO(Out):
   match uids:
@@ -570,12 +595,16 @@ def last_or(+xs: List<&2, U32>, +d: U32) -> U32:
 def new_out(+folder: String, +uidv: U32, +changed: Bool, +next: U32, +more: Bool, +ms: List<&2, J.Json>) -> Out:
   ok_obj([J.kv("folder", J.str(folder)), J.kv("uidvalidity", J.num(uidv)), J.kv("uidvalidity_changed", J.bool(changed)), J.kv("next_since_uid", J.num(next)), J.kv("has_more", J.bool(more)), J.kv("messages", J.arr(ms))])
 
+# As for search: a UIDVALIDITY change between the two sessions resets the
+# checkpoint instead of returning messages under stale UIDs.
 def new_headers(r: Run, +folder: String, +uidv: U32, +next: U32, +more: Bool, +uids: List<&2, U32>) -> Out:
   match r:
     case RunErr{m}:
       Err{m}
     case RunOk{+lines}:
-      new_out(folder, uidv, False{}, next, more, summaries(oldest_first(requested(I.fetched(lines), uids))))
+      Bool.pick(Out, uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv),
+        new_out(folder, uidv, False{}, next, more, summaries(oldest_first(requested(I.fetched(lines), uids)))),
+        new_out(folder, Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0), True{}, 0, True{}, []))
 
 def new_fetch(+uids: List<&2, U32>, +folder: String, +uidv: U32, +since: U32, +more: Bool) -> IO(Out):
   match uids:
@@ -609,17 +638,6 @@ def t_get_new(+args: J.Json) -> IO(Out):
   do IO<Out>:
     r : Run <- imap_run(Ops.plan_new(folder_arg(args), u32_arg(args, "since_uid", 0)))
     new_found(r, folder_arg(args), u32_arg(args, "since_uid", 0), u32_arg(args, "uidvalidity", 0), clamp(u32_arg(args, "limit", 50), 1, 500))
-
-# ---- flags ---------------------------------------------------------------------------------
-
-# ---- UID checks -------------------------------------------------------------------------------
-
-def uidv_is(+have: Maybe<&2, U32>, +want: U32) -> Bool:
-  match have:
-    case Some{n}:
-      U32.is_eq(n, want)
-    case None{}:
-      False{}
 
 # The preflight's early check (the plans check again in the changing session).
 def uidv_problem(+lines: List<&2, I.RLine>, +want: U32, +folder: String) -> String:
@@ -704,8 +722,13 @@ def move_caps(r: Run, +folder: String, +uids: List<&2, U32>, +dest: String, +uid
     case RunOk{+lines}:
       move_if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, dest, uidv)
 
+# Whether two names denote the same mailbox; INBOX is case-insensitive in
+# IMAP, other names are compared as given.
+def same_mailbox(+a: String, +b: String) -> Bool:
+  String.eq(a, b) || (String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"))
+
 def move_request(+uidv: U32, +folder: String, +dest: String) -> String:
-  Bool.pick(String, String.is_empty(dest) || String.eq(dest, folder), "\"destination\" must name a different folder",
+  Bool.pick(String, String.is_empty(dest) || same_mailbox(dest, folder), "\"destination\" must name a different folder",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
 def move_asked(+problem: String, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
@@ -848,95 +871,42 @@ def ext_type(+name: String) -> String:
 def max_attachment() -> U32:
   26214400
 
-def att_read(m: File & Result<&1, &1, U32 & String, List<&2, U32>>, +path: String, +name: String, +ctype: String) -> IO(AttR):
-  (f, r) = m
-  match r:
-    case Done{+xs}:
-      do IO<AttR>:
-        File.close(f)
-        return Bool.pick(AttR, Nat.is_gt(List.length(&2, U32, xs), U32.to_nat(max_attachment())), AttErr{"attachment " ++ path ++ " is larger than 25 MB"}, AttOk{M.Attach{name, ctype, bytes_str(xs)}})
-    case Fail{(code, msg)}:
-      do IO<AttR>:
-        File.close(f)
-        return AttErr{"cannot read attachment " ++ path ++ ": " ++ msg}
-
 def pure_att(+a: AttR) -> IO(AttR):
   IO.pure(AttR, a)
 
-def att_open(r: Result<&1, &1, U32 & String, File>, +path: String, +name: String, +ctype: String) -> IO(AttR):
-  match r:
-    case Done{f}:
-      do IO<AttR>:
-        m : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, (max_attachment() + 1 : U32))
-        att_read(m, path, name, ctype)
-    case Fail{(code, msg)}:
-      pure_att(AttErr{"cannot open attachment " ++ path ++ ": " ++ msg})
-
-def path_of(p: Proc) -> String:
+def att_proc(+p: Proc, +name: String, +ctype: String) -> AttR:
   match p:
-    case ProcOk{code, out, err}:
-      Bool.pick(String, U32.is_zero(code), String.trim(out), "")
     case ProcFail{m}:
-      ""
-
-# The canonical path (symlinks and ".." resolved), or "" if it does not exist.
-def real_path(+path: String) -> IO(String):
-  do IO<String>:
-    r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run("/usr/bin/realpath", ["-e", "--", path], "", 65536, 10000)
-    return path_of(proc_of(r))
-
-def kind_of(p: Proc) -> String:
-  match p:
+      AttErr{"cannot run the TLS helper: " ++ m}
     case ProcOk{code, out, err}:
-      String.trim(out)
-    case ProcFail{m}:
-      ""
+      Bool.pick(AttR, U32.is_zero(code), AttOk{M.Attach{name, ctype, out}}, AttErr{helper_msg(err)})
 
-def is_regular(+kind: String) -> Bool:
-  String.eq(kind, "regular file") || String.eq(kind, "regular empty file")
-
-def att_kind(+regular: Bool, +real: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
-  match regular:
-    case True{}:
-      do IO<AttR>:
-        r : Result<&1, &1, U32 & String, File> <- File.open(real, "r")
-        att_open(r, path, name, ctype)
-    case False{}:
-      pure_att(AttErr{"attachment " ++ path ++ " is not a regular file"})
-
-def att_problem(+dir: String, +real: String, +path: String) -> String:
-  Bool.pick(String, String.is_empty(dir), "MAILBEND_ATTACH_DIR does not exist",
-    Bool.pick(String, String.is_empty(real), "attachment not found: " ++ path,
-      Bool.pick(String, Bool.not(Ops.has_prefix(dir ++ "/", real)), "attachment " ++ path ++ " is outside MAILBEND_ATTACH_DIR", "")))
-
-def att_allowed(+problem: String, +real: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
-  match problem:
-    case SCon{h, t}:
-      pure_att(AttErr{problem})
-    case SNil{}:
-      do IO<AttR>:
-        k : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run("/usr/bin/stat", ["-L", "-c", "%F", "--", real], "", 4096, 10000)
-        att_kind(is_regular(kind_of(proc_of(k))), real, path, name, ctype)
-
-def att_checked(+rd: String, +rp: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
-  att_allowed(att_problem(rd, rp, path), rp, path, name, ctype)
-
-def att_resolve(+dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
+def att_read(+helper: String, +dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
   do IO<AttR>:
-    rd : String <- real_path(dir)
-    rp : String <- real_path(path)
-    att_checked(rd, rp, path, name, ctype)
+    r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run(helper, ["attach", dir, path], "", 60000000, 60000)
+    return att_proc(proc_of(r), name, ctype)
 
-# Attachments are read only from MAILBEND_ATTACH_DIR (resolved, so symlinks
-# and ".." cannot leave it) and only as regular files. Without it they are
-# off: an agent tricked by a message must not be able to mail out files such
-# as /proc/self/environ (which holds the app password) or ~/.ssh keys.
+def att_at(+helper: String, +dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
+  match helper:
+    case SCon{'/', t}:
+      att_read(helper, dir, path, name, ctype)
+    case _:
+      pure_att(AttErr{"MAILBEND_TLS_HELPER must be the absolute path of mailbend-tls (scripts/mailbend sets it)"})
+
+# Attachments come only from MAILBEND_ATTACH_DIR and are off without it: an
+# agent tricked by a message must not mail out files such as
+# /proc/self/environ (which holds the app password) or ~/.ssh keys. The
+# helper opens the file beneath that directory with no symlinks allowed and
+# checks the opened descriptor itself, so a path swapped mid-way cannot
+# redirect the read.
 def att_dir(+dir: String, +path: String, +name: String, +ctype: String) -> IO(AttR):
   match dir:
     case SNil{}:
       pure_att(AttErr{"attachments are disabled: set MAILBEND_ATTACH_DIR to the directory whose files may be attached"})
     case SCon{h, t}:
-      att_resolve(dir, path, name, ctype)
+      do IO<AttR>:
+        helper : String <- env_or("MAILBEND_TLS_HELPER", "")
+        att_at(helper, dir, path, name, ctype)
 
 def att_path(+missing: Bool, +path: String, +name: String, +ctype: String) -> IO(AttR):
   match missing:
@@ -1157,20 +1127,24 @@ def addr_push(+cur: String, +acc: List<&2, String>) -> List<&2, String>:
   +a = String.trim(String.reverse(cur))
   Bool.pick(List<&2, String>, String.is_empty(a), acc, a <> acc)
 
-def addr_split(+s: String, +cur: String, +q: Bool, +acc: List<&2, String>) -> List<&2, String>:
+def addr_split(+s: String, +cur: String, +q: Bool, +depth: U32, +esc: Bool, +acc: List<&2, String>) -> List<&2, String>:
   match s:
     case SNil{}:
       List.reverse(&2, String, addr_push(cur, acc))
-    case SCon{'"', t}:
-      addr_split(t, SCon{'"', cur}, Bool.not(q), acc)
-    case SCon{',', t}:
-      addr_split(t, Bool.pick(String, q, SCon{',', cur}, ""), q, Bool.pick(List<&2, String>, q, acc, addr_push(cur, acc)))
     case SCon{c, t}:
-      addr_split(t, SCon{c, cur}, q, acc)
+      +cut = Bool.not(esc) && Bool.not(q) && U32.is_zero(depth) && Char.is_eq(c, ',')
+      +open = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, '(')
+      +close = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, ')') && Bool.not(U32.is_zero(depth))
+      addr_split(t, Bool.pick(String, cut, "", SCon{c, cur}),
+        Bool.pick(Bool, Bool.not(esc) && U32.is_zero(depth) && Char.is_eq(c, '"'), Bool.not(q), q),
+        Bool.pick(U32, open, (depth + 1 : U32), Bool.pick(U32, close, (depth - 1 : U32), depth)),
+        Bool.not(esc) && (q || Bool.not(U32.is_zero(depth))) && Char.is_eq(c, '\\'),
+        Bool.pick(List<&2, String>, cut, addr_push(cur, acc), acc))
 
-# Splits a header address list at commas outside quotes and angle brackets.
+# Splits a header address list at commas outside quoted strings and
+# "(comments)", honouring "\\" escapes in both.
 def addr_list(+s: String) -> List<&2, String>:
-  addr_split(s, "", False{}, [])
+  addr_split(s, "", False{}, 0, False{}, [])
 
 def body_text(+p: M.Parts) -> String:
   match p:
@@ -1237,25 +1211,38 @@ def orig_msg(+ms: List<&2, I.Msg>, +args: J.Json, +mode: U32, +max: U32, +me: St
     case Con{I.Msg{uid, flags, date, size, headers, body}, t}:
       respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), body, args, me)
 
+def orig_checked(+stale: Bool, +lines: List<&2, I.RLine>, +args: J.Json, +mode: U32, +max: U32, +me: String) -> IO(Out):
+  match stale:
+    case True{}:
+      pure_out(Err{stale_msg()})
+    case False{}:
+      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0)), args, mode, max, me)
+
+# The original is used only if its folder still has the caller's
+# UIDVALIDITY (checked in the same session that fetched it).
 def orig_found(r: Run, +args: J.Json, +mode: U32, +max: U32, +me: String) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
-      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0)), args, mode, max, me)
+      orig_checked(Bool.not(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv_arg(args))), lines, args, mode, max, me)
 
-def respond_uid(+missing: Bool, +args: J.Json, +mode: U32, +max: U32) -> IO(Out):
-  match missing:
-    case True{}:
-      pure_out(Err{"\"uid\" (the message to answer) is required"})
-    case False{}:
+def respond_request(+args: J.Json) -> String:
+  Bool.pick(String, U32.is_zero(u32_arg(args, "uid", 0)), "\"uid\" (the message to answer) is required",
+    Bool.pick(String, U32.is_zero(uidv_arg(args)), uidv_missing(), ""))
+
+def respond_asked(+problem: String, +args: J.Json, +mode: U32, +max: U32) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
       do IO<Out>:
         me : String <- env_or("MAILBEND_EMAIL", "")
         r : Run <- imap_run(Ops.plan_get(folder_arg(args), u32_arg(args, "uid", 0), max))
         orig_found(r, args, mode, max, me)
 
 def t_respond(+args: J.Json, +mode: U32) -> IO(Out):
-  respond_uid(U32.is_zero(u32_arg(args, "uid", 0)), args, mode, Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()))
+  respond_asked(respond_request(args), args, mode, Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()))
 
 # ---- dispatch ----------------------------------------------------------------------------------
 

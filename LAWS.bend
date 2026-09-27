@@ -153,3 +153,20 @@ law draft_never_removes:
   for drafts: String
   for msg: String
   {Bool.or(I.any_expunges(Ops.plan_draft(drafts, msg)), I.any_marks_deleted(Ops.plan_draft(drafts, msg))) == False{} : Bool}
+
+# Plans that expunge confirm UIDPLUS in their own session before marking
+# anything \Deleted, so a session without it never leaves marked messages.
+law delete_checks_uidplus:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.checks_uidplus_or_empty(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) == True{} : Bool}
+
+law copy_move_checks_uidplus:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for uidv: U32
+  {Ops.checks_uidplus(Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv)) == True{} : Bool}

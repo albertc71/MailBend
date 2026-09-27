@@ -23,8 +23,17 @@
  * refused. The helper waits for each command's tagged answer before sending
  * the next one. A line "=EXPECT <text>" right after a command is not sent:
  * it makes the run stop (like a rejection) unless one of that command's
- * untagged response lines starts with <text>. The Bend core uses it to pin
- * UIDVALIDITY in the same session that changes messages.
+ * untagged response lines starts with <text>. "=EXPECT-WORD <word>" asks
+ * instead for <word> as a whole word (case-insensitive) in one of those
+ * lines. The Bend core uses them to pin UIDVALIDITY and to confirm an
+ * extension (such as UIDPLUS) in the same session that changes messages.
+ *
+ * "mailbend-tls attach <dir> <path>" writes one file to stdout (same byte
+ * encoding): <path> is relative to <dir>, or absolute inside it. It is
+ * opened with openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS), so no symlink
+ * or ".." can lead outside <dir>, and only a regular file of at most 25 MiB
+ * is read, checked on the opened descriptor itself. This mode reads no
+ * credentials and opens no connection.
  *
  * SMTP stdin: envelope lines (MAIL FROM, RCPT TO, ...), then DATA and the
  * dot-stuffed message ending in a "." line. EHLO, STARTTLS and AUTH are
@@ -52,6 +61,10 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <linux/openat2.h>
 
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -339,7 +352,19 @@ static int status_word(const unsigned char *p) {
 /* The pending expectation for the current command, and whether it was met. */
 static const unsigned char *expect = NULL;
 static size_t expect_len = 0;
+static int expect_word = 0;
 static int expect_seen = 0;
+
+/* Whether the line holds `w` as a whole word, ignoring case. */
+static int has_word(const unsigned char *l, size_t n, const unsigned char *w, size_t wl) {
+  for (size_t i = 1; i + wl <= n; i++) {
+    unsigned char after = i + wl < n ? l[i + wl] : ' ';
+    if (l[i - 1] == ' ' && strncasecmp((const char *)l + i, (const char *)w, wl) == 0 &&
+        (after == ' ' || after == '\r' || after == '\n' || after == ']'))
+      return 1;
+  }
+  return 0;
+}
 
 static int imap_wait(const char *tag, int want_cont) {
   size_t tl = strlen(tag);
@@ -353,7 +378,9 @@ static int imap_wait(const char *tag, int want_cont) {
       die(EX_PROTO, "unexpected continuation request");
     }
     emit(line, (size_t)n);
-    if (line[0] == '*' && expect_len && (size_t)n >= expect_len && memcmp(line, expect, expect_len) == 0)
+    if (line[0] == '*' && expect_len &&
+        (expect_word ? has_word(line, (size_t)n, expect, expect_len)
+                     : (size_t)n >= expect_len && memcmp(line, expect, expect_len) == 0))
       expect_seen = 1;
     if (line[0] == '*') {
       /* an untagged line may carry literals; each is followed by more line */
@@ -400,7 +427,7 @@ static int is_verb(const unsigned char *p, size_t n, const char *verb) {
  * bounds), stores its tag, sets *cmd_end to the end of the command itself
  * and *exp, *exp_len to a following "=EXPECT" text (or NULL, 0), and returns
  * the offset just past both. */
-static size_t imap_command(size_t p, char tag[17], size_t *cmd_end, const unsigned char **exp, size_t *exp_len) {
+static size_t imap_command(size_t p, char tag[17], size_t *cmd_end, const unsigned char **exp, size_t *exp_len, int *exp_word) {
   unsigned char *nl = memchr(in + p, '\n', in_len - p);
   if (!nl) die(EX_USAGE, "command script does not end in CRLF");
   size_t first_len = (size_t)(nl - (in + p)) + 1;
@@ -429,9 +456,12 @@ static size_t imap_command(size_t p, char tag[17], size_t *cmd_end, const unsign
   *cmd_end = p;
   *exp = NULL;
   *exp_len = 0;
-  static const char dir[] = "=EXPECT ";
-  size_t dl = sizeof dir - 1;
-  if (in_len - p > dl && memcmp(in + p, dir, dl) == 0) {
+  *exp_word = 0;
+  static const char word_dir[] = "=EXPECT-WORD ";
+  static const char prefix_dir[] = "=EXPECT ";
+  int word = in_len - p > sizeof word_dir - 1 && memcmp(in + p, word_dir, sizeof word_dir - 1) == 0;
+  size_t dl = word ? sizeof word_dir - 1 : sizeof prefix_dir - 1;
+  if (word || (in_len - p > dl && memcmp(in + p, prefix_dir, dl) == 0)) {
     nl = memchr(in + p, '\n', in_len - p);
     if (!nl) die(EX_USAGE, "command script does not end in CRLF");
     size_t ln = (size_t)(nl - (in + p)) + 1;
@@ -440,6 +470,8 @@ static size_t imap_command(size_t p, char tag[17], size_t *cmd_end, const unsign
       if (in[i] < 0x20 || in[i] > 0x7E) die(EX_USAGE, "=EXPECT text must be printable ASCII");
     *exp = in + p + dl;
     *exp_len = ln - dl - 2;
+    *exp_word = word;
+    if (word && memchr(*exp, ' ', *exp_len)) die(EX_USAGE, "=EXPECT-WORD takes one word");
     p += ln;
   }
   return p;
@@ -451,7 +483,8 @@ static void imap_validate(void) {
   char tag[17];
   size_t cmd_end, el;
   const unsigned char *e;
-  for (size_t p = 0; p < in_len;) p = imap_command(p, tag, &cmd_end, &e, &el);
+  int ew;
+  for (size_t p = 0; p < in_len;) p = imap_command(p, tag, &cmd_end, &e, &el, &ew);
 }
 
 static int run_imap(void) {
@@ -497,7 +530,7 @@ static int run_imap(void) {
   size_t p = 0;
   while (p < in_len) {
     char tag[17];
-    size_t end, next = imap_command(p, tag, &end, &expect, &expect_len);
+    size_t end, next = imap_command(p, tag, &end, &expect, &expect_len, &expect_word);
     expect_seen = 0;
     int st = ST_OK;
     while (p < end) {
@@ -536,6 +569,55 @@ static int run_imap(void) {
   raw_write("Z LOGOUT\r\n", 10);
   imap_wait("Z", 0);
   return status;
+}
+
+/* ---- attachments ------------------------------------------------------ */
+
+#define MAX_ATTACHMENT (25u << 20)
+
+static int run_attach(const char *dir, const char *path) {
+  char root[PATH_MAX];
+  if (!realpath(dir, root)) die(EX_USAGE, "MAILBEND_ATTACH_DIR does not exist");
+  const char *rel = path;
+  if (path[0] == '/') {
+    size_t rl = strlen(root), dl = strlen(dir);
+    while (dl > 1 && dir[dl - 1] == '/') dl--;
+    if (strncmp(path, root, rl) == 0 && path[rl] == '/') rel = path + rl + 1;
+    else if (strncmp(path, dir, dl) == 0 && path[dl] == '/') rel = path + dl + 1;
+    else die(EX_USAGE, "attachment %s is outside MAILBEND_ATTACH_DIR", path);
+  }
+  if (!*rel) die(EX_USAGE, "attachment path names no file");
+  int dfd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (dfd < 0) die(EX_USAGE, "cannot open MAILBEND_ATTACH_DIR");
+  struct open_how how;
+  memset(&how, 0, sizeof how);
+  how.flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY;
+  how.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS;
+  int fd = (int)syscall(SYS_openat2, dfd, rel, &how, sizeof how);
+  if (fd < 0) {
+    if (errno == ENOSYS) die(EX_USAGE, "attachments need Linux 5.6+ (openat2)");
+    if (errno == ENOENT) die(EX_USAGE, "attachment not found: %s", path);
+    if (errno == EXDEV || errno == ELOOP)
+      die(EX_USAGE, "attachment %s is outside MAILBEND_ATTACH_DIR or reached through a symlink", path);
+    die(EX_USAGE, "cannot open attachment %s: %s", path, strerror(errno));
+  }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die(EX_USAGE, "attachment %s is not a regular file", path);
+  if (st.st_size > (off_t)MAX_ATTACHMENT) die(EX_USAGE, "attachment %s is larger than 25 MB", path);
+  unsigned char buf[65536];
+  unsigned long long total = 0;
+  for (;;) {
+    ssize_t r = read(fd, buf, sizeof buf);
+    if (r < 0 && errno == EINTR) continue;
+    if (r < 0) die(EX_USAGE, "cannot read attachment %s", path);
+    if (r == 0) break;
+    total += (unsigned long long)r;
+    if (total > MAX_ATTACHMENT) die(EX_USAGE, "attachment %s is larger than 25 MB", path);
+    emit(buf, (size_t)r);
+  }
+  close(fd);
+  close(dfd);
+  return EX_OK;
 }
 
 /* ---- SMTP -------------------------------------------------------------- */
@@ -748,11 +830,11 @@ static int run_smtp(void) {
 
 int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
-  if (argc != 2) die(EX_USAGE, "usage: mailbend-tls imap|smtp");
   int r = EX_USAGE;
-  if (strcmp(argv[1], "imap") == 0) r = run_imap();
-  else if (strcmp(argv[1], "smtp") == 0) r = run_smtp();
-  else die(EX_USAGE, "usage: mailbend-tls imap|smtp");
+  if (argc == 2 && strcmp(argv[1], "imap") == 0) r = run_imap();
+  else if (argc == 2 && strcmp(argv[1], "smtp") == 0) r = run_smtp();
+  else if (argc == 4 && strcmp(argv[1], "attach") == 0) r = run_attach(argv[2], argv[3]);
+  else die(EX_USAGE, "usage: mailbend-tls imap|smtp, or mailbend-tls attach <dir> <path>");
   fflush(stdout);
   if (in) { wipe(in, in_len); free(in); }
   return r;

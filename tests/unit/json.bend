@@ -32,6 +32,7 @@ def main() -> IO(Unit):
     IO.print(rt("[1] [2]"))
     IO.print(rt("nope"))
     IO.print(String.join([rt("[1 2]"), rt("[1,]"), rt("{\"a\":1,}"), rt("{,}"), rt("{\"a\"::1}"), rt("[,1]")], " "))
+    IO.print(String.join([rt("\"a\\qb\""), rt("\"a\\x41\""), rt("\"ok\\/\\\"\""), rt("\"\\u00e9\"")], " "))
     IO.print(String.join([rt("01"), rt("1-2"), rt("-"), rt("1."), rt("1e"), rt("[-0.5e+3, 0, 10, 2E-2]")], " "))
     IO.print(J.show(J.str("ctl\u{1}")))
     checks(Maybe.default(&2, J.Json, J.parse("{\"uid\": 42, \"name\": \"INBOX\", \"flag\": true, \"list\": [\"a\",\"b\"]}"), J.JNull{}))
@@ -45,6 +46,7 @@ def main() -> IO(Unit):
 #|PARSE-ERROR
 #|PARSE-ERROR
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
+#|PARSE-ERROR PARSE-ERROR "ok/\"" "é"
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR [-0.5e+3,0,10,2E-2]
 #|"ctl\u0001"
 #|INBOX

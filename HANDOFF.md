@@ -11,8 +11,8 @@ The intended primary development branch is **`main`**. The repository was initia
 ## Status (2026-09-27)
 
 Milestones 1-6 and 8 are implemented and verified end to end against a local
-TLS IMAP/SMTP server (`tests/fake_mail_server.py`): 90 e2e checks, 17
-transport checks, 4 unit suites, 24 proven laws. See
+TLS IMAP/SMTP server (`tests/fake_mail_server.py`): 95 e2e checks, 17
+transport checks, 4 unit suites, 26 proven laws. See
 `plans/260927-0319-mailbend-core-implementation/plan.md`.
 
 - Bend 2.0.29 core in `main.bend` + `src/*.bend`; safety laws in `LAWS.bend`,
@@ -27,7 +27,9 @@ transport checks, 4 unit suites, 24 proven laws. See
   found an attachment-path exfiltration route and a helper literal bug; both
   are fixed (attachments only from `MAILBEND_ATTACH_DIR`). A Codex review on
   PR #1 led to UIDVALIDITY pinning inside the changing session, an absolute
-  helper path, strict JSON, RFC 2231 filenames and header folding.
+  helper path, strict JSON, RFC 2231 filenames and header folding; a second
+  round added in-session UIDPLUS checks, race-free attachment reads in the
+  helper (`openat2`), and UIDVALIDITY checks for reply/forward.
 
 Not done yet:
 

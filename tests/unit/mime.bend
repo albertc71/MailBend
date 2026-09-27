@@ -83,6 +83,19 @@ def evil() -> M.Draft:
 def no_evil(+m: String) -> Bool:
   Bool.not(String.contains(m, "\r\nBcc:") || String.contains(m, "\r\nX-Evil:"))
 
+def long_name() -> String:
+  String.repeat("é", 120n) ++ ".pdf"
+
+# The longest line (between CRLFs) in a string.
+def max_line(+s: String, +cur: U32, +best: U32) -> U32:
+  match s:
+    case SNil{}:
+      U32.max(cur, best)
+    case SCon{'\n', t}:
+      max_line(t, 0, U32.max(cur, best))
+    case SCon{c, t}:
+      max_line(t, (cur + 1 : U32), best)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     check(M.headers(M.head_of(M.split(msg()))))
@@ -93,6 +106,8 @@ def main() -> IO(Unit):
     IO.print(Bool.show(no_evil(M.compose(evil(), "b"))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
     IO.print(vis(M.name_param("filename", "résumé.pdf")) ++ " | " ++ M.name_param("filename", "plain.txt"))
     IO.print(Nat.show(String.length(M.encode_header(String.repeat("a", 950n)))) ++ " " ++ Bool.show(String.contains(M.encode_header(String.repeat("a", 950n)), "\r\n ")) ++ " " ++ vis(M.fold_ids(["<a@x>", "<b@y>"])))
+    IO.print(Bool.show(String.eq(M.param("attachment; " ++ String.concat(String.split(M.name_param("filename", long_name()), '\n')), "filename"), long_name())) ++ " " ++ Bool.show(U32.is_lt(max_line(M.name_param("filename", long_name()), 0, 0), 80)))
+    IO.print(M.param("attachment; filename=\"Q1; final \\\"v2\\\".pdf\"; size=3", "filename") ++ " | " ++ M.main_value("text/plain ; charset=\"a;b\"") ++ " | " ++ M.addr_spec("john@example.com (Doe, John)"))
     IO.print(M.addr_spec("\"a <evil@x.com>\" <real@y.com>") ++ " " ++ M.addr_spec("plain@z.com"))
     IO.print(Bool.show(M.addr_ok("A <a@b.c>")) ++ " " ++ Bool.show(M.addr_ok("a@b.c\r\nRCPT TO:<x@y>")) ++ " " ++ Bool.show(M.addr_ok("no-at")) ++ " " ++ Bool.show(M.addr_ok("a@b@c")))
 
@@ -109,7 +124,9 @@ def main() -> IO(Unit):
 #|ligne deux é html= atts=notes.txt|text/plain|5;
 #|Thu, 1 Jan 1970 00:00:00 +0000 / Tue, 29 Feb 2000 00:00:00 +0000 / Sun, 27 Sep 2026 03:39:30 +0000 / Thu, 31 Dec 2099 23:59:59 +0000
 #|True text/plain application/octet-stream True False
-#|filename="r_sum_.pdf";\r\n filename*=utf-8''r%C3%A9sum%C3%A9.pdf | filename="plain.txt"
+#|filename="r_sum_.pdf";\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf | filename="plain.txt"
 #|1595 True <a@x>\r\n <b@y>
+#|True True
+#|Q1; final "v2".pdf | text/plain | john@example.com
 #|real@y.com plain@z.com
 #|True False False False

@@ -23,8 +23,8 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity` | yes |
 | `mail_save_draft` | Compose into Drafts (with attachments) | yes |
 | `mail_send` | Compose and send over SMTP (to/cc/bcc, attachments) | sends |
-| `mail_reply` | Reply or reply-all, threaded; or save as draft | sends |
-| `mail_forward` | Forward with the original attached; or save as draft | sends |
+| `mail_reply` | Reply or reply-all, threaded; or save as draft (needs `uidvalidity`) | sends |
+| `mail_forward` | Forward with the original attached; or save as draft (needs `uidvalidity`) | sends |
 
 Read tools open folders with `EXAMINE` and fetch with `BODY.PEEK`, so reading
 never marks mail as read. Tools that change messages take the `uidvalidity`
@@ -112,13 +112,15 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
   folder's UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
-  any change.
+  any change. Reply and forward check it too before using the original, and
+  expunging plans confirm UIDPLUS in their own session first.
 - **Folders by role, not by name.** Trash and Drafts come from special-use
   attributes; names are used only on servers that mark no folder at all.
 - **No file exfiltration.** Attachments are read only from
-  `MAILBEND_ATTACH_DIR`, after resolving symlinks and `..`, and only regular
-  files; without it they are off. A prompt-injected message cannot make the
-  agent mail out `~/.ssh` keys or `/proc/self/environ`.
+  `MAILBEND_ATTACH_DIR` (off without it). The helper opens them beneath that
+  directory with `openat2`, refusing any symlink or `..`, and checks the
+  opened file itself, so a prompt-injected message cannot make the agent mail
+  out `~/.ssh` keys or `/proc/self/environ`, even by racing a path swap.
 - Commands run one at a time and stop at the first rejection; message
   contents are framed as IMAP literals, so a message cannot spoof a server
   reply.

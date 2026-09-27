@@ -126,7 +126,8 @@ def plan_mark(+mbox: String, +uids: List<&2, U32>, +seen: Bool, +uidv: U32) -> L
 
 # Moves with UID MOVE when the server has it. Otherwise copies, then marks
 # and expunges exactly those UIDs, which needs UIDPLUS (a plain EXPUNGE
-# could remove other messages marked \Deleted). With neither, no plan.
+# could remove other messages marked \Deleted); the session itself confirms
+# UIDPLUS before anything is marked. With neither, no plan.
 def plan_move(+mbox: String, +uids: List<&2, U32>, +dest: String, +move: Bool, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
   match move:
     case True{}:
@@ -134,7 +135,7 @@ def plan_move(+mbox: String, +uids: List<&2, U32>, +dest: String, +move: Bool, +
     case False{}:
       match uidplus:
         case True{}:
-          [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CCopy{uids, dest}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
+          [I.CCapability{}, I.CExpectWord{"UIDPLUS"}, I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CCopy{uids, dest}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
         case False{}:
           []
 
@@ -150,15 +151,16 @@ def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus
     case True{}:
       match uidplus:
         case True{}:
-          [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
+          [I.CCapability{}, I.CExpectWord{"UIDPLUS"}, I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
         case False{}:
           []
     case False{}:
       []
 
 # Permanent deletion needs the caller's confirmation, exactly the word
-# "permanently-delete", and UIDPLUS (to expunge only these UIDs). Without
-# both there is no plan.
+# "permanently-delete", and UIDPLUS (to expunge only these UIDs), confirmed
+# again in the deleting session before anything is marked. Without both
+# there is no plan.
 def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: String, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
   plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
 
@@ -205,8 +207,26 @@ def pinned(+cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Con{I.CSelect{m}, Con{I.CExpect{e}, t}}:
       has_prefix("* OK [UIDVALIDITY ", e)
+    case Con{I.CCapability{}, Con{I.CExpectWord{w}, t}}:
+      pinned(t)
     case _:
       False{}
+
+# Whether a plan confirms UIDPLUS in its own session before anything else:
+# CAPABILITY, then the expectation of the word UIDPLUS.
+def checks_uidplus(+cs: List<&2, I.Cmd>) -> Bool:
+  match cs:
+    case Con{I.CCapability{}, Con{I.CExpectWord{w}, t}}:
+      String.eq(w, "UIDPLUS")
+    case _:
+      False{}
+
+def checks_uidplus_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
+  match cs:
+    case Nil{}:
+      True{}
+    case Con{h, t}:
+      checks_uidplus(cs)
 
 # Pinned, or no plan at all (a refused operation sends nothing).
 def pinned_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
