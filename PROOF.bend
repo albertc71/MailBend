@@ -25,6 +25,9 @@ def Laws.probe_writes_nothing():
 def Laws.folders_write_nothing():
   {==}
 
+def Laws.roles_write_nothing():
+  {==}
+
 def Laws.search_writes_nothing(mbox, keys):
   {==}
 

@@ -292,6 +292,29 @@ def any_special(+fs: List<&2, I.Folder>) -> Bool:
 def role(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) -> Maybe<&2, String>:
   Bool.pick(Maybe<&2, String>, any_special(fs), I.special(fs, attr), Maybe.or(&2, String, I.named(fs, a), I.named(fs, b)))
 
+# The folders with their roles. A server may advertise SPECIAL-USE yet mark
+# folders only when LIST asks with RETURN (SPECIAL-USE); then a second,
+# read-only session asks, so roles never fall back to names needlessly.
+def roles_of(r: Run, +fallback: List<&2, I.Folder>) -> List<&2, I.Folder>:
+  match r:
+    case RunErr{m}:
+      fallback
+    case RunOk{+lines}:
+      Bool.pick(List<&2, I.Folder>, any_special(I.folders(lines)), I.folders(lines), fallback)
+
+def roles_if(+ask: Bool, +fs: List<&2, I.Folder>) -> IO(List<&2, I.Folder>):
+  match ask:
+    case False{}:
+      IO.pure(List<&2, I.Folder>, fs)
+    case True{}:
+      do IO<List<&2, I.Folder>>:
+        r : Run <- imap_run(Ops.plan_roles())
+        return roles_of(r, fs)
+
+# `lines` must come from a session that ran CAPABILITY and LIST.
+def folders_io(+lines: List<&2, I.RLine>) -> IO(List<&2, I.Folder>):
+  roles_if(I.has_cap(I.caps(lines), "SPECIAL-USE") && Bool.not(any_special(I.folders(lines))), I.folders(lines))
+
 def trash_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
   role(fs, "\\Trash", "Deleted Messages", "Trash")
 
@@ -375,31 +398,38 @@ def asc(+xs: List<&2, U32>) -> List<&2, U32>:
 
 # ---- mail_probe / mail_list_folders ----------------------------------------------------------
 
-def probe_out(r: Run, +host: String, +email: String) -> Out:
+def probe_json(+lines: List<&2, I.RLine>, +fs: List<&2, I.Folder>, +host: String, +email: String) -> Out:
+  ok_obj([J.kv("ok", J.bool(True{})), J.kv("account", J.str(email)), J.kv("imap_host", J.str(host)), J.kv("tls_verified", J.bool(True{})), J.kv("capabilities", J.strs(I.caps(lines))), J.kv("idle", J.bool(I.has_cap(I.caps(lines), "IDLE"))), J.kv("move", J.bool(I.has_cap(I.caps(lines), "MOVE"))), J.kv("uidplus", J.bool(I.has_cap(I.caps(lines), "UIDPLUS"))), J.kv("special_use", special_json(fs)), J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs))))])
+
+def probe_out(r: Run, +host: String, +email: String) -> IO(Out):
   match r:
     case RunErr{m}:
-      Err{m}
+      pure_out(Err{m})
     case RunOk{+lines}:
-      ok_obj([J.kv("ok", J.bool(True{})), J.kv("account", J.str(email)), J.kv("imap_host", J.str(host)), J.kv("tls_verified", J.bool(True{})), J.kv("capabilities", J.strs(I.caps(lines))), J.kv("idle", J.bool(I.has_cap(I.caps(lines), "IDLE"))), J.kv("move", J.bool(I.has_cap(I.caps(lines), "MOVE"))), J.kv("uidplus", J.bool(I.has_cap(I.caps(lines), "UIDPLUS"))), J.kv("special_use", special_json(I.folders(lines))), J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, I.folders(lines)))))])
+      do IO<Out>:
+        fs : List<&2, I.Folder> <- folders_io(lines)
+        return probe_json(lines, fs, host, email)
 
 def t_probe(+args: J.Json) -> IO(Out):
   do IO<Out>:
     r : Run <- imap_run(Ops.plan_probe())
     host : String <- env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com")
     email : String <- env_or("MAILBEND_EMAIL", "")
-    return probe_out(r, host, email)
+    probe_out(r, host, email)
 
-def folders_out(r: Run) -> Out:
+def folders_out(r: Run) -> IO(Out):
   match r:
     case RunErr{m}:
-      Err{m}
+      pure_out(Err{m})
     case RunOk{+lines}:
-      ok_obj([J.kv("folders", J.arr(folders_json(I.folders(lines))))])
+      do IO<Out>:
+        fs : List<&2, I.Folder> <- folders_io(lines)
+        return ok_obj([J.kv("folders", J.arr(folders_json(fs)))])
 
 def t_folders(+args: J.Json) -> IO(Out):
   do IO<Out>:
     r : Run <- imap_run(Ops.plan_folders())
-    return folders_out(r)
+    folders_out(r)
 
 def str_key(+args: J.Json, +name: String) -> List<&2, I.Key>:
   +v = str_arg(args, name, "")
@@ -781,7 +811,9 @@ def trash_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
-      trash_to(trash_of(I.folders(lines)), I.caps(lines), folder, uids, uidv)
+      do IO<Out>:
+        fs : List<&2, I.Folder> <- folders_io(lines)
+        trash_to(trash_of(fs), I.caps(lines), folder, uids, uidv)
 
 def trash_found(r: Run, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match r:
@@ -970,7 +1002,7 @@ def att_gated(+too_many: Bool, +spent: Bool, +a: J.Json, +budget: U32) -> IO(Att
     case False{}:
       match spent:
         case True{}:
-          pure_att(AttErr{"attachments may total at most 25 MB"})
+          pure_att(AttErr{"attachments (with a forwarded original) may total at most 25 MB"})
         case False{}:
           att_one(a, budget)
 
@@ -994,8 +1026,11 @@ def atts_go(+xs: List<&2, J.Json>, +go: Bool, +n: U32, +budget: U32) -> IO(List<
         rest : List<&2, AttR> <- atts_go(t, go && att_ok(o), (n + 1 : U32), (budget - att_size(o) : U32))
         return o <> rest
 
+def atts_read_within(+xs: List<&2, J.Json>, +budget: U32) -> IO(List<&2, AttR>):
+  atts_go(xs, True{}, 0, budget)
+
 def atts_read(+xs: List<&2, J.Json>) -> IO(List<&2, AttR>):
-  atts_go(xs, True{}, 0, max_attachment())
+  atts_read_within(xs, max_attachment())
 
 def atts_cons(+a: M.Attach, +rest: Atts) -> Atts:
   match rest:
@@ -1115,7 +1150,9 @@ def draft_folder(r: Run, +msg: String, +msgid: String) -> IO(Out):
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
-      draft_append(drafts_of(I.folders(lines)), msg, msgid)
+      do IO<Out>:
+        fs : List<&2, I.Folder> <- folders_io(lines)
+        draft_append(drafts_of(fs), msg, msgid)
 
 def sent_out(+o: Out, +msgid: String, +n: U32) -> Out:
   match o:
@@ -1214,24 +1251,29 @@ def addr_push(+cur: String, +acc: List<&2, String>) -> List<&2, String>:
   +a = String.trim(String.reverse(cur))
   Bool.pick(List<&2, String>, String.is_empty(a), acc, a <> acc)
 
-def addr_split(+s: String, +cur: String, +q: Bool, +depth: U32, +esc: Bool, +acc: List<&2, String>) -> List<&2, String>:
+def addr_split(+s: String, +cur: String, +q: Bool, +depth: U32, +esc: Bool, +ang: Bool, +acc: List<&2, String>) -> List<&2, String>:
   match s:
     case SNil{}:
       List.reverse(&2, String, addr_push(cur, acc))
     case SCon{c, t}:
-      +cut = Bool.not(esc) && Bool.not(q) && U32.is_zero(depth) && Char.is_eq(c, ',')
+      +top = Bool.not(esc) && Bool.not(q) && U32.is_zero(depth)
+      +cut = top && (Char.is_eq(c, ',') || Char.is_eq(c, ';'))
+      +label = top && Bool.not(ang) && Char.is_eq(c, ':')
       +open = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, '(')
       +close = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, ')') && Bool.not(U32.is_zero(depth))
-      addr_split(t, Bool.pick(String, cut, "", SCon{c, cur}),
+      addr_split(t, Bool.pick(String, cut || label, "", SCon{c, cur}),
         Bool.pick(Bool, Bool.not(esc) && U32.is_zero(depth) && Char.is_eq(c, '"'), Bool.not(q), q),
         Bool.pick(U32, open, (depth + 1 : U32), Bool.pick(U32, close, (depth - 1 : U32), depth)),
         Bool.not(esc) && (q || Bool.not(U32.is_zero(depth))) && Char.is_eq(c, '\\'),
+        Bool.pick(Bool, top && Char.is_eq(c, '<'), True{}, Bool.pick(Bool, top && Char.is_eq(c, '>'), False{}, ang)),
         Bool.pick(List<&2, String>, cut, addr_push(cur, acc), acc))
 
 # Splits a header address list at commas outside quoted strings and
-# "(comments)", honouring "\\" escapes in both.
+# "(comments)", honouring "\\" escapes in both. Groups ("Team: a@x, b@y;")
+# give their members only; the label and an empty group
+# ("undisclosed-recipients:;") give nothing.
 def addr_list(+s: String) -> List<&2, String>:
-  addr_split(s, "", False{}, 0, False{}, [])
+  addr_split(s, "", False{}, 0, False{}, False{}, [])
 
 def body_text(+p: M.Parts) -> String:
   match p:
@@ -1276,7 +1318,7 @@ def fwd_note(+hs: List<&2, M.Hdr>) -> String:
 
 def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
   do IO<Out>:
-    rs : List<&2, AttR> <- atts_read(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []))
+    rs : List<&2, AttR> <- atts_read_within(Maybe.default(&2, List<&2, J.Json>, J.as_list(J.get(args, "attachments")), []), (max_attachment() - byte_count(raw, 0) : U32))
     with_atts(atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
       prefixed("Fwd:", hdr_text(hs, "subject")),

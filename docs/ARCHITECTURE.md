@@ -30,7 +30,7 @@ flowchart TB
     json["src/json.bend<br/>strict JSON parser"]
     tools["src/tools.bend<br/>14 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>26 laws proven over the plans"]
+    laws["LAWS.bend + PROOF.bend<br/>27 laws proven over the plans"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
@@ -190,7 +190,7 @@ password.
 | Operation | Protocol |
 | --- | --- |
 | probe | `CAPABILITY` (after login) + `LIST "" "*"` |
-| list folders | `LIST "" "*"`, special use from RFC 6154 attributes |
+| list folders | `CAPABILITY` + `LIST "" "*"`, special use from RFC 6154 attributes; when the server advertises SPECIAL-USE but marks nothing, a second session asks `LIST "" "*" RETURN (SPECIAL-USE)` |
 | search | `EXAMINE` + `UID SEARCH` (`CHARSET UTF-8` with literals for non-ASCII) |
 | message summaries | `EXAMINE` + `UID FETCH (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (...)])` |
 | read | `EXAMINE` + `UID FETCH (... BODY.PEEK[]<0.max>)` |
@@ -247,7 +247,7 @@ Notes:
 `PROOF.bend` proves them, and `bend PROOF.bend` fails if any stops holding:
 
 - `Read`/`Search` are read-only, `Delete` is not, `Trash` is not destructive;
-- the probe, preflight, folder, search, summary, read and new-mail plans
+- the probe, preflight, folder, roles, search, summary, read and new-mail plans
   contain no command that can change a mailbox, for all arguments;
 - rendered read scripts start with `EXAMINE`, and every fetch item renders as
   `BODY.PEEK[...]` or metadata;

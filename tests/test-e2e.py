@@ -378,14 +378,23 @@ def compose(srv):
     check("forward attaches an 8-bit original as base64 (RFC 2046 forbids encoded message/rfc822)", c == 0
           and "Content-Type: application/octet-stream" in data and "forwarded-message.eml" in data
           and all(ord(ch) < 128 for ch in data), r)
+    c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["boss@example.com"], "body": "FYI",
+                                      "attachments": [{"path": "report.txt"}]}, MAILBEND_ATTACH_DIR=srv.work)
+    sent = srv.st().get("sent", [])
+    data = sent[-1]["data"] if sent else ""
+    check("forward with an attachment: original and file within one budget", c == 0 and "forwarded-message.eml" in data
+          and "report.txt" in data, r)
     s = srv.st()
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
 
 def mcp_session(srv, requests, **env):
     p = subprocess.Popen([LAUNCHER, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         text=True, env=srv.env(**env))
-    out, err = p.communicate("\n".join(json.dumps(r) if not isinstance(r, str) else r for r in requests) + "\n", timeout=180)
+                         env=srv.env(**env))
+    # raw bytes: a string request may carry lone surrogates standing for invalid UTF-8 bytes
+    lines = [json.dumps(r) if not isinstance(r, str) else r for r in requests]
+    out, err = p.communicate(b"\n".join(l.encode("utf-8", "surrogateescape") for l in lines) + b"\n", timeout=180)
+    out, err = out.decode("utf-8"), err.decode("utf-8", "replace")
     outputs.extend([out, err])
     return [json.loads(l) for l in out.splitlines() if l.strip()], p.returncode
 
@@ -404,10 +413,12 @@ def mcp(srv):
         {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "mail_save_draft", "arguments": "invalid"}},
         {"id": 8},
         5,
+        {"jsonrpc": "2.0", "id": 11, "method": "initialize", "params": "invalid"},
+        '{"jsonrpc": "2.0", "id": 12, "method": "ping", "x": "\udcff"}',
     ]
     res, code = mcp_session(srv, reqs)
     by_id = {r.get("id"): r for r in res}
-    check("mcp: exactly one answer per request (none for the notification)", len(res) == 11, res)
+    check("mcp: exactly one answer per request (none for the notification)", len(res) == 13, res)
     init = by_id.get(1, {}).get("result", {})
     check("mcp: initialize", init.get("protocolVersion") == "2025-06-18" and "tools" in init.get("capabilities", {})
           and init.get("serverInfo", {}).get("name") == "mailbend", init)
@@ -425,9 +436,11 @@ def mcp(srv):
     dele = by_id.get(4, {}).get("result", {})
     check("mcp: refused delete is an isError result", dele.get("isError") is True and 5 in msgs(srv.st(), "INBOX"), dele)
     check("mcp: parse errors (garbage, a missing separator) answered with -32700",
-          sum(1 for r in res if r.get("error", {}).get("code") == -32700) == 2 and 9 not in by_id, res)
+          sum(1 for r in res if r.get("error", {}).get("code") == -32700) == 3 and 9 not in by_id, res)
     check("mcp: unknown method answered with -32601", by_id.get(5, {}).get("error", {}).get("code") == -32601, by_id.get(5))
     check("mcp: ping", by_id.get(6, {}).get("result") == {}, by_id.get(6))
+    check("mcp: non-object params are refused, not cleared", by_id.get(11, {}).get("error", {}).get("code") == -32602, by_id.get(11))
+    check("mcp: a line that is not valid UTF-8 is a parse error", 12 not in by_id, res)
     check("mcp: non-object tool arguments are refused, not cleared", by_id.get(7, {}).get("error", {}).get("code") == -32602, by_id.get(7))
     check("mcp: malformed envelopes answered with -32600", by_id.get(8, {}).get("error", {}).get("code") == -32600
           and any(r.get("id") is None and r.get("error", {}).get("code") == -32600 for r in res), res)
@@ -456,6 +469,22 @@ def failures(srv, work):
 
 
 def fallback(work):
+    srv = Server(work, extra=["--special-on-request"])
+    try:
+        c, r = tool(srv, "mail_probe")
+        asked = [l for l in srv.log_lines() if "RETURN (SPECIAL-USE)" in l]
+        check("SPECIAL-USE marked only on request: roles asked with LIST RETURN (SPECIAL-USE)", c == 0 and asked
+              and r["special_use"]["trash"] == "Deleted Messages" and r["special_use"]["drafts"] == "Drafts", (r, asked))
+        c, r = tool(srv, "mail_trash", {"uids": [3], "uidvalidity": 1700000001})
+        check("SPECIAL-USE marked only on request: trash uses the requested roles", c == 0 and 3 not in msgs(srv.st(), "INBOX"), r)
+    finally:
+        srv.stop()
+    srv = Server(work)
+    try:
+        c, r = tool(srv, "mail_probe")
+        check("roles in the plain LIST: no second LIST session", c == 0 and not any("RETURN" in l for l in srv.log_lines()), r)
+    finally:
+        srv.stop()
     srv = Server(work, caps="UIDPLUS")
     try:
         c, r = tool(srv, "mail_probe")

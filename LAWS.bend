@@ -27,6 +27,9 @@ law probe_writes_nothing:
 law folders_write_nothing:
   {I.any_writes(Ops.plan_folders()) == False{} : Bool}
 
+law roles_write_nothing:
+  {I.any_writes(Ops.plan_roles()) == False{} : Bool}
+
 law search_writes_nothing:
   for mbox: String
   for keys: List<&2, I.Key>

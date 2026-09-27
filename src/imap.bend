@@ -46,6 +46,7 @@ type Item is Data:
 type Cmd is Data:
   CCapability{}
   CList{}
+  CListRoles{}
   CExamine{mbox: String}
   CSelect{mbox: String}
   CSearch{keys: List<&2, Key>}
@@ -114,6 +115,8 @@ def writes(+c: Cmd) -> Bool:
     case CCapability{}:
       False{}
     case CList{}:
+      False{}
+    case CListRoles{}:
       False{}
     case CExamine{m}:
       False{}
@@ -472,6 +475,8 @@ def cmd_str(+c: Cmd) -> String:
       "CAPABILITY"
     case CList{}:
       "LIST \"\" \"*\""
+    case CListRoles{}:
+      "LIST \"\" \"*\" RETURN (SPECIAL-USE)"
     case CExamine{m}:
       "EXAMINE " ++ mailbox(m)
     case CSelect{m}:
