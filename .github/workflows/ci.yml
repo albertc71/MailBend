@@ -20,7 +20,7 @@ env:
   BEND_SHA256: "5c365ddb12954d0933cef751802e0f7d9875f842edcb80f9661f89cd1a9ff7b6"
 
 jobs:
-  check:
+  checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
