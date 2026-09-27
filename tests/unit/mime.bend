@@ -3,6 +3,17 @@ import Base
 import ../../src/mime.bend as M
 import ../../src/codec.bend as C
 
+def vis(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\r', t}:
+      "\\r" ++ vis(t)
+    case SCon{'\n', t}:
+      "\\n" ++ vis(t)
+    case SCon{c, t}:
+      SCon{c, vis(t)}
+
 def msg() -> String:
   String.concat([
     "From: =?UTF-8?B?Sm9zw6k=?= <jose@example.com>\r\n",
@@ -80,6 +91,8 @@ def main() -> IO(Unit):
     roundtrip(M.compose(draft(), "b0undary"))
     IO.print(M.rfc5322_date(0) ++ " / " ++ M.rfc5322_date(951782400) ++ " / " ++ M.rfc5322_date(1790480370) ++ " / " ++ M.rfc5322_date(4102444799))
     IO.print(Bool.show(no_evil(M.compose(evil(), "b"))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
+    IO.print(vis(M.name_param("filename", "résumé.pdf")) ++ " | " ++ M.name_param("filename", "plain.txt"))
+    IO.print(Nat.show(String.length(M.encode_header(String.repeat("a", 950n)))) ++ " " ++ Bool.show(String.contains(M.encode_header(String.repeat("a", 950n)), "\r\n ")) ++ " " ++ vis(M.fold_ids(["<a@x>", "<b@y>"])))
     IO.print(M.addr_spec("\"a <evil@x.com>\" <real@y.com>") ++ " " ++ M.addr_spec("plain@z.com"))
     IO.print(Bool.show(M.addr_ok("A <a@b.c>")) ++ " " ++ Bool.show(M.addr_ok("a@b.c\r\nRCPT TO:<x@y>")) ++ " " ++ Bool.show(M.addr_ok("no-at")) ++ " " ++ Bool.show(M.addr_ok("a@b@c")))
 
@@ -96,5 +109,7 @@ def main() -> IO(Unit):
 #|ligne deux é html= atts=notes.txt|text/plain|5;
 #|Thu, 1 Jan 1970 00:00:00 +0000 / Tue, 29 Feb 2000 00:00:00 +0000 / Sun, 27 Sep 2026 03:39:30 +0000 / Thu, 31 Dec 2099 23:59:59 +0000
 #|True text/plain application/octet-stream True False
+#|filename="r_sum_.pdf";\r\n filename*=utf-8''r%C3%A9sum%C3%A9.pdf | filename="plain.txt"
+#|1595 True <a@x>\r\n <b@y>
 #|real@y.com plain@z.com
 #|True False False False

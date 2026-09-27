@@ -17,6 +17,45 @@ type Json is Data:
   JEnd{}
   JKv{key: String, val: Json}
 
+# ---- parsing -----------------------------------------------------------------
+
+type Tok is Data:
+  TLBrace{}
+  TRBrace{}
+  TLBrack{}
+  TRBrack{}
+  TStr{s: String}
+  TNum{s: String}
+  TTrue{}
+  TFalse{}
+  TNull{}
+  TColon{}
+  TComma{}
+  TBad{}
+
+# Lexer states; string accumulators are reversed. `hi` holds a pending
+# UTF-16 high surrogate from a \u escape, or 0.
+type LexSt is Data:
+  LNorm{}
+  LStr{acc: String, hi: U32}
+  LEsc{acc: String, hi: U32}
+  LUni{acc: String, hi: U32, n: Nat, code: U32}
+  LNum{acc: String}
+  LWord{acc: String}
+
+type Lx is Data:
+  Lx{st: LexSt, toks: List<&2, Tok>}
+
+# Open containers with what they accept next. Arrays: 0 a value or "]"
+# (just opened), 1 a value (after ","), 2 "," or "]". Objects: 0 a key or
+# "}", 1 a key, 2 ":", 3 a value, 4 "," or "}".
+type Frame is Data:
+  FArr{rev: List<&2, Json>, need: U32}
+  FObj{rev: List<&2, Json>, key: String, need: U32}
+
+type Bld is Data:
+  Bld{stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool}
+
 # ---- construction ----------------------------------------------------------
 
 def chain(xs: List<&2, Json>) -> Json:
@@ -183,33 +222,6 @@ def as_list(m: Maybe<&2, Json>) -> Maybe<&2, List<&2, Json>>:
     case _:
       None{}
 
-# ---- parsing -----------------------------------------------------------------
-
-type Tok is Data:
-  TLBrace{}
-  TRBrace{}
-  TLBrack{}
-  TRBrack{}
-  TStr{s: String}
-  TNum{s: String}
-  TTrue{}
-  TFalse{}
-  TNull{}
-  TBad{}
-
-# Lexer states; string accumulators are reversed. `hi` holds a pending
-# UTF-16 high surrogate from a \u escape, or 0.
-type LexSt is Data:
-  LNorm{}
-  LStr{acc: String, hi: U32}
-  LEsc{acc: String, hi: U32}
-  LUni{acc: String, hi: U32, n: Nat, code: U32}
-  LNum{acc: String}
-  LWord{acc: String}
-
-type Lx is Data:
-  Lx{st: LexSt, toks: List<&2, Tok>}
-
 def is_num_char(+c: Char) -> Bool:
   Char.is_digit(c) || Char.is_eq(c, '-') || Char.is_eq(c, '+') || Char.is_eq(c, '.') || Char.is_eq(c, 'e') || Char.is_eq(c, 'E')
 
@@ -234,9 +246,9 @@ def norm(+c: Char, toks: List<&2, Tok>) -> Lx:
     case ']':
       Lx{LNorm{}, TRBrack{} <> toks}
     case ':':
-      Lx{LNorm{}, toks}
+      Lx{LNorm{}, TColon{} <> toks}
     case ',':
-      Lx{LNorm{}, toks}
+      Lx{LNorm{}, TComma{} <> toks}
     case '"':
       Lx{LStr{SNil{}, 0}, toks}
     case _:
@@ -309,8 +321,38 @@ def uni_step(n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
     case 0n:
       LStr{acc, hi}
 
+# JSON number grammar (RFC 8259) as a state machine. States: 0 start,
+# 1 after '-', 2 a leading 0, 3 integer digits, 4 after '.', 5 fraction
+# digits, 6 after 'e', 7 after the exponent sign, 8 exponent digits;
+# 9 is dead. 2, 3, 5 and 8 accept.
+def num_next(+st: U32, +c: Char) -> U32:
+  +d = Char.is_digit(c)
+  +z = Char.is_eq(c, '0')
+  +e = Char.is_eq(c, 'e') || Char.is_eq(c, 'E')
+  Bool.pick(U32, U32.is_eq(st, 0), Bool.pick(U32, Char.is_eq(c, '-'), 1, Bool.pick(U32, z, 2, Bool.pick(U32, d, 3, 9))),
+    Bool.pick(U32, U32.is_eq(st, 1), Bool.pick(U32, z, 2, Bool.pick(U32, d, 3, 9)),
+      Bool.pick(U32, U32.is_eq(st, 2) || U32.is_eq(st, 3), Bool.pick(U32, Char.is_eq(c, '.'), 4, Bool.pick(U32, e, 6, Bool.pick(U32, d && U32.is_eq(st, 3), 3, 9))),
+        Bool.pick(U32, U32.is_eq(st, 4), Bool.pick(U32, d, 5, 9),
+          Bool.pick(U32, U32.is_eq(st, 5), Bool.pick(U32, d, 5, Bool.pick(U32, e, 6, 9)),
+            Bool.pick(U32, U32.is_eq(st, 6), Bool.pick(U32, Char.is_eq(c, '+') || Char.is_eq(c, '-'), 7, Bool.pick(U32, d, 8, 9)),
+              Bool.pick(U32, U32.is_eq(st, 7) || U32.is_eq(st, 8), Bool.pick(U32, d, 8, 9), 9)))))))
+
+def num_state(+s: String, +st: U32) -> U32:
+  match s:
+    case SNil{}:
+      st
+    case SCon{c, t}:
+      num_state(t, num_next(st, c))
+
+def valid_num(+s: String) -> Bool:
+  +st = num_state(s, 0)
+  U32.is_eq(st, 2) || U32.is_eq(st, 3) || U32.is_eq(st, 5) || U32.is_eq(st, 8)
+
+def num_tok(+s: String) -> Tok:
+  Bool.pick(Tok, valid_num(s), TNum{s}, TBad{})
+
 def num_step(+c: Char, +acc: String, +toks: List<&2, Tok>) -> Lx:
-  Bool.pick(Lx, is_num_char(c), Lx{LNum{SCon{c, acc}}, toks}, norm(c, TNum{String.reverse(acc)} <> toks))
+  Bool.pick(Lx, is_num_char(c), Lx{LNum{SCon{c, acc}}, toks}, norm(c, num_tok(String.reverse(acc)) <> toks))
 
 def word_step(+c: Char, +acc: String, +toks: List<&2, Tok>) -> Lx:
   Bool.pick(Lx, Char.is_alpha(c), Lx{LWord{SCon{c, acc}}, toks}, norm(c, word_tok(String.reverse(acc)) <> toks))
@@ -335,7 +377,7 @@ def lex_end(lx: Lx) -> List<&2, Tok>:
     case Lx{LNorm{}, toks}:
       toks
     case Lx{LNum{acc}, toks}:
-      TNum{String.reverse(acc)} <> toks
+      num_tok(String.reverse(acc)) <> toks
     case Lx{LWord{acc}, toks}:
       word_tok(String.reverse(acc)) <> toks
     case Lx{_, toks}:
@@ -348,55 +390,77 @@ def lex(s: String, lx: Lx) -> List<&2, Tok>:
     case SCon{c, t}:
       lex(t, lex_step(c, lx))
 
-type Frame is Data:
-  FArr{rev: List<&2, Json>}
-  FObj{rev: List<&2, Json>, key: String, has: Bool}
-
-type Bld is Data:
-  Bld{stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool}
-
-def close(f: Frame) -> Json:
+def close(+f: Frame) -> Json:
   match f:
-    case FArr{rev}:
+    case FArr{rev, n}:
       JArr{chain(List.reverse(&2, Json, rev))}
-    case FObj{rev, k, h}:
+    case FObj{rev, k, n}:
       JObj{chain(List.reverse(&2, Json, rev))}
 
-def add(v: Json, stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool) -> Bld:
+def bad(+stack: List<&2, Frame>, +done: Maybe<&2, Json>) -> Bld:
+  Bld{stack, done, False{}}
+
+# A finished value lands in the open container, if it expects one.
+def add(+v: Json, +stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
   match stack:
     case Nil{}:
       Bld{[], Some{v}, ok && Maybe.is_none(&2, Json, done)}
-    case Con{FArr{rev}, rest}:
-      Bld{FArr{v <> rev} <> rest, done, ok}
-    case Con{FObj{rev, k, True{}}, rest}:
-      Bld{FObj{JKv{k, v} <> rev, "", False{}} <> rest, done, ok}
-    case Con{FObj{rev, k, False{}}, rest}:
-      Bld{FObj{rev, k, False{}} <> rest, done, False{}}
+    case Con{FArr{rev, n}, rest}:
+      Bool.pick(Bld, U32.is_lt(n, 2), Bld{FArr{v <> rev, 2} <> rest, done, ok}, bad(stack, done))
+    case Con{FObj{rev, k, n}, rest}:
+      Bool.pick(Bld, U32.is_eq(n, 3), Bld{FObj{JKv{k, v} <> rev, "", 4} <> rest, done, ok}, bad(stack, done))
 
-def pop(stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool) -> Bld:
+def pop_arr(+stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
   match stack:
-    case Nil{}:
-      Bld{[], done, False{}}
-    case Con{f, rest}:
-      add(close(f), rest, done, ok)
+    case Con{FArr{rev, n}, rest}:
+      Bool.pick(Bld, U32.is_eq(n, 0) || U32.is_eq(n, 2), add(close(FArr{rev, n}), rest, done, ok), bad(stack, done))
+    case _:
+      bad(stack, done)
 
-def key_or_value(s: String, stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool) -> Bld:
+def pop_obj(+stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
   match stack:
-    case Con{FObj{rev, k, False{}}, rest}:
-      Bld{FObj{rev, s, True{}} <> rest, done, ok}
+    case Con{FObj{rev, k, n}, rest}:
+      Bool.pick(Bld, U32.is_eq(n, 0) || U32.is_eq(n, 4), add(close(FObj{rev, k, n}), rest, done, ok), bad(stack, done))
+    case _:
+      bad(stack, done)
+
+def key_or_value(+s: String, +stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
+  match stack:
+    case Con{FObj{rev, k, n}, rest}:
+      Bool.pick(Bld, U32.is_lt(n, 2), Bld{FObj{rev, s, 2} <> rest, done, ok}, add(JStr{s}, stack, done, ok))
     case _:
       add(JStr{s}, stack, done, ok)
 
-def bstep(t: Tok, stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool) -> Bld:
+def colon(+stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
+  match stack:
+    case Con{FObj{rev, k, n}, rest}:
+      Bool.pick(Bld, U32.is_eq(n, 2), Bld{FObj{rev, k, 3} <> rest, done, ok}, bad(stack, done))
+    case _:
+      bad(stack, done)
+
+def comma(+stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
+  match stack:
+    case Con{FArr{rev, n}, rest}:
+      Bool.pick(Bld, U32.is_eq(n, 2), Bld{FArr{rev, 1} <> rest, done, ok}, bad(stack, done))
+    case Con{FObj{rev, k, n}, rest}:
+      Bool.pick(Bld, U32.is_eq(n, 4), Bld{FObj{rev, k, 1} <> rest, done, ok}, bad(stack, done))
+    case _:
+      bad(stack, done)
+
+def bstep(+t: Tok, +stack: List<&2, Frame>, +done: Maybe<&2, Json>, +ok: Bool) -> Bld:
   match t:
     case TLBrack{}:
-      Bld{FArr{[]} <> stack, done, ok}
+      Bld{FArr{[], 0} <> stack, done, ok}
     case TLBrace{}:
-      Bld{FObj{[], "", False{}} <> stack, done, ok}
+      Bld{FObj{[], "", 0} <> stack, done, ok}
     case TRBrack{}:
-      pop(stack, done, ok)
+      pop_arr(stack, done, ok)
     case TRBrace{}:
-      pop(stack, done, ok)
+      pop_obj(stack, done, ok)
+    case TColon{}:
+      colon(stack, done, ok)
+    case TComma{}:
+      comma(stack, done, ok)
     case TStr{s}:
       key_or_value(s, stack, done, ok)
     case TNum{s}:
@@ -408,21 +472,21 @@ def bstep(t: Tok, stack: List<&2, Frame>, done: Maybe<&2, Json>, ok: Bool) -> Bl
     case TNull{}:
       add(JNull{}, stack, done, ok)
     case TBad{}:
-      Bld{stack, done, False{}}
+      bad(stack, done)
 
-def bstep_b(b: Bld, t: Tok) -> Bld:
+def bstep_b(+b: Bld, +t: Tok) -> Bld:
   match b:
     case Bld{stack, done, ok}:
       bstep(t, stack, done, ok)
 
-def build(toks: List<&2, Tok>, b: Bld) -> Bld:
+def build(+toks: List<&2, Tok>, +b: Bld) -> Bld:
   match toks:
     case Nil{}:
       b
     case Con{t, rest}:
       build(rest, bstep_b(b, t))
 
-def finish(b: Bld) -> Maybe<&2, Json>:
+def finish(+b: Bld) -> Maybe<&2, Json>:
   match b:
     case Bld{Nil{}, Some{v}, True{}}:
       Some{v}

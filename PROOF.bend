@@ -64,14 +64,14 @@ def Laws.fetch_items_never_set_seen(item):
 def Laws.get_new_writes_nothing(mbox, since):
   {==}
 
-def Laws.mark_never_deletes(mbox, uids, seen):
+def Laws.mark_never_deletes(mbox, uids, seen, uidv):
   match seen:
     case True{}:
       {==}
     case False{}:
       {==}
 
-def Laws.move_never_loses_mail(mbox, uids, dest, move, uidplus):
+def Laws.move_never_loses_mail(mbox, uids, dest, move, uidplus, uidv):
   match move:
     case True{}:
       {==}
@@ -82,7 +82,7 @@ def Laws.move_never_loses_mail(mbox, uids, dest, move, uidplus):
         case False{}:
           {==}
 
-def Laws.trash_never_loses_mail(mbox, uids, trash, move, uidplus):
+def Laws.trash_never_loses_mail(mbox, uids, trash, move, uidplus, uidv):
   match move:
     case True{}:
       {==}
@@ -93,9 +93,49 @@ def Laws.trash_never_loses_mail(mbox, uids, trash, move, uidplus):
         case False{}:
           {==}
 
-def Laws.delete_needs_confirmation(mbox, uids, confirm, wrong, uidplus):
-  %Equal.sym(Bool, String.eq(confirm, Ops.confirm_word()), False{}, wrong) : {Ops.plan_delete_if(_, mbox, uids, uidplus) == [] : List<&2, I.Cmd>}
+def Laws.delete_needs_confirmation(mbox, uids, confirm, wrong, uidplus, uidv):
+  %Equal.sym(Bool, String.eq(confirm, Ops.confirm_word()), False{}, wrong) : {Ops.plan_delete_if(_, mbox, uids, uidplus, uidv) == [] : List<&2, I.Cmd>}
   {==}
+
+def Laws.mark_is_pinned(mbox, uids, seen, uidv):
+  {==}
+
+def Laws.move_is_pinned(mbox, uids, dest, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def Laws.trash_is_pinned(mbox, uids, trash, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+# For any confirmation outcome: the plan is pinned or empty.
+def delete_if_pinned(confirm: Bool, mbox: String, uids: List<&2, U32>, uidplus: Bool, uidv: U32) -> {Ops.pinned_or_empty(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) == True{} : Bool}:
+  match confirm:
+    case True{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case False{}:
+      {==}
+
+def Laws.delete_is_pinned(mbox, uids, confirm, uidplus, uidv):
+  delete_if_pinned(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
 
 def Laws.draft_never_removes(drafts, msg):
   {==}

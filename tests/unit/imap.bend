@@ -77,6 +77,7 @@ def main() -> IO(Unit):
     IO.print(vis(I.script([I.CStore{[3], True{}, I.FSeen{}}, I.CMove{[3], "Deleted Messages"}, I.CExpunge{[1, 2]}, I.CAppend{"Drafts", [I.FDraft{}, I.FSeen{}], "Hi\r\n"}, I.CSearch{[I.KSubject{"a\"b"}, I.KUidFrom{9}]}])))
     IO.print(I.mutf7_encode("日本 & Co") ++ " " ++ I.mutf7_decode(I.mutf7_encode("日本 & Co")) ++ " " ++ I.mutf7_decode("&ZeVnLA-") ++ " " ++ I.mutf7_encode("😀"))
     IO.print(Maybe.default(&2, String, I.imap_date("2026-02-01"), "bad") ++ " " ++ Maybe.default(&2, String, I.imap_date("2026-13-01"), "bad"))
+    IO.print(vis(I.script([I.CSelect{"INBOX"}, I.CExpect{I.uidv_line(7)}, I.CSearch{[I.KUids{[3, 4]}]}, I.CStore{[3, 4], True{}, I.FSeen{}}])))
     check(I.frame(transcript()))
     IO.print(Nat.show(List.length(&2, I.RLine, I.frame("a7 OK text {3}\r\nZ OK bye\r\n"))) ++ " " ++ Maybe.default(&2, String, I.imap_date("a\r\nb-02-01"), "bad") ++ " " ++ Maybe.default(&2, String, I.imap_date("{99}-02-01"), "bad"))
 
@@ -84,6 +85,7 @@ def main() -> IO(Unit):
 #|a1 UID STORE 3 +FLAGS.SILENT (\Seen)\r\na2 UID MOVE 3 "Deleted Messages"\r\na3 UID EXPUNGE 1,2\r\na4 APPEND "Drafts" (\Draft \Seen) {4}\r\nHi\r\n\r\na5 UID SEARCH SUBJECT "a\"b" UID 9:*\r\n
 #|&ZeVnLA- &- Co 日本 & Co 日本 &2D3eAA-
 #|1-Feb-2026 bad
+#|a1 SELECT "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 7]\r\na2 UID SEARCH UID 3,4\r\na3 UID STORE 3,4 +FLAGS.SILENT (\Seen)\r\n
 #|19
 #|IMAP4REV1 MOVE UIDPLUS IDLE
 #|True

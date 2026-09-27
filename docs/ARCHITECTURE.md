@@ -44,9 +44,10 @@ The core never reads `MAILBEND_APP_PASSWORD`; only the helper does.
 | message summaries | `EXAMINE` + `UID FETCH (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (...)])` |
 | read | `EXAMINE` + `UID FETCH (... BODY.PEEK[]<0.max>)` |
 | new mail | `EXAMINE` + `UID SEARCH UID n+1:*`, filtered to UIDs > n |
-| mark read / unread | `SELECT` + `UID STORE +FLAGS.SILENT (\Seen)` / `-FLAGS.SILENT` |
-| move | `UID MOVE`; else `UID COPY` + `UID STORE +FLAGS.SILENT (\Deleted)` + `UID EXPUNGE` (UIDPLUS); else refused |
-| trash | move to the `\Trash` folder (else "Deleted Messages" or "Trash" by name) |
+| (every change) | `SELECT`, `=EXPECT * OK [UIDVALIDITY v]` (checked by the helper), `UID SEARCH UID <uids>` (reports changed/missing) |
+| mark read / unread | then `UID STORE +FLAGS.SILENT (\Seen)` / `-FLAGS.SILENT` |
+| move | then `UID MOVE`; else `UID COPY` + `UID STORE +FLAGS.SILENT (\Deleted)` + `UID EXPUNGE` (UIDPLUS); else refused |
+| trash | move to the `\Trash` folder (by name only if the server marks no special-use folders) |
 | delete | confirmation word + matching UIDVALIDITY (checked by an EXAMINE preflight), then `\Deleted` + `UID EXPUNGE` of exactly those UIDs (UIDPLUS); else refused |
 | save draft | `APPEND` to the `\Drafts` folder with `(\Draft \Seen)` |
 | send / reply / forward | MIME composition + SMTP via STARTTLS |
@@ -64,8 +65,12 @@ Notes:
   quoted-printable text, base64 attachments. Bcc goes only into the envelope.
 - A plain `EXPUNGE` is never sent: it would also remove messages another
   client marked `\Deleted`.
-- Mutations accept the folder's `uidvalidity` (delete requires it); a
-  read-only preflight (`CAPABILITY`, `LIST`, `EXAMINE`) refuses stale UIDs.
+- Every change requires the folder's `uidvalidity` and is pinned to it in
+  the changing session itself (`=EXPECT` after `SELECT`); move, trash and
+  delete also run a read-only preflight (`CAPABILITY`, `LIST`, `EXAMINE`)
+  for capabilities and folders.
+- The core starts the helper only from an absolute `MAILBEND_TLS_HELPER`,
+  never from a path relative to the working directory.
 - Attachments come only from `MAILBEND_ATTACH_DIR`: paths are resolved with
   `realpath -e`, must stay inside it, and must be regular files.
 
@@ -83,7 +88,9 @@ Notes:
 - move and trash never expunge before copying, for every capability set;
 - delete is the empty plan unless the confirmation is exactly
   `permanently-delete` (the tool passes the caller's string straight in);
-- saving a draft never removes anything.
+- saving a draft never removes anything;
+- mark, move, trash and delete plans open with `SELECT` and the UIDVALIDITY
+  expectation (or are empty).
 
 Fetch items are a closed type with no non-PEEK body item, so a read cannot
 set `\Seen` by construction; the e2e suite also checks the server log.

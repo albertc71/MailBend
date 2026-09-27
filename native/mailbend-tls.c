@@ -21,7 +21,10 @@
  * in {N} is followed by N literal bytes). Tags "L" and "Z" are reserved for
  * the helper's own LOGIN and LOGOUT, and LOGIN/AUTHENTICATE/STARTTLS are
  * refused. The helper waits for each command's tagged answer before sending
- * the next one.
+ * the next one. A line "=EXPECT <text>" right after a command is not sent:
+ * it makes the run stop (like a rejection) unless one of that command's
+ * untagged response lines starts with <text>. The Bend core uses it to pin
+ * UIDVALIDITY in the same session that changes messages.
  *
  * SMTP stdin: envelope lines (MAIL FROM, RCPT TO, ...), then DATA and the
  * dot-stuffed message ending in a "." line. EHLO, STARTTLS and AUTH are
@@ -333,6 +336,11 @@ static int status_word(const unsigned char *p) {
  * for `tag` (returns its status), or a continuation request when
  * `want_cont` (returns ST_CONT). Literals inside responses are copied as raw
  * bytes, so message content can never be mistaken for a tagged answer. */
+/* The pending expectation for the current command, and whether it was met. */
+static const unsigned char *expect = NULL;
+static size_t expect_len = 0;
+static int expect_seen = 0;
+
 static int imap_wait(const char *tag, int want_cont) {
   size_t tl = strlen(tag);
   for (;;) {
@@ -345,6 +353,8 @@ static int imap_wait(const char *tag, int want_cont) {
       die(EX_PROTO, "unexpected continuation request");
     }
     emit(line, (size_t)n);
+    if (line[0] == '*' && expect_len && (size_t)n >= expect_len && memcmp(line, expect, expect_len) == 0)
+      expect_seen = 1;
     if (line[0] == '*') {
       /* an untagged line may carry literals; each is followed by more line */
       /* (after "* BYE" the tagged answer or end of stream follows) */
@@ -387,8 +397,10 @@ static int is_verb(const unsigned char *p, size_t n, const char *verb) {
 }
 
 /* Checks the command starting at `p` (tag, verb, CRLF lines, literal
- * bounds), stores its tag, and returns the offset just past it. */
-static size_t imap_command(size_t p, char tag[17]) {
+ * bounds), stores its tag, sets *cmd_end to the end of the command itself
+ * and *exp, *exp_len to a following "=EXPECT" text (or NULL, 0), and returns
+ * the offset just past both. */
+static size_t imap_command(size_t p, char tag[17], size_t *cmd_end, const unsigned char **exp, size_t *exp_len) {
   unsigned char *nl = memchr(in + p, '\n', in_len - p);
   if (!nl) die(EX_USAGE, "command script does not end in CRLF");
   size_t first_len = (size_t)(nl - (in + p)) + 1;
@@ -410,17 +422,36 @@ static size_t imap_command(size_t p, char tag[17]) {
     unsigned long long lit;
     int has_lit = literal_len(in + p, (long)ln, &lit);
     p += ln;
-    if (!has_lit) return p;
+    if (!has_lit) break;
     if (lit > in_len - p) die(EX_USAGE, "literal runs past the end of the script");
     p += (size_t)lit;
   }
+  *cmd_end = p;
+  *exp = NULL;
+  *exp_len = 0;
+  static const char dir[] = "=EXPECT ";
+  size_t dl = sizeof dir - 1;
+  if (in_len - p > dl && memcmp(in + p, dir, dl) == 0) {
+    nl = memchr(in + p, '\n', in_len - p);
+    if (!nl) die(EX_USAGE, "command script does not end in CRLF");
+    size_t ln = (size_t)(nl - (in + p)) + 1;
+    if (ln < dl + 3 || in[p + ln - 2] != '\r') die(EX_USAGE, "an =EXPECT line needs text and CRLF");
+    for (size_t i = p + dl; i < p + ln - 2; i++)
+      if (in[i] < 0x20 || in[i] > 0x7E) die(EX_USAGE, "=EXPECT text must be printable ASCII");
+    *exp = in + p + dl;
+    *exp_len = ln - dl - 2;
+    p += ln;
+  }
+  return p;
 }
 
 /* Validates the whole script before connecting, so a malformed later
  * command can never be found only after earlier ones have run. */
 static void imap_validate(void) {
   char tag[17];
-  for (size_t p = 0; p < in_len;) p = imap_command(p, tag);
+  size_t cmd_end, el;
+  const unsigned char *e;
+  for (size_t p = 0; p < in_len;) p = imap_command(p, tag, &cmd_end, &e, &el);
 }
 
 static int run_imap(void) {
@@ -466,7 +497,8 @@ static int run_imap(void) {
   size_t p = 0;
   while (p < in_len) {
     char tag[17];
-    size_t end = imap_command(p, tag);
+    size_t end, next = imap_command(p, tag, &end, &expect, &expect_len);
+    expect_seen = 0;
     int st = ST_OK;
     while (p < end) {
       unsigned char *nl = memchr(in + p, '\n', end - p);
@@ -491,6 +523,14 @@ static int run_imap(void) {
       status = EX_REJECTED;
       break;
     }
+    if (expect_len && !expect_seen) {
+      fprintf(stderr, "mailbend-tls: command %s lacked the expected response \"%.*s\"; later commands skipped\n",
+              tag, (int)expect_len, (const char *)expect);
+      status = EX_REJECTED;
+      break;
+    }
+    expect_len = 0;
+    p = next;
   }
 
   raw_write("Z LOGOUT\r\n", 10);

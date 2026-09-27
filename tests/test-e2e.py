@@ -187,27 +187,42 @@ def reads(srv):
 
 
 def mutations(srv):
+    V = 1700000001  # INBOX UIDVALIDITY in the fixture
     c, r = tool(srv, "mail_mark_read", {"uids": [1, 2]})
+    check("mark_read requires the folder's UIDVALIDITY", c != 0 and "uidvalidity" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_mark_read", {"uids": [1, 2], "uidvalidity": V})
     s = srv.st()
-    check("mark_read adds \\Seen", c == 0 and "\\Seen" in flags(s, "INBOX", 1) and "\\Seen" in flags(s, "INBOX", 2), r)
-    c, r = tool(srv, "mail_mark_unread", {"uids": [2]})
+    check("mark_read adds \\Seen", c == 0 and "\\Seen" in flags(s, "INBOX", 1) and "\\Seen" in flags(s, "INBOX", 2)
+          and r.get("changed") == [1, 2] and r.get("missing") == [], r)
+    c, r = tool(srv, "mail_mark_unread", {"uids": [2], "uidvalidity": V})
     s = srv.st()
     check("mark_unread removes \\Seen", c == 0 and "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 1), r)
-    c, r = tool(srv, "mail_mark_read", {"uids": []})
+    c, r = tool(srv, "mail_mark_read", {"uids": [], "uidvalidity": V})
     check("mark_read needs UIDs", c != 0 and "uids" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_mark_unread", {"uids": [1, 99], "uidvalidity": V})
+    check("changes report UIDs that do not exist", c == 0 and r.get("changed") == [1] and r.get("missing") == [99], r)
+    c, r = tool(srv, "mail_mark_unread", {"uids": [98, 99], "uidvalidity": V})
+    check("a change on no existing UID is an error", c != 0 and "none of these UIDs" in r.get("error", ""), r)
+    before = srv.st()
+    n_log = len(srv.log_lines())
+    c, r = tool(srv, "mail_mark_read", {"uids": [2], "uidvalidity": 42})
+    new = srv.log_lines()[n_log:]
+    check("stale UIDVALIDITY stops a change in the same session (after SELECT, before STORE)",
+          c != 0 and "UIDVALIDITY" in r.get("error", "") and srv.st() == before
+          and any(" SELECT " in l for l in new) and not any(" STORE " in l for l in new), (r, new))
 
-    c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive"})
+    c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive", "uidvalidity": V})
     s = srv.st()
     check("move with UID MOVE", c == 0 and r.get("method") == "UID MOVE" and 3 not in msgs(s, "INBOX")
           and len(s["mailboxes"]["Archive"]["messages"]) == 1, r)
-    c, r = tool(srv, "mail_move", {"uids": [5], "destination": "Nope"})
+    c, r = tool(srv, "mail_move", {"uids": [5], "destination": "Nope", "uidvalidity": V})
     check("move to a missing folder is rejected", c != 0 and "rejected" in r.get("error", "") and 5 in msgs(srv.st(), "INBOX"), r)
 
-    c, r = tool(srv, "mail_trash", {"uids": [1]})
+    c, r = tool(srv, "mail_trash", {"uids": [1], "uidvalidity": V})
     s = srv.st()
     check("trash moves to the special-use Trash", c == 0 and r.get("destination") == "Deleted Messages" and 1 not in msgs(s, "INBOX")
           and len(s["mailboxes"]["Deleted Messages"]["messages"]) == 1, r)
-    c, r = tool(srv, "mail_trash", {"folder": "Deleted Messages", "uids": [1]})
+    c, r = tool(srv, "mail_trash", {"folder": "Deleted Messages", "uids": [1], "uidvalidity": 1700000003})
     check("trash refuses to act inside Trash", c != 0 and "mail_delete" in r.get("error", ""), r)
 
     before = srv.st()
@@ -248,7 +263,8 @@ def compose(srv):
                 MAILBEND_ATTACH_DIR=srv.work)
     check("a symlink cannot escape MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
     c, r = tool(srv, "mail_save_draft", {"to": ["José Q <jose@example.com>"], "subject": "Brouillon é",
-                                         "body": "Draft body é\n.leading dot", "attachments": [{"path": att}]},
+                                         "body": "Draft body é\n.leading dot",
+                                         "attachments": [{"path": att}, {"path": att, "filename": "rapport é.txt"}]},
                 MAILBEND_ATTACH_DIR=srv.work)
     s = srv.st()
     drafts = s["mailboxes"]["Drafts"]["messages"]
@@ -260,6 +276,9 @@ def compose(srv):
     c, r = tool(srv, "mail_get", {"folder": "Drafts", "uid": drafts[-1]["uid"] if drafts else 1})
     check("draft reads back: subject, body, attachment", c == 0 and r.get("subject") == "Brouillon é" and "Draft body é" in r.get("text", "")
           and any(a["filename"] == "report.txt" for a in r.get("attachments", [])), r)
+    check("non-ASCII attachment names use RFC 2231 and read back", "filename*=utf-8''rapport%20%C3%A9.txt" in raw
+          and "=?UTF-8?" not in raw.split("filename", 1)[-1].split("\r\n\r\n", 1)[0]
+          and any(a["filename"] == "rapport é.txt" for a in r.get("attachments", [])), [a["filename"] for a in r.get("attachments", [])])
 
     c, r = tool(srv, "mail_send", {"to": "friend@example.com", "cc": ["Carol <carol@example.com>"], "bcc": ["hidden@example.com"],
                                    "subject": "Hello ✓", "body": "Hi there\n.dot line\n"})
@@ -324,12 +343,13 @@ def mcp(srv):
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "mail_search", "arguments": {"from": "bob"}}},
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "mail_delete", "arguments": {"uids": [5]}}},
         "this is not json",
+        '{"jsonrpc": "2.0" "id": 9, "method": "ping"}',
         {"jsonrpc": "2.0", "id": 5, "method": "resources/list"},
         {"jsonrpc": "2.0", "id": 6, "method": "ping"},
     ]
     res, code = mcp_session(srv, reqs)
     by_id = {r.get("id"): r for r in res}
-    check("mcp: exactly one answer per request (none for the notification)", len(res) == 7, res)
+    check("mcp: exactly one answer per request (none for the notification)", len(res) == 8, res)
     init = by_id.get(1, {}).get("result", {})
     check("mcp: initialize", init.get("protocolVersion") == "2025-06-18" and "tools" in init.get("capabilities", {})
           and init.get("serverInfo", {}).get("name") == "mailbend", init)
@@ -346,7 +366,8 @@ def mcp(srv):
           call.get("isError") is False and payload.get("folder") == "INBOX", call)
     dele = by_id.get(4, {}).get("result", {})
     check("mcp: refused delete is an isError result", dele.get("isError") is True and 5 in msgs(srv.st(), "INBOX"), dele)
-    check("mcp: parse error answered with -32700", any(r.get("error", {}).get("code") == -32700 for r in res), res)
+    check("mcp: parse errors (garbage, a missing separator) answered with -32700",
+          sum(1 for r in res if r.get("error", {}).get("code") == -32700) == 2 and 9 not in by_id, res)
     check("mcp: unknown method answered with -32601", by_id.get(5, {}).get("error", {}).get("code") == -32601, by_id.get(5))
     check("mcp: ping", by_id.get(6, {}).get("result") == {}, by_id.get(6))
     check("mcp: exits cleanly when stdin closes", code == 0, code)
@@ -354,7 +375,7 @@ def mcp(srv):
 
 def read_only(srv):
     before = srv.st()
-    c, r = tool(srv, "mail_trash", {"uids": [5]}, MAILBEND_READ_ONLY="1")
+    c, r = tool(srv, "mail_trash", {"uids": [5], "uidvalidity": 1700000001}, MAILBEND_READ_ONLY="1")
     check("read-only mode refuses changes", c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "") and srv.st() == before, r)
     c, r = tool(srv, "mail_search", {}, MAILBEND_READ_ONLY="1")
     check("read-only mode still allows reads", c == 0 and "messages" in r, r)
@@ -365,6 +386,8 @@ def failures(srv, work):
     check("unknown CA is refused (TLS verification)", c != 0 and "TLS verification failed" in r.get("error", ""), r)
     c, r = tool(srv, "mail_probe", MAILBEND_IMAP_HOST="127.0.0.1")
     check("host name mismatch is refused", c != 0 and "TLS verification failed" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_probe", MAILBEND_TLS_HELPER="bin/mailbend-tls")
+    check("a relative MAILBEND_TLS_HELPER is refused", c != 0 and "absolute path" in r.get("error", ""), r)
     c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD="wrong-password")
     check("wrong password reports authentication failure", c != 0 and "authentication failed" in r.get("error", ""), r)
     c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None)
@@ -377,7 +400,7 @@ def fallback(work):
         c, r = tool(srv, "mail_probe")
         check("no SPECIAL-USE: folders found by name", c == 0 and r["special_use"]["trash"] == "Deleted Messages"
               and r["special_use"]["drafts"] == "Drafts" and not r["move"], r)
-        c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive"})
+        c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive", "uidvalidity": 1700000001})
         s = srv.st()
         check("no MOVE: copy + UID EXPUNGE of exactly those UIDs", c == 0 and r.get("method") == "UID COPY + UID EXPUNGE"
               and 3 not in msgs(s, "INBOX") and len(s["mailboxes"]["Archive"]["messages"]) == 1, r)
@@ -386,7 +409,7 @@ def fallback(work):
     srv = Server(work, caps="")
     try:
         before = srv.st()
-        c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive"})
+        c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive", "uidvalidity": 1700000001})
         check("no MOVE or UIDPLUS: move refused", c != 0 and "neither MOVE nor UIDPLUS" in r.get("error", ""), r)
         c, r = tool(srv, "mail_delete", {"uids": [3], "confirm": "permanently-delete", "uidvalidity": 1700000001})
         check("no UIDPLUS: delete refused", c != 0 and "UIDPLUS" in r.get("error", "") and srv.st() == before, r)

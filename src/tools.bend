@@ -89,11 +89,25 @@ def proc_of(r: Result<&1, &1, U32 & String, U32 & (String & String)>) -> Proc:
     case Fail{(code, msg)}:
       ProcFail{msg}
 
-def helper(+mode: String, +input: String) -> IO(Proc):
+def run_helper(+path: String, +mode: String, +input: String) -> IO(Proc):
   do IO<Proc>:
-    path : String <- env_or("MAILBEND_TLS_HELPER", "./bin/mailbend-tls")
     r : Result<&1, &1, U32 & String, U32 & (String & String)> <- Process.run(path, [mode], input, 134217728, 300000)
     return proc_of(r)
+
+# The helper gets the password through the environment, so it is only ever
+# started from an absolute MAILBEND_TLS_HELPER path (scripts/mailbend sets
+# it), never from a path relative to the working directory.
+def helper_at(+path: String, +mode: String, +input: String) -> IO(Proc):
+  match path:
+    case SCon{'/', t}:
+      run_helper(path, mode, input)
+    case _:
+      IO.pure(Proc, ProcFail{"MAILBEND_TLS_HELPER must be the absolute path of mailbend-tls (scripts/mailbend sets it)"})
+
+def helper(+mode: String, +input: String) -> IO(Proc):
+  do IO<Proc>:
+    path : String <- env_or("MAILBEND_TLS_HELPER", "")
+    helper_at(path, mode, input)
 
 def strip_prefix(+s: String, +p: String) -> String:
   Bool.pick(String, String.starts_with(s, p), String.drop(s, String.length(p)), s)
@@ -108,15 +122,19 @@ def helper_error(+code: U32, +err: String) -> String:
       Bool.pick(String, U32.is_eq(code, 4), "authentication failed (check MAILBEND_EMAIL and the app-specific password): ",
         "mail server error: "))) ++ helper_msg(err)
 
+def stale_msg() -> String:
+  "the folder's UIDVALIDITY changed since these UIDs were read, so they may name other messages; nothing was changed: search again"
+
 def imap_code(+code: U32, +lines: List<&2, I.RLine>, +err: String) -> Run:
   Bool.pick(Run, U32.is_zero(code), RunOk{lines},
-    Bool.pick(Run, U32.is_eq(code, 5), RunErr{"the server rejected a command: " ++ String.trim(I.first_failure(lines))},
-      RunErr{helper_error(code, err)}))
+    Bool.pick(Run, U32.is_eq(code, 5) && String.contains(err, "[UIDVALIDITY "), RunErr{stale_msg()},
+      Bool.pick(Run, U32.is_eq(code, 5), RunErr{"the server rejected a command: " ++ String.trim(I.first_failure(lines))},
+        RunErr{helper_error(code, err)})))
 
 def imap_result(p: Proc) -> Run:
   match p:
     case ProcFail{m}:
-      RunErr{"cannot run the TLS helper (set MAILBEND_TLS_HELPER): " ++ m}
+      RunErr{"cannot run the TLS helper: " ++ m}
     case ProcOk{code, out, err}:
       imap_code(code, I.frame(out), err)
 
@@ -134,7 +152,7 @@ def smtp_code(+code: U32, +out: String, +err: String) -> Out:
 def smtp_result(p: Proc) -> Out:
   match p:
     case ProcFail{m}:
-      Err{"cannot run the TLS helper (set MAILBEND_TLS_HELPER): " ++ m}
+      Err{"cannot run the TLS helper: " ++ m}
     case ProcOk{code, out, err}:
       smtp_code(code, out, err)
 
@@ -261,20 +279,33 @@ def pure_out(+o: Out) -> IO(Out):
 
 # ---- folders ----------------------------------------------------------------------------
 
+def any_special(+fs: List<&2, I.Folder>) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case Con{I.Folder{n, d, attrs}, t}:
+      I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Drafts") || I.has_attr(attrs, "\\Sent") || I.has_attr(attrs, "\\Junk") || I.has_attr(attrs, "\\Archive") || I.has_attr(attrs, "\\All") || I.has_attr(attrs, "\\Flagged") || any_special(t)
+
+# A folder role from its special-use attribute. Only a server that marks no
+# folder at all (no SPECIAL-USE support) falls back to the conventional
+# names; otherwise an unmarked role is unknown, never guessed.
+def role(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) -> Maybe<&2, String>:
+  Bool.pick(Maybe<&2, String>, any_special(fs), I.special(fs, attr), Maybe.or(&2, String, I.named(fs, a), I.named(fs, b)))
+
 def trash_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  Maybe.or(&2, String, I.special(fs, "\\Trash"), Maybe.or(&2, String, I.named(fs, "Deleted Messages"), I.named(fs, "Trash")))
+  role(fs, "\\Trash", "Deleted Messages", "Trash")
 
 def drafts_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  Maybe.or(&2, String, I.special(fs, "\\Drafts"), I.named(fs, "Drafts"))
+  role(fs, "\\Drafts", "Drafts", "Drafts")
 
 def sent_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  Maybe.or(&2, String, I.special(fs, "\\Sent"), Maybe.or(&2, String, I.named(fs, "Sent Messages"), I.named(fs, "Sent")))
+  role(fs, "\\Sent", "Sent Messages", "Sent")
 
 def junk_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  Maybe.or(&2, String, I.special(fs, "\\Junk"), I.named(fs, "Junk"))
+  role(fs, "\\Junk", "Junk", "Junk")
 
 def archive_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  Maybe.or(&2, String, I.special(fs, "\\Archive"), I.named(fs, "Archive"))
+  role(fs, "\\Archive", "Archive", "Archive")
 
 def special_json(+fs: List<&2, I.Folder>) -> J.Json:
   J.obj([J.kv("inbox", maybe_str(I.named(fs, "INBOX"))), J.kv("drafts", maybe_str(drafts_of(fs))), J.kv("sent", maybe_str(sent_of(fs))), J.kv("trash", maybe_str(trash_of(fs))), J.kv("junk", maybe_str(junk_of(fs))), J.kv("archive", maybe_str(archive_of(fs)))])
@@ -581,13 +612,6 @@ def t_get_new(+args: J.Json) -> IO(Out):
 
 # ---- flags ---------------------------------------------------------------------------------
 
-def done_out(r: Run, +result: J.Json) -> Out:
-  match r:
-    case RunErr{m}:
-      Err{m}
-    case RunOk{lines}:
-      Ok{result}
-
 # ---- UID checks -------------------------------------------------------------------------------
 
 def uidv_is(+have: Maybe<&2, U32>, +want: U32) -> Bool:
@@ -597,51 +621,57 @@ def uidv_is(+have: Maybe<&2, U32>, +want: U32) -> Bool:
     case None{}:
       False{}
 
-# UIDs are only meaningful with their folder's UIDVALIDITY: when the caller
-# passes the value it saw, a changed folder refuses the stale UIDs.
+# The preflight's early check (the plans check again in the changing session).
 def uidv_problem(+lines: List<&2, I.RLine>, +want: U32, +folder: String) -> String:
-  Bool.pick(String, U32.is_zero(want) || uidv_is(I.ok_code(lines, "UIDVALIDITY"), want), "",
-    "the UIDVALIDITY of " ++ folder ++ " is no longer " ++ U32.show(want) ++ ", so these UIDs may name other messages; search again")
+  Bool.pick(String, uidv_is(I.ok_code(lines, "UIDVALIDITY"), want), "", stale_msg())
 
 def uidv_arg(+args: J.Json) -> U32:
   u32_arg(args, "uidvalidity", 0)
 
-# ---- flags ---------------------------------------------------------------------------------------
+def uidv_missing() -> String:
+  "\"uidvalidity\" is required: pass the value mail_search or mail_get returned with these UIDs, so stale UIDs can never change other messages"
 
-def mark_go(+uids: List<&2, U32>, +folder: String, +seen: Bool) -> IO(Out):
-  do IO<Out>:
-    r : Run <- imap_run(Ops.plan_mark(folder, uids, seen))
-    return done_out(r, J.obj([J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("uids", uids_json(uids)), J.kv("seen", J.bool(seen))]))
+def minus(+xs: List<&2, U32>, +ys: List<&2, U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      List.append(&2, U32, Bool.pick(List<&2, U32>, uid_in(x, ys), [], [x]), minus(t, ys))
 
-def mark_if(+problem: String, +uids: List<&2, U32>, +folder: String, +seen: Bool) -> IO(Out):
-  match problem:
-    case SCon{h, t}:
-      pure_out(Err{problem})
-    case SNil{}:
-      mark_go(uids, folder, seen)
+# The result of a change: which requested UIDs existed when it ran (the
+# guard's UID SEARCH) and which did not. If none existed, nothing changed.
+def changed_of(+lines: List<&2, I.RLine>, +uids: List<&2, U32>, +folder: String, +kvs: List<&2, J.Json>) -> Out:
+  +found = asc(I.search_uids(lines))
+  Bool.pick(Out, List.is_empty(&2, U32, found), Err{"none of these UIDs exist in " ++ folder ++ "; nothing was changed"},
+    ok_obj(List.append(&2, J.Json, kvs, [J.kv("changed", uids_json(found)), J.kv("missing", uids_json(minus(uids, found)))])))
 
-def mark_checked(r: Run, +uids: List<&2, U32>, +folder: String, +seen: Bool, +want: U32) -> IO(Out):
+def changed_out(r: Run, +uids: List<&2, U32>, +folder: String, +kvs: List<&2, J.Json>) -> Out:
   match r:
     case RunErr{m}:
-      pure_out(Err{m})
+      Err{m}
     case RunOk{+lines}:
-      mark_if(uidv_problem(lines, want, folder), uids, folder, seen)
+      changed_of(lines, uids, folder, kvs)
 
-def mark_pre(+unchecked: Bool, +uids: List<&2, U32>, +folder: String, +seen: Bool, +want: U32) -> IO(Out):
-  match unchecked:
+# ---- flags ---------------------------------------------------------------------------------------
+
+def mark_go(+uids: List<&2, U32>, +folder: String, +seen: Bool, +uidv: U32) -> IO(Out):
+  do IO<Out>:
+    r : Run <- imap_run(Ops.plan_mark(folder, uids, seen, uidv))
+    return changed_out(r, uids, folder, [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("seen", J.bool(seen))])
+
+def mark_checked(+missing: Bool, +uids: List<&2, U32>, +folder: String, +seen: Bool, +uidv: U32) -> IO(Out):
+  match missing:
     case True{}:
-      mark_go(uids, folder, seen)
+      pure_out(Err{uidv_missing()})
     case False{}:
-      do IO<Out>:
-        r : Run <- imap_run(Ops.plan_preflight(folder))
-        mark_checked(r, uids, folder, seen, want)
+      mark_go(uids, folder, seen, uidv)
 
-def mark_uids(+u: Uids, +folder: String, +seen: Bool, +want: U32) -> IO(Out):
+def mark_uids(+u: Uids, +folder: String, +seen: Bool, +uidv: U32) -> IO(Out):
   match u:
     case UidsErr{m}:
       pure_out(Err{m})
     case UidsOk{uids}:
-      mark_pre(U32.is_zero(want), uids, folder, seen, want)
+      mark_checked(U32.is_zero(uidv), uids, folder, seen, uidv)
 
 def t_mark(+args: J.Json, +seen: Bool) -> IO(Out):
   mark_uids(uids_arg(args), folder_arg(args), seen, uidv_arg(args))
@@ -658,77 +688,88 @@ def move_plan(+plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>, +de
     case Con{h, t}:
       do IO<Out>:
         r : Run <- imap_run(plan)
-        return done_out(r, J.obj([J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("destination", J.str(dest)), J.kv("uids", uids_json(uids)), J.kv("method", J.str(method_name(move)))]))
+        return changed_out(r, uids, folder, [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("destination", J.str(dest)), J.kv("method", J.str(method_name(move)))])
 
-def move_if(+problem: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +dest: String) -> IO(Out):
+def move_if(+problem: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
-      move_plan(Ops.plan_move(folder, uids, dest, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS")), folder, uids, dest, I.has_cap(caps, "MOVE"))
+      move_plan(Ops.plan_move(folder, uids, dest, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS"), uidv), folder, uids, dest, I.has_cap(caps, "MOVE"))
 
-def move_caps(r: Run, +folder: String, +uids: List<&2, U32>, +dest: String, +want: U32) -> IO(Out):
+def move_caps(r: Run, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
-      move_if(uidv_problem(lines, want, folder), I.caps(lines), folder, uids, dest)
+      move_if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, dest, uidv)
 
-def move_to(+same: Bool, +folder: String, +uids: List<&2, U32>, +dest: String, +want: U32) -> IO(Out):
-  match same:
-    case True{}:
-      pure_out(Err{"\"destination\" must name a different folder"})
-    case False{}:
+def move_request(+uidv: U32, +folder: String, +dest: String) -> String:
+  Bool.pick(String, String.is_empty(dest) || String.eq(dest, folder), "\"destination\" must name a different folder",
+    Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
+
+def move_asked(+problem: String, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
       do IO<Out>:
         r : Run <- imap_run(Ops.plan_preflight(folder))
-        move_caps(r, folder, uids, dest, want)
+        move_caps(r, folder, uids, dest, uidv)
 
-def move_uids(+u: Uids, +folder: String, +dest: String, +want: U32) -> IO(Out):
+def move_uids(+u: Uids, +folder: String, +dest: String, +uidv: U32) -> IO(Out):
   match u:
     case UidsErr{m}:
       pure_out(Err{m})
     case UidsOk{uids}:
-      move_to(String.is_empty(dest) || String.eq(dest, folder), folder, uids, dest, want)
+      move_asked(move_request(uidv, folder, dest), folder, uids, dest, uidv)
 
 def t_move(+args: J.Json) -> IO(Out):
   move_uids(uids_arg(args), folder_arg(args), str_arg(args, "destination", ""), uidv_arg(args))
 
-def trash_into(+same: Bool, +t: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+def trash_into(+same: Bool, +t: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match same:
     case True{}:
       pure_out(Err{"these messages are already in " ++ t ++ "; use mail_delete to remove them permanently"})
     case False{}:
-      move_plan(Ops.plan_trash(folder, uids, t, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS")), folder, uids, t, I.has_cap(caps, "MOVE"))
+      move_plan(Ops.plan_trash(folder, uids, t, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS"), uidv), folder, uids, t, I.has_cap(caps, "MOVE"))
 
-def trash_to(+trash: Maybe<&2, String>, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+def trash_to(+trash: Maybe<&2, String>, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match trash:
     case None{}:
-      pure_out(Err{"no Trash folder found (no \\Trash special-use folder, \"Deleted Messages\" or \"Trash\")"})
+      pure_out(Err{"no Trash folder: the server marks none as \\Trash (and names are only used on servers without special-use folders)"})
     case Some{t}:
-      trash_into(String.eq(String.to_lower(t), String.to_lower(folder)), t, caps, folder, uids)
+      trash_into(String.eq(String.to_lower(t), String.to_lower(folder)), t, caps, folder, uids, uidv)
 
-def trash_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids: List<&2, U32>) -> IO(Out):
+def trash_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
-      trash_to(trash_of(I.folders(lines)), I.caps(lines), folder, uids)
+      trash_to(trash_of(I.folders(lines)), I.caps(lines), folder, uids, uidv)
 
-def trash_found(r: Run, +folder: String, +uids: List<&2, U32>, +want: U32) -> IO(Out):
+def trash_found(r: Run, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
-      trash_if(uidv_problem(lines, want, folder), lines, folder, uids)
+      trash_if(uidv_problem(lines, uidv, folder), lines, folder, uids, uidv)
 
-def trash_uids(+u: Uids, +folder: String, +want: U32) -> IO(Out):
+def trash_checked(+missing: Bool, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
+  match missing:
+    case True{}:
+      pure_out(Err{uidv_missing()})
+    case False{}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_preflight(folder))
+        trash_found(r, folder, uids, uidv)
+
+def trash_uids(+u: Uids, +folder: String, +uidv: U32) -> IO(Out):
   match u:
     case UidsErr{m}:
       pure_out(Err{m})
     case UidsOk{uids}:
-      do IO<Out>:
-        r : Run <- imap_run(Ops.plan_preflight(folder))
-        trash_found(r, folder, uids, want)
+      trash_checked(U32.is_zero(uidv), folder, uids, uidv)
 
 def t_trash(+args: J.Json) -> IO(Out):
   trash_uids(uids_arg(args), folder_arg(args), uidv_arg(args))
@@ -740,43 +781,43 @@ def delete_plan(+plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>) -
     case Con{h, t}:
       do IO<Out>:
         r : Run <- imap_run(plan)
-        return done_out(r, J.obj([J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("uids", uids_json(uids)), J.kv("permanently_deleted", J.bool(True{}))]))
+        return changed_out(r, uids, folder, [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("permanently_deleted", J.bool(True{}))])
 
-def delete_if(+problem: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +confirm: String) -> IO(Out):
+def delete_if(+problem: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +confirm: String, +uidv: U32) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
-      delete_plan(Ops.plan_delete(folder, uids, confirm, I.has_cap(caps, "UIDPLUS")), folder, uids)
+      delete_plan(Ops.plan_delete(folder, uids, confirm, I.has_cap(caps, "UIDPLUS"), uidv), folder, uids)
 
-def delete_caps(r: Run, +folder: String, +uids: List<&2, U32>, +confirm: String, +want: U32) -> IO(Out):
+def delete_caps(r: Run, +folder: String, +uids: List<&2, U32>, +confirm: String, +uidv: U32) -> IO(Out):
   match r:
     case RunErr{m}:
       pure_out(Err{m})
     case RunOk{+lines}:
-      delete_if(uidv_problem(lines, want, folder), I.caps(lines), folder, uids, confirm)
+      delete_if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, confirm, uidv)
 
-def delete_asked(+problem: String, +folder: String, +uids: List<&2, U32>, +confirm: String, +want: U32) -> IO(Out):
+def delete_asked(+problem: String, +folder: String, +uids: List<&2, U32>, +confirm: String, +uidv: U32) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
       do IO<Out>:
         r : Run <- imap_run(Ops.plan_preflight(folder))
-        delete_caps(r, folder, uids, confirm, want)
+        delete_caps(r, folder, uids, confirm, uidv)
 
 # The plan itself refuses without the confirmation word (a proven law);
 # these checks only explain why before connecting.
-def delete_request(+confirm: String, +want: U32) -> String:
+def delete_request(+confirm: String, +uidv: U32) -> String:
   Bool.pick(String, Bool.not(String.eq(confirm, Ops.confirm_word())), "mail_delete permanently removes messages and cannot be undone; pass \"confirm\": \"permanently-delete\" to proceed (use mail_trash to move them to Trash instead)",
-    Bool.pick(String, U32.is_zero(want), "mail_delete needs the folder's \"uidvalidity\" (from mail_search or mail_get) so stale UIDs can never delete other messages", ""))
+    Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
-def delete_uids(+u: Uids, +folder: String, +confirm: String, +want: U32) -> IO(Out):
+def delete_uids(+u: Uids, +folder: String, +confirm: String, +uidv: U32) -> IO(Out):
   match u:
     case UidsErr{m}:
       pure_out(Err{m})
     case UidsOk{uids}:
-      delete_asked(delete_request(confirm, want), folder, uids, confirm, want)
+      delete_asked(delete_request(confirm, uidv), folder, uids, confirm, uidv)
 
 def t_delete(+args: J.Json) -> IO(Out):
   delete_uids(uids_arg(args), folder_arg(args), str_arg(args, "confirm", ""), uidv_arg(args))
@@ -1026,7 +1067,7 @@ def draft_saved(r: Run, +drafts: String, +msgid: String) -> Out:
 def draft_append(+m: Maybe<&2, String>, +msg: String, +msgid: String) -> IO(Out):
   match m:
     case None{}:
-      pure_out(Err{"no Drafts folder found (no \\Drafts special-use folder or \"Drafts\")"})
+      pure_out(Err{"no Drafts folder: the server marks none as \\Drafts (and names are only used on servers without special-use folders)"})
     case Some{drafts}:
       do IO<Out>:
         r : Run <- imap_run(Ops.plan_draft(drafts, msg))

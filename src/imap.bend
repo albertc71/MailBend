@@ -31,6 +31,7 @@ type Key is Data:
   KFlagged{}
   KUnflagged{}
   KUidFrom{n: U32}
+  KUids{uids: List<&2, U32>}
 
 # Fetch items. None of them can set \Seen: message content is only ever
 # fetched with BODY.PEEK.
@@ -54,6 +55,7 @@ type Cmd is Data:
   CMove{uids: List<&2, U32>, dest: String}
   CExpunge{uids: List<&2, U32>}
   CAppend{mbox: String, flags: List<&2, Flag>, msg: String}
+  CExpect{text: String}
 
 type M7 is Data:
   M7{out: String, run: String}
@@ -130,6 +132,8 @@ def writes(+c: Cmd) -> Bool:
       True{}
     case CAppend{m, f, b}:
       True{}
+    case CExpect{e}:
+      False{}
 
 # Whether a command permanently removes messages (UID EXPUNGE).
 def expunges(+c: Cmd) -> Bool:
@@ -384,6 +388,8 @@ def key_str(+k: Key) -> String:
       "UNFLAGGED"
     case KUidFrom{n}:
       "UID " ++ U32.show(n) ++ ":*"
+    case KUids{us}:
+      "UID " ++ uid_set(us)
 
 def key_plain(+k: Key) -> Bool:
   match k:
@@ -481,18 +487,35 @@ def cmd_str(+c: Cmd) -> String:
       "UID EXPUNGE " ++ uid_set(us)
     case CAppend{m, fs, msg}:
       "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") {" ++ U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
+    case CExpect{e}:
+      e
 
 def tag(+n: U32) -> String:
   "a" ++ U32.show(n)
+
+# An expectation is not a command: the helper checks it against the
+# previous command's untagged replies, so it takes no tag.
+def is_expect(+c: Cmd) -> Bool:
+  match c:
+    case CExpect{e}:
+      True{}
+    case _:
+      False{}
+
+def line_of(+expect: Bool, +c: Cmd, +n: U32) -> String:
+  match expect:
+    case True{}:
+      "=EXPECT " ++ cmd_str(c)
+    case False{}:
+      tag(n) ++ " " ++ cmd_str(c)
 
 def script_go(+cs: List<&2, Cmd>, +n: U32) -> String:
   match cs:
     case Nil{}:
       ""
     case Con{c, t}:
-      tag(n) ++ " " ++ cmd_str(c) ++ crlf() ++ script_go(t, (n + 1 : U32))
+      line_of(is_expect(c), c, n) ++ crlf() ++ script_go(t, Bool.pick(U32, is_expect(c), n, (n + 1 : U32)))
 
-# The script for the helper: the commands tagged a1, a2, ...
 def script(+cs: List<&2, Cmd>) -> String:
   script_go(cs, 1)
 
@@ -1007,6 +1030,10 @@ def fetched(+lines: List<&2, RLine>) -> List<&2, Msg>:
       []
     case Con{RLine{+text, lits}, t}:
       List.append(&2, Msg, fetch_line(String.starts_with(text, "* ") && String.contains(String.to_upper(before_paren(text)), " FETCH "), text, lits), fetched(t))
+
+# The untagged reply that pins a folder's UIDVALIDITY after SELECT.
+def uidv_line(+v: U32) -> String:
+  "* OK [UIDVALIDITY " ++ U32.show(v) ++ "]"
 
 # The tagged status of command n: "OK", "NO", "BAD", or "" if it never ran.
 def status(+lines: List<&2, RLine>, +n: U32) -> String:
