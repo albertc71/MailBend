@@ -234,6 +234,9 @@ Notes:
   note in the quote that it may be incomplete.
 - Saved drafts keep a `Bcc:` header (a mail client sends them later); sent
   mail never carries one, Bcc goes only into the SMTP envelope.
+- Every tool call (MCP or CLI) is checked against the tool's input schema
+  first: a value of the wrong type or an unknown argument name is refused,
+  never read as absent (so `"as_draft": "true"` cannot fall back to sending).
 - The MCP server accepts request lines up to 8 MiB and answers malformed
   JSON with `-32700`, a malformed JSON-RPC envelope with `-32600`, and
   tool `arguments` that are not an object with `-32602`.

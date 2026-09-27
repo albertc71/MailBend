@@ -5,6 +5,7 @@ import ./imap.bend as I
 import ./mime.bend as M
 import ./smtp.bend as S
 import ./ops.bend as Ops
+import ./schema.bend as Schema
 
 # The mail tools: JSON arguments in, JSON results out. IMAP work goes
 # through the plans in ops.bend and the TLS helper; this module never reads
@@ -1430,6 +1431,150 @@ def call_op(+m: Maybe<&2, Ops.Op>, +name: String, +args: J.Json) -> IO(Out):
         ro : Bool <- read_only_mode()
         gated(op, args, ro)
 
-# Runs the named tool with its JSON arguments.
+# ---- arguments checked against the tool's input schema -------------------------------
+# A value of the wrong type, or a misspelt name, is refused rather than read as
+# absent: "as_draft": "true" must not fall back to false and send the mail.
+
+def tool_named(+ts: J.Json, +name: String) -> Maybe<&2, J.Json>:
+  match ts:
+    case J.JCons{+t, rest}:
+      Bool.pick(Maybe<&2, J.Json>, String.eq(str_arg(t, "name", ""), name), Some{t}, tool_named(rest, name))
+    case _:
+      None{}
+
+def tool_list(+m: Maybe<&2, J.Json>) -> J.Json:
+  match m:
+    case Some{J.JArr{xs}}:
+      xs
+    case _:
+      J.JEnd{}
+
+def props_for(+m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
+  match m:
+    case Some{t}:
+      J.get(Maybe.default(&2, J.Json, J.get(t, "inputSchema"), J.JNull{}), "properties")
+    case None{}:
+      None{}
+
+def tool_props(+name: String) -> Maybe<&2, J.Json>:
+  props_for(tool_named(tool_list(J.parse(Schema.tool_defs())), name))
+
+def digits(+s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      Char.is_digit(c) && digits(t)
+
+def int_raw(+s: String) -> Bool:
+  match s:
+    case SCon{'-', t}:
+      digits(t)
+    case _:
+      digits(s)
+
+def prim_ok(+want: String, +v: J.Json) -> Bool:
+  match v:
+    case J.JStr{x}:
+      String.eq(want, "string")
+    case J.JNum{raw}:
+      String.eq(want, "integer") && int_raw(raw)
+    case J.JBool{b}:
+      String.eq(want, "boolean")
+    case J.JObj{i}:
+      String.eq(want, "object")
+    case J.JArr{i}:
+      String.eq(want, "array")
+    case _:
+      False{}
+
+def items_all(+want: String, +xs: J.Json) -> Bool:
+  match xs:
+    case J.JCons{v, t}:
+      prim_ok(want, v) && items_all(want, t)
+    case _:
+      True{}
+
+# Address lists also take one address as a plain string.
+def value_ok(+want: String, +item: String, +v: J.Json) -> Bool:
+  match v:
+    case J.JArr{xs}:
+      String.eq(want, "array") && items_all(item, xs)
+    case J.JStr{x}:
+      String.eq(want, "string") || (String.eq(want, "array") && String.eq(item, "string"))
+    case _:
+      prim_ok(want, v)
+
+def type_words(+want: String, +item: String) -> String:
+  Bool.pick(String, String.eq(want, "boolean"), "true or false",
+    Bool.pick(String, String.eq(want, "integer"), "an integer",
+      Bool.pick(String, String.eq(want, "string"), "a string",
+        Bool.pick(String, String.eq(want, "object"), "an object",
+          Bool.pick(String, String.eq(item, "string"), "a string or an array of strings", "an array of " ++ item ++ "s")))))
+
+def want_of(+s: J.Json) -> String:
+  str_arg(s, "type", "")
+
+def item_of(+s: J.Json) -> String:
+  str_arg(Maybe.default(&2, J.Json, J.get(s, "items"), J.JNull{}), "type", "")
+
+def prop_problem(+p: Maybe<&2, J.Json>, +k: String, +v: J.Json, +tool: String) -> String:
+  match p:
+    case None{}:
+      "unknown argument \"" ++ k ++ "\" for " ++ tool
+    case Some{+s}:
+      Bool.pick(String, value_ok(want_of(s), item_of(s), v), "", "\"" ++ k ++ "\" must be " ++ type_words(want_of(s), item_of(s)))
+
+def first_of(+a: String, +b: String) -> String:
+  Bool.pick(String, String.is_empty(a), b, a)
+
+def args_problem(+props: J.Json, +kvs: J.Json, +tool: String) -> String:
+  match kvs:
+    case J.JCons{J.JKv{k, v}, t}:
+      first_of(prop_problem(J.get(props, k), k, v, tool), args_problem(props, t, tool))
+    case _:
+      ""
+
+def elems_problem(+props: J.Json, +xs: J.Json, +tool: String) -> String:
+  match xs:
+    case J.JCons{J.JObj{kvs}, t}:
+      first_of(args_problem(props, kvs, tool ++ " attachments"), elems_problem(props, t, tool))
+    case J.JCons{v, t}:
+      elems_problem(props, t, tool)
+    case _:
+      ""
+
+def item_props(+props: J.Json) -> J.Json:
+  Maybe.default(&2, J.Json, J.get(Maybe.default(&2, J.Json, J.get(Maybe.default(&2, J.Json, J.get(props, "attachments"), J.JNull{}), "items"), J.JNull{}), "properties"), J.JNull{})
+
+def att_check(+m: Maybe<&2, J.Json>, +props: J.Json, +tool: String) -> String:
+  match m:
+    case Some{J.JArr{xs}}:
+      elems_problem(item_props(props), xs, tool)
+    case _:
+      ""
+
+def args_obj_problem(+args: J.Json, +props: J.Json, +tool: String) -> String:
+  match args:
+    case J.JObj{+kvs}:
+      first_of(args_problem(props, kvs, tool), att_check(J.find(kvs, "attachments"), props, tool))
+    case _:
+      "the arguments must be a JSON object"
+
+def schema_problem(+props: Maybe<&2, J.Json>, +args: J.Json, +tool: String) -> String:
+  match props:
+    case None{}:
+      ""
+    case Some{p}:
+      args_obj_problem(args, p, tool)
+
+def call_checked(+problem: String, +name: String, +args: J.Json) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      call_op(Ops.from_name(name), name, args)
+
+# Runs the named tool with its JSON arguments, once they match its schema.
 def call(+name: String, +args: J.Json) -> IO(Out):
-  call_op(Ops.from_name(name), name, args)
+  call_checked(schema_problem(tool_props(name), args, name), name, args)
