@@ -24,13 +24,15 @@ agents: a Bend 2 core plus one C/OpenSSL TLS helper.
 - use `LAWS.bend` to keep important rules; do not weaken a law to make code pass
 - run `bend PROOF.bend` before committing: it must print "All terms check."
 - Bend has no mutual recursion, `match` only inspects parameters, and defs
-  must be declared before use; `Bool.pick` evaluates both branches
+  must be declared before use; `Bool.pick` evaluates both branches, so never
+  put a recursive call in both (that is exponential): recurse once and pick
+  the arguments or the head instead
 
 ## Checks before committing
 ```sh
 bend PROOF.bend
 sh tests/run-unit.sh
-sh tests/test-transport.sh
+bash tests/test-transport.sh
 scripts/install.sh && python3 tests/test-e2e.py
 ```
 

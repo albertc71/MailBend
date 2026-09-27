@@ -14,8 +14,9 @@ MAILBEND_EMAIL          your iCloud address
 MAILBEND_APP_PASSWORD   an Apple app-specific password
 ```
 
-Optional: `MAILBEND_READ_ONLY=1` for a first run against a real mailbox. All
-optional variables are in [.env.example](../.env.example).
+Optional: `MAILBEND_READ_ONLY=1` for a first run against a real mailbox, and
+`MAILBEND_ATTACH_DIR` to allow attachments from one directory. All optional
+variables are in [.env.example](../.env.example).
 
 ## 2. Install
 
@@ -79,6 +80,7 @@ the MCP process).
    is still unread.
 2. Unset read-only and use a test message you sent yourself:
    `mail_mark_read`, `mail_mark_unread`, `mail_move` to a scratch folder,
-   `mail_trash`, then `mail_delete` with `"confirm": "permanently-delete"`.
+   `mail_trash`, then `mail_delete` with `"confirm": "permanently-delete"` and
+   the `uidvalidity` that `mail_search` reported.
 3. `mail_save_draft`, then `mail_send` to your own address; check whether
    iCloud filed the sent copy in "Sent Messages".

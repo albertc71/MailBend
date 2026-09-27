@@ -49,6 +49,7 @@ class Server:
                   "MAILBEND_SMTP_HOST": "localhost", "MAILBEND_SMTP_PORT": self.smtp,
                   "MAILBEND_CA_FILE": os.path.join(self.work, "certs", "ca.pem"), "MAILBEND_TIMEOUT_MS": "10000"})
         e.pop("MAILBEND_READ_ONLY", None)
+        e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
         for k, v in over.items():
             if v is None:
@@ -210,12 +211,18 @@ def mutations(srv):
     check("trash refuses to act inside Trash", c != 0 and "mail_delete" in r.get("error", ""), r)
 
     before = srv.st()
+    c, r = tool(srv, "mail_move", {"uids": [5], "destination": "Archive", "uidvalidity": 42})
+    check("stale UIDVALIDITY refuses a move", c != 0 and "UIDVALIDITY" in r.get("error", "") and srv.st() == before, r)
+    c, r = tool(srv, "mail_delete", {"uids": [4], "confirm": "permanently-delete"})
+    check("delete requires the folder's UIDVALIDITY", c != 0 and "uidvalidity" in r.get("error", "") and srv.st() == before, r)
+    c, r = tool(srv, "mail_delete", {"uids": [4], "confirm": "permanently-delete", "uidvalidity": 42})
+    check("delete with a stale UIDVALIDITY does nothing", c != 0 and "UIDVALIDITY" in r.get("error", "") and srv.st() == before, r)
     c, r = tool(srv, "mail_delete", {"uids": [4]})
     check("delete without confirmation does nothing", c != 0 and "confirm" in r.get("error", "") and srv.st() == before, r)
-    c, r = tool(srv, "mail_delete", {"uids": [4], "confirm": "yes"})
+    c, r = tool(srv, "mail_delete", {"uids": [4], "confirm": "yes", "uidvalidity": 1700000001})
     check("delete with a wrong confirmation does nothing", c != 0 and srv.st() == before, r)
     n_log = len(srv.log_lines())
-    c, r = tool(srv, "mail_delete", {"uids": [4], "confirm": "permanently-delete"})
+    c, r = tool(srv, "mail_delete", {"uids": [4], "confirm": "permanently-delete", "uidvalidity": 1700000001})
     s = srv.st()
     trash_uids = [m["uid"] for m in s["mailboxes"]["Deleted Messages"]["messages"]]
     check("delete with confirmation expunges exactly that UID", c == 0 and r.get("permanently_deleted") and 4 not in msgs(s, "INBOX")
@@ -227,16 +234,30 @@ def mutations(srv):
 def compose(srv):
     att = os.path.join(srv.work, "report.txt")
     pathlib.Path(att).write_text("quarterly numbers\n")
+    n_drafts = len(srv.st()["mailboxes"]["Drafts"]["messages"])
+    c, r = tool(srv, "mail_save_draft", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": att}]})
+    check("attachments are off without MAILBEND_ATTACH_DIR", c != 0 and "MAILBEND_ATTACH_DIR" in r.get("error", "")
+          and len(srv.st()["mailboxes"]["Drafts"]["messages"]) == n_drafts, r)
+    c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": "/proc/self/environ"}]},
+                MAILBEND_ATTACH_DIR=srv.work)
+    check("attachments outside MAILBEND_ATTACH_DIR are refused (/proc/self/environ)", c != 0 and "outside" in r.get("error", "")
+          and not srv.st().get("sent"), r)
+    link = os.path.join(srv.work, "link")
+    os.symlink("/proc/self/environ", link)
+    c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": link}]},
+                MAILBEND_ATTACH_DIR=srv.work)
+    check("a symlink cannot escape MAILBEND_ATTACH_DIR", c != 0 and "outside" in r.get("error", "") and not srv.st().get("sent"), r)
     c, r = tool(srv, "mail_save_draft", {"to": ["José Q <jose@example.com>"], "subject": "Brouillon é",
-                                         "body": "Draft body é\n.leading dot", "attachments": [{"path": att}]})
+                                         "body": "Draft body é\n.leading dot", "attachments": [{"path": att}]},
+                MAILBEND_ATTACH_DIR=srv.work)
     s = srv.st()
     drafts = s["mailboxes"]["Drafts"]["messages"]
-    check("save_draft appends to Drafts with \\Draft", c == 0 and len(drafts) == 1 and "\\Draft" in drafts[0]["flags"]
+    check("save_draft appends to Drafts with \\Draft", c == 0 and len(drafts) == n_drafts + 1 and "\\Draft" in drafts[-1]["flags"]
           and r.get("saved_to") == "Drafts" and isinstance(r.get("uid"), int), r)
-    raw = drafts[0]["raw"] if drafts else ""
+    raw = drafts[-1]["raw"] if drafts else ""
     check("draft is 7-bit MIME with the attachment", all(ord(ch) < 128 for ch in raw) and "report.txt" in raw
           and "multipart/mixed" in raw and "=?UTF-8?B?" in raw, raw[:400])
-    c, r = tool(srv, "mail_get", {"folder": "Drafts", "uid": drafts[0]["uid"] if drafts else 1})
+    c, r = tool(srv, "mail_get", {"folder": "Drafts", "uid": drafts[-1]["uid"] if drafts else 1})
     check("draft reads back: subject, body, attachment", c == 0 and r.get("subject") == "Brouillon é" and "Draft body é" in r.get("text", "")
           and any(a["filename"] == "report.txt" for a in r.get("attachments", [])), r)
 
@@ -270,13 +291,19 @@ def compose(srv):
     check("reply threads: In-Reply-To, References, Re: subject", ("In-Reply-To: " + orig_id) in data and orig_id in data.split("References:", 1)[-1]
           and "Subject: Re: " in data.replace("=?UTF-8?B?", "Subject: Re: ") , data[:500])
     c, r = tool(srv, "mail_reply", {"uid": 2, "body": "draft reply", "as_draft": True})
-    check("reply as draft goes to Drafts", c == 0 and r.get("saved_to") == "Drafts" and len(srv.st()["mailboxes"]["Drafts"]["messages"]) == 2, r)
+    check("reply as draft goes to Drafts", c == 0 and r.get("saved_to") == "Drafts" and len(srv.st()["mailboxes"]["Drafts"]["messages"]) == n_drafts + 2, r)
 
+    c, r = tool(srv, "mail_forward", {"uid": 2, "to": ["boss@example.com"], "body": "FYI"})
+    sent = srv.st().get("sent", [])
+    data = sent[-1]["data"] if sent else ""
+    check("forward attaches a 7-bit original as message/rfc822", c == 0 and sent[-1]["rcpt_to"] == ["boss@example.com"]
+          and "Content-Type: message/rfc822" in data and "Content-Transfer-Encoding: 7bit" in data and "forwarded-message.eml" in data, r)
     c, r = tool(srv, "mail_forward", {"uid": 5, "to": ["boss@example.com"], "body": "FYI"})
     sent = srv.st().get("sent", [])
     data = sent[-1]["data"] if sent else ""
-    check("forward attaches the original as message/rfc822", c == 0 and sent[-1]["rcpt_to"] == ["boss@example.com"]
-          and "message/rfc822" in data and "forwarded-message.eml" in data, r)
+    check("forward attaches an 8-bit original as base64 (RFC 2046 forbids encoded message/rfc822)", c == 0
+          and "Content-Type: application/octet-stream" in data and "forwarded-message.eml" in data
+          and all(ord(ch) < 128 for ch in data), r)
     s = srv.st()
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
@@ -361,7 +388,7 @@ def fallback(work):
         before = srv.st()
         c, r = tool(srv, "mail_move", {"uids": [3], "destination": "Archive"})
         check("no MOVE or UIDPLUS: move refused", c != 0 and "neither MOVE nor UIDPLUS" in r.get("error", ""), r)
-        c, r = tool(srv, "mail_delete", {"uids": [3], "confirm": "permanently-delete"})
+        c, r = tool(srv, "mail_delete", {"uids": [3], "confirm": "permanently-delete", "uidvalidity": 1700000001})
         check("no UIDPLUS: delete refused", c != 0 and "UIDPLUS" in r.get("error", "") and srv.st() == before, r)
         check("refusals sent no mutating command", not any(k in l for l in srv.log_lines() for k in (" STORE ", " EXPUNGE", " COPY ", " MOVE ")))
     finally:

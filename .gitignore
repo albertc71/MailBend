@@ -14,3 +14,6 @@ bin/
 .DS_Store
 .idea/
 .vscode/
+
+# python
+__pycache__/

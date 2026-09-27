@@ -57,10 +57,10 @@
 
 enum { EX_OK = 0, EX_USAGE = 2, EX_CONNECT = 3, EX_AUTH = 4, EX_REJECTED = 5, EX_PROTO = 6 };
 
-#define MAX_LINE (1u << 20)          /* one response line */
+#define MAX_LINE (32u << 20)         /* one response line (a big SEARCH reply) */
 #define MAX_LITERAL (64u << 20)      /* one IMAP literal */
-#define MAX_SCRIPT (64u << 20)        /* the whole command script */
-#define MAX_OUTPUT (128ull << 20)    /* the whole transcript */
+#define MAX_SCRIPT (64u << 20)       /* the whole command script */
+#define MAX_OUTPUT (60ull << 20)     /* transcript bytes; at most doubled on stdout */
 
 static int sock = -1;
 static SSL *ssl = NULL;
@@ -306,11 +306,11 @@ static void read_stdin(void) {
 
 enum { ST_OK, ST_NO, ST_BAD, ST_CONT, ST_BYE };
 
-/* If the line ends in "{N}\r\n" (or "{N+}"), returns 1 and stores N. */
+/* If the line ends in "{N}\r\n", returns 1 and stores N. (Non-synchronizing
+ * "{N+}" literals are neither sent by MailBend nor accepted from servers.) */
 static int literal_len(const unsigned char *l, long n, unsigned long long *out) {
   if (n < 4 || l[n - 1] != '\n' || l[n - 2] != '\r' || l[n - 3] != '}') return 0;
   long i = n - 4;
-  if (i >= 0 && l[i] == '+') i--;
   long end = i;
   while (i >= 0 && isdigit(l[i])) i--;
   if (i < 0 || l[i] != '{' || i == end) return 0;
@@ -386,6 +386,43 @@ static int is_verb(const unsigned char *p, size_t n, const char *verb) {
          (n == vl || p[vl] == ' ' || p[vl] == '\r');
 }
 
+/* Checks the command starting at `p` (tag, verb, CRLF lines, literal
+ * bounds), stores its tag, and returns the offset just past it. */
+static size_t imap_command(size_t p, char tag[17]) {
+  unsigned char *nl = memchr(in + p, '\n', in_len - p);
+  if (!nl) die(EX_USAGE, "command script does not end in CRLF");
+  size_t first_len = (size_t)(nl - (in + p)) + 1;
+  unsigned char *sp = memchr(in + p, ' ', first_len);
+  if (!sp) die(EX_USAGE, "command without a tag");
+  size_t tl = (size_t)(sp - (in + p));
+  if (!valid_tag(in + p, tl)) die(EX_USAGE, "invalid or reserved command tag");
+  size_t rest = first_len - tl - 1;
+  if (is_verb(sp + 1, rest, "LOGIN") || is_verb(sp + 1, rest, "AUTHENTICATE") ||
+      is_verb(sp + 1, rest, "STARTTLS") || is_verb(sp + 1, rest, "LOGOUT"))
+    die(EX_USAGE, "the script may not authenticate or log out");
+  memcpy(tag, in + p, tl);
+  tag[tl] = 0;
+  for (;;) {
+    nl = memchr(in + p, '\n', in_len - p);
+    if (!nl) die(EX_USAGE, "command script does not end in CRLF");
+    size_t ln = (size_t)(nl - (in + p)) + 1;
+    if (ln < 2 || in[p + ln - 2] != '\r') die(EX_USAGE, "command lines must end in CRLF");
+    unsigned long long lit;
+    int has_lit = literal_len(in + p, (long)ln, &lit);
+    p += ln;
+    if (!has_lit) return p;
+    if (lit > in_len - p) die(EX_USAGE, "literal runs past the end of the script");
+    p += (size_t)lit;
+  }
+}
+
+/* Validates the whole script before connecting, so a malformed later
+ * command can never be found only after earlier ones have run. */
+static void imap_validate(void) {
+  char tag[17];
+  for (size_t p = 0; p < in_len;) p = imap_command(p, tag);
+}
+
 static int run_imap(void) {
   const char *host = env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com");
   const char *port = env_or("MAILBEND_IMAP_PORT", "993");
@@ -394,6 +431,7 @@ static int run_imap(void) {
 
   load_credentials();
   read_stdin();
+  imap_validate();
   tcp_connect(host, port, timeout);
   tls_start(host);
 
@@ -427,29 +465,12 @@ static int run_imap(void) {
   int status = EX_OK;
   size_t p = 0;
   while (p < in_len) {
-    /* one command: its first line names the tag */
-    unsigned char *nl = memchr(in + p, '\n', in_len - p);
-    if (!nl) die(EX_USAGE, "command script does not end in CRLF");
-    size_t first_len = (size_t)(nl - (in + p)) + 1;
-    unsigned char *sp = memchr(in + p, ' ', first_len);
-    if (!sp) die(EX_USAGE, "command without a tag");
-    size_t tl = (size_t)(sp - (in + p));
-    if (!valid_tag(in + p, tl)) die(EX_USAGE, "invalid or reserved command tag");
-    if (is_verb(sp + 1, first_len - tl - 1, "LOGIN") ||
-        is_verb(sp + 1, first_len - tl - 1, "AUTHENTICATE") ||
-        is_verb(sp + 1, first_len - tl - 1, "STARTTLS") ||
-        is_verb(sp + 1, first_len - tl - 1, "LOGOUT"))
-      die(EX_USAGE, "the script may not authenticate or log out");
     char tag[17];
-    memcpy(tag, in + p, tl);
-    tag[tl] = 0;
-
+    size_t end = imap_command(p, tag);
     int st = ST_OK;
-    for (;;) {
-      nl = memchr(in + p, '\n', in_len - p);
-      if (!nl) die(EX_USAGE, "command script does not end in CRLF");
+    while (p < end) {
+      unsigned char *nl = memchr(in + p, '\n', end - p);
       size_t ln = (size_t)(nl - (in + p)) + 1;
-      if (ln < 2 || in[p + ln - 2] != '\r') die(EX_USAGE, "command lines must end in CRLF");
       unsigned long long lit;
       int has_lit = literal_len(in + p, (long)ln, &lit);
       raw_write(in + p, ln);
@@ -458,8 +479,8 @@ static int run_imap(void) {
         st = imap_wait(tag, 0);
         break;
       }
-      if (lit > in_len - p) die(EX_USAGE, "literal runs past the end of the script");
       st = imap_wait(tag, 1);
+      if (st == ST_OK) die(EX_PROTO, "server completed a command before its literal was sent");
       if (st != ST_CONT) break; /* the server refused the literal */
       raw_write(in + p, (size_t)lit);
       p += (size_t)lit;
@@ -588,6 +609,29 @@ static void smtp_auth(const char *ehlo) {
   if (smtp_reply(NULL) != 235) die(EX_AUTH, "SMTP authentication rejected");
 }
 
+/* Validates the whole envelope before connecting: CRLF lines, none of the
+ * helper's own verbs, and a message that ends in a "." line after DATA. */
+static void smtp_validate(void) {
+  int in_data = 0;
+  for (size_t p = 0; p < in_len;) {
+    unsigned char *nl = memchr(in + p, '\n', in_len - p);
+    if (!nl) die(EX_USAGE, "envelope does not end in CRLF");
+    size_t ln = (size_t)(nl - (in + p)) + 1;
+    if (ln < 2 || in[p + ln - 2] != '\r') die(EX_USAGE, "envelope lines must end in CRLF");
+    if (in_data) {
+      if (ln == 3 && in[p] == '.') in_data = 0;
+    } else if (is_verb(in + p, ln, "AUTH") || is_verb(in + p, ln, "STARTTLS") ||
+               is_verb(in + p, ln, "EHLO") || is_verb(in + p, ln, "HELO") ||
+               is_verb(in + p, ln, "QUIT")) {
+      die(EX_USAGE, "the envelope may not greet, authenticate or quit");
+    } else if (is_verb(in + p, ln, "DATA")) {
+      in_data = 1;
+    }
+    p += ln;
+  }
+  if (in_data) die(EX_USAGE, "message does not end in a \".\" line");
+}
+
 static int run_smtp(void) {
   const char *host = env_or("MAILBEND_SMTP_HOST", "smtp.mail.me.com");
   const char *port = env_or("MAILBEND_SMTP_PORT", "587");
@@ -596,6 +640,7 @@ static int run_smtp(void) {
 
   load_credentials();
   read_stdin();
+  smtp_validate();
   tcp_connect(host, port, timeout);
 
   if (smtp_reply(NULL) != 220) die(EX_PROTO, "server refused the connection");

@@ -94,6 +94,11 @@ def from_name(+n: String) -> Maybe<&2, Op>:
 def plan_probe() -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}]
 
+# Before a change: capabilities, folders, and the folder's UIDVALIDITY
+# (EXAMINE, read-only).
+def plan_preflight(+mbox: String) -> List<&2, I.Cmd>:
+  [I.CCapability{}, I.CList{}, I.CExamine{mbox}]
+
 def plan_folders() -> List<&2, I.Cmd>:
   [I.CList{}]
 
@@ -132,9 +137,10 @@ def plan_move(+mbox: String, +uids: List<&2, U32>, +dest: String, +move: Bool, +
 def plan_trash(+mbox: String, +uids: List<&2, U32>, +trash: String, +move: Bool, +uidplus: Bool) -> List<&2, I.Cmd>:
   plan_move(mbox, uids, trash, move, uidplus)
 
-# Permanent deletion needs the caller's explicit confirmation and UIDPLUS
-# (to expunge only these UIDs). Without both there is no plan.
-def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: Bool, +uidplus: Bool) -> List<&2, I.Cmd>:
+def confirm_word() -> String:
+  "permanently-delete"
+
+def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus: Bool) -> List<&2, I.Cmd>:
   match confirm:
     case True{}:
       match uidplus:
@@ -144,6 +150,12 @@ def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: Bool, +uidplus: B
           []
     case False{}:
       []
+
+# Permanent deletion needs the caller's confirmation, exactly the word
+# "permanently-delete", and UIDPLUS (to expunge only these UIDs). Without
+# both there is no plan.
+def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: String, +uidplus: Bool) -> List<&2, I.Cmd>:
+  plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus)
 
 def plan_draft(+drafts: String, +msg: String) -> List<&2, I.Cmd>:
   [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]
@@ -162,3 +174,22 @@ def loses_mail(+cs: List<&2, I.Cmd>) -> Bool:
           True{}
         case _:
           loses_mail(t)
+
+# Whether `s` starts with `p`. Unlike String.starts_with it looks at `p`
+# first, so it decides as soon as a known prefix is matched even when the
+# rest of `s` is unknown (which is what the laws about rendering need).
+def has_prefix(+p: String, +s: String) -> Bool:
+  match p:
+    case SNil{}:
+      True{}
+    case SCon{c, pt}:
+      match s:
+        case SNil{}:
+          False{}
+        case SCon{d, st}:
+          Char.is_eq(c, d) && has_prefix(pt, st)
+
+# Whether a rendered fetch item leaves \Seen alone: a BODY.PEEK section or
+# pure metadata (non-PEEK BODY[...] or RFC822/RFC822.TEXT would set \Seen).
+def peek_safe(+s: String) -> Bool:
+  has_prefix("BODY.PEEK[", s) || String.eq(s, "UID") || String.eq(s, "FLAGS") || String.eq(s, "INTERNALDATE") || String.eq(s, "RFC822.SIZE")
