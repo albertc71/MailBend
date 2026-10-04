@@ -5,11 +5,6 @@ as the default and live-tested profile. The core is
 written in [Bend 2](https://github.com/bendlang/bend); a small C helper
 does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 
-> **Status: live-tested.** The iCloud profile has passed live testing of the
-> supported read, change, send and draft paths, including compose-draft,
-> reply-as-draft and forward-as-draft. Start with a test mailbox, or set
-> `MAILBEND_READ_ONLY=1`.
-
 ## What it can do
 
 | Tool | What it does | Changes mail? |
