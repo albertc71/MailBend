@@ -38,7 +38,7 @@ gen_leaf() {
   rm -f "${name}.csr" "${name}.ext"
 }
 
-gen_leaf server "DNS:localhost" 2
+gen_leaf server "DNS:localhost,DNS:mailbend.test" 2
 gen_leaf wronghost "DNS:not-localhost.invalid" 2
 gen_leaf expired "DNS:localhost" -1
 

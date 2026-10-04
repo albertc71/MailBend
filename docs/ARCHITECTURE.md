@@ -276,6 +276,14 @@ set `\Seen` by construction; the e2e suite also checks the server log.
 See [native/README.md](../native/README.md) for the helper's contract: the
 TLS rules, script format, output encoding, limits and exit codes.
 
+The helper uses libcurl only for DNS and TCP connection setup, in connect-only
+mode; it sends no mail commands through libcurl. System DNS is the default.
+The cloud launcher opts into fresh DNS-over-HTTPS per helper process, while
+OpenSSL still verifies the original mail hostname and owns mail TLS. Numeric
+connection overrides likewise never change SNI or the certificate identity.
+No DNS result is stored on disk or in the long-running Bend MCP core. See the
+[cloud recovery guide](CLOUD_AGENT.md) for resolver configuration and rebuilds.
+
 ## Bend notes
 
 Bend 2 (2.0.29) is total by default: no mutual recursion, recursion must

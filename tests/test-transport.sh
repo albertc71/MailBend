@@ -33,7 +33,7 @@ fail() { echo "FAIL $1 -- $2"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 # --- build the helper -------------------------------------------------
 mkdir -p "$ROOT/bin"
-if ! cc -std=c11 -O2 -Wall -Wextra -Werror -o "$HELPER" "$ROOT/native/mailbend-tls.c" -lssl -lcrypto 2>"$WORK/build.err"; then
+if ! cc -std=c11 -O2 -Wall -Wextra -Werror -o "$HELPER" "$ROOT/native/mailbend-tls.c" -lssl -lcrypto -lcurl 2>"$WORK/build.err"; then
   echo "FAIL build -- $(cat "$WORK/build.err")"
   exit 1
 fi
