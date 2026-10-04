@@ -2,17 +2,17 @@
 import Base
 import ../../src/json.bend as J
 
-def shown(m: Maybe<&2, J.Json>) -> String:
+def parsed_output(m: Maybe<&2, J.Json>) -> String:
   match m:
     case Some{j}:
       J.show(j)
     case None{}:
       "PARSE-ERROR"
 
-def rt(s: String) -> String:
-  shown(J.parse(s))
+def round_trip(s: String) -> String:
+  parsed_output(J.parse(s))
 
-def checks(+o: J.Json) -> IO(Unit):
+def check_accessors(+o: J.Json) -> IO(Unit):
   do IO<Unit>:
     IO.print(Maybe.default(&2, String, J.as_str(J.get(o, "name")), "?"))
     IO.print(U32.show(Maybe.default(&2, U32, J.as_u32(J.get(o, "uid")), 0)))
@@ -23,21 +23,21 @@ def checks(+o: J.Json) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    IO.print(rt("{\"a\": [1, -2.5e3, true, false, null], \"b\": {\"c\": \"x\\\"y\\\\z\"}}"))
-    IO.print(rt("  [ ]  "))
-    IO.print(rt("{}"))
-    IO.print(rt("\"tab\\tnl\\n\\u00e9\\ud83d\\ude00\""))
-    IO.print(rt("[1, 2"))
-    IO.print(rt("{\"a\" 1}"))
-    IO.print(rt("[1] [2]"))
-    IO.print(rt("nope"))
-    IO.print(String.join([rt("[1 2]"), rt("[1,]"), rt("{\"a\":1,}"), rt("{,}"), rt("{\"a\"::1}"), rt("[,1]")], " "))
-    IO.print(String.join([rt("\"a\\qb\""), rt("\"a\\x41\""), rt("\"ok\\/\\\"\""), rt("\"\\u00e9\"")], " "))
-    IO.print(String.join([rt("01"), rt("1-2"), rt("-"), rt("1."), rt("1e"), rt("[-0.5e+3, 0, 10, 2E-2]")], " "))
+    IO.print(round_trip("{\"a\": [1, -2.5e3, true, false, null], \"b\": {\"c\": \"x\\\"y\\\\z\"}}"))
+    IO.print(round_trip("  [ ]  "))
+    IO.print(round_trip("{}"))
+    IO.print(round_trip("\"tab\\tnl\\n\\u00e9\\ud83d\\ude00\""))
+    IO.print(round_trip("[1, 2"))
+    IO.print(round_trip("{\"a\" 1}"))
+    IO.print(round_trip("[1] [2]"))
+    IO.print(round_trip("nope"))
+    IO.print(String.join([round_trip("[1 2]"), round_trip("[1,]"), round_trip("{\"a\":1,}"), round_trip("{,}"), round_trip("{\"a\"::1}"), round_trip("[,1]")], " "))
+    IO.print(String.join([round_trip("\"a\\qb\""), round_trip("\"a\\x41\""), round_trip("\"ok\\/\\\"\""), round_trip("\"\\u00e9\"")], " "))
+    IO.print(String.join([round_trip("01"), round_trip("1-2"), round_trip("-"), round_trip("1."), round_trip("1e"), round_trip("[-0.5e+3, 0, 10, 2E-2]")], " "))
     IO.print(J.show(J.str("ctl\u{1}")))
-    IO.print(String.join([rt("\"a\u{1}b\""), rt("\"tab\u{9}raw\""), rt("\"\\u00g9\""), rt("\"\\u12\""), rt("\"\\u00E9\"")], " "))
-    IO.print(String.join([rt("[1,\u{C}2]"), rt("\u{B}[]"), rt("\t[1,\r\n2]\n")], " "))
-    checks(Maybe.default(&2, J.Json, J.parse("{\"uid\": 42, \"name\": \"INBOX\", \"flag\": true, \"list\": [\"a\",\"b\"]}"), J.JNull{}))
+    IO.print(String.join([round_trip("\"a\u{1}b\""), round_trip("\"tab\u{9}raw\""), round_trip("\"\\u00g9\""), round_trip("\"\\u12\""), round_trip("\"\\u00E9\"")], " "))
+    IO.print(String.join([round_trip("[1,\u{C}2]"), round_trip("\u{B}[]"), round_trip("\t[1,\r\n2]\n")], " "))
+    check_accessors(Maybe.default(&2, J.Json, J.parse("{\"uid\": 42, \"name\": \"INBOX\", \"flag\": true, \"list\": [\"a\",\"b\"]}"), J.JNull{}))
 
 #|{"a":[1,-2.5e3,true,false,null],"b":{"c":"x\"y\\z"}}
 #|[]

@@ -33,8 +33,8 @@ type Strip is Data:
 type Attach is Data:
   Attach{name: String, ctype: String, data: String}
 
-# A message to compose. `to`, `cc` may hold "Name <addr>" forms; Bcc is
-# never written into the message.
+# A message to compose. Recipient lists may hold "Name <addr>" forms.
+# Callers retain Bcc for drafts and remove it before SMTP composition.
 type Draft is Data:
   Draft{from: String, to: List<&2, String>, cc: List<&2, String>, bcc: List<&2, String>, subject: String, text: String, date: String, msgid: String, in_reply_to: String, refs: String, atts: List<&2, Attach>}
 
@@ -140,7 +140,8 @@ def ew_join(+ws: List<&2, String>, +prev_ew: Bool, +first: Bool) -> String:
     case Nil{}:
       ""
     case Con{w, t}:
-      Bool.pick(String, first || (prev_ew && is_ew(w)), "", " ") ++ ew_word(w) ++ ew_join(t, is_ew(w), False{})
+      +encoded = is_ew(w)
+      Bool.pick(String, first || (prev_ew && encoded), "", " ") ++ ew_word(w) ++ ew_join(t, encoded, False{})
 
 def tab_to_space(+s: String) -> String:
   match s:
@@ -347,7 +348,8 @@ def leaf_hs(+hs: List<&2, Hdr>, +body: String) -> Parts:
   +ct = header(hs, "content-type")
   +cd = header(hs, "content-disposition")
   +typ = Bool.pick(String, String.is_empty(ct), "text/plain", main_value(ct))
-  +fname = Bool.pick(String, String.is_empty(param(cd, "filename")), param(ct, "name"), param(cd, "filename"))
+  +disposition_name = param(cd, "filename")
+  +fname = Bool.pick(String, String.is_empty(disposition_name), param(ct, "name"), disposition_name)
   +bytes = transfer_decode(header(hs, "content-transfer-encoding"), body)
   +attached = String.eq(main_value(cd), "attachment") || Bool.not(String.is_empty(fname))
   Bool.pick(Parts, Bool.not(attached) && String.eq(typ, "text/plain"), Parts{lf_lines(C.charset_decode(default_cs(param(ct, "charset")), bytes)), "", []},
@@ -356,7 +358,8 @@ def leaf_hs(+hs: List<&2, Hdr>, +body: String) -> Parts:
 
 # One non-multipart entity (its header and body).
 def leaf(+part: String) -> Parts:
-  leaf_hs(headers(head_of(split(part))), body_of(split(part)))
+  +entity = split(part)
+  leaf_hs(headers(head_of(entity)), body_of(entity))
 
 # The boundary of a multipart entity, or "" for a single part.
 def boundary_of(+part: String) -> String:
@@ -466,7 +469,8 @@ def squeeze(+s: String, +sp: Bool) -> String:
     case SNil{}:
       ""
     case SCon{c, t}:
-      Bool.pick(String, is_blank(c), Bool.pick(String, sp, "", " "), SCon{c, SNil{}}) ++ squeeze(t, is_blank(c))
+      +blank = is_blank(c)
+      Bool.pick(String, blank, Bool.pick(String, sp, "", " "), SCon{c, SNil{}}) ++ squeeze(t, blank)
 
 # A rough plain-text view of HTML: tags removed, common entities decoded.
 def html_text(+html: String) -> String:
@@ -628,8 +632,9 @@ def display_part(+a: String) -> String:
 # "Name <addr>" with the display name encoded when needed.
 def encode_addr(+a: String) -> String:
   +name = String.trim(display_part(a))
+  +address = addr_spec(a)
   Bool.pick(String, String.contains(a, "<") && Bool.not(String.is_empty(name)),
-    encode_display(unquote(name)) ++ " <" ++ addr_spec(a) ++ ">", addr_spec(a))
+    encode_display(unquote(name)) ++ " <" ++ address ++ ">", address)
 
 def encode_addrs(+xs: List<&2, String>) -> String:
   match xs:
@@ -766,7 +771,9 @@ def att_body(+raw: Bool, +b: String, +ctype: String, +name: String, +data: Strin
     case True{}:
       att_head(b, "message/rfc822", name, "7bit") ++ data ++ "\r\n"
     case False{}:
-      att_head(b, Bool.pick(String, String.eq(safe_ctype(ctype), "message/rfc822"), "application/octet-stream", safe_ctype(ctype)), name, "base64") ++ C.wrap76(C.b64_encode(data, False{}), 0)
+      +content_type = safe_ctype(ctype)
+      +attachment_type = Bool.pick(String, String.eq(content_type, "message/rfc822"), "application/octet-stream", content_type)
+      att_head(b, attachment_type, name, "base64") ++ C.wrap76(C.b64_encode(data, False{}), 0)
 
 def att_part(+b: String, +a: Attach) -> String:
   match a:

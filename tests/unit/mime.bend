@@ -3,18 +3,18 @@ import Base
 import ../../src/mime.bend as M
 import ../../src/codec.bend as C
 
-def vis(s: String) -> String:
+def show_line_breaks(s: String) -> String:
   match s:
     case SNil{}:
       ""
     case SCon{'\r', t}:
-      "\\r" ++ vis(t)
+      "\\r" ++ show_line_breaks(t)
     case SCon{'\n', t}:
-      "\\n" ++ vis(t)
+      "\\n" ++ show_line_breaks(t)
     case SCon{c, t}:
-      SCon{c, vis(t)}
+      SCon{c, show_line_breaks(t)}
 
-def msg() -> String:
+def multipart_message() -> String:
   String.concat([
     "From: =?UTF-8?B?Sm9zw6k=?= <jose@example.com>\r\n",
     "Subject: =?utf-8?q?Caf=C3=A9?= =?utf-8?q?_menu?= today\r\n",
@@ -55,14 +55,14 @@ def show_parts(p: M.Parts) -> String:
     case M.Parts{t, h, a}:
       "text=" ++ String.trim(t) ++ " html=" ++ String.trim(M.html_text(h)) ++ " atts=" ++ show_atts(a)
 
-def check(+hs: List<&2, M.Hdr>) -> IO(Unit):
+def show_headers(+hs: List<&2, M.Hdr>) -> IO(Unit):
   do IO<Unit>:
     IO.print(M.decode_header(M.header(hs, "from")))
     IO.print(M.decode_header(M.header(hs, "subject")))
     IO.print(M.header(hs, "to"))
     IO.print(M.main_value(M.header(hs, "content-type")) ++ " " ++ M.param(M.header(hs, "content-type"), "boundary"))
 
-def draft() -> M.Draft:
+def attachment_draft() -> M.Draft:
   M.Draft{"Tester <tester@example.com>", ["José Q <jose@example.com>", "b@example.com"], [], [], "Résumé attached", "Line one\nligne deux é\n", "Sun, 27 Sep 2026 03:19:30 +0000", "<1@example.com>", "", "", [M.Attach{"notes.txt", "text/plain", "hello"}]}
 
 # Whether a message is 7-bit: printable ASCII, tabs and CRLF only.
@@ -77,10 +77,10 @@ def roundtrip(+m: String) -> IO(Unit):
     IO.print(show_parts(M.parts(m)))
 
 # Caller-supplied threading headers and content types cannot add header lines.
-def evil() -> M.Draft:
+def header_injection_draft() -> M.Draft:
   M.Draft{"t@example.com", ["a@example.com"], [], [], "s", "b", "d", "<1@x>", "<x@y>\r\nBcc: evil@example.com", "", [M.Attach{"f.txt", "text/plain\r\nX-Evil: 1", "hi"}]}
 
-def no_evil(+m: String) -> Bool:
+def has_no_injected_headers(+m: String) -> Bool:
   Bool.not(String.contains(m, "\r\nBcc:") || String.contains(m, "\r\nX-Evil:"))
 
 def long_name() -> String:
@@ -98,14 +98,14 @@ def max_line(+s: String, +cur: U32, +best: U32) -> U32:
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    check(M.headers(M.head_of(M.split(msg()))))
-    IO.print(show_parts(M.parts(msg())))
+    show_headers(M.headers(M.head_of(M.split(multipart_message()))))
+    IO.print(show_parts(M.parts(multipart_message())))
     IO.print(show_parts(M.parts("Subject: plain\r\n\r\nJust text\r\n")))
-    roundtrip(M.compose(draft(), "b0undary"))
+    roundtrip(M.compose(attachment_draft(), "b0undary"))
     IO.print(M.rfc5322_date(0) ++ " / " ++ M.rfc5322_date(951782400) ++ " / " ++ M.rfc5322_date(1790480370) ++ " / " ++ M.rfc5322_date(4102444799))
-    IO.print(Bool.show(no_evil(M.compose(evil(), "b"))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
-    IO.print(vis(M.name_param("filename", "résumé.pdf")) ++ " | " ++ M.name_param("filename", "plain.txt"))
-    IO.print(Nat.show(String.length(M.encode_header(String.repeat("a", 950n)))) ++ " " ++ Bool.show(String.contains(M.encode_header(String.repeat("a", 950n)), "\r\n ")) ++ " " ++ vis(M.fold_ids(["<a@x>", "<b@y>"])))
+    IO.print(Bool.show(has_no_injected_headers(M.compose(header_injection_draft(), "b"))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
+    IO.print(show_line_breaks(M.name_param("filename", "résumé.pdf")) ++ " | " ++ M.name_param("filename", "plain.txt"))
+    IO.print(Nat.show(String.length(M.encode_header(String.repeat("a", 950n)))) ++ " " ++ Bool.show(String.contains(M.encode_header(String.repeat("a", 950n)), "\r\n ")) ++ " " ++ show_line_breaks(M.fold_ids(["<a@x>", "<b@y>"])))
     IO.print(Bool.show(String.eq(M.param("attachment; " ++ String.concat(String.split(M.name_param("filename", long_name()), '\n')), "filename"), long_name())) ++ " " ++ Bool.show(U32.is_lt(max_line(M.name_param("filename", long_name()), 0, 0), 80)))
     IO.print(M.param("attachment; filename=\"Q1; final \\\"v2\\\".pdf\"; size=3", "filename") ++ " | " ++ M.main_value("text/plain ; charset=\"a;b\"") ++ " | " ++ M.addr_spec("john@example.com (Doe, John)"))
     IO.print(M.addr_spec("\"a <evil@x.com>\" <real@y.com>") ++ " " ++ M.addr_spec("plain@z.com"))

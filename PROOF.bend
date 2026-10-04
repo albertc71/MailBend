@@ -3,9 +3,9 @@ import ./LAWS.bend as Laws
 import ./src/imap.bend as I
 import ./src/ops.bend as Ops
 
-# Proofs of LAWS.bend. Most laws hold by computation: the plans are fixed
-# command lists, so the classifiers reduce to False{} whatever the mailbox
-# names, UIDs or keys. The capability laws split on the Bool arguments.
+# Proofs of LAWS.bend. Most laws hold by computation: command-plan structure
+# determines the classifiers regardless of mailbox names, UIDs or keys.
+# Case analysis exposes plans selected by fetch items and Bool arguments.
 
 def Laws.read_is_read_only():
   {==}
@@ -64,6 +64,8 @@ def Laws.fetch_items_never_set_seen(item):
     case I.IFull{max}:
       {==}
 
+# Match the checkpoint comparison through a parameter: both the empty plan
+# at the maximum UID and the search plan are read-only.
 def new_if_writes_nothing(at_end: Bool, mbox: String, since: U32) -> {I.any_writes(Ops.plan_new_if(at_end, mbox, since)) == False{} : Bool}:
   match at_end:
     case True{}:
@@ -107,6 +109,7 @@ def Laws.trash_never_loses_mail(mbox, uids, trash, move, uidplus, uidv):
           {==}
 
 def Laws.delete_needs_confirmation(mbox, uids, confirm, wrong, uidplus, uidv):
+  # Rewrite the confirmation comparison to False using the law's premise.
   %Equal.sym(Bool, String.eq(confirm, Ops.confirm_word()), False{}, wrong) : {Ops.plan_delete_if(_, mbox, uids, uidplus, uidv) == [] : List<&2, I.Cmd>}
   {==}
 

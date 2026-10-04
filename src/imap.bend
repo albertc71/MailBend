@@ -533,7 +533,8 @@ def script_go(+cs: List<&2, Cmd>, +n: U32) -> String:
     case Nil{}:
       ""
     case Con{c, t}:
-      line_of(is_expect(c), c, n) ++ crlf() ++ script_go(t, Bool.pick(U32, is_expect(c), n, (n + 1 : U32)))
+      +expect = is_expect(c)
+      line_of(expect, c, n) ++ crlf() ++ script_go(t, Bool.pick(U32, expect, n, (n + 1 : U32)))
 
 def script(+cs: List<&2, Cmd>) -> String:
   script_go(cs, 1)
@@ -912,12 +913,15 @@ def folders(+lines: List<&2, RLine>) -> List<&2, Folder>:
     case Con{RLine{+text, lits}, t}:
       List.append(&2, Folder, folder_line(upper_starts(text, "* LIST "), text, lits), folders(t))
 
-def has_attr(+attrs: List<&2, String>, +a: String) -> Bool:
+def has_attr_lowered(+attrs: List<&2, String>, +want: String) -> Bool:
   match attrs:
     case Nil{}:
       False{}
-    case Con{x, t}:
-      String.eq(String.to_lower(x), String.to_lower(a)) || has_attr(t, a)
+    case Con{attr, rest}:
+      String.eq(String.to_lower(attr), want) || has_attr_lowered(rest, want)
+
+def has_attr(+attrs: List<&2, String>, +a: String) -> Bool:
+  has_attr_lowered(attrs, String.to_lower(a))
 
 # The first mailbox carrying a special-use attribute such as "\\Trash".
 def special(+fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:

@@ -215,8 +215,10 @@ def b64_val(+c: Char) -> U32:
           Bool.pick(U32, U32.is_eq(n, 47) || U32.is_eq(n, 44), 63, 64)))))
 
 def b64_emit(+acc: U32, +bits: U32, +out: String) -> B64St:
+  +remaining_bits = (bits - 8 : U32)
+  +shift = U32.to_nat(remaining_bits)
   Bool.pick(B64St, U32.is_ge(bits, 8),
-    B64St{(acc .&. ((1 << U32.to_nat((bits - 8 : U32))) - 1) : U32), (bits - 8 : U32), SCon{chr(((acc >> U32.to_nat((bits - 8 : U32))) .&. 255 : U32)), out}},
+    B64St{(acc .&. ((1 << shift) - 1) : U32), remaining_bits, SCon{chr(((acc >> shift) .&. 255 : U32)), out}},
     B64St{acc, bits, out})
 
 def b64_push(+v: U32, st: B64St) -> B64St:
@@ -249,7 +251,8 @@ def wrap76(s: String, +col: U32) -> String:
     case SNil{}:
       Bool.pick(String, U32.is_zero(col), "", "\r\n")
     case SCon{c, t}:
-      Bool.pick(String, U32.is_eq(col, 76), "\r\n", "") ++ SCon{c, wrap76(t, Bool.pick(U32, U32.is_eq(col, 76), 1, (col + 1 : U32)))}
+      +line_full = U32.is_eq(col, 76)
+      Bool.pick(String, line_full, "\r\n", "") ++ SCon{c, wrap76(t, Bool.pick(U32, line_full, 1, (col + 1 : U32)))}
 
 # ---- quoted-printable ------------------------------------------------------------
 
@@ -279,7 +282,9 @@ def qp_decode(s: String, +q: Bool) -> String:
     case SCon{'=', SCon{'\n', t}}:
       qp_decode(t, q)
     case SCon{'=', SCon{+a, SCon{+b, t}}}:
-      qp_pair(U32.is_lt(hex_val(a), 16) && U32.is_lt(hex_val(b), 16), hex_val(a), hex_val(b), qp_decode(t, q), SCon{'=', SCon{a, SCon{b, SNil{}}}})
+      +high = hex_val(a)
+      +low = hex_val(b)
+      qp_pair(U32.is_lt(high, 16) && U32.is_lt(low, 16), high, low, qp_decode(t, q), SCon{'=', SCon{a, SCon{b, SNil{}}}})
     case SCon{'_', t}:
       SCon{Bool.pick(Char, q, ' ', '_'), qp_decode(t, q)}
     case SCon{c, t}:
@@ -321,9 +326,9 @@ def qp_encode(bytes: String, +col: U32) -> String:
     case SCon{'\t', SNil{}}:
       qp_brk(col, 3) ++ "=09"
     case SCon{+c, t}:
-      +tok = qp_token(c)
-      +w = U32.from_nat(String.length(tok))
-      qp_brk(col, w) ++ tok ++ qp_encode(t, qp_col(col, w))
+      +token = qp_token(c)
+      +width = U32.from_nat(String.length(token))
+      qp_brk(col, width) ++ token ++ qp_encode(t, qp_col(col, width))
 
 def plain_char(+n: U32) -> Bool:
   between(n, 32, 126) || U32.is_eq(n, 9)

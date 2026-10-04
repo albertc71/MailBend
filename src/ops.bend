@@ -77,7 +77,22 @@ def name(+op: Op) -> String:
       "mail_forward"
 
 def all_ops() -> List<&2, Op>:
-  [OProbe{}, OListFolders{}, OSearch{}, OGet{}, OGetNew{}, OMarkRead{}, OMarkUnread{}, OMove{}, OTrash{}, ODelete{}, OSaveDraft{}, OSend{}, OReply{}, OForward{}]
+  [
+    OProbe{},
+    OListFolders{},
+    OSearch{},
+    OGet{},
+    OGetNew{},
+    OMarkRead{},
+    OMarkUnread{},
+    OMove{},
+    OTrash{},
+    ODelete{},
+    OSaveDraft{},
+    OSend{},
+    OReply{},
+    OForward{}
+  ]
 
 def find_op(+ops: List<&2, Op>, +n: String) -> Maybe<&2, Op>:
   match ops:
@@ -102,8 +117,9 @@ def plan_preflight(+mbox: String) -> List<&2, I.Cmd>:
 def plan_folders() -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}]
 
-# A server may advertise SPECIAL-USE yet mark folders only when LIST asks
-# for them (RFC 6154 RETURN option); tools use this plan then.
+# When SPECIAL-USE is advertised, tools explicitly request its attributes
+# with this plan, even if ordinary LIST already reports some roles. Providers
+# may expose only part of their role information without RETURN (SPECIAL-USE).
 def plan_roles() -> List<&2, I.Cmd>:
   [I.CListRoles{}]
 
@@ -152,7 +168,16 @@ def plan_move(+mbox: String, +uids: List<&2, U32>, +dest: String, +move: Bool, +
     case False{}:
       match uidplus:
         case True{}:
-          [I.CCapability{}, I.CExpectWord{"UIDPLUS"}, I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CCopy{uids, dest}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
+          [
+            I.CCapability{},
+            I.CExpectWord{"UIDPLUS"},
+            I.CSelect{mbox},
+            I.CExpect{I.uidv_line(uidv)},
+            I.CSearch{[I.KUids{uids}]},
+            I.CCopy{uids, dest},
+            I.CStore{uids, True{}, I.FDeleted{}},
+            I.CExpunge{uids}
+          ]
         case False{}:
           []
 
@@ -168,7 +193,15 @@ def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus
     case True{}:
       match uidplus:
         case True{}:
-          [I.CCapability{}, I.CExpectWord{"UIDPLUS"}, I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}]
+          [
+            I.CCapability{},
+            I.CExpectWord{"UIDPLUS"},
+            I.CSelect{mbox},
+            I.CExpect{I.uidv_line(uidv)},
+            I.CSearch{[I.KUids{uids}]},
+            I.CStore{uids, True{}, I.FDeleted{}},
+            I.CExpunge{uids}
+          ]
         case False{}:
           []
     case False{}:
