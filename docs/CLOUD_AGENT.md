@@ -42,6 +42,11 @@ environment owner install the packages listed in
 [setup-cloud.sh](../scripts/setup-cloud.sh), then run
 `sh scripts/install.sh --install-bend` as your user.
 
+Setup reuses Bend when it is already installed; otherwise its official
+installer selects the release. For a compiler-related rebuild failure,
+compare that version with the tested release and checksum in
+[CI](../.github/workflows/ci.yml). Setup does not pin or downgrade Bend.
+
 Re-enable/restart the MCP server after setup so it uses the rebuilt binaries.
 Its command must be `/workspace/MailBend/scripts/mailbend-cloud`. Ensure the
 platform still supplies the two credential variables below. Setup does not
@@ -60,9 +65,10 @@ Keep credentials in the platform's secret environment; never print them.
 ```
 
 `--check` performs a local, credential-free readiness check, including running
-the TLS helper and core to detect missing shared libraries. It neither
-installs packages nor checks DNS, connectivity, authentication, or source
-freshness. After updating MailBend source, run full setup again. This routine
+the TLS helper and core to detect missing shared libraries. On failure it
+names the component that needs rebuilding, without exposing process output.
+It neither installs packages nor checks DNS, connectivity, authentication,
+or source freshness. After updating MailBend source, run full setup again. This routine
 is on-demand recovery, not a guaranteed boot hook. No personal post-rebuild
 setup hook is documented in the sources checked on 2026-10-04.
 
@@ -189,6 +195,10 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
   default resolver bootstrap requires IPv4 connectivity; an IPv6-only
   environment needs a reachable approved resolver URL/bootstrap. Bad IPv6
   routing can consume part of the connection budget.
+- **DNS timeouts:** the DNS deadline needs a libcurl build with asynchronous
+  DNS, as provided by the tested Ubuntu 24.04 packages. With a custom
+  synchronous resolver build, system DNS or a custom DoH resolver's bootstrap
+  lookup can exceed the deadline; see [libcurl's timeout limitation](https://curl.se/libcurl/c/CURLOPT_NOSIGNAL.html).
 - **Proxies:** raw mail TCP does not use `HTTP_PROXY`/`HTTPS_PROXY`; libcurl's
   separate DoH HTTPS requests may honor proxy environment settings. DNS
   changes cannot fix a network that permits only proxied HTTP(S).

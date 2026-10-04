@@ -86,8 +86,10 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   literal lengths stay exact. Server literals are copied as raw bytes, so
   message content can never be mistaken for a tagged reply.
 - **Limits**: DNS plus TCP connect budget and per-read timeout
-  `MAILBEND_TIMEOUT_MS` (default 30 s), 32 MiB line buffer, 64 MiB per literal
-  and per script, 60 MiB transcript before stdout's byte-to-UTF-8 encoding
+  `MAILBEND_TIMEOUT_MS` (default 30 s). Bounding system/bootstrap DNS requires
+  a libcurl build with asynchronous DNS (the tested Ubuntu packages provide
+  it). Size limits are 32 MiB per line, 64 MiB per literal and per script,
+  and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
   (at most 120 MiB after encoding).
 - **Exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.

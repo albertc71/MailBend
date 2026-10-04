@@ -5,7 +5,8 @@
 #
 # Produces:
 #   ca.pem                        the test CA certificate (no key kept around)
-#   server.pem / server-key.pem   SAN=DNS:localhost, CA-signed, valid
+#   server.pem / server-key.pem   SAN=DNS:localhost,DNS:mailbend.test, CA-signed
+#   ip-address.pem / -key.pem     SAN=IP:127.0.0.1,IP:::1, CA-signed, valid
 #   wronghost.pem / -key.pem      SAN=DNS:not-localhost.invalid, CA-signed, valid
 #   expired.pem / -key.pem        SAN=DNS:localhost, CA-signed, validity in the past
 #   selfsigned.pem / -key.pem     SAN=DNS:localhost, NOT CA-signed
@@ -39,6 +40,7 @@ gen_leaf() {
 }
 
 gen_leaf server "DNS:localhost,DNS:mailbend.test" 2
+gen_leaf ip-address "IP:127.0.0.1,IP:::1" 2
 gen_leaf wronghost "DNS:not-localhost.invalid" 2
 gen_leaf expired "DNS:localhost" -1
 

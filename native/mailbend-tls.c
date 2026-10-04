@@ -209,23 +209,16 @@ static void set_timeouts(int fd, int ms) {
 }
 
 static void curl_check(CURLcode code) {
-  if (code != CURLE_OK) die(EX_CONNECT, "cannot configure the resolver/connection");
+  if (code != CURLE_OK)
+    die(EX_CONNECT, "cannot configure the resolver/connection: %s",
+        curl_easy_strerror(code));
 }
 
-static void tcp_connect(const char *host, const char *port, const char *ip_env,
-                        int timeout_ms) {
-  const char *doh = env_or("MAILBEND_DOH_URL", "");
-  const char *ip = env_or(ip_env, "");
-  const char *ca = env_or("MAILBEND_CA_FILE", "");
-  if (*doh && strncmp(doh, "https://", 8) != 0)
-    die(EX_USAGE, "MAILBEND_DOH_URL must be an HTTPS URL");
-
-  curl_check(curl_global_init(CURL_GLOBAL_DEFAULT));
-  connection = curl_easy_init();
+static CURLU *mail_connection_url(const char *host, const char *port) {
   CURLU *url = curl_url();
-  if (!connection || !url) die(EX_CONNECT, "cannot create a connection");
-  /* getaddrinfo accepted bare IPv6 hosts; URL syntax needs brackets. Keep
-   * the original unbracketed host for certificate identity verification. */
+  if (!url) die(EX_CONNECT, "cannot create a connection URL");
+  /* URL syntax needs brackets around IPv6. The caller keeps the original
+   * host unchanged for mail certificate verification and SNI. */
   unsigned char host_ip[16];
   char bracketed[INET6_ADDRSTRLEN + 2];
   const char *url_host = host;
@@ -239,6 +232,73 @@ static void tcp_connect(const char *host, const char *port, const char *ip_env,
       curl_url_set(url, CURLUPART_HOST, url_host, 0) ||
       curl_url_set(url, CURLUPART_PORT, port, 0))
     die(EX_USAGE, "invalid mail host or port");
+  return url;
+}
+
+/* The returned list is borrowed by libcurl until the connection attempt ends.
+ * A numeric override wins over DoH; neither changes the mail TLS identity. */
+static struct curl_slist *configure_connection_route(
+    CURL *handle, const char *port, const char *connect_ip_env,
+    const char *connect_ip, const char *doh_url) {
+  struct curl_slist *route_entries = NULL;
+  if (*connect_ip) {
+    unsigned char bytes[16];
+    int is_ipv6 = inet_pton(AF_INET6, connect_ip, bytes) == 1;
+    if (!is_ipv6 && inet_pton(AF_INET, connect_ip, bytes) != 1)
+      die(EX_USAGE, "%s must be one numeric IPv4 or IPv6 address", connect_ip_env);
+    char *entry = NULL;
+    /* CONNECT_TO is source-host:source-port:destination-host:destination-port.
+     * Empty source fields match this connection's original host and port. */
+    if (asprintf(&entry, "::%s%s%s:%s", is_ipv6 ? "[" : "", connect_ip,
+                 is_ipv6 ? "]" : "", port) < 0)
+      die(EX_CONNECT, "out of memory");
+    route_entries = curl_slist_append(NULL, entry);
+    free(entry);
+    if (!route_entries) die(EX_CONNECT, "out of memory");
+    curl_check(curl_easy_setopt(handle, CURLOPT_CONNECT_TO, route_entries));
+  } else if (*doh_url) {
+    /* Bootstrap the default resolver without consulting broken system DNS.
+     * These are resolver anycast addresses, never pinned Apple addresses. */
+    route_entries = curl_slist_append(NULL,
+        "cloudflare-dns.com:443:1.1.1.1,1.0.0.1");
+    if (!route_entries) die(EX_CONNECT, "out of memory");
+    curl_check(curl_easy_setopt(handle, CURLOPT_RESOLVE, route_entries));
+    curl_check(curl_easy_setopt(handle, CURLOPT_DOH_URL, doh_url));
+    curl_check(curl_easy_setopt(handle, CURLOPT_DOH_SSL_VERIFYPEER, 1L));
+    curl_check(curl_easy_setopt(handle, CURLOPT_DOH_SSL_VERIFYHOST, 2L));
+    const char *ca = env_or("MAILBEND_CA_FILE", "");
+    if (*ca) {
+      curl_check(curl_easy_setopt(handle, CURLOPT_CAINFO, ca));
+      curl_check(curl_easy_setopt(handle, CURLOPT_CAPATH, NULL));
+    }
+  }
+  return route_entries;
+}
+
+static int connected_socket(CURL *handle, int timeout_ms) {
+  curl_socket_t fd = CURL_SOCKET_BAD;
+  curl_check(curl_easy_getinfo(handle, CURLINFO_ACTIVESOCKET, &fd));
+  if (fd == CURL_SOCKET_BAD) die(EX_CONNECT, "no connected socket");
+  /* Mail I/O uses blocking OpenSSL/socket calls with per-operation timeouts. */
+  int flags = fcntl(fd, F_GETFL);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0 ||
+      fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+    die(EX_CONNECT, "cannot configure the connected socket");
+  set_timeouts(fd, timeout_ms);
+  return fd;
+}
+
+static void tcp_connect(const char *host, const char *port,
+                        const char *connect_ip_env, int timeout_ms) {
+  const char *doh_url = env_or("MAILBEND_DOH_URL", "");
+  const char *connect_ip = env_or(connect_ip_env, "");
+  if (*doh_url && strncmp(doh_url, "https://", 8) != 0)
+    die(EX_USAGE, "MAILBEND_DOH_URL must be an HTTPS URL");
+
+  curl_check(curl_global_init(CURL_GLOBAL_DEFAULT));
+  connection = curl_easy_init();
+  if (!connection) die(EX_CONNECT, "cannot create a connection");
+  CURLU *url = mail_connection_url(host, port);
   curl_check(curl_easy_setopt(connection, CURLOPT_CURLU, url));
   curl_check(curl_easy_setopt(connection, CURLOPT_CONNECT_ONLY, 1L));
   /* Raw mail sockets must never become an HTTP request through a proxy. */
@@ -246,52 +306,19 @@ static void tcp_connect(const char *host, const char *port, const char *ip_env,
   curl_check(curl_easy_setopt(connection, CURLOPT_NOSIGNAL, 1L));
   curl_check(curl_easy_setopt(connection, CURLOPT_CONNECTTIMEOUT_MS, (long)timeout_ms));
   curl_check(curl_easy_setopt(connection, CURLOPT_TIMEOUT_MS, (long)timeout_ms));
+  struct curl_slist *route_entries = configure_connection_route(
+      connection, port, connect_ip_env, connect_ip, doh_url);
 
-  struct curl_slist *addresses = NULL;
-  if (*ip) {
-    unsigned char bytes[16];
-    int v6 = inet_pton(AF_INET6, ip, bytes) == 1;
-    if (!v6 && inet_pton(AF_INET, ip, bytes) != 1)
-      die(EX_USAGE, "%s must be one numeric IPv4 or IPv6 address", ip_env);
-    char *entry = NULL;
-    if (asprintf(&entry, "::%s%s%s:%s", v6 ? "[" : "", ip,
-                 v6 ? "]" : "", port) < 0)
-      die(EX_CONNECT, "out of memory");
-    addresses = curl_slist_append(NULL, entry);
-    free(entry);
-    if (!addresses) die(EX_CONNECT, "out of memory");
-    curl_check(curl_easy_setopt(connection, CURLOPT_CONNECT_TO, addresses));
-  } else if (*doh) {
-    /* Bootstrap the default resolver without consulting broken system DNS.
-     * These are resolver anycast addresses, never pinned Apple addresses. */
-    addresses = curl_slist_append(NULL,
-        "cloudflare-dns.com:443:1.1.1.1,1.0.0.1");
-    if (!addresses) die(EX_CONNECT, "out of memory");
-    curl_check(curl_easy_setopt(connection, CURLOPT_RESOLVE, addresses));
-    curl_check(curl_easy_setopt(connection, CURLOPT_DOH_URL, doh));
-    curl_check(curl_easy_setopt(connection, CURLOPT_DOH_SSL_VERIFYPEER, 1L));
-    curl_check(curl_easy_setopt(connection, CURLOPT_DOH_SSL_VERIFYHOST, 2L));
-    if (*ca) {
-      curl_check(curl_easy_setopt(connection, CURLOPT_CAINFO, ca));
-      curl_check(curl_easy_setopt(connection, CURLOPT_CAPATH, NULL));
-    }
-  }
+  const char *resolver_mode = "system DNS";
+  if (*connect_ip) resolver_mode = "connection IP override";
+  else if (*doh_url) resolver_mode = "DNS-over-HTTPS";
   CURLcode result = curl_easy_perform(connection);
-  curl_slist_free_all(addresses);
+  curl_slist_free_all(route_entries);
   curl_url_cleanup(url);
   if (result != CURLE_OK)
     die(EX_CONNECT, "cannot connect to %s:%s (%s; %s)", host, port,
-        *ip ? "connection IP override" : *doh ? "DNS-over-HTTPS" : "system DNS",
-        curl_easy_strerror(result));
-  curl_socket_t fd = CURL_SOCKET_BAD;
-  curl_check(curl_easy_getinfo(connection, CURLINFO_ACTIVESOCKET, &fd));
-  if (fd == CURL_SOCKET_BAD) die(EX_CONNECT, "no connected socket");
-  int flags = fcntl(fd, F_GETFL);
-  if (flags < 0 || fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0 ||
-      fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
-    die(EX_CONNECT, "cannot configure the connected socket");
-  sock = fd;
-  set_timeouts(sock, timeout_ms);
+        resolver_mode, curl_easy_strerror(result));
+  sock = connected_socket(connection, timeout_ms);
 }
 
 static void tls_start(const char *host) {

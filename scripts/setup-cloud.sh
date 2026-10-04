@@ -10,11 +10,15 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || fail "usage: setup-cloud.sh [--check]"
     # Actually run the binaries: a surviving executable can still have lost
     # its shared libraries in an image rebuild. Nothing connects to mail.
-    "$root/bin/mailbend-tls" --check >/dev/null 2>&1 || exit 1
-    [ -x "$root/bin/mailbend-attach" ] || exit 1
-    [ -x "$root/bin/mailbend-core" ] || exit 1
-    "$root/scripts/mailbend" tools >/dev/null 2>&1
-    exit $?
+    "$root/bin/mailbend-tls" --check >/dev/null 2>&1 \
+      || fail "TLS helper cannot run; rerun setup-cloud.sh"
+    [ -x "$root/bin/mailbend-attach" ] \
+      || fail "attachment helper is missing; rerun setup-cloud.sh"
+    [ -x "$root/bin/mailbend-core" ] \
+      || fail "compiled core is missing; rerun setup-cloud.sh"
+    "$root/scripts/mailbend" tools >/dev/null 2>&1 \
+      || fail "compiled core cannot run; rerun setup-cloud.sh"
+    exit 0
     ;;
   '') [ "$#" -eq 0 ] || fail "usage: setup-cloud.sh [--check]" ;;
   *) fail "usage: setup-cloud.sh [--check]" ;;
