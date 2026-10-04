@@ -4,16 +4,22 @@
 set -eu
 cd "$(dirname "$0")/.."
 export BEND_NO_TELEMETRY=1
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-pass=0 fail=0
-for t in tests/unit/*.bend; do
-  sed -n 's/^#|//p' "$t" > "$tmp/want"
-  if bend "$t" > "$tmp/got" 2>&1 && cmp -s "$tmp/want" "$tmp/got"; then
-    echo "PASS $t"; pass=$((pass + 1))
+temp_dir=$(mktemp -d)
+trap 'rm -rf "$temp_dir"' EXIT
+expected_output="$temp_dir/expected"
+actual_output="$temp_dir/actual"
+passed=0
+failed=0
+for test_file in tests/unit/*.bend; do
+  sed -n 's/^#|//p' "$test_file" > "$expected_output"
+  if bend "$test_file" > "$actual_output" 2>&1 && cmp -s "$expected_output" "$actual_output"; then
+    echo "PASS $test_file"
+    passed=$((passed + 1))
   else
-    echo "FAIL $t"; diff "$tmp/want" "$tmp/got" | head -20 || true; fail=$((fail + 1))
+    echo "FAIL $test_file"
+    diff "$expected_output" "$actual_output" | head -20 || true
+    failed=$((failed + 1))
   fi
 done
-echo "unit: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+echo "unit: $passed passed, $failed failed"
+[ "$failed" -eq 0 ]

@@ -5,19 +5,24 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
+
+check_readiness() {
+  # Run the binaries: surviving executables can lose their shared libraries
+  # in an image rebuild. These local checks do not connect to mail.
+  "$root/bin/mailbend-tls" --check >/dev/null 2>&1 \
+    || fail "TLS helper cannot run; rerun setup-cloud.sh"
+  [ -x "$root/bin/mailbend-attach" ] \
+    || fail "attachment helper is missing; rerun setup-cloud.sh"
+  [ -x "$root/bin/mailbend-core" ] \
+    || fail "compiled core is missing; rerun setup-cloud.sh"
+  "$root/scripts/mailbend" tools >/dev/null 2>&1 \
+    || fail "compiled core cannot run; rerun setup-cloud.sh"
+}
+
 case "${1:-}" in
   --check)
     [ "$#" -eq 1 ] || fail "usage: setup-cloud.sh [--check]"
-    # Actually run the binaries: a surviving executable can still have lost
-    # its shared libraries in an image rebuild. Nothing connects to mail.
-    "$root/bin/mailbend-tls" --check >/dev/null 2>&1 \
-      || fail "TLS helper cannot run; rerun setup-cloud.sh"
-    [ -x "$root/bin/mailbend-attach" ] \
-      || fail "attachment helper is missing; rerun setup-cloud.sh"
-    [ -x "$root/bin/mailbend-core" ] \
-      || fail "compiled core is missing; rerun setup-cloud.sh"
-    "$root/scripts/mailbend" tools >/dev/null 2>&1 \
-      || fail "compiled core cannot run; rerun setup-cloud.sh"
+    check_readiness
     exit 0
     ;;
   '') [ "$#" -eq 0 ] || fail "usage: setup-cloud.sh [--check]" ;;

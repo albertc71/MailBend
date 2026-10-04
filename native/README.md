@@ -28,7 +28,8 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 
 - **TLS**: TLS 1.2+, peer certificate required, chain verified against the
   system trust store (or `MAILBEND_CA_FILE`, which replaces it), host name
-  verified (`SSL_set1_host`), SNI sent. There is no way to skip verification.
+  verified (`SSL_set1_host` for DNS names; IP identity verification for numeric
+  hosts), SNI sent for DNS names. There is no way to skip verification.
   SMTP must offer STARTTLS; the helper refuses to authenticate without it.
 - **Resolution**: system DNS by default; a nonempty `MAILBEND_DOH_URL`
   selects an HTTPS DNS resolver without fallback to system DNS for the mail
@@ -53,7 +54,8 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   stops the session rather than replaying commands on another address.
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
   environment only. The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
-  (SMTP) itself, wipes its copies, and never writes them to stdout or stderr.
+  (SMTP) itself, wipes temporary password-bearing buffers, and never writes
+  credentials to stdout or stderr.
   The server's replies to the login are checked but not forwarded either, so
   a server that echoes the credentials cannot pass them to the core.
 - **IMAP script**: CRLF lines in IMAP wire form; a line ending in `{N}` is
@@ -62,8 +64,9 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   tagged answer; the first `NO`/`BAD` stops the run (later commands are never
   sent), then the helper logs out. A line `=EXPECT <text>` right after a
   command is not sent: the run stops (exit 5) unless one of that command's
-  untagged replies starts with `<text>`. The core uses it to pin a folder's
-  UIDVALIDITY after `SELECT`, in the same session that changes messages.
+  untagged replies starts with `<text>` (case-insensitive). The core uses it
+  to pin a folder's UIDVALIDITY after `SELECT`, in the same session that
+  changes messages.
   `=EXPECT-WORD <word>` asks for `<word>` as a whole word (any case) in one
   of those lines; the core uses it to confirm UIDPLUS before anything is
   marked `\Deleted`.
@@ -75,21 +78,26 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   or absolute inside it) with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS |
   RESOLVE_NO_MAGICLINKS)`, so no symlink or `..` leads outside `<dir>`, then
   checks the opened descriptor is a regular file of at most `<max-bytes>`
-  (the core passes what is left of the 25 MiB all attachments may total)
-  before reading it. Exit 2 with the reason on stderr when refused. Needs
+  (capped at 25 MiB; the core passes what remains of the 25 MiB total budget)
+  before reading it, and enforces that limit while reading if the file grows.
+  Exit 2 with the reason on stderr when refused. Needs
   Linux 5.6+.
 - **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
-  message, `.`. EHLO, STARTTLS, AUTH and QUIT are the helper's own and are
-  refused in the envelope. Any non-2xx reply stops the run.
+  message, `.`. EHLO, HELO, STARTTLS, AUTH and QUIT are refused in the
+  envelope. The helper owns greeting, STARTTLS, authentication and QUIT.
+  Envelope commands and final message acceptance require 2xx replies; DATA
+  requires a 354 continuation before the message is sent. A rejection stops
+  the run.
 - **Output**: the server's bytes; bytes 0x80-0xFF are written as the UTF-8
   encoding of U+0080-U+00FF, so the core reads one character per byte and
-  literal lengths stay exact. Server literals are copied as raw bytes, so
-  message content can never be mistaken for a tagged reply.
+  literal lengths stay exact. IMAP literals are consumed by byte count and
+  emitted with the same encoding, so message content can never be mistaken
+  for a tagged reply. Attachment output uses this encoding too.
 - **Limits**: DNS plus TCP connect budget and per-read timeout
   `MAILBEND_TIMEOUT_MS` (default 30 s). Bounding system/bootstrap DNS requires
   a libcurl build with asynchronous DNS (the tested Ubuntu packages provide
   it). Size limits are 32 MiB per line, 64 MiB per literal and per script,
   and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
   (at most 120 MiB after encoding).
-- **Exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
+- **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.

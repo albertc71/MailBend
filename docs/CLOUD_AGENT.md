@@ -276,7 +276,27 @@ launcher for runtime DoH, since exported shell variables are not captured in
 a Build. See [Cloud Environment Setup](https://cursor.com/docs/cloud-agent/setup).
 That file is not a documented personal Grok Bot post-rebuild hook.
 
-## First live compatibility run
+## Live compatibility and draft retest
+
+The user-reported iCloud run on Grok Bot used `MAILBEND_READ_ONLY=0`.
+TLS verification and IDLE were available, MOVE was absent, and UIDPLUS was
+available. The discovered folders were `INBOX`, `Archive`, `Junk`, `Drafts`,
+`Sent` and `Deleted`. Trash and Sent advertised special-use
+roles; the existing Drafts mailbox did not advertise its role.
+
+Probe, folder listing, search, get, new mail, flag changes, move, trash,
+permanent deletion of a disposable message, sending to self with an
+attachment, reply-send and forward-send passed. Compose-draft, reply-as-draft
+and forward-as-draft failed because partial role metadata prevented Drafts
+resolution. The per-role repair has local test coverage; a live retest of
+those three paths is still pending. These results describe that reported
+account and computer, rather than every provider or cloud network.
+
+For another provider or localized/nested folders, follow the
+[server and folder configuration](../README.md#configure). Inspect
+`mail_probe` for resolved roles and `mail_list_folders` for actual advertised
+metadata; a folder resolved by name or override can still have
+`special_use: null`.
 
 With read-only mode enabled, run `mail_probe`, `mail_list_folders`,
 `mail_search`, `mail_get_new`, and `mail_get` on a known unread message.
@@ -284,3 +304,15 @@ Confirm in Mail.app that it remains unread and record MOVE, UIDPLUS,
 SPECIAL-USE, IDLE and discovered folder roles. Only then use a disposable
 test message for intentional move/trash/delete, draft and send checks. A
 successful probe alone does not establish every iCloud operation's behavior.
+
+To retest the draft repair, update the checkout, rerun setup and restart the
+MCP server. Confirm that `mail_probe` resolves Drafts, then intentionally
+enable writes and test `mail_save_draft`, `mail_reply` with `as_draft: true`,
+and `mail_forward` with `as_draft: true`. Use a disposable original and its
+current UIDVALIDITY for reply and forward. Check that all three messages
+appear in the intended Drafts mailbox and that no draft was sent.
+
+A small `max_bytes` can truncate a fetched message before its body and return
+an empty body; increase the budget when needed. SMTP delivery does not
+guarantee a Sent copy, and MailBend does not append one automatically. Those
+limits are unchanged by folder-role resolution.

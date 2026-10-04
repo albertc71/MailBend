@@ -360,16 +360,31 @@ def uni_step(n: Nat, +c: Char, acc: String, +hi: U32, +code: U32) -> LexSt:
 # digits, 6 after 'e', 7 after the exponent sign, 8 exponent digits;
 # 9 is dead. 2, 3, 5 and 8 accept.
 def num_next(+st: U32, +c: Char) -> U32:
-  +d = Char.is_digit(c)
-  +z = Char.is_eq(c, '0')
-  +e = Char.is_eq(c, 'e') || Char.is_eq(c, 'E')
-  Bool.pick(U32, U32.is_eq(st, 0), Bool.pick(U32, Char.is_eq(c, '-'), 1, Bool.pick(U32, z, 2, Bool.pick(U32, d, 3, 9))),
-    Bool.pick(U32, U32.is_eq(st, 1), Bool.pick(U32, z, 2, Bool.pick(U32, d, 3, 9)),
-      Bool.pick(U32, U32.is_eq(st, 2) || U32.is_eq(st, 3), Bool.pick(U32, Char.is_eq(c, '.'), 4, Bool.pick(U32, e, 6, Bool.pick(U32, d && U32.is_eq(st, 3), 3, 9))),
-        Bool.pick(U32, U32.is_eq(st, 4), Bool.pick(U32, d, 5, 9),
-          Bool.pick(U32, U32.is_eq(st, 5), Bool.pick(U32, d, 5, Bool.pick(U32, e, 6, 9)),
-            Bool.pick(U32, U32.is_eq(st, 6), Bool.pick(U32, Char.is_eq(c, '+') || Char.is_eq(c, '-'), 7, Bool.pick(U32, d, 8, 9)),
-              Bool.pick(U32, U32.is_eq(st, 7) || U32.is_eq(st, 8), Bool.pick(U32, d, 8, 9), 9)))))))
+  match st:
+    case 0:
+      Bool.pick(U32, Char.is_eq(c, '-'), 1,
+        Bool.pick(U32, Char.is_eq(c, '0'), 2, Bool.pick(U32, Char.is_digit(c), 3, 9)))
+    case 1:
+      Bool.pick(U32, Char.is_eq(c, '0'), 2, Bool.pick(U32, Char.is_digit(c), 3, 9))
+    case 2:
+      Bool.pick(U32, Char.is_eq(c, '.'), 4,
+        Bool.pick(U32, Char.is_eq(c, 'e') || Char.is_eq(c, 'E'), 6, 9))
+    case 3:
+      Bool.pick(U32, Char.is_eq(c, '.'), 4,
+        Bool.pick(U32, Char.is_eq(c, 'e') || Char.is_eq(c, 'E'), 6, Bool.pick(U32, Char.is_digit(c), 3, 9)))
+    case 4:
+      Bool.pick(U32, Char.is_digit(c), 5, 9)
+    case 5:
+      Bool.pick(U32, Char.is_digit(c), 5,
+        Bool.pick(U32, Char.is_eq(c, 'e') || Char.is_eq(c, 'E'), 6, 9))
+    case 6:
+      Bool.pick(U32, Char.is_eq(c, '+') || Char.is_eq(c, '-'), 7, Bool.pick(U32, Char.is_digit(c), 8, 9))
+    case 7:
+      Bool.pick(U32, Char.is_digit(c), 8, 9)
+    case 8:
+      Bool.pick(U32, Char.is_digit(c), 8, 9)
+    case _:
+      9
 
 def num_state(+s: String, +st: U32) -> U32:
   match s:
@@ -530,4 +545,5 @@ def finish(+b: Bld) -> Maybe<&2, Json>:
       None{}
 
 def parse(s: String) -> Maybe<&2, Json>:
-  finish(build(List.reverse(&2, Tok, lex(s, Lx{LNorm{}, []})), Bld{[], None{}, True{}}))
+  tokens = List.reverse(&2, Tok, lex(s, Lx{LNorm{}, []}))
+  finish(build(tokens, Bld{[], None{}, True{}}))

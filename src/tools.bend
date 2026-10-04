@@ -27,7 +27,7 @@ type Run is Data:
 
 # The folders, or why their special-use roles could not be read.
 type Fs is Data:
-  FsOk{fs: List<&2, I.Folder>}
+  FsOk{fs: List<&2, I.Folder>, drafts: Maybe<&2, String>, trash: Maybe<&2, String>, sent: Maybe<&2, String>, junk: Maybe<&2, String>, archive: Maybe<&2, String>}
   FsErr{msg: String}
 
 type Uids is Data:
@@ -285,44 +285,126 @@ def pure_out(+o: Out) -> IO(Out):
 
 # ---- folders ----------------------------------------------------------------------------
 
-def any_special(+fs: List<&2, I.Folder>) -> Bool:
+# Attribute checks retain the server's actual LIST metadata. Role resolution
+# never adds attributes to a conventionally named or overridden mailbox.
+def recognized_role(+attrs: List<&2, String>) -> Bool:
+  I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Drafts") || I.has_attr(attrs, "\\Sent") || I.has_attr(attrs, "\\Junk") || I.has_attr(attrs, "\\Archive") || I.has_attr(attrs, "\\All") || I.has_attr(attrs, "\\Flagged")
+
+def selectable(+attrs: List<&2, String>) -> Bool:
+  Bool.not(I.has_attr(attrs, "\\Noselect") || I.has_attr(attrs, "\\NonExistent"))
+
+# Keep all matches until uniqueness has been established. An advertised but
+# unselectable role still blocks fallback to a different mailbox.
+def role_candidates(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String, +advertised: Bool) -> List<&2, I.Folder>:
   match fs:
     case Nil{}:
-      False{}
-    case Con{I.Folder{n, d, attrs}, t}:
-      I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Drafts") || I.has_attr(attrs, "\\Sent") || I.has_attr(attrs, "\\Junk") || I.has_attr(attrs, "\\Archive") || I.has_attr(attrs, "\\All") || I.has_attr(attrs, "\\Flagged") || any_special(t)
+      []
+    case Con{I.Folder{+name, +delimiter, +attrs}, t}:
+      +matches = Bool.pick(Bool, advertised, I.has_attr(attrs, attr),
+        (I.same_name(name, a) || I.same_name(name, b)) && selectable(attrs) && Bool.not(recognized_role(attrs)))
+      List.append(&2, I.Folder, Bool.pick(List<&2, I.Folder>, matches, [I.Folder{name, delimiter, attrs}], []), role_candidates(t, attr, a, b, advertised))
 
-# A folder role from its special-use attribute. Only a server that marks no
-# folder at all (no SPECIAL-USE support) falls back to the conventional
-# names; otherwise an unmarked role is unknown, never guessed.
+def unique_folder(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  match fs:
+    case Con{I.Folder{name, d, attrs}, Nil{}}:
+      Bool.pick(Maybe<&2, String>, selectable(attrs), Some{name}, None{})
+    case _:
+      None{}
+
+def role_fallback(+marked: List<&2, I.Folder>, +fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) -> Maybe<&2, String>:
+  match marked:
+    case Nil{}:
+      unique_folder(role_candidates(fs, attr, a, b, False{}))
+    case _:
+      unique_folder(marked)
+
 def role(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) -> Maybe<&2, String>:
-  Bool.pick(Maybe<&2, String>, any_special(fs), I.special(fs, attr), Maybe.or(&2, String, I.named(fs, a), I.named(fs, b)))
+  role_fallback(role_candidates(fs, attr, a, b, True{}), fs, attr, a, b)
 
-# The folders with their roles. A server may advertise SPECIAL-USE yet mark
-# folders only when LIST asks with RETURN (SPECIAL-USE); then a second,
-# read-only session asks, so roles never fall back to names needlessly.
-# When that session fails the roles are unknown, not absent: falling back to
-# the unmarked list would let `role` guess by name on a server that supports
-# special-use discovery, so the failure is reported instead.
-def roles_of(r: Run, +fallback: List<&2, I.Folder>) -> Fs:
+def override_candidates(+fs: List<&2, I.Folder>, +want: String) -> List<&2, I.Folder>:
+  match fs:
+    case Nil{}:
+      []
+    case Con{+f, t}:
+      I.Folder{+name, d, attrs} = f
+      List.append(&2, I.Folder, Bool.pick(List<&2, I.Folder>, I.same_name(name, want), [f], []), override_candidates(t, want))
+
+def resolved_role(+fs: List<&2, I.Folder>, +override: String, +attr: String, +a: String, +b: String) -> Maybe<&2, String>:
+  Bool.pick(Maybe<&2, String>, String.is_empty(override), role(fs, attr, a, b), unique_folder(override_candidates(fs, override)))
+
+def invalid_override(+fs: List<&2, I.Folder>, +value: String, +variable: String) -> String:
+  Bool.pick(String, String.is_empty(value) || Bool.not(Maybe.is_none(&2, String, unique_folder(override_candidates(fs, value)))), "", variable ++ " must name one existing selectable mailbox")
+
+def folders_resolved(+problem: String, +fs: List<&2, I.Folder>, +drafts: String, +trash: String, +sent: String, +junk: String, +archive: String) -> Fs:
+  match problem:
+    case SCon{h, t}:
+      FsErr{problem}
+    case SNil{}:
+      FsOk{fs, resolved_role(fs, drafts, "\\Drafts", "Drafts", "Drafts"), resolved_role(fs, trash, "\\Trash", "Trash", "Deleted Messages"), resolved_role(fs, sent, "\\Sent", "Sent", "Sent Messages"), resolved_role(fs, junk, "\\Junk", "Junk", "Junk"), resolved_role(fs, archive, "\\Archive", "Archive", "Archive")}
+
+def first_of(+a: String, +b: String) -> String:
+  Bool.pick(String, String.is_empty(a), b, a)
+
+def validate_overrides(+fs: List<&2, I.Folder>, +drafts: String, +trash: String, +sent: String, +junk: String, +archive: String) -> Fs:
+  +problem = first_of(invalid_override(fs, drafts, "MAILBEND_DRAFTS_FOLDER"),
+    first_of(invalid_override(fs, trash, "MAILBEND_TRASH_FOLDER"),
+      first_of(invalid_override(fs, sent, "MAILBEND_SENT_FOLDER"),
+        first_of(invalid_override(fs, junk, "MAILBEND_JUNK_FOLDER"), invalid_override(fs, archive, "MAILBEND_ARCHIVE_FOLDER")))))
+  folders_resolved(problem, fs, drafts, trash, sent, junk, archive)
+
+def folders_overrides(+fs: List<&2, I.Folder>) -> IO(Fs):
+  do IO<Fs>:
+    drafts : String <- env_or("MAILBEND_DRAFTS_FOLDER", "")
+    trash : String <- env_or("MAILBEND_TRASH_FOLDER", "")
+    sent : String <- env_or("MAILBEND_SENT_FOLDER", "")
+    junk : String <- env_or("MAILBEND_JUNK_FOLDER", "")
+    archive : String <- env_or("MAILBEND_ARCHIVE_FOLDER", "")
+    return validate_overrides(fs, drafts, trash, sent, junk, archive)
+
+def merge_attrs(+xs: List<&2, String>, +ys: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      ys
+    case Con{+x, t}:
+      merge_attrs(t, Bool.pick(List<&2, String>, I.has_attr(ys, x), ys, x <> ys))
+
+def merge_folder(+fs: List<&2, I.Folder>, +entry: I.Folder) -> List<&2, I.Folder>:
+  match fs:
+    case Nil{}:
+      [entry]
+    case Con{I.Folder{+name, +delimiter, +attrs}, t}:
+      I.Folder{+other, d, +extra} = entry
+      +same = I.same_name(name, other)
+      +head = {I.Folder{name, delimiter, Bool.pick(List<&2, String>, same, merge_attrs(extra, attrs), attrs)} : I.Folder}
+      Bool.pick(List<&2, I.Folder>, same, head <> t, head <> merge_folder(t, entry))
+
+def merge_folders(+extra: List<&2, I.Folder>, +ordinary: List<&2, I.Folder>) -> List<&2, I.Folder>:
+  match extra:
+    case Nil{}:
+      ordinary
+    case Con{entry, t}:
+      merge_folders(t, merge_folder(ordinary, entry))
+
+def roles_of(r: Run, +ordinary: List<&2, I.Folder>) -> IO(Fs):
   match r:
     case RunErr{m}:
-      FsErr{"cannot read the special-use folder roles the server advertises: " ++ m}
-    case RunOk{+lines}:
-      FsOk{Bool.pick(List<&2, I.Folder>, any_special(I.folders(lines)), I.folders(lines), fallback)}
+      IO.pure(Fs, FsErr{"cannot read the special-use folder roles the server advertises: " ++ m})
+    case RunOk{lines}:
+      folders_overrides(merge_folders(I.folders(lines), ordinary))
 
 def roles_if(+ask: Bool, +fs: List<&2, I.Folder>) -> IO(Fs):
   match ask:
     case False{}:
-      IO.pure(Fs, FsOk{fs})
+      folders_overrides(fs)
     case True{}:
       do IO<Fs>:
         r : Run <- imap_run(Ops.plan_roles())
-        return roles_of(r, fs)
+        roles_of(r, fs)
 
-# `lines` must come from a session that ran CAPABILITY and LIST.
+# SPECIAL-USE may be partial even in ordinary LIST: always request the
+# extended metadata when the authenticated capability advertises it.
 def folders_io(+lines: List<&2, I.RLine>) -> IO(Fs):
-  roles_if(I.has_cap(I.caps(lines), "SPECIAL-USE") && Bool.not(any_special(I.folders(lines))), I.folders(lines))
+  roles_if(I.has_cap(I.caps(lines), "SPECIAL-USE"), merge_folders(I.folders(lines), []))
 
 def trash_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
   role(fs, "\\Trash", "Deleted Messages", "Trash")
@@ -339,8 +421,8 @@ def junk_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
 def archive_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
   role(fs, "\\Archive", "Archive", "Archive")
 
-def special_json(+fs: List<&2, I.Folder>) -> J.Json:
-  J.obj([J.kv("inbox", maybe_str(I.named(fs, "INBOX"))), J.kv("drafts", maybe_str(drafts_of(fs))), J.kv("sent", maybe_str(sent_of(fs))), J.kv("trash", maybe_str(trash_of(fs))), J.kv("junk", maybe_str(junk_of(fs))), J.kv("archive", maybe_str(archive_of(fs)))])
+def special_json(+fs: List<&2, I.Folder>, +drafts: Maybe<&2, String>, +trash: Maybe<&2, String>, +sent: Maybe<&2, String>, +junk: Maybe<&2, String>, +archive: Maybe<&2, String>) -> J.Json:
+  J.obj([J.kv("inbox", maybe_str(unique_folder(override_candidates(fs, "INBOX")))), J.kv("drafts", maybe_str(drafts)), J.kv("sent", maybe_str(sent)), J.kv("trash", maybe_str(trash)), J.kv("junk", maybe_str(junk)), J.kv("archive", maybe_str(archive))])
 
 def role_of(+attrs: List<&2, String>) -> J.Json:
   Bool.pick(J.Json, I.has_attr(attrs, "\\Drafts"), J.str("drafts"),
@@ -354,7 +436,7 @@ def role_of(+attrs: List<&2, String>) -> J.Json:
 def folder_json(+f: I.Folder) -> J.Json:
   match f:
     case I.Folder{name, delim, attrs}:
-      J.obj([J.kv("name", J.str(name)), J.kv("delimiter", J.str(delim)), J.kv("attributes", J.strs(attrs)), J.kv("special_use", role_of(attrs)), J.kv("selectable", J.bool(Bool.not(I.has_attr(attrs, "\\Noselect") || I.has_attr(attrs, "\\NonExistent"))))])
+      J.obj([J.kv("name", J.str(name)), J.kv("delimiter", J.str(delim)), J.kv("attributes", J.strs(attrs)), J.kv("special_use", role_of(attrs)), J.kv("selectable", J.bool(selectable(attrs)))])
 
 def folders_json(+fs: List<&2, I.Folder>) -> List<&2, J.Json>:
   match fs:
@@ -407,15 +489,15 @@ def asc(+xs: List<&2, U32>) -> List<&2, U32>:
 
 # ---- mail_probe / mail_list_folders ----------------------------------------------------------
 
-def probe_json(+lines: List<&2, I.RLine>, +fs: List<&2, I.Folder>, +host: String, +email: String) -> Out:
-  ok_obj([J.kv("ok", J.bool(True{})), J.kv("account", J.str(email)), J.kv("imap_host", J.str(host)), J.kv("tls_verified", J.bool(True{})), J.kv("capabilities", J.strs(I.caps(lines))), J.kv("idle", J.bool(I.has_cap(I.caps(lines), "IDLE"))), J.kv("move", J.bool(I.has_cap(I.caps(lines), "MOVE"))), J.kv("uidplus", J.bool(I.has_cap(I.caps(lines), "UIDPLUS"))), J.kv("special_use", special_json(fs)), J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs))))])
+def probe_json(+lines: List<&2, I.RLine>, +fs: List<&2, I.Folder>, +host: String, +email: String, +drafts: Maybe<&2, String>, +trash: Maybe<&2, String>, +sent: Maybe<&2, String>, +junk: Maybe<&2, String>, +archive: Maybe<&2, String>) -> Out:
+  ok_obj([J.kv("ok", J.bool(True{})), J.kv("account", J.str(email)), J.kv("imap_host", J.str(host)), J.kv("tls_verified", J.bool(True{})), J.kv("capabilities", J.strs(I.caps(lines))), J.kv("idle", J.bool(I.has_cap(I.caps(lines), "IDLE"))), J.kv("move", J.bool(I.has_cap(I.caps(lines), "MOVE"))), J.kv("uidplus", J.bool(I.has_cap(I.caps(lines), "UIDPLUS"))), J.kv("special_use", special_json(fs, drafts, trash, sent, junk, archive)), J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs))))])
 
 def probe_fs(+f: Fs, +lines: List<&2, I.RLine>, +host: String, +email: String) -> Out:
   match f:
     case FsErr{m}:
       Err{m}
-    case FsOk{+fs}:
-      probe_json(lines, fs, host, email)
+    case FsOk{+fs, drafts, trash, sent, junk, archive}:
+      probe_json(lines, fs, host, email, drafts, trash, sent, junk, archive)
 
 def probe_out(r: Run, +host: String, +email: String) -> IO(Out):
   match r:
@@ -437,7 +519,7 @@ def folders_fs(+f: Fs) -> Out:
   match f:
     case FsErr{m}:
       Err{m}
-    case FsOk{+fs}:
+    case FsOk{+fs, drafts, trash, sent, junk, archive}:
       ok_obj([J.kv("folders", J.arr(folders_json(fs)))])
 
 def folders_out(r: Run) -> IO(Out):
@@ -825,7 +907,7 @@ def trash_into(+same: Bool, +t: String, +caps: List<&2, String>, +folder: String
 def trash_to(+trash: Maybe<&2, String>, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match trash:
     case None{}:
-      pure_out(Err{"no Trash folder: the server marks none as \\Trash (and names are only used on servers without special-use folders)"})
+      pure_out(Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
     case Some{t}:
       trash_into(same_mailbox(t, folder), t, caps, folder, uids, uidv)
 
@@ -833,8 +915,8 @@ def trash_fs(+f: Fs, +caps: List<&2, String>, +folder: String, +uids: List<&2, U
   match f:
     case FsErr{m}:
       pure_out(Err{m ++ "; nothing was changed"})
-    case FsOk{+fs}:
-      trash_to(trash_of(fs), caps, folder, uids, uidv)
+    case FsOk{+fs, drafts, trash, sent, junk, archive}:
+      trash_to(trash, caps, folder, uids, uidv)
 
 def trash_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match problem:
@@ -1169,7 +1251,7 @@ def draft_saved(r: Run, +drafts: String, +msgid: String) -> Out:
 def draft_append(+m: Maybe<&2, String>, +msg: String, +msgid: String) -> IO(Out):
   match m:
     case None{}:
-      pure_out(Err{"no Drafts folder: the server marks none as \\Drafts (and names are only used on servers without special-use folders)"})
+      pure_out(Err{"no unique selectable Drafts folder: configure MAILBEND_DRAFTS_FOLDER"})
     case Some{drafts}:
       do IO<Out>:
         r : Run <- imap_run(Ops.plan_draft(drafts, msg))
@@ -1179,8 +1261,8 @@ def draft_fs(+f: Fs, +msg: String, +msgid: String) -> IO(Out):
   match f:
     case FsErr{m}:
       pure_out(Err{m ++ "; no draft was saved"})
-    case FsOk{+fs}:
-      draft_append(drafts_of(fs), msg, msgid)
+    case FsOk{+fs, drafts, trash, sent, junk, archive}:
+      draft_append(drafts, msg, msgid)
 
 def draft_folder(r: Run, +msg: String, +msgid: String) -> IO(Out):
   match r:
@@ -1583,9 +1665,6 @@ def is_some_json(+m: Maybe<&2, J.Json>) -> Bool:
     case None{}:
       False{}
 
-def first_of(+a: String, +b: String) -> String:
-  Bool.pick(String, String.is_empty(a), b, a)
-
 def args_problem(+props: J.Json, +kvs: J.Json, +tool: String) -> String:
   match kvs:
     case J.JCons{J.JKv{k, v}, t}:
@@ -1602,8 +1681,11 @@ def elems_problem(+props: J.Json, +xs: J.Json, +tool: String) -> String:
     case _:
       ""
 
+def object_field(+object: J.Json, +key: String) -> J.Json:
+  Maybe.default(&2, J.Json, J.get(object, key), J.JNull{})
+
 def item_props(+props: J.Json) -> J.Json:
-  Maybe.default(&2, J.Json, J.get(Maybe.default(&2, J.Json, J.get(Maybe.default(&2, J.Json, J.get(props, "attachments"), J.JNull{}), "items"), J.JNull{}), "properties"), J.JNull{})
+  object_field(object_field(object_field(props, "attachments"), "items"), "properties")
 
 def att_check(+m: Maybe<&2, J.Json>, +props: J.Json, +tool: String) -> String:
   match m:
@@ -1638,9 +1720,9 @@ def req_list(+m: Maybe<&2, J.Json>) -> J.Json:
 def args_obj_problem(+args: J.Json, +input: J.Json, +tool: String) -> String:
   match args:
     case J.JObj{+kvs}:
-      first_of(args_problem(Maybe.default(&2, J.Json, J.get(input, "properties"), J.JNull{}), kvs, tool),
+      first_of(args_problem(object_field(input, "properties"), kvs, tool),
         first_of(missing_problem(req_list(J.get(input, "required")), kvs),
-          att_check(J.find(kvs, "attachments"), Maybe.default(&2, J.Json, J.get(input, "properties"), J.JNull{}), tool)))
+          att_check(J.find(kvs, "attachments"), object_field(input, "properties"), tool)))
     case _:
       "the arguments must be a JSON object"
 

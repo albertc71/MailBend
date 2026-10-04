@@ -7,13 +7,22 @@ never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 """
-import json, os, subprocess, sys, tempfile, time, pathlib, shutil
+import copy
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
 FIXTURE = ROOT / "tests" / "fixtures" / "mailbox.json"
 FIX = json.loads(FIXTURE.read_text(encoding="utf-8"))
 PASSWORD = FIX["password"]
+FOLDER_ROLES = ("drafts", "trash", "sent", "junk", "archive")
+MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ", " CREATE ")
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -25,15 +34,19 @@ def check(name, cond, detail=""):
 
 
 class Server:
-    def __init__(self, work, caps=None, extra=()):
+    def __init__(self, work, caps=None, extra=(), fixture=None):
         self.work = work
         self.state = os.path.join(work, "state.json")
         self.log = os.path.join(work, "log.jsonl")
         for f in (self.state, self.log):
             if os.path.exists(f):
                 os.remove(f)
+        fixture_path = FIXTURE
+        if fixture is not None:
+            fixture_path = pathlib.Path(work) / "scenario-fixture.json"
+            fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
         cmd = [sys.executable, str(ROOT / "tests" / "fake_mail_server.py"), "--certdir", os.path.join(work, "certs"),
-               "--fixture", str(FIXTURE), "--state", self.state, "--log", self.log, *extra]
+               "--fixture", str(fixture_path), "--state", self.state, "--log", self.log, *extra]
         if caps is not None:
             cmd += ["--caps", caps]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
@@ -48,6 +61,8 @@ class Server:
                   "MAILBEND_IMAP_HOST": "localhost", "MAILBEND_IMAP_PORT": self.imap,
                   "MAILBEND_SMTP_HOST": "localhost", "MAILBEND_SMTP_PORT": self.smtp,
                   "MAILBEND_CA_FILE": os.path.join(self.work, "certs", "ca.pem"), "MAILBEND_TIMEOUT_MS": "10000"})
+        for role in FOLDER_ROLES:
+            e.pop(f"MAILBEND_{role.upper()}_FOLDER", None)
         e.pop("MAILBEND_READ_ONLY", None)
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
@@ -62,9 +77,14 @@ class Server:
     def st(self):
         return json.loads(pathlib.Path(self.state).read_text(encoding="utf-8"))
 
+    def log_records(self):
+        path = pathlib.Path(self.log)
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
     def log_lines(self):
-        p = pathlib.Path(self.log)
-        return [json.loads(l)["line"] for l in p.read_text(encoding="utf-8").splitlines() if l.strip()] if p.exists() else []
+        return [record["line"] for record in self.log_records()]
 
     def stop(self):
         self.proc.terminate()
@@ -72,6 +92,8 @@ class Server:
             self.proc.wait(5)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+            self.proc.wait()
+        self.proc.stdout.close()
 
 
 def tool(srv, name, args=None, **env):
@@ -120,6 +142,7 @@ def run_all(work):
     finally:
         srv.stop()
     fallback(work)
+    generic_folders(work)
 
 
 def reads(srv):
@@ -516,7 +539,8 @@ def fallback(work):
     srv = Server(work)
     try:
         c, r = tool(srv, "mail_probe")
-        check("roles in the plain LIST: no second LIST session", c == 0 and not any("RETURN" in l for l in srv.log_lines()), r)
+        check("roles in plain LIST still request complete SPECIAL-USE discovery",
+              c == 0 and any("RETURN (SPECIAL-USE)" in line for line in srv.log_lines()), r)
     finally:
         srv.stop()
     srv = Server(work, caps="UIDPLUS")
@@ -538,6 +562,167 @@ def fallback(work):
         c, r = tool(srv, "mail_delete", {"uids": [3], "confirm": "permanently-delete", "uidvalidity": 1700000001})
         check("no UIDPLUS: delete refused", c != 0 and "UIDPLUS" in r.get("error", "") and srv.st() == before, r)
         check("refusals sent no mutating command", not any(k in l for l in srv.log_lines() for k in (" STORE ", " EXPUNGE", " COPY ", " MOVE ")))
+    finally:
+        srv.stop()
+
+
+
+def empty_mailbox(special=()):
+    return {"uidvalidity": 1700000010, "special": list(special), "messages": []}
+
+
+def draft_paths(srv, label, destination=None, **env):
+    requests = (
+        ("mail_save_draft", {"to": ["bob@example.com"], "subject": "generic draft", "body": "body"}),
+        ("mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "draft reply", "as_draft": True}),
+        ("mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["bob@example.com"], "as_draft": True}),
+    )
+    for name, args in requests:
+        before = srv.st()
+        log_start = len(srv.log_lines())
+        code, result = tool(srv, name, args, **env)
+        after = srv.st()
+        commands = srv.log_lines()[log_start:]
+        if destination is None:
+            check(f"{label}: {name} fails without mutation", code != 0 and bool(result.get("error"))
+                  and after == before and not any(token in line for line in commands for token in MUTATING_COMMANDS),
+                  (result, commands))
+        else:
+            appended = [line for line in commands if " APPEND " in line]
+            check(f"{label}: {name} appends to {destination}", code == 0
+                  and result.get("saved_to") == destination and len(appended) == 1
+                  and len(after["mailboxes"][destination]["messages"]) ==
+                  len(before["mailboxes"][destination]["messages"]) + 1, (result, appended))
+        check(f"{label}: {name} sends nothing and preserves originals",
+              after.get("sent", []) == before.get("sent", [])
+              and after["mailboxes"]["INBOX"] == before["mailboxes"]["INBOX"]
+              and not any(record.get("proto") == "smtp" for record in srv.log_records()[log_start:]), commands)
+
+
+def generic_folders(work):
+    # Resolve each role independently when providers advertise only a subset.
+    for options in (["--omit-special-use", "Drafts,Sent"], ["--special-plain-roles", "Trash"],
+                    ["--special-on-request", "--omit-special-use", "Drafts,Sent"]):
+        srv = Server(work, extra=options)
+        try:
+            label = "partial roles " + " ".join(options)
+            code, result = tool(srv, "mail_probe")
+            roles = result.get("special_use", {})
+            check(label + ": per-role resolution", code == 0 and roles.get("drafts") == "Drafts"
+                  and roles.get("sent") == "Sent Messages" and roles.get("trash") == "Deleted Messages", result)
+            check(label + ": extended LIST requested", any("RETURN (SPECIAL-USE)" in line for line in srv.log_lines()))
+            code, result = tool(srv, "mail_list_folders")
+            folders = {folder["name"]: folder for folder in result.get("folders", [])}
+            check(label + ": ordinary folders retained", code == 0 and set(folders) == set(FIX["mailboxes"]), result)
+            if "--omit-special-use" in options:
+                check(label + ": listing does not invent fallback attributes",
+                      folders.get("Drafts", {}).get("special_use") is None
+                      and "\\Drafts" not in folders.get("Drafts", {}).get("attributes", []), folders.get("Drafts"))
+            draft_paths(srv, label, "Drafts")
+        finally:
+            srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Drafts"]["special"] = []
+    localized = "Projets/Brouillons \u65e5\u672c"
+    fixture["mailboxes"][localized] = empty_mailbox(["\\Drafts"])
+    srv = Server(work, fixture=fixture)
+    try:
+        draft_paths(srv, "unique localized advertised role wins conventional name", localized)
+    finally:
+        srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    targets = {role: "Personnel/" + role + " \u65e5\u672c" for role in FOLDER_ROLES}
+    for target in targets.values():
+        fixture["mailboxes"][target] = empty_mailbox()
+    srv = Server(work, fixture=fixture)
+    try:
+        overrides = {f"MAILBEND_{role.upper()}_FOLDER": target for role, target in targets.items()}
+        code, result = tool(srv, "mail_probe", **overrides)
+        check("all five overrides resolve exact decoded nested names", code == 0
+              and all(result.get("special_use", {}).get(role) == target for role, target in targets.items()), result)
+        draft_paths(srv, "explicit Drafts override wins advertised role", targets["drafts"], **overrides)
+        code, result = tool(srv, "mail_trash", {"uids": [3], "uidvalidity": 1700000001}, **overrides)
+        check("explicit Trash override controls move destination", code == 0
+              and result.get("destination") == targets["trash"]
+              and len(srv.st()["mailboxes"][targets["trash"]]["messages"]) == 1, result)
+        before = srv.st()
+        log_start = len(srv.log_lines())
+        code, result = tool(srv, "mail_trash", {"uids": [4], "uidvalidity": 1700000001},
+                            MAILBEND_TRASH_FOLDER="Missing/Trash")
+        check("invalid Trash override refuses mutation", code != 0 and srv.st() == before
+              and not any(token in line for line in srv.log_lines()[log_start:] for token in MUTATING_COMMANDS), result)
+        for role in FOLDER_ROLES:
+            variable = f"MAILBEND_{role.upper()}_FOLDER"
+            code, result = tool(srv, "mail_probe", **{variable: targets[role].lower()})
+            check(f"{variable} refuses non-INBOX case mismatch", code != 0 and bool(result.get("error")), result)
+        code, result = tool(srv, "mail_probe", MAILBEND_DRAFTS_FOLDER="inbox")
+        check("INBOX override is case-insensitive", code == 0 and result.get("special_use", {}).get("drafts") == "INBOX", result)
+        draft_paths(srv, "unknown Drafts override", MAILBEND_DRAFTS_FOLDER="Missing/Drafts")
+        draft_paths(srv, "override is not a substring", MAILBEND_DRAFTS_FOLDER="drafts")
+        draft_paths(srv, "empty override uses regular resolution", "Drafts", MAILBEND_DRAFTS_FOLDER="")
+    finally:
+        srv.stop()
+
+    cases = []
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Other Drafts"] = empty_mailbox(["\\Drafts"])
+    cases.append(("multiple advertised Drafts", fixture, {}))
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Drafts"]["special"] = []
+    fixture["mailboxes"]["Unavailable"] = empty_mailbox(["\\Drafts", "\\Noselect"])
+    cases.append(("unselectable advertised role blocks conventional fallback", fixture, {}))
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Drafts"]["special"] = ["\\Noselect"]
+    cases.append(("unselectable conventional Drafts", fixture, {}))
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Drafts"]["special"] = ["\\Sent"]
+    cases.append(("Drafts name carrying conflicting role", fixture, {}))
+    fixture = copy.deepcopy(FIX)
+    del fixture["mailboxes"]["Drafts"]
+    fixture["mailboxes"]["Drafts backup"] = empty_mailbox()
+    cases.append(("conventional name is not a substring", fixture, {}))
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Unavailable"] = empty_mailbox(["\\Noselect"])
+    cases.append(("unselectable explicit override", fixture, {"MAILBEND_DRAFTS_FOLDER": "Unavailable"}))
+    for label, fixture, env in cases:
+        srv = Server(work, fixture=fixture)
+        try:
+            draft_paths(srv, label, **env)
+            if label == "multiple advertised Drafts":
+                draft_paths(srv, "explicit override resolves advertised ambiguity", "Other Drafts",
+                            MAILBEND_DRAFTS_FOLDER="Other Drafts")
+        finally:
+            srv.stop()
+
+    for role, alias, attribute in (("trash", "Trash", "\\Trash"), ("sent", "Sent", "\\Sent")):
+        fixture = copy.deepcopy(FIX)
+        for mailbox in fixture["mailboxes"].values():
+            mailbox["special"] = [value for value in mailbox["special"] if value != attribute]
+        fixture["mailboxes"][alias] = empty_mailbox()
+        srv = Server(work, fixture=fixture)
+        try:
+            code, result = tool(srv, "mail_probe")
+            check(f"ambiguous conventional {role} aliases unresolved", code == 0
+                  and result.get("special_use", {}).get(role) is None, result)
+            if role == "trash":
+                before = srv.st()
+                log_start = len(srv.log_lines())
+                code, result = tool(srv, "mail_trash", {"uids": [3], "uidvalidity": 1700000001})
+                check("ambiguous Trash aliases refuse mutation", code != 0 and srv.st() == before
+                      and not any(token in line for line in srv.log_lines()[log_start:] for token in MUTATING_COMMANDS), result)
+            draft_paths(srv, f"ambiguous {role} does not block Drafts", "Drafts")
+        finally:
+            srv.stop()
+
+    srv = Server(work, extra=["--special-plain-roles", "Trash", "--special-return-fails"])
+    try:
+        draft_paths(srv, "partial roles do not hide failed extended LIST")
+        for name in ("mail_probe", "mail_list_folders"):
+            code, result = tool(srv, name)
+            check(f"failed extended LIST after partial plain roles: {name}", code != 0
+                  and "special-use folder roles" in result.get("error", ""), result)
     finally:
         srv.stop()
 

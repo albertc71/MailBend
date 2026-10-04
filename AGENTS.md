@@ -1,8 +1,8 @@
 # MailBend agent instructions
 
-MailBend is a small Linux-first iCloud Mail connector (IMAP/SMTP) for AI
-agents: a Bend 2 core plus two small native helpers (`native/mailbend-tls.c`,
-`native/mailbend-attach.c`).
+MailBend is a small Linux-first IMAP/SMTP connector for AI agents, with
+iCloud Mail as the default and live-tested profile: a Bend 2 core plus two
+small native helpers (`native/mailbend-tls.c`, `native/mailbend-attach.c`).
 
 ## Native boundaries
 
@@ -30,8 +30,11 @@ rendering, response interpretation, MIME behavior, and agent-visible results.
 - Prefer IMAP UID commands over sequence-number commands.
 - Detect server capabilities after authentication; do not assume optional
   IMAP extensions.
-- Treat iCloud "labels" as IMAP mailboxes/folders; discover special-use
-  folders instead of hard-coding names.
+- Treat provider "labels" as IMAP mailboxes/folders; discover special-use
+  folders instead of hard-coding names. Resolve each role independently:
+  explicit override, unique selectable advertised role, then unique selectable
+  conventional name as documented in README.md. Never guess after ambiguous,
+  unselectable, or failed discovery results; never create a target mailbox.
 - Tools build IMAP commands only through the `plan_*` defs in `src/ops.bend`.
 
 ## When using Bend

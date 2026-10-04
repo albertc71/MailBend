@@ -4,7 +4,7 @@ import ./src/json.bend as J
 import ./src/tools.bend as T
 import ./src/schema.bend as Schema
 
-# MailBend: iCloud (IMAP/SMTP) mail tools for AI agents.
+# MailBend: IMAP/SMTP mail tools for AI agents.
 #
 #   mailbend mcp                   MCP server on stdin/stdout (JSON-RPC lines)
 #   mailbend tools                 print the tool list as JSON
@@ -36,7 +36,8 @@ def rpc_result(+id: J.Json, +result: J.Json) -> String:
   J.show(J.obj([J.kv("jsonrpc", J.str("2.0")), J.kv("id", id), J.kv("result", result)]))
 
 def rpc_error(+id: J.Json, +code: String, +msg: String) -> String:
-  J.show(J.obj([J.kv("jsonrpc", J.str("2.0")), J.kv("id", id), J.kv("error", J.obj([J.kv("code", J.JNum{code}), J.kv("message", J.str(msg))]))]))
+  error = J.obj([J.kv("code", J.JNum{code}), J.kv("message", J.str(msg))])
+  J.show(J.obj([J.kv("jsonrpc", J.str("2.0")), J.kv("id", id), J.kv("error", error)]))
 
 def known_version(+v: String) -> Bool:
   String.eq(v, "2025-06-18") || String.eq(v, "2025-03-26") || String.eq(v, "2024-11-05")
@@ -47,10 +48,11 @@ def initialize_result(+params: J.Json) -> J.Json:
     J.kv("protocolVersion", J.str(Bool.pick(String, known_version(asked), asked, "2025-06-18"))),
     J.kv("capabilities", J.obj([J.kv("tools", J.obj([J.kv("listChanged", J.bool(False{}))]))])),
     J.kv("serverInfo", J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(version()))])),
-    J.kv("instructions", J.str("iCloud mail over IMAP/SMTP. Start with mail_probe. Read tools (mail_search, mail_get, mail_get_new) never mark mail as read. mail_trash is recoverable; mail_delete is permanent and needs confirm = \"permanently-delete\"."))])
+    J.kv("instructions", J.str("Mail over IMAP/SMTP. Start with mail_probe. Read tools (mail_search, mail_get, mail_get_new) never mark mail as read. mail_trash is recoverable; mail_delete is permanent and needs confirm = \"permanently-delete\"."))])
 
 def call_result(+o: T.Out) -> J.Json:
-  J.obj([J.kv("content", J.arr([J.obj([J.kv("type", J.str("text")), J.kv("text", J.str(J.show(result_json(o))))])])), J.kv("isError", J.bool(is_error(o)))])
+  content = J.obj([J.kv("type", J.str("text")), J.kv("text", J.str(J.show(result_json(o))))])
+  J.obj([J.kv("content", J.arr([content])), J.kv("isError", J.bool(is_error(o)))])
 
 def args_of(+m: Maybe<&2, J.Json>) -> J.Json:
   match m:
@@ -242,7 +244,8 @@ def serve_rest(f: File, +rest: List<&2, String>, +parts: List<&2, String>, +n: U
       do IO<Unit>:
         handle_line(pending(parts))
         handle_lines(init_lines(rest))
-        serve(f, [rest_line(rest)], str_len(rest_line(rest)))
+        +unfinished : String = rest_line(rest)
+        serve(f, [unfinished], str_len(unfinished))
 
 @unsafe
 def serve_piece(over: Bool, f: File, +rest: List<&2, String>, +parts: List<&2, String>, +n: U32) -> IO(Unit):
@@ -260,7 +263,8 @@ def serve_pieces(f: File, +pieces: List<&2, String>, +parts: List<&2, String>, +
     case Nil{}:
       serve(f, parts, n)
     case Con{+p, rest}:
-      serve_piece(U32.is_gt((n + str_len(p) : U32), line_cap()), f, rest, p <> parts, (n + str_len(p) : U32))
+      +length = (n + str_len(p) : U32)
+      serve_piece(U32.is_gt(length, line_cap()), f, rest, p <> parts, length)
 
 @unsafe
 def serve_chunk(m: File & Result<&1, &1, U32 & String, List<&2, U32>>, +parts: List<&2, String>, +n: U32) -> IO(Unit):
