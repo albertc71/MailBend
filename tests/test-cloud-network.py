@@ -80,10 +80,12 @@ class Resolver(http.server.ThreadingHTTPServer):
 
     def __init__(self, certs, cert="server", answers=("127.0.0.1", "::1"), mode="ok"):
         super().__init__(("127.0.0.1", 0), DnsHandler)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(certs / f"{cert}.pem", certs / f"{cert}-key.pem")
-        self.socket = ctx.wrap_socket(self.socket, server_side=True)
-        self.answers, self.mode, self.queries = answers, mode, []
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certs / f"{cert}.pem", certs / f"{cert}-key.pem")
+        self.socket = context.wrap_socket(self.socket, server_side=True)
+        self.answers = answers
+        self.mode = mode
+        self.queries = []
 
     @property
     def url(self):
@@ -129,8 +131,10 @@ class CloudNetworkTests(unittest.TestCase):
     def setUpClass(cls):
         cls.work = tempfile.TemporaryDirectory(prefix="mailbend-network-")
         cls.certs = Path(cls.work.name) / "certs"
-        subprocess.run(["sh", str(ROOT / "tests/gen-test-certs.sh"), str(cls.certs)], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["sh", str(ROOT / "tests/gen-test-certs.sh"), str(cls.certs)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
 
     @classmethod
     def tearDownClass(cls):
@@ -140,26 +144,32 @@ class CloudNetworkTests(unittest.TestCase):
     def mail_server(self, cert="server", bind="127.0.0.1", require_sni="mailbend.test"):
         with tempfile.TemporaryDirectory(dir=self.work.name) as work:
             log = Path(work) / "log.jsonl"
-            cmd = ["python3", str(ROOT / "tests/fake_mail_server.py"), "--certdir", str(self.certs),
-                   "--fixture", str(FIXTURE), "--state", work + "/state.json", "--log", str(log),
-                   "--cert-name", cert, "--bind-host", bind]
+            command = [
+                "python3", str(ROOT / "tests/fake_mail_server.py"),
+                "--certdir", str(self.certs), "--fixture", str(FIXTURE),
+                "--state", str(Path(work) / "state.json"), "--log", str(log),
+                "--cert-name", cert, "--bind-host", bind
+            ]
             if require_sni is not None:
-                cmd.extend(["--require-sni", require_sni])
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                command.extend(["--require-sni", require_sni])
+            process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
             try:
                 # Bound startup even if the fixture fails before printing READY.
-                self.assertTrue(select.select([proc.stdout], [], [], 5)[0], "server startup timed out")
-                ready = proc.stdout.readline().split()
+                readable, _, _ = select.select([process.stdout], [], [], 5)
+                self.assertTrue(readable, "server startup timed out")
+                ready = process.stdout.readline().split()
                 self.assertTrue(ready and ready[0] == "READY", "server failed to start")
                 ports = dict(part.split("=") for part in ready[1:])
                 yield ports, log
             finally:
-                proc.terminate()
+                process.terminate()
                 try:
-                    proc.communicate(timeout=5)
+                    process.communicate(timeout=5)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.communicate()
+                    process.kill()
+                    process.communicate()
 
     def mail_env(self, ports, **overrides):
         # Do not inherit real credentials, resolver overrides or HTTP proxies.
@@ -181,6 +191,9 @@ class CloudNetworkTests(unittest.TestCase):
         # Boolean assertions keep captured output out of unittest's failure log.
         leaked = FIXTURE_DATA["password"].encode() in result.stdout + result.stderr
         self.assertFalse(leaked, "fixture credential leaked (output withheld)")
+
+    def read_mail_log(self, log):
+        return log.read_text() if log.exists() else ""
 
     def run_helper(self, proto, ports, expected=0, **overrides):
         env = self.mail_env(ports, **overrides)
@@ -254,7 +267,7 @@ class CloudNetworkTests(unittest.TestCase):
             for ip in ("localhost", "127.0.0.1:993", "127.0.0.1,127.0.0.2"):
                 with self.subTest(ip=ip):
                     self.run_helper("imap", ports, expected=2, MAILBEND_IMAP_CONNECT_IP=ip)
-            self.assertFalse(bool(log.exists() and log.read_text()), "mail reached after invalid override")
+            self.assertFalse(self.read_mail_log(log), "mail reached after invalid override")
 
     def test_doh_falls_back_between_addresses_and_refreshes_each_session(self):
         answers = ("127.0.0.2", "127.0.0.1", "::1")
@@ -352,7 +365,7 @@ class CloudNetworkTests(unittest.TestCase):
                         "imap", ports, expected=3, MAILBEND_DOH_URL=dns.url, MAILBEND_TIMEOUT_MS="350"
                     )
                     self.assertTrue(dns.queries)
-            self.assertFalse(bool(log.exists() and log.read_text()), "mail reached after DNS failure")
+            self.assertFalse(self.read_mail_log(log), "mail reached after DNS failure")
 
     def test_doh_requires_https_and_valid_certificate(self):
         with self.mail_server() as (ports, log):
@@ -361,7 +374,7 @@ class CloudNetworkTests(unittest.TestCase):
                 with self.subTest(cert=cert), dns_server(self.certs, cert=cert) as dns:
                     self.run_helper("imap", ports, expected=3, MAILBEND_DOH_URL=dns.url)
                     self.assertEqual(dns.queries, [])
-            self.assertFalse(bool(log.exists() and log.read_text()), "mail reached after invalid DoH TLS")
+            self.assertFalse(self.read_mail_log(log), "mail reached after invalid DoH TLS")
 
     def test_mail_certificate_still_checked_with_doh_and_ip(self):
         for cert in ("wronghost", "expired", "selfsigned"):
@@ -369,7 +382,7 @@ class CloudNetworkTests(unittest.TestCase):
                 for proto in ("imap", "smtp"):
                     self.run_helper(proto, ports, expected=3, MAILBEND_DOH_URL=dns.url)
                     self.run_helper(proto, ports, expected=3, **{f"MAILBEND_{proto.upper()}_CONNECT_IP": "127.0.0.1"})
-                lines = log.read_text() if log.exists() else ""
+                lines = self.read_mail_log(log)
                 self.assertFalse("LOGIN" in lines, "IMAP authenticated despite invalid TLS")
                 self.assertFalse("AUTH" in lines, "SMTP authenticated despite invalid TLS")
 

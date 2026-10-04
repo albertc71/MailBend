@@ -90,6 +90,11 @@ static const char *env_or(const char *name, const char *fallback) {
   return (v && *v) ? v : fallback;
 }
 
+static int configured_timeout_ms(void) {
+  int timeout = atoi(env_or("MAILBEND_TIMEOUT_MS", "30000"));
+  return timeout > 0 ? timeout : 30000;
+}
+
 /* ---- output ------------------------------------------------------------ */
 
 /* Set while authenticating: those replies are consumed, never forwarded, so
@@ -275,6 +280,17 @@ static struct curl_slist *configure_connection_route(
   return route_entries;
 }
 
+/* Configure only the TCP connection; mail TLS and protocol stay below. */
+static void configure_tcp_connection(CURL *handle, CURLU *url, int timeout_ms) {
+  curl_check(curl_easy_setopt(handle, CURLOPT_CURLU, url));
+  curl_check(curl_easy_setopt(handle, CURLOPT_CONNECT_ONLY, 1L));
+  /* Raw mail sockets must never become an HTTP request through a proxy. */
+  curl_check(curl_easy_setopt(handle, CURLOPT_PROXY, ""));
+  curl_check(curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L));
+  curl_check(curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT_MS, (long)timeout_ms));
+  curl_check(curl_easy_setopt(handle, CURLOPT_TIMEOUT_MS, (long)timeout_ms));
+}
+
 static int connected_socket(CURL *handle, int timeout_ms) {
   curl_socket_t fd = CURL_SOCKET_BAD;
   curl_check(curl_easy_getinfo(handle, CURLINFO_ACTIVESOCKET, &fd));
@@ -299,13 +315,7 @@ static void tcp_connect(const char *host, const char *port,
   connection = curl_easy_init();
   if (!connection) die(EX_CONNECT, "cannot create a connection");
   CURLU *url = mail_connection_url(host, port);
-  curl_check(curl_easy_setopt(connection, CURLOPT_CURLU, url));
-  curl_check(curl_easy_setopt(connection, CURLOPT_CONNECT_ONLY, 1L));
-  /* Raw mail sockets must never become an HTTP request through a proxy. */
-  curl_check(curl_easy_setopt(connection, CURLOPT_PROXY, ""));
-  curl_check(curl_easy_setopt(connection, CURLOPT_NOSIGNAL, 1L));
-  curl_check(curl_easy_setopt(connection, CURLOPT_CONNECTTIMEOUT_MS, (long)timeout_ms));
-  curl_check(curl_easy_setopt(connection, CURLOPT_TIMEOUT_MS, (long)timeout_ms));
+  configure_tcp_connection(connection, url, timeout_ms);
   struct curl_slist *route_entries = configure_connection_route(
       connection, port, connect_ip_env, connect_ip, doh_url);
 
@@ -579,11 +589,30 @@ static void imap_validate(void) {
   for (size_t p = 0; p < in_len;) p = imap_command(p, tag, &cmd_end, &e, &el, &ew);
 }
 
+static void imap_login(void) {
+  size_t cap = 32 + 2 * (strlen(user) + strlen(pass));
+  char *cmd = malloc(cap);
+  if (!cmd) die(EX_PROTO, "out of memory");
+  size_t n = 0;
+  memcpy(cmd + n, "L LOGIN ", 8); n += 8;
+  n += put_quoted(cmd + n, user);
+  cmd[n++] = ' ';
+  n += put_quoted(cmd + n, pass);
+  cmd[n++] = '\r';
+  cmd[n++] = '\n';
+  raw_write(cmd, n);
+  wipe(cmd, cap);
+  free(cmd);
+  quiet = 1;
+  int st = imap_wait("L", 0);
+  quiet = 0;
+  if (st != ST_OK) die(EX_AUTH, "IMAP login rejected");
+}
+
 static int run_imap(void) {
   const char *host = env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com");
   const char *port = env_or("MAILBEND_IMAP_PORT", "993");
-  int timeout = atoi(env_or("MAILBEND_TIMEOUT_MS", "30000"));
-  if (timeout <= 0) timeout = 30000;
+  int timeout = configured_timeout_ms();
 
   load_credentials();
   read_stdin();
@@ -600,25 +629,7 @@ static int run_imap(void) {
     die(EX_PROTO, "server refused the connection");
   free(g);
 
-  if (!preauth) {
-    size_t cap = 32 + 2 * (strlen(user) + strlen(pass));
-    char *cmd = malloc(cap);
-    if (!cmd) die(EX_PROTO, "out of memory");
-    size_t n = 0;
-    memcpy(cmd + n, "L LOGIN ", 8); n += 8;
-    n += put_quoted(cmd + n, user);
-    cmd[n++] = ' ';
-    n += put_quoted(cmd + n, pass);
-    cmd[n++] = '\r';
-    cmd[n++] = '\n';
-    raw_write(cmd, n);
-    wipe(cmd, cap);
-    free(cmd);
-    quiet = 1;
-    int st = imap_wait("L", 0);
-    quiet = 0;
-    if (st != ST_OK) die(EX_AUTH, "IMAP login rejected");
-  }
+  if (!preauth) imap_login();
 
   int status = EX_OK;
   size_t p = 0;
@@ -789,6 +800,12 @@ static void smtp_auth(const char *ehlo) {
   quiet = 0;
 }
 
+static int smtp_reserved_verb(const unsigned char *line, size_t length) {
+  return is_verb(line, length, "AUTH") || is_verb(line, length, "STARTTLS") ||
+         is_verb(line, length, "EHLO") || is_verb(line, length, "HELO") ||
+         is_verb(line, length, "QUIT");
+}
+
 /* Validates the whole envelope before connecting: CRLF lines, none of the
  * helper's own verbs, and a message that ends in a "." line after DATA. */
 static void smtp_validate(void) {
@@ -800,9 +817,7 @@ static void smtp_validate(void) {
     if (ln < 2 || in[p + ln - 2] != '\r') die(EX_USAGE, "envelope lines must end in CRLF");
     if (in_data) {
       if (ln == 3 && in[p] == '.') in_data = 0;
-    } else if (is_verb(in + p, ln, "AUTH") || is_verb(in + p, ln, "STARTTLS") ||
-               is_verb(in + p, ln, "EHLO") || is_verb(in + p, ln, "HELO") ||
-               is_verb(in + p, ln, "QUIT")) {
+    } else if (smtp_reserved_verb(in + p, ln)) {
       die(EX_USAGE, "the envelope may not greet, authenticate or quit");
     } else if (is_verb(in + p, ln, "DATA")) {
       in_data = 1;
@@ -815,8 +830,7 @@ static void smtp_validate(void) {
 static int run_smtp(void) {
   const char *host = env_or("MAILBEND_SMTP_HOST", "smtp.mail.me.com");
   const char *port = env_or("MAILBEND_SMTP_PORT", "587");
-  int timeout = atoi(env_or("MAILBEND_TIMEOUT_MS", "30000"));
-  if (timeout <= 0) timeout = 30000;
+  int timeout = configured_timeout_ms();
 
   load_credentials();
   read_stdin();
@@ -845,9 +859,7 @@ static int run_smtp(void) {
     if (!nl) die(EX_USAGE, "envelope does not end in CRLF");
     size_t ln = (size_t)(nl - (in + p)) + 1;
     if (ln < 2 || in[p + ln - 2] != '\r') die(EX_USAGE, "envelope lines must end in CRLF");
-    if (is_verb(in + p, ln, "AUTH") || is_verb(in + p, ln, "STARTTLS") ||
-        is_verb(in + p, ln, "EHLO") || is_verb(in + p, ln, "HELO") ||
-        is_verb(in + p, ln, "QUIT"))
+    if (smtp_reserved_verb(in + p, ln))
       die(EX_USAGE, "the envelope may not greet, authenticate or quit");
     int data = is_verb(in + p, ln, "DATA");
     raw_write(in + p, ln);

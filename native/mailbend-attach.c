@@ -83,39 +83,45 @@ static unsigned long long parse_max(const char *s) {
   return v < MAX_ATTACHMENT ? v : MAX_ATTACHMENT;
 }
 
-int main(int argc, char **argv) {
+static void drop_inherited_environment(char **argv) {
   if (environ && environ[0]) {
     char *empty[] = {NULL};
     execve("/proc/self/exe", argv, empty);
     die("cannot drop the inherited environment");
   }
-  if (argc != 4) die("usage: mailbend-attach <dir> <path> <max-bytes>");
-  const char *dir = argv[1], *path = argv[2];
-  unsigned long long max = parse_max(argv[3]);
+}
 
-  char root[PATH_MAX];
-  if (!realpath(dir, root)) die("MAILBEND_ATTACH_DIR does not exist");
-  const char *rel = path;
+static const char *relative_attachment_path(const char *dir, const char *root, const char *path) {
+  const char *relative = path;
   if (path[0] == '/') {
-    size_t rl = strlen(root), dl = strlen(dir);
-    while (dl > 1 && dir[dl - 1] == '/') dl--;
-    if (strncmp(path, root, rl) == 0 && path[rl] == '/') rel = path + rl + 1;
-    else if (strncmp(path, dir, dl) == 0 && path[dl] == '/') rel = path + dl + 1;
+    size_t root_length = strlen(root), dir_length = strlen(dir);
+    while (dir_length > 1 && dir[dir_length - 1] == '/') dir_length--;
+    if (strncmp(path, root, root_length) == 0 && path[root_length] == '/')
+      relative = path + root_length + 1;
+    else if (strncmp(path, dir, dir_length) == 0 && path[dir_length] == '/')
+      relative = path + dir_length + 1;
     else die("attachment %s is outside MAILBEND_ATTACH_DIR", path);
   }
-  if (!*rel) die("attachment path names no file");
+  if (!*relative) die("attachment path names no file");
+  return relative;
+}
 
+static int open_attachment_directory(const char *root) {
   /* `root` is canonical, so it holds no symlink; opening it with
    * RESOLVE_NO_SYMLINKS fails if a component was swapped for one since
    * realpath() read it. */
-  int dfd = open2(AT_FDCWD, root, O_RDONLY | O_DIRECTORY | O_CLOEXEC,
-                  RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS);
-  if (dfd < 0) {
+  int fd = open2(AT_FDCWD, root, O_RDONLY | O_DIRECTORY | O_CLOEXEC,
+                 RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS);
+  if (fd < 0) {
     if (errno == ENOSYS) die("attachments need Linux 5.6+ (openat2)");
     if (errno == ELOOP) die("MAILBEND_ATTACH_DIR changed while it was opened");
     die("cannot open MAILBEND_ATTACH_DIR");
   }
-  int fd = open2(dfd, rel, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY,
+  return fd;
+}
+
+static int open_attachment(int directory_fd, const char *relative, const char *path) {
+  int fd = open2(directory_fd, relative, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY,
                  RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS);
   if (fd < 0) {
     if (errno == ENOENT) die("attachment not found: %s", path);
@@ -123,26 +129,47 @@ int main(int argc, char **argv) {
       die("attachment %s is outside MAILBEND_ATTACH_DIR or reached through a symlink", path);
     die("cannot open attachment %s: %s", path, strerror(errno));
   }
+  return fd;
+}
+
+static void validate_attachment(int fd, const char *path, unsigned long long max) {
   struct stat st;
   if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die("attachment %s is not a regular file", path);
   struct statfs fs;
   if (fstatfs(fd, &fs) != 0 || fs.f_type == PROC_SUPER_MAGIC || fs.f_type == SYSFS_MAGIC)
     die("attachment %s is a kernel file (procfs or sysfs)", path);
   if ((unsigned long long)st.st_size > max) die("attachments would exceed %llu bytes (at %s)", max, path);
+}
 
+static void emit_attachment(int fd, const char *path, unsigned long long max) {
   unsigned char buf[65536];
   unsigned long long total = 0;
   for (;;) {
-    ssize_t r = read(fd, buf, sizeof buf);
-    if (r < 0 && errno == EINTR) continue;
-    if (r < 0) die("cannot read attachment %s", path);
-    if (r == 0) break;
-    total += (unsigned long long)r;
+    ssize_t count = read(fd, buf, sizeof buf);
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0) die("cannot read attachment %s", path);
+    if (count == 0) break;
+    total += (unsigned long long)count;
     if (total > max) die("attachments would exceed %llu bytes (at %s)", max, path);
-    emit(buf, (size_t)r);
+    emit(buf, (size_t)count);
   }
+}
+
+int main(int argc, char **argv) {
+  drop_inherited_environment(argv);
+  if (argc != 4) die("usage: mailbend-attach <dir> <path> <max-bytes>");
+  const char *dir = argv[1], *path = argv[2];
+  unsigned long long max = parse_max(argv[3]);
+
+  char root[PATH_MAX];
+  if (!realpath(dir, root)) die("MAILBEND_ATTACH_DIR does not exist");
+  const char *relative = relative_attachment_path(dir, root, path);
+  int directory_fd = open_attachment_directory(root);
+  int fd = open_attachment(directory_fd, relative, path);
+  validate_attachment(fd, path, max);
+  emit_attachment(fd, path, max);
   close(fd);
-  close(dfd);
+  close(directory_fd);
   if (fflush(stdout) != 0) die("cannot write the attachment");
   return 0;
 }

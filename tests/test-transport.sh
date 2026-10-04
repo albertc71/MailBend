@@ -38,7 +38,7 @@ if ! cc -std=c11 -O2 -Wall -Wextra -Werror -o "$HELPER" "$ROOT/native/mailbend-t
   exit 1
 fi
 
-USER=$(python3 -c "import json; print(json.load(open('$FIXTURE', encoding='utf-8'))['user'])")
+FIXTURE_USER=$(python3 -c "import json; print(json.load(open('$FIXTURE', encoding='utf-8'))['user'])")
 PASSWORD=$(python3 -c "import json; print(json.load(open('$FIXTURE', encoding='utf-8'))['password'])")
 
 CERTDIR="$WORK/certs"
@@ -54,7 +54,8 @@ fi
 # LOG_FILE. Returns 1 (and prints nothing to stdout) if the server failed to
 # come up within 5s.
 start_server() {
-  name="$1"; shift
+  local name="$1" dir line kv n
+  shift
   dir="$WORK/$name"
   mkdir -p "$dir"
   STATE_FILE="$dir/state.json"
@@ -95,32 +96,36 @@ stop_server() {
 
 # --- helper invocation ---------------------------------------------------
 
-# call_imap SCRIPT_TEXT [ENV_ASSIGNMENT...]
-# Runs `mailbend-tls imap` with the given command script on stdin. Sets
-# OUT (path), ERR (path), CODE (exit status). Tracks password leaks.
-call_imap() {
-  script="$1"; shift
+# call_helper PROTOCOL SCRIPT_TEXT [ENV_ASSIGNMENT...]
+# Runs the helper with the command script on stdin. Sets OUT (path), ERR
+# (path), CODE (exit status), and tracks password leaks. Protocol-specific
+# defaults precede caller overrides, so failure cases can replace them.
+call_helper() {
+  local protocol="$1" script="$2"
+  shift 2
   printf '%s' "$script" >"$WORK/in.txt"
   OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
-  env MAILBEND_EMAIL="$USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
-      MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_IMAP_HOST=localhost \
-      MAILBEND_IMAP_PORT="$IMAP_PORT" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
-      "$@" "$HELPER" imap <"$WORK/in.txt" >"$OUT" 2>"$ERR"
+  env MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
+      MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
+      "$@" "$HELPER" "$protocol" <"$WORK/in.txt" >"$OUT" 2>"$ERR"
   CODE=$?
   check_leak
 }
 
+# call_imap SCRIPT_TEXT [ENV_ASSIGNMENT...]
+call_imap() {
+  local script="$1"
+  shift
+  call_helper imap "$script" MAILBEND_IMAP_HOST=localhost \
+      MAILBEND_IMAP_PORT="$IMAP_PORT" "$@"
+}
+
 # call_smtp SCRIPT_TEXT [ENV_ASSIGNMENT...]
 call_smtp() {
-  script="$1"; shift
-  printf '%s' "$script" >"$WORK/in.txt"
-  OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
-  env MAILBEND_EMAIL="$USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
-      MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_SMTP_HOST=localhost \
-      MAILBEND_SMTP_PORT="$SMTP_PORT" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
-      "$@" "$HELPER" smtp <"$WORK/in.txt" >"$OUT" 2>"$ERR"
-  CODE=$?
-  check_leak
+  local script="$1"
+  shift
+  call_helper smtp "$script" MAILBEND_SMTP_HOST=localhost \
+      MAILBEND_SMTP_PORT="$SMTP_PORT" "$@"
 }
 
 check_leak() {
@@ -168,7 +173,7 @@ case4() {
 # Case 5: hostname mismatch -> exit 3 (two sub-cases)
 # =========================================================================
 case5() {
-  ok=1
+  local ok=1 detail_a="" detail_b=""
   start_server case5a || { fail 5 "server did not start"; return; }
   call_imap $'a1 NOOP\r\n' MAILBEND_IMAP_HOST="127.0.0.1"
   [ "$CODE" -eq 3 ] || { ok=0; detail_a="127.0.0.1 with localhost cert: exit=$CODE"; }
@@ -190,7 +195,7 @@ case5() {
 # Case 6: expired and self-signed certs -> exit 3
 # =========================================================================
 case6() {
-  ok=1
+  local ok=1 detail_a="" detail_b=""
   start_server case6a --cert-name expired || { fail 6 "server did not start"; return; }
   call_imap $'a1 NOOP\r\n'
   [ "$CODE" -eq 3 ] || { ok=0; detail_a="expired cert: exit=$CODE"; }
@@ -244,17 +249,15 @@ case8() {
 # Case 9: reserved tag / forbidden verb in the script -> exit 2
 # =========================================================================
 case9() {
-  ok=1
+  local ok=1 detail_a="" detail_b="" detail_c=""
   start_server case9 || { fail 9 "server did not start"; return; }
   call_imap $'L NOOP\r\n'
   [ "$CODE" -eq 2 ] || { ok=0; detail_a="reserved tag: exit=$CODE"; }
-  after_reserved="$(wc -l <"$LOG_FILE")"
 
   call_imap $'a1 LOGIN "x" "y"\r\n'
   [ "$CODE" -eq 2 ] || { ok=0; detail_b="forbidden verb: exit=$CODE"; }
   lines_after_login="$(python3 -c "
 import json
-n = 0
 with open('$LOG_FILE', encoding='utf-8') as f:
     lines = [json.loads(l) for l in f if l.strip()]
 seen_login = False
@@ -319,13 +322,13 @@ case11() {
 case12() {
   start_server case12 || { fail 12 "server did not start"; return; }
   body=$'Subject: hello\r\n\r\nHi there.\r\n'
-  call_smtp $'MAIL FROM:<'"$USER"$'>\r\nRCPT TO:<friend@example.com>\r\nRCPT TO:<second@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<friend@example.com>\r\nRCPT TO:<second@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
   CASE12_LOG="$LOG_FILE"
   ok=$(python3 -c "
 import json
 d = json.load(open('$STATE_FILE', encoding='utf-8'))
 sent = d.get('sent', [])
-ok = (len(sent) == 1 and sent[0]['mail_from'] == '$USER'
+ok = (len(sent) == 1 and sent[0]['mail_from'] == '$FIXTURE_USER'
       and set(sent[0]['rcpt_to']) == {'friend@example.com', 'second@example.com'})
 print(ok)
 ")
@@ -350,7 +353,7 @@ print(st is not None and au is not None and st < au)
 case13() {
   start_server case13 || { fail 13 "server did not start"; return; }
   body=$'Subject: x\r\n\r\nbody\r\n'
-  call_smtp $'MAIL FROM:<'"$USER"$'>\r\nRCPT TO:<reject@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<reject@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
   no_data=$(python3 -c "
 import json
 lines = [json.loads(l)['line'] for l in open('$LOG_FILE', encoding='utf-8') if l.strip()]
@@ -387,7 +390,7 @@ print(not any('AUTH' in l for l in lines))
 # Case 15: envelope may not greet/authenticate/quit -> exit 2
 # =========================================================================
 case15() {
-  ok=1
+  local ok=1 detail_a="" detail_b="" detail_c=""
   start_server case15 || { fail 15 "server did not start"; return; }
 
   call_smtp $'AUTH PLAIN AAA=\r\n'
@@ -416,7 +419,7 @@ case16() {
   save_imap_port="$IMAP_PORT"
   IMAP_PORT="$SILENT_PORT"
   start_ts=$(date +%s)
-  TIMEOUT_MS=1500 timeout 6 env MAILBEND_EMAIL="$USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
+  TIMEOUT_MS=1500 timeout 6 env MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
       MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_IMAP_HOST=localhost \
       MAILBEND_IMAP_PORT="$IMAP_PORT" MAILBEND_TIMEOUT_MS=1500 \
       "$HELPER" imap </dev/null >"$WORK/out.bin" 2>"$WORK/err.txt"
@@ -463,7 +466,7 @@ case18() {
     ok=0; detail="imap exit=$CODE"
   fi
   body=$'Subject: echo\r\n\r\nhi\r\n'
-  call_smtp $'MAIL FROM:<'"$USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
   if [ "$CODE" -ne 0 ] || grep -aq -- "$PASSWORD" "$OUT" || grep -aq "^235" "$OUT"; then
     ok=0; detail="$detail smtp exit=$CODE"
   fi
@@ -501,7 +504,7 @@ case19() {
 case20() {
   start_server case20 || { fail 20 "server did not start"; return; }
   body=$'Subject: x\r\n\r\nhi\r\n'
-  call_smtp $'MAIL FROM:<'"$USER"$'>\r\nRCPT TO:<closing@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<closing@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
   if [ "$CODE" -eq 5 ] && grep -aq "^421" "$OUT"; then
     pass "20 a closing 421 stays a rejection"
   else
