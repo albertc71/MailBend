@@ -42,10 +42,11 @@ environment owner install the packages listed in
 [setup-cloud.sh](../scripts/setup-cloud.sh), then run
 `sh scripts/install.sh --install-bend` as your user.
 
-Setup reuses Bend when it is already installed; otherwise its official
-installer selects the release. For a compiler-related rebuild failure,
-compare that version with the tested release and checksum in
-[CI](../.github/workflows/ci.yml). Setup does not pin or downgrade Bend.
+Setup reuses Bend when it is already installed; otherwise it installs the
+release tested in CI, pinned with its sha256 in
+[install-bend.sh](../scripts/install-bend.sh) (Linux x64 only). For a
+compiler-related rebuild failure, compare an existing Bend with that pinned
+version. Setup does not downgrade an installed Bend.
 
 Re-enable/restart the MCP server after setup so it uses the rebuilt binaries.
 Its command must be `/workspace/MailBend/scripts/mailbend-cloud`. Ensure the

@@ -3,8 +3,8 @@
 #   bin/mailbend-tls     the TLS helper (C, OpenSSL, libcurl)
 #   bin/mailbend-attach  the attachment reader (C, no credentials)
 #   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
-# and checks the safety proofs. Pass --install-bend to install Bend with its
-# official installer (https://bend-lang.com/install.sh) when it is missing.
+# and checks the safety proofs. Pass --install-bend to install the pinned,
+# checksum-verified Bend release (scripts/install-bend.sh) when it is missing.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
@@ -16,11 +16,9 @@ fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 
 if ! command -v bend >/dev/null 2>&1; then
   if [ "${1:-}" = "--install-bend" ]; then
-    say "installing Bend from https://bend-lang.com/install.sh"
-    curl -fsSL https://bend-lang.com/install.sh | sh
+    sh scripts/install-bend.sh
   else
-    fail "Bend is not installed. Run: curl -fsSL https://bend-lang.com/install.sh | sh
-      (or rerun this script with --install-bend)"
+    fail "Bend is not installed. Rerun this script with --install-bend"
   fi
 fi
 

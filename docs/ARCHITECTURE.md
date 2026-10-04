@@ -277,7 +277,7 @@ These tests use the fake TLS server, not a live provider.
   total, reading stops at the first failure), read by `mailbend-attach`
   (from an absolute `MAILBEND_ATTACH_HELPER`) with `openat2` beneath that
   directory (no symlinks,
-  no `..`; the directory itself is opened by its canonical path without
+  no `..` that leaves it; the directory itself is opened by its canonical path without
   following symlinks) and checked on the opened descriptor.
 - A `mail_get_new` checkpoint is a UID with its UIDVALIDITY: `since_uid`
   without `uidvalidity` is refused.
