@@ -1,5 +1,13 @@
 # MailBend Handoff
 
+> **Historical record (2026-09-27).** The objectives, status, counts and tooling
+> below describe that handoff, not the current release. The generic IMAP/SMTP
+> direction has superseded its iCloud-first scope; iCloud remains the default
+> and live-tested profile. For current scope and configuration, use
+> [README.md](README.md); for component boundaries, use
+> [the architecture guide](docs/ARCHITECTURE.md); for setup, reported live
+> results and pending draft retests, use [the cloud guide](docs/CLOUD_AGENT.md).
+
 ## Objective
 
 Build **MailBend**, a small, lightweight, Linux-first iCloud Mail connector for AI agents, with **Bend 2** as the core language. The immediate target is installation and use from **Cursor Cloud Agent / Grok Bot**. Keep the mail layer reusable for other MCP-capable assistants.

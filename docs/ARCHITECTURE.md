@@ -2,12 +2,18 @@
 
 ## Why IMAP + SMTP
 
-iCloud Mail has no Gmail-style public REST API; it speaks standard mail
-protocols. MailBend uses IMAP for mailboxes and SMTP for delivery:
+MailBend uses password-authenticated IMAP for mailboxes and SMTP for delivery.
+iCloud Mail is the default and live-tested profile:
 
 - IMAP: `imap.mail.me.com:993`, implicit TLS
 - SMTP: `smtp.mail.me.com:587`, STARTTLS
 - login: the iCloud address and an Apple app-specific password
+
+Other compatible providers use the same architecture with configured IMAP
+and SMTP hosts and ports. IMAP requires implicit TLS and SMTP requires
+STARTTLS; OAuth and implicit SMTPS are unsupported. Other providers have not
+been live-tested here. The draft-folder repair has local fake-server coverage
+and awaits a live iCloud retest; see [cloud validation](CLOUD_AGENT.md).
 
 ## Diagrams
 
@@ -47,8 +53,8 @@ flowchart TB
     attach["no credentials: re-executes with an empty environment<br/>no procfs or sysfs files<br/>openat2 beneath the directory<br/>no symlinks, no ..<br/>regular file within the byte budget"]
   end
 
-  imapsrv[("imap.mail.me.com:993<br/>implicit TLS")]
-  smtpsrv[("smtp.mail.me.com:587<br/>STARTTLS required")]
+  imapsrv[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
+  smtpsrv[("SMTP STARTTLS required<br/>default smtp.mail.me.com:587")]
   files[("MAILBEND_ATTACH_DIR<br/>attachments off without it")]
 
   agent -- "JSON-RPC lines on stdio" --> main
@@ -85,7 +91,7 @@ sequenceDiagram
   participant A as Agent
   participant C as Bend core
   participant H as mailbend-tls
-  participant S as iCloud IMAP
+  participant S as IMAP server
   A->>C: tools/call mail_get with uid
   C->>C: plan_get gives EXAMINE and UID FETCH with BODY.PEEK
   C->>H: rendered script on stdin
@@ -103,8 +109,9 @@ sequenceDiagram
 
 ### A change (mail_trash)
 
-Every change runs two sessions: a read-only preflight, then the change
-itself, pinned to the caller's UIDVALIDITY inside the changing session.
+Changes to existing messages are pinned to the caller's UIDVALIDITY inside
+the changing session. Move, trash and delete first run a read-only preflight
+for server capabilities and folders; the diagram shows trash with MOVE.
 
 ```mermaid
 sequenceDiagram
@@ -112,14 +119,20 @@ sequenceDiagram
   participant A as Agent
   participant C as Bend core
   participant H as mailbend-tls
-  participant S as iCloud IMAP
+  participant S as IMAP server
   A->>C: tools/call mail_trash with uids and uidvalidity
   C->>C: refuse if MAILBEND_READ_ONLY or uidvalidity missing
   C->>H: preflight: CAPABILITY, LIST, EXAMINE folder
   H->>S: login, then the commands one at a time
   S-->>H: capabilities, folders with special-use, UIDVALIDITY
   H-->>C: transcript
-  C->>C: Trash from the \Trash attribute, MOVE or UIDPLUS, UIDVALIDITY matches
+  opt SPECIAL-USE advertised after authentication
+    C->>H: plan_roles: LIST RETURN (SPECIAL-USE)
+    H->>S: login, then extended LIST
+    S-->>H: folder attributes
+    H-->>C: transcript
+  end
+  C->>C: merge folders, resolve Trash, check MOVE or UIDPLUS and UIDVALIDITY
   C->>H: plan_trash: SELECT, =EXPECT UIDVALIDITY, UID SEARCH, UID MOVE
   H->>S: SELECT folder
   S-->>H: OK [UIDVALIDITY v]
@@ -153,6 +166,7 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Attachments only from `MAILBEND_ATTACH_DIR`, at most 32 and 25 MB | `mailbend-attach` (openat2), `src/tools.bend` budget | e2e (symlink, `..`, `/proc/self/environ`, count, budget) |
 | Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
 | Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
+| Folder roles resolve independently; uncertain targets never trigger guessed writes | `src/tools.bend` discovery and resolution, `src/ops.bend` discovery plans | local e2e partial-role, override, ambiguity and failed-discovery cases |
 
 ## Layers
 
@@ -189,21 +203,57 @@ password.
 
 | Operation | Protocol |
 | --- | --- |
-| probe | `CAPABILITY` (after login) + `LIST "" "*"` |
-| list folders | `CAPABILITY` + `LIST "" "*"`, special use from RFC 6154 attributes; when the server advertises SPECIAL-USE but marks nothing, a second session asks `LIST "" "*" RETURN (SPECIAL-USE)` |
+| probe / list folders | `CAPABILITY` (after login) + `LIST "" "*"`; when SPECIAL-USE is advertised, a second discovery session requests `LIST "" "*" RETURN (SPECIAL-USE)`, even if ordinary LIST already marks some roles |
 | search | `EXAMINE` + `UID SEARCH` (`CHARSET UTF-8` with literals for non-ASCII) |
 | message summaries | `EXAMINE` + `UID FETCH (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (...)])` |
 | read | `EXAMINE` + `UID FETCH (... BODY.PEEK[]<0.max>)` |
 | new mail | `EXAMINE` + `UID SEARCH UID n+1:*`, filtered to UIDs > n |
-| (every change) | `SELECT`, `=EXPECT * OK [UIDVALIDITY v]` (checked by the helper), `UID SEARCH UID <uids>` (reports changed/missing) |
+| changes to existing messages | `SELECT`, `=EXPECT * OK [UIDVALIDITY v]` (checked by the helper), `UID SEARCH UID <uids>` (reports changed/missing) |
 | mark read / unread | then `UID STORE +FLAGS.SILENT (\Seen)` / `-FLAGS.SILENT` |
 | move | then `UID MOVE`; else (after `CAPABILITY` + `=EXPECT-WORD UIDPLUS` ahead of the guard) `UID COPY` + `UID STORE +FLAGS.SILENT (\Deleted)` + `UID EXPUNGE`; else refused |
-| trash | move to the `\Trash` folder (by name only if the server marks no special-use folders) |
+| trash | move to the resolved Trash folder using the per-role policy below |
 | delete | confirmation word, then `CAPABILITY` + `=EXPECT-WORD UIDPLUS`, the guard, `\Deleted` + `UID EXPUNGE` of exactly those UIDs; else refused |
-| save draft | `APPEND` to the `\Drafts` folder with `(\Draft \Seen)` |
+| save draft / reply-as-draft / forward-as-draft | `APPEND` to the resolved Drafts folder with `(\Draft \Seen)` |
 | send / reply / forward | MIME composition + SMTP via STARTTLS |
 
-Notes:
+### Folder discovery and resolution
+
+The Bend core merges ordinary and extended LIST entries by decoded mailbox
+identity, preserving ordinary entries and their attributes. A failed extended
+LIST remains an error; it never permits fallback to guessed folder names.
+The TLS helper only executes the core's discovery plans.
+
+Each role resolves independently: a nonempty `MAILBEND_<ROLE>_FOLDER` override,
+then a unique selectable advertised SPECIAL-USE target, then a unique
+selectable conventional-name target if that role is not advertised.
+
+| Role | Override | Conventional names |
+| --- | --- | --- |
+| Drafts | `MAILBEND_DRAFTS_FOLDER` | `Drafts` |
+| Trash | `MAILBEND_TRASH_FOLDER` | `Trash`, `Deleted Messages` |
+| Sent | `MAILBEND_SENT_FOLDER` | `Sent`, `Sent Messages` |
+| Junk | `MAILBEND_JUNK_FOLDER` | `Junk` |
+| Archive | `MAILBEND_ARCHIVE_FOLDER` | `Archive` |
+
+Overrides use the exact decoded LIST name, including namespace prefixes;
+only `INBOX` compares case-insensitively. Invalid or unselectable overrides
+fail visibly. Multiple advertised targets or conventional aliases are
+unresolved. An advertised but unselectable target blocks fallback, and a
+conventional candidate carrying a different recognized role is excluded.
+There is no substring matching, namespace guessing or mailbox creation.
+
+`mail_probe` reports resolved roles. `mail_list_folders` reports actual
+advertised attributes and `special_use`; a role resolved by name or override
+can still have `special_use: null` in that listing. Missing or ambiguous
+Drafts or Trash blocks operations requiring that target. Resolving Sent does
+not append sent mail there: SMTP delivery and provider filing are separate.
+
+Local e2e tests exercise partial metadata, extended discovery, all three
+draft paths, advertised-role precedence, localized/nested overrides and
+refusal of ambiguous, missing, unselectable or failed-discovery targets.
+These tests use the fake TLS server, not a live provider.
+
+### Other protocol details
 
 - Capabilities are read after authentication, never assumed. IDLE is
   reported by `mail_probe` for a future watcher.
@@ -213,11 +263,12 @@ Notes:
   `folder + UIDVALIDITY + UID`, never on read/unread state; when UIDVALIDITY
   changes it reports `uidvalidity_changed` and restarts at 0.
 - Composed messages are 7-bit: RFC 2047 encoded words for headers,
-  quoted-printable text, base64 attachments. Bcc goes only into the envelope.
+  quoted-printable text, base64 attachments. For SMTP-sent messages, Bcc goes
+  only into the envelope; saved drafts retain the header.
 - A plain `EXPUNGE` is never sent: it would also remove messages another
   client marked `\Deleted`.
-- Every change requires the folder's `uidvalidity` and is pinned to it in
-  the changing session itself (`=EXPECT` after `SELECT`); move, trash and
+- Changes to existing messages require the folder's `uidvalidity` and are
+  pinned to it in the changing session itself (`=EXPECT` after `SELECT`); move, trash and
   delete also run a read-only preflight (`CAPABILITY`, `LIST`, `EXAMINE`)
   for capabilities and folders.
 - The core starts the helper only from an absolute `MAILBEND_TLS_HELPER`,
@@ -286,10 +337,11 @@ No DNS result is stored on disk or in the long-running Bend MCP core. See the
 
 ## Bend notes
 
-Bend 2 (2.0.29) is total by default: no mutual recursion, recursion must
+Bend 2 is total by default: no mutual recursion, recursion must
 shrink an argument, and `match` only inspects parameters. Parsers are
 therefore char-by-char state machines (structural on the input) feeding
-explicit stacks. The MCP read loop is the one `@unsafe` def, as in Bend's own
-server demos, since its length is set by the client. Running `bend main.bend`
+explicit stacks. The MCP read loop and its supporting loop helpers use
+`@unsafe`, as in Bend's own server demos, because the client determines the
+session length. Running `bend main.bend`
 checks and compiles on every start (~9 s); `scripts/install.sh` compiles a
 native binary once (~1 min) that starts in milliseconds.
