@@ -13,7 +13,7 @@ Other compatible providers use the same architecture with configured IMAP
 and SMTP hosts and ports. IMAP requires implicit TLS and SMTP requires
 STARTTLS; OAuth and implicit SMTPS are unsupported. Other providers have not
 been live-tested here. The draft-folder repair has local fake-server coverage
-and awaits a live iCloud retest; see [cloud validation](CLOUD_AGENT.md).
+and passed a live iCloud retest; see [cloud validation](CLOUD_AGENT.md).
 
 ## Diagrams
 

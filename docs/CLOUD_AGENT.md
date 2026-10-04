@@ -287,10 +287,8 @@ roles; the existing Drafts mailbox did not advertise its role.
 Probe, folder listing, search, get, new mail, flag changes, move, trash,
 permanent deletion of a disposable message, sending to self with an
 attachment, reply-send and forward-send passed. Compose-draft, reply-as-draft
-and forward-as-draft failed because partial role metadata prevented Drafts
-resolution. The per-role repair has local test coverage; a live retest of
-those three paths is still pending. These results describe that reported
-account and computer, rather than every provider or cloud network.
+and forward-as-draft also passed after the per-role repair. These results describe
+that reported account and computer, rather than every provider or cloud network.
 
 For another provider or localized/nested folders, follow the
 [server and folder configuration](../README.md#configure). Inspect
@@ -305,12 +303,10 @@ SPECIAL-USE, IDLE and discovered folder roles. Only then use a disposable
 test message for intentional move/trash/delete, draft and send checks. A
 successful probe alone does not establish every iCloud operation's behavior.
 
-To retest the draft repair, update the checkout, rerun setup and restart the
-MCP server. Confirm that `mail_probe` resolves Drafts, then intentionally
-enable writes and test `mail_save_draft`, `mail_reply` with `as_draft: true`,
-and `mail_forward` with `as_draft: true`. Use a disposable original and its
-current UIDVALIDITY for reply and forward. Check that all three messages
-appear in the intended Drafts mailbox and that no draft was sent.
+The folder-role repair was live-tested on iCloud after the merge. `mail_probe`
+resolved Drafts, and `mail_save_draft`, `mail_reply` with `as_draft: true`, and
+`mail_forward` with `as_draft: true` each created a draft in the intended
+Drafts mailbox without sending it.
 
 A small `max_bytes` can truncate a fetched message before its body and return
 an empty body; increase the budget when needed. SMTP delivery does not
