@@ -166,6 +166,8 @@ class State:
         self.lowercase_codes = False
         self.special_on_request = False
         self.special_return_fails = False
+        self.omit_special_use = set()
+        self.special_plain_roles = None
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -263,6 +265,33 @@ def imap_quote(s: str) -> str:
 
 
 LIT_RE = re.compile(rb'\{(\d+)\+?\}\r\n$')
+
+# LIST attributes such as \\Noselect describe mailbox structure, not roles.
+SPECIAL_USE_ROLES = {'all', 'archive', 'drafts', 'flagged', 'junk', 'sent', 'trash'}
+
+
+def parse_role_names(value: str) -> set:
+    """Accept comma-separated role names, with optional leading backslashes."""
+    return {name.strip().lstrip('\\').lower() for name in value.split(',') if name.strip()}
+
+
+def list_attributes(attributes, state: State, roles_available: bool, requested: bool):
+    """Filter role advertisements without hiding structural LIST attributes."""
+    visible = []
+    for attribute in attributes:
+        role = attribute.lstrip('\\').lower()
+        if role not in SPECIAL_USE_ROLES:
+            visible.append(attribute)
+            continue
+        if not roles_available or role in state.omit_special_use:
+            continue
+        if not requested:
+            if state.special_on_request:
+                continue
+            if state.special_plain_roles is not None and role not in state.special_plain_roles:
+                continue
+        visible.append(attribute)
+    return visible
 
 
 # --------------------------------------------------------------------------
@@ -711,17 +740,14 @@ class IMAPSession:
         with self.state.lock:
             names = list(self.state.data['mailboxes'].keys())
             specials = {n: list(self.state.data['mailboxes'][n]['special']) for n in names}
-        asked = any(astring_val(a).upper() == 'RETURN' for a in args)
-        if asked and self.state.special_return_fails:
+        requested = any(astring_val(arg).upper() == 'RETURN' for arg in args)
+        if requested and self.state.special_return_fails:
             self.send(f'{tag} NO [UNAVAILABLE] special-use lookup failed\r\n')
             return
-        # --special-on-request: special-use attributes only for LIST ... RETURN (SPECIAL-USE)
-        show = 'SPECIAL-USE' in self.caps and (asked or not self.state.special_on_request)
         for name in names:
             has_children = any(other != name and other.startswith(name + '/') for other in names)
             attrs = ['\\HasChildren' if has_children else '\\HasNoChildren']
-            if show:
-                attrs.extend(specials[name])
+            attrs.extend(list_attributes(specials[name], self.state, 'SPECIAL-USE' in self.caps, requested))
             self.send(f'* LIST ({" ".join(attrs)}) "/" {imap_quote(mutf7_encode(name))}\r\n')
         self.send(f'{tag} OK LIST completed\r\n')
 
@@ -1255,6 +1281,10 @@ def main():
                     help='mark special-use folders only for LIST ... RETURN (SPECIAL-USE)')
     ap.add_argument('--special-return-fails', action='store_true',
                     help='answer NO to LIST ... RETURN (SPECIAL-USE)')
+    ap.add_argument('--omit-special-use', type=parse_role_names, default=set(),
+                    help='omit these comma-separated roles from ordinary and extended LIST')
+    ap.add_argument('--special-plain-roles', type=parse_role_names,
+                    help='advertise only these comma-separated roles in ordinary LIST (empty hides all)')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1264,6 +1294,8 @@ def main():
     state.lowercase_codes = args.lowercase_codes
     state.special_on_request = args.special_on_request
     state.special_return_fails = args.special_return_fails
+    state.omit_special_use = args.omit_special_use
+    state.special_plain_roles = args.special_plain_roles
     logger = Logger(args.log)
     caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
     ctx = make_ssl_context(args.certdir, args.cert_name)
