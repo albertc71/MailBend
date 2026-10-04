@@ -11,8 +11,9 @@
  *  - the certificate chain and the host name are always verified; there is
  *    no switch to turn verification off (MAILBEND_CA_FILE only replaces the
  *    trust store, e.g. for the local test server);
- *  - credentials come from MAILBEND_EMAIL / MAILBEND_APP_PASSWORD, are sent
- *    only to the verified server, and are never written to stdout/stderr;
+ *  - credentials come from MAILBEND_EMAIL and MAILBEND_APP_PASSWORD (or the
+ *    file named by MAILBEND_PASSWORD_FILE), are sent only to the verified
+ *    server, and are never written to stdout/stderr;
  *  - every read is bounded in size and time;
  *  - commands run one at a time and the run stops at the first rejection, so
  *    a later command never acts on the result of a failed earlier one.
@@ -51,6 +52,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -367,12 +369,45 @@ static void tls_start(const char *host) {
 /* ---- credentials ------------------------------------------------------- */
 
 static const char *user = NULL, *pass = NULL;
+static char pass_file_buf[1025];
+
+/* MAILBEND_PASSWORD_FILE keeps the password out of every environment: an
+ * absolute path to a regular file owned by this user, not readable by group
+ * or others, holding the password (one trailing newline is ignored). */
+static const char *read_password_file(const char *path) {
+  if (path[0] != '/') die(EX_USAGE, "MAILBEND_PASSWORD_FILE must be an absolute path");
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY);
+  if (fd < 0) die(EX_USAGE, "cannot open MAILBEND_PASSWORD_FILE (it must exist and not be a symlink)");
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die(EX_USAGE, "MAILBEND_PASSWORD_FILE is not a regular file");
+  if (st.st_uid != getuid()) die(EX_USAGE, "MAILBEND_PASSWORD_FILE must be owned by the user running MailBend");
+  if (st.st_mode & 077) die(EX_USAGE, "MAILBEND_PASSWORD_FILE must not be readable by group or others (chmod 600)");
+  size_t n = 0;
+  for (;;) {
+    ssize_t r = read(fd, pass_file_buf + n, sizeof pass_file_buf - 1 - n);
+    if (r < 0 && errno == EINTR) continue;
+    if (r < 0) die(EX_USAGE, "cannot read MAILBEND_PASSWORD_FILE");
+    if (r == 0) break;
+    n += (size_t)r;
+    if (n == sizeof pass_file_buf - 1) die(EX_USAGE, "MAILBEND_PASSWORD_FILE is too long");
+  }
+  close(fd);
+  if (n > 0 && pass_file_buf[n - 1] == '\n') n--;
+  if (n > 0 && pass_file_buf[n - 1] == '\r') n--;
+  pass_file_buf[n] = '\0';
+  return pass_file_buf;
+}
 
 static void load_credentials(void) {
   user = getenv("MAILBEND_EMAIL");
   pass = getenv("MAILBEND_APP_PASSWORD");
+  const char *pass_file = getenv("MAILBEND_PASSWORD_FILE");
   if (!user || !*user) die(EX_USAGE, "MAILBEND_EMAIL is not set");
-  if (!pass || !*pass) die(EX_USAGE, "MAILBEND_APP_PASSWORD is not set");
+  if (pass_file && *pass_file) {
+    if (pass && *pass) die(EX_USAGE, "set MAILBEND_APP_PASSWORD or MAILBEND_PASSWORD_FILE, not both");
+    pass = read_password_file(pass_file);
+  }
+  if (!pass || !*pass) die(EX_USAGE, "MAILBEND_APP_PASSWORD (or MAILBEND_PASSWORD_FILE) is not set");
   for (const char *s = user; *s; s++)
     if ((unsigned char)*s < 0x21 || (unsigned char)*s > 0x7E)
       die(EX_USAGE, "MAILBEND_EMAIL must be printable ASCII without spaces");
@@ -916,6 +951,7 @@ int main(int argc, char **argv) {
   else die(EX_USAGE, "usage: mailbend-tls imap|smtp|--check");
   fflush(stdout);
   if (in) { wipe(in, in_len); free(in); }
+  wipe(pass_file_buf, sizeof pass_file_buf);
   SSL_free(ssl);
   curl_easy_cleanup(connection);
   curl_global_cleanup();

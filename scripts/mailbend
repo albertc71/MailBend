@@ -9,6 +9,9 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${MAILBEND_ATTACH_HELPER:=$root/bin/mailbend-attach}"
 export MAILBEND_TLS_HELPER MAILBEND_ATTACH_HELPER
 export BEND_NO_TELEMETRY=1
+if [ -n "${MAILBEND_CA_FILE:-}" ]; then
+  echo "mailbend: warning: MAILBEND_CA_FILE replaces the system trust store; it is meant for local tests" >&2
+fi
 if [ -x "$root/bin/mailbend-core" ]; then
   exec "$root/bin/mailbend-core" "$@"
 fi

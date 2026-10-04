@@ -29,14 +29,19 @@ In scope: anything that breaks the guarantees in the README's
 [Safety](README.md#safety) section and [AGENTS.md](AGENTS.md), for example
 
 - a way to skip or weaken TLS peer or host name verification;
-- the app password reaching a tool result, log, error message or the Bend core;
+- the app password reaching a tool result, log or error message, or being
+  read by the Bend core or `mailbend-attach`;
 - a read tool changing mailbox state (flags, `SELECT`, `EXPUNGE`);
 - a plain `EXPUNGE`, or a change hitting messages other than the given UIDs;
-- reading an attachment from outside `MAILBEND_ATTACH_DIR`;
+- a way around `MAILBEND_READ_ONLY` or `MAILBEND_DRAFTS_ONLY`;
+- reading an attachment from outside `MAILBEND_ATTACH_DIR`, or through a
+  symlink, hard link, device or FIFO;
 - IMAP, SMTP or MIME command or header injection.
 
 Out of scope: an agent following instructions found in mail it was allowed
-to read (treat mail as untrusted input and use `MAILBEND_READ_ONLY=1` where
-writes are not needed), files that `MAILBEND_ATTACH_DIR` itself exposes, and
-problems that need control of MailBend's own configuration, binaries or CA
-trust store.
+to read (treat mail as untrusted input; use `MAILBEND_READ_ONLY=1` where
+writes are not needed and `MAILBEND_DRAFTS_ONLY=1` to review every send),
+regular files that `MAILBEND_ATTACH_DIR` itself holds, and problems that need
+control of MailBend's own configuration, binaries or trust store
+(`MAILBEND_CA_FILE` replaces the trust store by design and is for tests
+only).

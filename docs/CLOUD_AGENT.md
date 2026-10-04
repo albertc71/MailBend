@@ -101,8 +101,10 @@ MAILBEND_EMAIL
 MAILBEND_APP_PASSWORD
 ```
 
-Start with `MAILBEND_READ_ONLY=1`. `MAILBEND_ATTACH_DIR` is optional; attachments
-are disabled without it. All options are in [.env.example](../.env.example).
+Start with `MAILBEND_READ_ONLY=1`, and consider `MAILBEND_DRAFTS_ONLY=1` once
+writes are on. `MAILBEND_ATTACH_DIR` is optional; attachments are disabled
+without it, and it must be a dedicated directory (never the home directory
+or the clone). All options are in [.env.example](../.env.example).
 
 For clients supporting Cursor's MCP configuration, use the actual absolute
 path in the appropriate `.cursor/mcp.json` or MCP server registration:

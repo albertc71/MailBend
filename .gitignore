@@ -2,6 +2,15 @@
 .env
 .env.*
 !.env.example
+# MCP client configurations, which may hold MAILBEND_APP_PASSWORD
+.mcp.json
+.cursor/mcp.json
+# keys, certificates, password files and logs
+*.pem
+*.key
+*.p12
+*password*
+*.log
 
 # native/build output
 build/

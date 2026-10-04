@@ -1,0 +1,16 @@
+# Secret-scanning rules for scripts/scan-secrets.sh (run in CI): gitleaks'
+# default rules plus the shape of an Apple app-specific password, the secret
+# MailBend is configured with. Only the documented placeholder is allowed.
+title = "MailBend"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "apple-app-specific-password"
+description = "Apple app-specific password"
+regex = '''\b[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}\b'''
+
+[[rules.allowlists]]
+regexTarget = "match"
+regexes = ['''^xxxx-xxxx-xxxx-xxxx$''']

@@ -10,6 +10,7 @@ any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 import copy
 import json
 import os
+import pwd
 import pathlib
 import shutil
 import subprocess
@@ -64,6 +65,8 @@ class Server:
         for role in FOLDER_ROLES:
             e.pop(f"MAILBEND_{role.upper()}_FOLDER", None)
         e.pop("MAILBEND_READ_ONLY", None)
+        e.pop("MAILBEND_DRAFTS_ONLY", None)
+        e.pop("MAILBEND_PASSWORD_FILE", None)
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
         e.pop("MAILBEND_ATTACH_HELPER", None)
@@ -280,6 +283,43 @@ def mutations(srv):
           and not any(l.split(" ", 1)[-1] == "EXPUNGE" for l in srv.log_lines()))
 
 
+def attach(directory, path):
+    p = subprocess.run([str(ROOT / "bin" / "mailbend-attach"), directory, path, "1000"], capture_output=True, text=True, timeout=10)
+    return p.returncode, p.stderr
+
+
+def attach_dir_guards(srv):
+    c, err = attach("/", "etc/hostname")
+    check("MAILBEND_ATTACH_DIR=/ is refused", c == 2 and "must not be /" in err, err)
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    c, err = attach(home, ".profile")
+    check("the home directory is refused as MAILBEND_ATTACH_DIR", c == 2 and "home directory" in err, err)
+    c, err = attach(os.path.dirname(home) or "/", "x")
+    check("a directory containing the home directory is refused", c == 2 and ("home directory" in err or "must not be /" in err), err)
+    keys = os.path.join(srv.work, "with-keys")
+    os.makedirs(os.path.join(keys, ".ssh"))
+    pathlib.Path(keys, "a.txt").write_text("a")
+    c, err = attach(keys, "a.txt")
+    check("a directory holding .ssh is refused", c == 2 and ".ssh" in err, err)
+    shutil.rmtree(keys)
+    hard = os.path.join(srv.work, "hard.txt")
+    os.link(os.path.join(srv.work, "report.txt"), hard)
+    try:
+        c, err = attach(srv.work, "hard.txt")
+    finally:
+        os.remove(hard)
+    check("a file with another hard link is refused", c == 2 and "hard link" in err, err)
+    fifo = os.path.join(srv.work, "pipe")
+    os.mkfifo(fifo)
+    try:
+        c, err = attach(srv.work, "pipe")
+    finally:
+        os.remove(fifo)
+    check("a FIFO is refused without being opened", c == 2 and "not a regular file" in err, err)
+    c, err = attach(srv.work, "report.txt")
+    check("a regular file in a dedicated directory is still read", c == 0, err)
+
+
 def compose(srv):
     att = os.path.join(srv.work, "report.txt")
     pathlib.Path(att).write_text("quarterly numbers\n")
@@ -303,6 +343,7 @@ def compose(srv):
                 MAILBEND_ATTACH_DIR="/proc/self")
     check("MAILBEND_ATTACH_DIR=/proc/self cannot mail out the environment", c != 0 and PASSWORD not in json.dumps(r)
           and not srv.st().get("sent"), r)
+    attach_dir_guards(srv)
     c, r = tool(srv, "mail_send", {"to": "a@example.com", "subject": "x", "body": "x", "attachments": [{"path": "report.txt"}] * 33},
                 MAILBEND_ATTACH_DIR=srv.work)
     check("at most 32 attachments per message", c != 0 and "32 attachments" in r.get("error", "") and not srv.st().get("sent"), r)
@@ -487,12 +528,74 @@ def mcp(srv):
     check("mcp: exits cleanly when stdin closes", code == 0, code)
 
 
+MUTATING_CALLS = {
+    "mail_mark_read": {"uids": [5], "uidvalidity": 1700000001},
+    "mail_mark_unread": {"uids": [5], "uidvalidity": 1700000001},
+    "mail_move": {"uids": [5], "destination": "Archive", "uidvalidity": 1700000001},
+    "mail_trash": {"uids": [5], "uidvalidity": 1700000001},
+    "mail_delete": {"uids": [5], "uidvalidity": 1700000001, "confirm": "permanently-delete"},
+    "mail_save_draft": {"to": "a@example.com", "subject": "x", "body": "x"},
+    "mail_send": {"to": "a@example.com", "subject": "x", "body": "x"},
+    "mail_reply": {"uid": 5, "uidvalidity": 1700000001, "body": "x"},
+    "mail_forward": {"uid": 5, "uidvalidity": 1700000001, "to": "a@example.com"},
+}
+
+
+def listed_tools(srv, **env):
+    p = subprocess.run([LAUNCHER, "tools"], capture_output=True, text=True, env=srv.env(**env), timeout=120)
+    outputs.extend([p.stdout, p.stderr])
+    return [t["name"] for t in json.loads(p.stdout)]
+
+
 def read_only(srv):
-    before = srv.st()
-    c, r = tool(srv, "mail_trash", {"uids": [5], "uidvalidity": 1700000001}, MAILBEND_READ_ONLY="1")
-    check("read-only mode refuses changes", c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "") and srv.st() == before, r)
+    before, log_before = srv.st(), len(srv.log_lines())
+    allowed = []
+    for name, args in MUTATING_CALLS.items():
+        c, r = tool(srv, name, args, MAILBEND_READ_ONLY="1")
+        if not (c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "")):
+            allowed.append((name, r))
+    check("read-only mode refuses all 9 mutating tools before connecting", not allowed and srv.st() == before
+          and len(srv.log_lines()) == log_before, allowed)
     c, r = tool(srv, "mail_search", {}, MAILBEND_READ_ONLY="1")
     check("read-only mode still allows reads", c == 0 and "messages" in r, r)
+    c, r = tool(srv, "mail_trash", {"uids": [5], "uidvalidity": 1700000001}, MAILBEND_READ_ONLY="TRUE")
+    check("MAILBEND_READ_ONLY=TRUE is on", c != 0 and "MAILBEND_READ_ONLY is set" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_search", {}, MAILBEND_READ_ONLY="0")
+    check("MAILBEND_READ_ONLY=0 is off", c == 0 and "messages" in r, r)
+    unclear = []
+    for value in ["yes", "on", " 1", "2"]:
+        for name, args in [("mail_search", {}), ("mail_trash", {"uids": [5], "uidvalidity": 1700000001})]:
+            c, r = tool(srv, name, args, MAILBEND_READ_ONLY=value)
+            if not (c != 0 and "MAILBEND_READ_ONLY must be" in r.get("error", "")):
+                unclear.append((value, name, r))
+    c, r = tool(srv, "mail_search", {}, MAILBEND_DRAFTS_ONLY="sure")
+    if not (c != 0 and "MAILBEND_DRAFTS_ONLY must be" in r.get("error", "")):
+        unclear.append(("sure", "drafts", r))
+    check("unrecognized switch values fail every tool instead of reading as off", not unclear and srv.st() == before, unclear)
+
+    read_tools = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"]
+    check("tools lists all 14 tools by default", len(listed_tools(srv)) == 14)
+    check("read-only mode lists only the 5 read tools", listed_tools(srv, MAILBEND_READ_ONLY="1") == read_tools)
+    check("a misconfigured switch lists only the read tools", listed_tools(srv, MAILBEND_READ_ONLY="yes") == read_tools)
+    names = listed_tools(srv, MAILBEND_DRAFTS_ONLY="1")
+    check("drafts-only mode hides mail_send", len(names) == 13 and "mail_send" not in names and "mail_reply" in names, names)
+    res, code = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], MAILBEND_READ_ONLY="1")
+    names = [t["name"] for t in res[0].get("result", {}).get("tools", [])] if res else []
+    check("mcp: tools/list in read-only mode offers only the read tools", names == read_tools, res)
+
+    sent_before = len(srv.st().get("sent", []))
+    refused = []
+    for name in ["mail_send", "mail_reply", "mail_forward"]:
+        c, r = tool(srv, name, MUTATING_CALLS[name], MAILBEND_DRAFTS_ONLY="1")
+        if not (c != 0 and "MAILBEND_DRAFTS_ONLY" in r.get("error", "")):
+            refused.append((name, r))
+    check("drafts-only mode refuses every send", not refused and len(srv.st().get("sent", [])) == sent_before, refused)
+    n_drafts = len(srv.st()["mailboxes"]["Drafts"]["messages"])
+    c, r = tool(srv, "mail_reply", {**MUTATING_CALLS["mail_reply"], "as_draft": True}, MAILBEND_DRAFTS_ONLY="1")
+    check("drafts-only mode still saves a reply as a draft", c == 0 and len(srv.st()["mailboxes"]["Drafts"]["messages"]) == n_drafts + 1
+          and len(srv.st().get("sent", [])) == sent_before, r)
+    c, r = tool(srv, "mail_save_draft", MUTATING_CALLS["mail_save_draft"], MAILBEND_DRAFTS_ONLY="1")
+    check("drafts-only mode still saves drafts", c == 0 and r.get("saved_to") == "Drafts", r)
 
 
 def failures(srv, work):
@@ -506,6 +609,32 @@ def failures(srv, work):
     check("wrong password reports authentication failure", c != 0 and "authentication failed" in r.get("error", ""), r)
     c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None)
     check("missing password is a configuration error", c != 0 and "MAILBEND_APP_PASSWORD" in r.get("error", ""), r)
+    password_file(srv, work)
+    p = subprocess.run([LAUNCHER, "tools"], capture_output=True, text=True, env=srv.env(), timeout=120)
+    outputs.extend([p.stdout, p.stderr])
+    check("MAILBEND_CA_FILE prints a warning that it replaces the trust store", "warning" in p.stderr
+          and "MAILBEND_CA_FILE" in p.stderr, p.stderr)
+
+
+def password_file(srv, work):
+    pw = os.path.join(work, "password")
+    with open(os.open(pw, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        f.write(PASSWORD + "\n")
+    c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE=pw)
+    check("MAILBEND_PASSWORD_FILE logs in without the password in any environment", c == 0 and r.get("ok"), r)
+    c, r = tool(srv, "mail_probe", MAILBEND_PASSWORD_FILE=pw)
+    check("the password from both the environment and a file is refused", c != 0 and "not both" in r.get("error", ""), r)
+    c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE="password")
+    check("a relative MAILBEND_PASSWORD_FILE is refused", c != 0 and "absolute path" in r.get("error", ""), r)
+    link = os.path.join(work, "password-link")
+    os.symlink(pw, link)
+    c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE=link)
+    check("a symlinked MAILBEND_PASSWORD_FILE is refused", c != 0 and "symlink" in r.get("error", ""), r)
+    os.chmod(pw, 0o644)
+    c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE=pw)
+    check("a MAILBEND_PASSWORD_FILE readable by others is refused", c != 0 and "chmod 600" in r.get("error", ""), r)
+    os.remove(link)
+    os.remove(pw)
 
 
 def fallback(work):

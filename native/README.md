@@ -53,7 +53,10 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   HTTPS proxy environment settings. A TLS/protocol failure after TCP connects
   stops the session rather than replaying commands on another address.
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
-  environment only. The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
+  environment, or the password from `MAILBEND_PASSWORD_FILE` (an absolute
+  path to a regular file owned by the user, mode 600, opened without
+  following symlinks; one trailing newline is ignored; setting both is
+  refused). The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
   (SMTP) itself, wipes temporary password-bearing buffers, and never writes
   credentials to stdout or stderr.
   The server's replies to the login are checked but not forwarded either, so
@@ -76,7 +79,13 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   that canonical path with `RESOLVE_NO_SYMLINKS` (so swapping a component
   for a symlink afterwards fails), then opens `<path>` (relative to `<dir>`,
   or absolute inside it) with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS |
-  RESOLVE_NO_MAGICLINKS)`, so no symlink or `..` leads outside `<dir>`, then
+  RESOLVE_NO_MAGICLINKS)`, so no symlink or `..` leads outside `<dir>`. It
+  refuses a `<dir>` that is `/`, the user's home directory (from the
+  password database) or a directory containing it, or one holding `.ssh`,
+  `.gnupg`, `.aws`, `.config` or `.git`. It checks the file's type through
+  an `O_PATH` descriptor first, so a device or FIFO is never opened, then
+  opens it and confirms it is the same inode, refuses a file with more than
+  one hard link, and
   checks the opened descriptor is a regular file of at most `<max-bytes>`
   (capped at 25 MiB; the core passes what remains of the 25 MiB total budget)
   before reading it, and enforces that limit while reading if the file grows.

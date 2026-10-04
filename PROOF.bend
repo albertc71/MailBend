@@ -19,6 +19,9 @@ def Laws.delete_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
+def Laws.read_only_tools_are_exactly_five():
+  {==}
+
 def Laws.probe_writes_nothing():
   {==}
 
@@ -172,3 +175,84 @@ def Laws.delete_checks_uidplus(mbox, uids, confirm, uidplus, uidv):
 
 def Laws.copy_move_checks_uidplus(mbox, uids, dest, uidv):
   {==}
+
+def Laws.move_expunges_only_copied(mbox, uids, dest, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def Laws.trash_expunges_only_copied(mbox, uids, trash, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def delete_if_expunges_marked(confirm: Bool, mbox: String, uids: List<&2, U32>, uidplus: Bool, uidv: U32) -> {Ops.expunged(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) == Ops.marked_deleted(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) : Maybe<&2, List<&2, U32>>}:
+  match confirm:
+    case True{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case False{}:
+      {==}
+
+def Laws.delete_expunges_only_marked(mbox, uids, confirm, uidplus, uidv):
+  delete_if_expunges_marked(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
+
+def Laws.delete_expunges_given_uids(mbox, uids, uidv):
+  {==}
+
+def Laws.expunge_renders_uid_expunge(uids):
+  {==}
+
+def Laws.mark_pins_callers_uidvalidity(mbox, uids, seen, uidv):
+  {==}
+
+def Laws.move_pins_callers_uidvalidity(mbox, uids, dest, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def Laws.trash_pins_callers_uidvalidity(mbox, uids, trash, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def delete_if_pins_uidvalidity(confirm: Bool, mbox: String, uids: List<&2, U32>, uidplus: Bool, uidv: U32) -> {Ops.pin_line_or(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv), I.uidv_line(uidv)) == I.uidv_line(uidv) : String}:
+  match confirm:
+    case True{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case False{}:
+      {==}
+
+def Laws.delete_pins_callers_uidvalidity(mbox, uids, confirm, uidplus, uidv):
+  delete_if_pins_uidvalidity(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
