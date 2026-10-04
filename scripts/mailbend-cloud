@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Opt-in cloud launcher. Resolve afresh in each native helper invocation,
+# including tool calls made by a long-running MCP core after sleep/wake.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# An explicitly empty value selects system DNS for troubleshooting.
+: "${MAILBEND_DOH_URL=https://cloudflare-dns.com/dns-query}"
+export MAILBEND_DOH_URL
+exec "$root/scripts/mailbend" "$@"

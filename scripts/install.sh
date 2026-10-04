@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Builds MailBend in place:
-#   bin/mailbend-tls     the TLS helper (C, OpenSSL)
+#   bin/mailbend-tls     the TLS helper (C, OpenSSL, libcurl)
 #   bin/mailbend-attach  the attachment reader (C, no credentials)
 #   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install Bend with its
@@ -27,13 +27,20 @@ fi
 command -v cc >/dev/null 2>&1 || fail "a C compiler is needed (apt-get install build-essential)"
 probe=$(mktemp -d)
 trap 'rm -rf "$probe"' EXIT
-printf '#include <openssl/ssl.h>\nint main(void){return 0;}\n' > "$probe/check.c"
-cc "$probe/check.c" -o "$probe/check" -lssl -lcrypto 2>/dev/null \
-  || fail "OpenSSL headers are needed (apt-get install libssl-dev)"
+cat > "$probe/check.c" <<'EOF'
+#include <openssl/ssl.h>
+#include <curl/curl.h>
+#if LIBCURL_VERSION_NUM < 0x074c00
+#error libcurl 7.76+ required
+#endif
+int main(void) { return 0; }
+EOF
+cc "$probe/check.c" -o "$probe/check" -lssl -lcrypto -lcurl 2>/dev/null \
+  || fail "OpenSSL and libcurl 7.76+ headers are needed (apt-get install libssl-dev libcurl4-openssl-dev)"
 
 mkdir -p bin
 say "building bin/mailbend-tls"
-cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto
+cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto -lcurl
 say "building bin/mailbend-attach"
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
 

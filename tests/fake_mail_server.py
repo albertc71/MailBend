@@ -1246,6 +1246,8 @@ def main():
     ap.add_argument('--caps', default='MOVE,UIDPLUS,SPECIAL-USE,IDLE')
     ap.add_argument('--no-starttls', action='store_true')
     ap.add_argument('--cert-name', default='server')
+    ap.add_argument('--require-sni', help='reject TLS unless this service name is sent')
+    ap.add_argument('--bind-host', default='127.0.0.1')
     ap.add_argument('--silent-port', action='store_true')
     ap.add_argument('--echo-login', action='store_true', help='echo the credentials in login replies')
     ap.add_argument('--lowercase-codes', action='store_true', help='send response codes in lower case')
@@ -1265,11 +1267,17 @@ def main():
     logger = Logger(args.log)
     caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
     ctx = make_ssl_context(args.certdir, args.cert_name)
+    if args.require_sni:
+        def check_sni(sock, name, context):
+            if name != args.require_sni:
+                return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
+        ctx.set_servername_callback(check_sni)
 
     def make_listener():
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        family = socket.AF_INET6 if ':' in args.bind_host else socket.AF_INET
+        s = socket.socket(family, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(('127.0.0.1', 0))
+        s.bind((args.bind_host, 0))
         s.listen(16)
         return s
 

@@ -40,11 +40,10 @@
  * 4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
  */
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -55,6 +54,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <curl/curl.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
@@ -69,6 +69,8 @@ enum { EX_OK = 0, EX_USAGE = 2, EX_CONNECT = 3, EX_AUTH = 4, EX_REJECTED = 5, EX
 
 static int sock = -1;
 static SSL *ssl = NULL;
+/* Kept alive while OpenSSL uses the connected socket owned by libcurl. */
+static CURL *connection = NULL;
 static unsigned long long out_total = 0;
 
 __attribute__((noreturn, format(printf, 2, 3)))
@@ -206,36 +208,117 @@ static void set_timeouts(int fd, int ms) {
   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
 }
 
-static void tcp_connect(const char *host, const char *port, int timeout_ms) {
-  struct addrinfo hints = {0}, *res = NULL;
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  if (getaddrinfo(host, port, &hints, &res) != 0 || !res)
-    die(EX_CONNECT, "cannot resolve %s", host);
-  for (struct addrinfo *a = res; a; a = a->ai_next) {
-    int fd = socket(a->ai_family, a->ai_socktype | SOCK_CLOEXEC, a->ai_protocol);
-    if (fd < 0) continue;
-    int fl = fcntl(fd, F_GETFL);
-    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-    int r = connect(fd, a->ai_addr, a->ai_addrlen);
-    if (r < 0 && errno == EINPROGRESS) {
-      struct pollfd p = { fd, POLLOUT, 0 };
-      int err = 0;
-      socklen_t el = sizeof err;
-      if (poll(&p, 1, timeout_ms) == 1 &&
-          getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el) == 0 && err == 0)
-        r = 0;
-    }
-    if (r == 0) {
-      fcntl(fd, F_SETFL, fl);
-      set_timeouts(fd, timeout_ms);
-      sock = fd;
-      break;
-    }
-    close(fd);
+static void curl_check(CURLcode code) {
+  if (code != CURLE_OK)
+    die(EX_CONNECT, "cannot configure the resolver/connection: %s",
+        curl_easy_strerror(code));
+}
+
+static CURLU *mail_connection_url(const char *host, const char *port) {
+  CURLU *url = curl_url();
+  if (!url) die(EX_CONNECT, "cannot create a connection URL");
+  /* URL syntax needs brackets around IPv6. The caller keeps the original
+   * host unchanged for mail certificate verification and SNI. */
+  unsigned char host_ip[16];
+  char bracketed[INET6_ADDRSTRLEN + 2];
+  const char *url_host = host;
+  if (inet_pton(AF_INET6, host, host_ip) == 1) {
+    snprintf(bracketed, sizeof bracketed, "[%s]", host);
+    url_host = bracketed;
   }
-  freeaddrinfo(res);
-  if (sock < 0) die(EX_CONNECT, "cannot connect to %s:%s", host, port);
+  /* HTTP is only a URL container here: CONNECT_ONLY sends no HTTP or mail
+   * bytes. The existing OpenSSL/IMAP/SMTP code owns every protocol byte. */
+  if (curl_url_set(url, CURLUPART_SCHEME, "http", 0) ||
+      curl_url_set(url, CURLUPART_HOST, url_host, 0) ||
+      curl_url_set(url, CURLUPART_PORT, port, 0))
+    die(EX_USAGE, "invalid mail host or port");
+  return url;
+}
+
+/* The returned list is borrowed by libcurl until the connection attempt ends.
+ * A numeric override wins over DoH; neither changes the mail TLS identity. */
+static struct curl_slist *configure_connection_route(
+    CURL *handle, const char *port, const char *connect_ip_env,
+    const char *connect_ip, const char *doh_url) {
+  struct curl_slist *route_entries = NULL;
+  if (*connect_ip) {
+    unsigned char bytes[16];
+    int is_ipv6 = inet_pton(AF_INET6, connect_ip, bytes) == 1;
+    if (!is_ipv6 && inet_pton(AF_INET, connect_ip, bytes) != 1)
+      die(EX_USAGE, "%s must be one numeric IPv4 or IPv6 address", connect_ip_env);
+    char *entry = NULL;
+    /* CONNECT_TO is source-host:source-port:destination-host:destination-port.
+     * Empty source fields match this connection's original host and port. */
+    if (asprintf(&entry, "::%s%s%s:%s", is_ipv6 ? "[" : "", connect_ip,
+                 is_ipv6 ? "]" : "", port) < 0)
+      die(EX_CONNECT, "out of memory");
+    route_entries = curl_slist_append(NULL, entry);
+    free(entry);
+    if (!route_entries) die(EX_CONNECT, "out of memory");
+    curl_check(curl_easy_setopt(handle, CURLOPT_CONNECT_TO, route_entries));
+  } else if (*doh_url) {
+    /* Bootstrap the default resolver without consulting broken system DNS.
+     * These are resolver anycast addresses, never pinned Apple addresses. */
+    route_entries = curl_slist_append(NULL,
+        "cloudflare-dns.com:443:1.1.1.1,1.0.0.1");
+    if (!route_entries) die(EX_CONNECT, "out of memory");
+    curl_check(curl_easy_setopt(handle, CURLOPT_RESOLVE, route_entries));
+    curl_check(curl_easy_setopt(handle, CURLOPT_DOH_URL, doh_url));
+    curl_check(curl_easy_setopt(handle, CURLOPT_DOH_SSL_VERIFYPEER, 1L));
+    curl_check(curl_easy_setopt(handle, CURLOPT_DOH_SSL_VERIFYHOST, 2L));
+    const char *ca = env_or("MAILBEND_CA_FILE", "");
+    if (*ca) {
+      curl_check(curl_easy_setopt(handle, CURLOPT_CAINFO, ca));
+      curl_check(curl_easy_setopt(handle, CURLOPT_CAPATH, NULL));
+    }
+  }
+  return route_entries;
+}
+
+static int connected_socket(CURL *handle, int timeout_ms) {
+  curl_socket_t fd = CURL_SOCKET_BAD;
+  curl_check(curl_easy_getinfo(handle, CURLINFO_ACTIVESOCKET, &fd));
+  if (fd == CURL_SOCKET_BAD) die(EX_CONNECT, "no connected socket");
+  /* Mail I/O uses blocking OpenSSL/socket calls with per-operation timeouts. */
+  int flags = fcntl(fd, F_GETFL);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0 ||
+      fcntl(fd, F_SETFD, FD_CLOEXEC) < 0)
+    die(EX_CONNECT, "cannot configure the connected socket");
+  set_timeouts(fd, timeout_ms);
+  return fd;
+}
+
+static void tcp_connect(const char *host, const char *port,
+                        const char *connect_ip_env, int timeout_ms) {
+  const char *doh_url = env_or("MAILBEND_DOH_URL", "");
+  const char *connect_ip = env_or(connect_ip_env, "");
+  if (*doh_url && strncmp(doh_url, "https://", 8) != 0)
+    die(EX_USAGE, "MAILBEND_DOH_URL must be an HTTPS URL");
+
+  curl_check(curl_global_init(CURL_GLOBAL_DEFAULT));
+  connection = curl_easy_init();
+  if (!connection) die(EX_CONNECT, "cannot create a connection");
+  CURLU *url = mail_connection_url(host, port);
+  curl_check(curl_easy_setopt(connection, CURLOPT_CURLU, url));
+  curl_check(curl_easy_setopt(connection, CURLOPT_CONNECT_ONLY, 1L));
+  /* Raw mail sockets must never become an HTTP request through a proxy. */
+  curl_check(curl_easy_setopt(connection, CURLOPT_PROXY, ""));
+  curl_check(curl_easy_setopt(connection, CURLOPT_NOSIGNAL, 1L));
+  curl_check(curl_easy_setopt(connection, CURLOPT_CONNECTTIMEOUT_MS, (long)timeout_ms));
+  curl_check(curl_easy_setopt(connection, CURLOPT_TIMEOUT_MS, (long)timeout_ms));
+  struct curl_slist *route_entries = configure_connection_route(
+      connection, port, connect_ip_env, connect_ip, doh_url);
+
+  const char *resolver_mode = "system DNS";
+  if (*connect_ip) resolver_mode = "connection IP override";
+  else if (*doh_url) resolver_mode = "DNS-over-HTTPS";
+  CURLcode result = curl_easy_perform(connection);
+  curl_slist_free_all(route_entries);
+  curl_url_cleanup(url);
+  if (result != CURLE_OK)
+    die(EX_CONNECT, "cannot connect to %s:%s (%s; %s)", host, port,
+        resolver_mode, curl_easy_strerror(result));
+  sock = connected_socket(connection, timeout_ms);
 }
 
 static void tls_start(const char *host) {
@@ -505,7 +588,7 @@ static int run_imap(void) {
   load_credentials();
   read_stdin();
   imap_validate();
-  tcp_connect(host, port, timeout);
+  tcp_connect(host, port, "MAILBEND_IMAP_CONNECT_IP", timeout);
   tls_start(host);
 
   unsigned char *g;
@@ -738,7 +821,7 @@ static int run_smtp(void) {
   load_credentials();
   read_stdin();
   smtp_validate();
-  tcp_connect(host, port, timeout);
+  tcp_connect(host, port, "MAILBEND_SMTP_CONNECT_IP", timeout);
 
   if (smtp_reply(NULL) != 220) die(EX_PROTO, "server refused the connection");
   char *ehlo = NULL;
@@ -810,11 +893,19 @@ static int run_smtp(void) {
 
 int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
+  const curl_version_info_data *cv = curl_version_info(CURLVERSION_NOW);
+  if (!cv || cv->version_num < 0x074c00 || !(cv->features & CURL_VERSION_SSL))
+    die(EX_USAGE, "libcurl 7.76+ with HTTPS support is required");
+  /* Credential-free readiness check for a rebuilt cloud computer. */
+  if (argc == 2 && strcmp(argv[1], "--check") == 0) return EX_OK;
   int r = EX_USAGE;
   if (argc == 2 && strcmp(argv[1], "imap") == 0) r = run_imap();
   else if (argc == 2 && strcmp(argv[1], "smtp") == 0) r = run_smtp();
-  else die(EX_USAGE, "usage: mailbend-tls imap|smtp");
+  else die(EX_USAGE, "usage: mailbend-tls imap|smtp|--check");
   fflush(stdout);
   if (in) { wipe(in, in_len); free(in); }
+  SSL_free(ssl);
+  curl_easy_cleanup(connection);
+  curl_global_cleanup();
   return r;
 }

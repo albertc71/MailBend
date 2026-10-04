@@ -4,14 +4,16 @@ MailBend has two small native programs:
 
 - `mailbend-tls.c`: sockets, TLS and login, the only code that reads the
   password. Which commands to send, and what the answers mean, is decided
-  by the Bend core. It links only against OpenSSL.
+  by the Bend core. It links against OpenSSL and libcurl 7.76+ (with HTTPS
+  support). libcurl only resolves names and connects TCP sockets; OpenSSL
+  and this helper still own mail TLS, authentication and protocol framing.
 - `mailbend-attach.c`: reads one attachment file safely (Bend cannot open a
   file without following symlinks). It holds no credentials: it first
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
 
 ```sh
-cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto
+cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto -lcurl
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
 ```
 
@@ -20,6 +22,7 @@ cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
 ```text
 mailbend-tls imap   < tagged IMAP commands   > server transcript
 mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
+mailbend-tls --check  # credential-free local runtime check; no network
 mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 ```
 
@@ -27,6 +30,27 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   system trust store (or `MAILBEND_CA_FILE`, which replaces it), host name
   verified (`SSL_set1_host`), SNI sent. There is no way to skip verification.
   SMTP must offer STARTTLS; the helper refuses to authenticate without it.
+- **Resolution**: system DNS by default; a nonempty `MAILBEND_DOH_URL`
+  selects an HTTPS DNS resolver without fallback to system DNS for the mail
+  hostname. libcurl performs standard A/AAAA resolution, address selection
+  and TCP fallback. The default cloud resolver, `cloudflare-dns.com:443`, is
+  bootstrapped with Cloudflare's `1.1.1.1` and `1.0.0.1` anycast addresses.
+  Other resolver hostnames use system DNS for bootstrap. DoH verifies both
+  its peer and hostname, using the system CA store or `MAILBEND_CA_FILE`.
+  Every helper process resolves anew; no addresses or credentials are cached
+  on disk. The resolver sees only DNS queries, never mail credentials/content.
+- **Connection overrides**: `MAILBEND_IMAP_CONNECT_IP` and
+  `MAILBEND_SMTP_CONNECT_IP` each accept one bare numeric IPv4/IPv6 address.
+  They take precedence over DoH for that service, without changing `*_HOST`,
+  SNI, the certificate name, port, or command plan. They are manual overrides,
+  not refreshed DNS. Invalid nonempty values fail with exit 2. An invalid
+  non-HTTPS DoH URL also fails with exit 2.
+- **TCP only**: libcurl uses `CONNECT_ONLY` with an HTTP URL as an address
+  container, sends no HTTP request, and never authenticates to mail or
+  executes/retries mail operations. HTTP proxy environment variables do not
+  route the raw mail socket; libcurl's separate DoH HTTPS requests may use
+  HTTPS proxy environment settings. A TLS/protocol failure after TCP connects
+  stops the session rather than replaying commands on another address.
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
   environment only. The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
   (SMTP) itself, wipes its copies, and never writes them to stdout or stderr.
@@ -61,8 +85,11 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   encoding of U+0080-U+00FF, so the core reads one character per byte and
   literal lengths stay exact. Server literals are copied as raw bytes, so
   message content can never be mistaken for a tagged reply.
-- **Limits**: connect and per-read timeout `MAILBEND_TIMEOUT_MS` (default
-  30 s), 1 MiB per line, 64 MiB per literal and per script, 128 MiB per
-  transcript.
+- **Limits**: DNS plus TCP connect budget and per-read timeout
+  `MAILBEND_TIMEOUT_MS` (default 30 s). Bounding system/bootstrap DNS requires
+  a libcurl build with asynchronous DNS (the tested Ubuntu packages provide
+  it). Size limits are 32 MiB per line, 64 MiB per literal and per script,
+  and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
+  (at most 120 MiB after encoding).
 - **Exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
