@@ -50,7 +50,7 @@ flowchart TB
   end
 
   subgraph reader["mailbend-attach (C)"]
-    attach["no credentials: re-executes with an empty environment<br/>no procfs or sysfs files<br/>openat2 beneath the directory<br/>no symlinks, no ..<br/>regular file within the byte budget"]
+    attach["no credentials: re-executes with an empty environment<br/>no procfs or sysfs files<br/>openat2 beneath the directory<br/>no symlinks, no .. that leaves it<br/>regular file within the byte budget"]
   end
 
   imapsrv[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
