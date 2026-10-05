@@ -53,8 +53,10 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <linux/openat2.h>
 
 #include <curl/curl.h>
 #include <openssl/err.h>
@@ -373,11 +375,21 @@ static char pass_file_buf[1025];
 
 /* MAILBEND_PASSWORD_FILE keeps the password out of every environment: an
  * absolute path to a regular file owned by this user, not readable by group
- * or others, holding the password (one trailing newline is ignored). */
+ * or others, holding the password (one trailing newline is ignored). It is
+ * opened with openat2(RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS), so no
+ * component of the path, not just the last, may be a symlink. */
 static const char *read_password_file(const char *path) {
   if (path[0] != '/') die(EX_USAGE, "MAILBEND_PASSWORD_FILE must be an absolute path");
-  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY);
-  if (fd < 0) die(EX_USAGE, "cannot open MAILBEND_PASSWORD_FILE (it must exist and not be a symlink)");
+  struct open_how how;
+  memset(&how, 0, sizeof how);
+  how.flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY;
+  how.resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS;
+  int fd = (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof how);
+  if (fd < 0) {
+    if (errno == ENOSYS) die(EX_USAGE, "MAILBEND_PASSWORD_FILE needs Linux 5.6+ (openat2)");
+    if (errno == ELOOP) die(EX_USAGE, "MAILBEND_PASSWORD_FILE must not be or sit under a symlink: use its real path");
+    die(EX_USAGE, "cannot open MAILBEND_PASSWORD_FILE (it must exist)");
+  }
   struct stat st;
   if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die(EX_USAGE, "MAILBEND_PASSWORD_FILE is not a regular file");
   if (st.st_uid != getuid()) die(EX_USAGE, "MAILBEND_PASSWORD_FILE must be owned by the user running MailBend");

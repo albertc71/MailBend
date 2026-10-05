@@ -617,6 +617,7 @@ def failures(srv, work):
 
 
 def password_file(srv, work):
+    work = os.path.realpath(work)
     pw = os.path.join(work, "password")
     with open(os.open(pw, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         f.write(PASSWORD + "\n")
@@ -630,6 +631,11 @@ def password_file(srv, work):
     os.symlink(pw, link)
     c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE=link)
     check("a symlinked MAILBEND_PASSWORD_FILE is refused", c != 0 and "symlink" in r.get("error", ""), r)
+    linked_dir = os.path.join(work, "password-dir")
+    os.symlink(work, linked_dir)
+    c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE=os.path.join(linked_dir, "password"))
+    check("a MAILBEND_PASSWORD_FILE under a symlinked directory is refused", c != 0 and "symlink" in r.get("error", ""), r)
+    os.remove(linked_dir)
     os.chmod(pw, 0o644)
     c, r = tool(srv, "mail_probe", MAILBEND_APP_PASSWORD=None, MAILBEND_PASSWORD_FILE=pw)
     check("a MAILBEND_PASSWORD_FILE readable by others is refused", c != 0 and "chmod 600" in r.get("error", ""), r)

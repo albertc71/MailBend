@@ -284,6 +284,28 @@ def marked_deleted(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
         case _:
           marked_deleted(t)
 
+# The commands of a plan that change mail (store, copy, move, expunge,
+# append), in order. Unlike the first-match helpers above, it keeps every
+# such command, so a law about it also binds any second or later one.
+def mail_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  match cs:
+    case Nil{}:
+      []
+    case Con{c, t}:
+      match c:
+        case I.CStore{u, a, f}:
+          Con{I.CStore{u, a, f}, mail_changes(t)}
+        case I.CCopy{u, d}:
+          Con{I.CCopy{u, d}, mail_changes(t)}
+        case I.CMove{u, d}:
+          Con{I.CMove{u, d}, mail_changes(t)}
+        case I.CExpunge{u}:
+          Con{I.CExpunge{u}, mail_changes(t)}
+        case I.CAppend{m, f, b}:
+          Con{I.CAppend{m, f, b}, mail_changes(t)}
+        case _:
+          mail_changes(t)
+
 # Whether `s` starts with `p`. Unlike String.starts_with it looks at `p`
 # first, so it decides as soon as a known prefix is matched even when the
 # rest of `s` is unknown (which is what the laws about rendering need).
