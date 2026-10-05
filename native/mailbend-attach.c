@@ -17,9 +17,12 @@
  * RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS), so no symlink or ".." leads
  * outside, and only a regular file of at most <max-bytes> (never more than
  * 25 MiB) is read, checked on the opened descriptor itself. The file's type
- * is checked on an O_PATH descriptor before it is opened for reading, so a
- * device or FIFO is never opened, and a file with more than one hard link is
- * refused (another name for it may live outside <dir>).
+ * is checked first on an O_PATH descriptor, so a device or FIFO found there
+ * is not opened. That descriptor is then closed and the path opened again
+ * (non-blocking) for reading: a file a concurrent local writer substitutes
+ * in between may be opened, but is refused because its inode differs. A
+ * file with more than one hard link is refused (another name for it may
+ * live outside <dir>).
  *
  * <dir> must be a dedicated directory: "/", the user's home directory or any
  * directory containing it, and a directory holding .ssh, .gnupg, .aws,

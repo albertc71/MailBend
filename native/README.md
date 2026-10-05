@@ -54,8 +54,10 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   stops the session rather than replaying commands on another address.
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
   environment, or the password from `MAILBEND_PASSWORD_FILE` (an absolute
-  path to a regular file owned by the user, mode 600, opened without
-  following symlinks; one trailing newline is ignored; setting both is
+  path to a regular file owned by the user, mode 600, opened with
+  `O_NOFOLLOW`, so the final component must not be a symlink; symlinks in
+  earlier components are followed, so the path must be trusted; one
+  trailing newline is ignored; setting both is
   refused). The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
   (SMTP) itself, wipes temporary password-bearing buffers, and never writes
   credentials to stdout or stderr.
@@ -83,9 +85,11 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   refuses a `<dir>` that is `/`, the user's home directory (from the
   password database) or a directory containing it, or one holding `.ssh`,
   `.gnupg`, `.aws`, `.config` or `.git`. It checks the file's type through
-  an `O_PATH` descriptor first, so a device or FIFO is never opened, then
-  opens it and confirms it is the same inode, refuses a file with more than
-  one hard link, and
+  an `O_PATH` descriptor first, so a device or FIFO found there is not
+  opened; it then closes that descriptor, opens the path again
+  (non-blocking) and confirms it is the same inode, so a file a concurrent
+  local writer substitutes in between may be opened but is refused. It
+  refuses a file with more than one hard link, and
   checks the opened descriptor is a regular file of at most `<max-bytes>`
   (capped at 25 MiB; the core passes what remains of the 25 MiB total budget)
   before reading it, and enforces that limit while reading if the file grows.

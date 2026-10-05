@@ -159,8 +159,8 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | TLS chain and host name always verified | `native/mailbend-tls.c` | transport tests (bad CA, wrong host, expired, self-signed) |
 | Only the helper reads the password; no output contains it | helper (login, login replies not forwarded) | transport cases 2 and 18, e2e output scan |
 | Reads never change mail (`EXAMINE`, `BODY.PEEK`) | `src/ops.bend` read plans | laws in `LAWS.bend`, e2e server log |
-| Move and trash never expunge before copying, and expunge exactly the copied UIDs | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail`, `move/trash_expunges_only_copied` |
-| Delete needs `permanently-delete` and UIDPLUS, and expunges exactly the marked UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
+| Move and trash never expunge before copying; the first `UID EXPUNGE` names the first `UID COPY`'s UIDs | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail`, `move/trash_expunges_only_copied` |
+| Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
 | Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
 | No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
 | Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_five`, e2e (all 9 mutating tools, switch values, tool lists) |
@@ -318,12 +318,13 @@ These tests use the fake TLS server, not a live provider.
 - rendered read scripts start with `EXAMINE`, and every fetch item renders as
   `BODY.PEEK[...]` or metadata;
 - marking read/unread never marks `\Deleted` or expunges;
-- move and trash never expunge before copying, and expunge exactly the UIDs
-  they copied, for every capability set;
+- move and trash never expunge before copying, for every capability set,
+  and their first `UID EXPUNGE` names the same UIDs as their first
+  `UID COPY` (their `\Deleted` store and later commands are not compared);
 - delete is the empty plan unless the confirmation is exactly
-  `permanently-delete` (the tool passes the caller's string straight in); it
-  expunges exactly the UIDs it marked `\Deleted`, which with the
-  confirmation are the caller's UIDs;
+  `permanently-delete` (the tool passes the caller's string straight in); its
+  first `UID EXPUNGE` names the same UIDs as its first `\Deleted` store,
+  which with the confirmation and UIDPLUS are the caller's UIDs;
 - `CExpunge` renders as `UID EXPUNGE`;
 - saving a draft never removes anything;
 - mark, move, trash and delete plans open with `SELECT` and the expectation

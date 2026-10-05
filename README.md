@@ -176,10 +176,15 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   that can change a mailbox, for every argument, and that what is rendered on
   the wire is `EXAMINE` and `BODY.PEEK`.
 - **Nothing is lost by accident.** Move and trash never expunge before
-  copying, and expunge exactly the UIDs they copied (proven for every server
-  capability). Permanent delete needs the exact confirmation word (proven:
-  otherwise the plan is empty) and UIDPLUS, and expunges exactly the given
-  UIDs it marked; expunging always renders as `UID EXPUNGE` (proven).
+  copying (proven for every server capability), and their first
+  `UID EXPUNGE` names the same UIDs as their first `UID COPY` (proven).
+  Permanent delete needs the exact confirmation word (proven: otherwise the
+  plan is empty) and UIDPLUS; its first `UID EXPUNGE` names the same UIDs
+  as its first `\Deleted` store, and with the confirmation those are the
+  caller's UIDs (proven). These laws compare first commands only: they do
+  not bind move/trash's `\Deleted` store or any later command, which the
+  current plans build from the caller's UIDs. Expunging always renders as
+  `UID EXPUNGE` (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
   caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
@@ -198,8 +203,11 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   be sent, so use an empty, dedicated directory holding only files you are
   willing to mail. The reader refuses `/`, your home directory or any
   directory containing it, and a directory holding `.ssh`, `.gnupg`, `.aws`,
-  `.config` or `.git`; it never opens a device or FIFO, and refuses a file
-  with a second hard link (whose other name may be elsewhere).
+  `.config` or `.git`; it checks the file's type before opening it, so a
+  device or FIFO is not opened (one a concurrent local writer substitutes
+  just before the read open may be opened, but is then refused), and it
+  refuses a file with a second hard link (whose other name may be
+  elsewhere).
 - **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
   test server; whoever sets it decides which servers are trusted, so never
   set it in production. `scripts/mailbend` prints a warning when it is set.

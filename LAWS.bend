@@ -111,10 +111,11 @@ law trash_never_loses_mail:
   for uidv: U32
   {Ops.loses_mail(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv)) == False{} : Bool}
 
-# A plan that expunges expunges exactly the UIDs it copied first (so a move
-# without UID MOVE removes only what now exists at the destination), and
-# permanent deletion expunges exactly the UIDs it marked \Deleted: the
-# caller's UIDs when the confirmation is given.
+# A move or trash plan's first UID EXPUNGE names the same UIDs as its first
+# UID COPY, and a delete plan's first UID EXPUNGE names the same UIDs as its
+# first \Deleted store; with the confirmation and UIDPLUS those are the
+# caller's UIDs. Only the first matching commands are compared: these laws
+# do not bind move/trash's \Deleted store or any later command.
 law move_expunges_only_copied:
   for mbox: String
   for uids: List<&2, U32>
