@@ -55,8 +55,8 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
   environment, or the password from `MAILBEND_PASSWORD_FILE` (an absolute
   path to a regular file owned by the user, mode 600, opened with
-  `O_NOFOLLOW`, so the final component must not be a symlink; symlinks in
-  earlier components are followed, so the path must be trusted; one
+  `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)`, so no component
+  of the path may be a symlink: give its real path; needs Linux 5.6+; one
   trailing newline is ignored; setting both is
   refused). The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
   (SMTP) itself, wipes temporary password-bearing buffers, and never writes
@@ -86,9 +86,11 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   password database) or a directory containing it, or one holding `.ssh`,
   `.gnupg`, `.aws`, `.config` or `.git`. It checks the file's type through
   an `O_PATH` descriptor first, so a device or FIFO found there is not
-  opened; it then closes that descriptor, opens the path again
-  (non-blocking) and confirms it is the same inode, so a file a concurrent
-  local writer substitutes in between may be opened but is refused. It
+  opened; it then reopens that same inode for reading through
+  `/proc/self/fd/<descriptor>` (not by walking the path again) and confirms
+  the inode once more, so a file a concurrent local writer substitutes
+  under the name is never opened. What can still change after the checks
+  is that same file's contents and links. It
   refuses a file with more than one hard link, and
   checks the opened descriptor is a regular file of at most `<max-bytes>`
   (capped at 25 MiB; the core passes what remains of the 25 MiB total budget)

@@ -18,11 +18,10 @@
  * outside, and only a regular file of at most <max-bytes> (never more than
  * 25 MiB) is read, checked on the opened descriptor itself. The file's type
  * is checked first on an O_PATH descriptor, so a device or FIFO found there
- * is not opened. That descriptor is then closed and the path opened again
- * (non-blocking) for reading: a file a concurrent local writer substitutes
- * in between may be opened, but is refused because its inode differs. A
- * file with more than one hard link is refused (another name for it may
- * live outside <dir>).
+ * is not opened. That same inode is then reopened for reading through
+ * /proc/self/fd, not by walking the path again, so a file a concurrent local
+ * writer substitutes under the name is never opened. A file with more than
+ * one hard link is refused (another name for it may live outside <dir>).
  *
  * <dir> must be a dedicated directory: "/", the user's home directory or any
  * directory containing it, and a directory holding .ssh, .gnupg, .aws,
@@ -167,19 +166,25 @@ static int open_beneath(int directory_fd, const char *relative, const char *path
   return fd;
 }
 
-/* Checks the file through an O_PATH descriptor (opening nothing), then opens
- * it for reading and makes sure it is still the same file. No O_NOFOLLOW on
- * the probe: with O_PATH it would return a final symlink itself instead of
- * letting RESOLVE_NO_SYMLINKS refuse it. */
+/* Checks the file through an O_PATH descriptor (opening nothing), then
+ * reopens that same inode for reading through /proc/self/fd/<probe>, which
+ * follows the descriptor rather than walking the path again, so a file
+ * swapped in under the name meanwhile is never opened. The inode is compared
+ * once more as a backstop. No O_NOFOLLOW on the probe: with O_PATH it would
+ * return a final symlink itself instead of letting RESOLVE_NO_SYMLINKS
+ * refuse it. */
 static int open_attachment(int directory_fd, const char *relative, const char *path) {
   int probe = open_beneath(directory_fd, relative, path, O_PATH);
   struct stat before;
   if (fstat(probe, &before) != 0 || !S_ISREG(before.st_mode)) die("attachment %s is not a regular file", path);
-  close(probe);
-  int fd = open_beneath(directory_fd, relative, path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY);
+  char self[32];
+  snprintf(self, sizeof self, "/proc/self/fd/%d", probe);
+  int fd = open(self, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
+  if (fd < 0) die("cannot reopen attachment %s through /proc/self/fd: %s", path, strerror(errno));
   struct stat after;
   if (fstat(fd, &after) != 0 || after.st_dev != before.st_dev || after.st_ino != before.st_ino)
     die("attachment %s changed while it was opened", path);
+  close(probe);
   return fd;
 }
 
