@@ -1,0 +1,6 @@
+# The MSRV, and the version Ubuntu 24.04 packages as cargo-1.85. Fuzzing
+# alone uses nightly (cargo +nightly fuzz).
+[toolchain]
+channel = "1.85"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

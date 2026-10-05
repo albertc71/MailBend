@@ -1,24 +1,66 @@
 #!/usr/bin/env sh
 # Builds MailBend in place:
 #   bin/mailbend-tls     the TLS helper (C, OpenSSL, libcurl)
-#   bin/mailbend-attach  the attachment reader (C, no credentials)
+#   bin/mailbend-attach  the attachment reader (Rust, no credentials)
 #   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install the pinned,
-# checksum-verified Bend release (scripts/install-bend.sh) when it is missing.
+# checksum-verified Bend release (scripts/install-bend.sh) when it is missing,
+# and --install-rust to install Rust 1.85 with a checksum-verified rustup
+# (scripts/install-rust.sh) when no cargo 1.85+ is found.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 export BEND_NO_TELEMETRY=1
-PATH="$HOME/.bend/bin:$PATH"
+PATH="$HOME/.bend/bin:$HOME/.cargo/bin:$PATH"
 
 say() { printf 'mailbend: %s\n' "$*"; }
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 
+install_bend=0 install_rust=0
+for arg in "$@"; do
+  case "$arg" in
+    --install-bend) install_bend=1 ;;
+    --install-rust) install_rust=1 ;;
+    *) fail "usage: install.sh [--install-bend] [--install-rust]" ;;
+  esac
+done
+
 if ! command -v bend >/dev/null 2>&1; then
-  if [ "${1:-}" = "--install-bend" ]; then
+  if [ "$install_bend" = 1 ]; then
     sh scripts/install-bend.sh
   else
     fail "Bend is not installed. Rerun this script with --install-bend"
+  fi
+fi
+
+# Whether a "<tool> 1.N.x ..." version line is at least 1.85.
+at_least_185() {
+  minor=$(printf '%s\n' "$1" | sed -n 's/^[a-z]* 1\.\([0-9][0-9]*\)\..*/\1/p')
+  [ -n "$minor" ] && [ "$minor" -ge 85 ]
+}
+# Uses cargo $1 with rustc $2 if both are 1.85+. Asked from native/ so
+# rustup's proxies report the toolchain native/rust-toolchain.toml pins.
+try_cargo() {
+  cargo_version=$(CDPATH= cd native && "$1" --version 2>/dev/null) || return 1
+  rustc_version=$(CDPATH= cd native && "$2" --version 2>/dev/null) || return 1
+  at_least_185 "$cargo_version" && at_least_185 "$rustc_version" || return 1
+  cargo=$1 RUSTC=$2
+  export RUSTC
+}
+# $CARGO if set; else cargo (rustup), else Ubuntu's cargo-1.85 and rustc-1.85.
+find_cargo() {
+  if [ -n "${CARGO:-}" ]; then
+    try_cargo "$CARGO" "${RUSTC:-rustc}"
+  else
+    try_cargo cargo "${RUSTC:-rustc}" || try_cargo cargo-1.85 "${RUSTC:-rustc-1.85}"
+  fi
+}
+if ! find_cargo; then
+  if [ "$install_rust" = 1 ]; then
+    sh scripts/install-rust.sh
+    find_cargo || fail "Rust 1.85 was installed but cargo still cannot be used"
+  else
+    fail "cargo and rustc 1.85+ are needed for the native helpers. Rerun this script with --install-rust, or install Ubuntu's cargo-1.85"
   fi
 fi
 
@@ -39,8 +81,11 @@ cc "$probe/check.c" -o "$probe/check" -lssl -lcrypto -lcurl 2>/dev/null \
 mkdir -p bin
 say "building bin/mailbend-tls"
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto -lcurl
-say "building bin/mailbend-attach"
-cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
+say "building bin/mailbend-attach ($rustc_version)"
+# Build from native/: rustup finds rust-toolchain.toml from the working
+# directory, not from --manifest-path.
+(CDPATH= cd native && "$cargo" build --release --locked --quiet -p mailbend-attach)
+cp native/target/release/mailbend-attach bin/mailbend-attach
 
 say "checking the safety laws (bend PROOF.bend)"
 bend PROOF.bend

@@ -7,15 +7,22 @@ MailBend has two small native programs:
   by the Bend core. It links against OpenSSL and libcurl 7.76+ (with HTTPS
   support). libcurl only resolves names and connects TCP sockets; OpenSSL
   and this helper still own mail TLS, authentication and protocol framing.
-- `mailbend-attach.c`: reads one attachment file safely (Bend cannot open a
+- `mailbend-attach/` (Rust): reads one attachment file safely (Bend cannot open a
   file without following symlinks). It holds no credentials: it first
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
 
 ```sh
 cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto -lcurl
-cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-attach native/mailbend-attach.c
+(cd native && cargo build --release --locked -p mailbend-attach)
 ```
+
+The Rust workspace (`native/Cargo.toml`) pins Rust 1.85 in
+`native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
+up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
+native-tls and other TLS stacks from the dependency tree.
+`mailbend-attach` depends only on `nix`. Its tests run with
+`cargo test --locked`, and its mode is chosen by the argument count alone.
 
 ## Contract
 

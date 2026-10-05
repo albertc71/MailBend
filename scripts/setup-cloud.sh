@@ -40,8 +40,12 @@ as_root() {
 }
 # Do not re-run the whole script with sudo: Bend belongs in the user's home.
 as_root env DEBIAN_FRONTEND=noninteractive apt-get update >&2
+# Rust 1.85 for the native helpers: Ubuntu 24.04 packages it as cargo-1.85;
+# elsewhere install.sh installs it with a checksum-verified rustup.
+rust_pkg=
+if apt-cache show cargo-1.85 >/dev/null 2>&1; then rust_pkg=cargo-1.85; fi
 as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  build-essential libssl-dev libcurl4-openssl-dev clang ca-certificates curl >&2
-sh "$root/scripts/install.sh" --install-bend >&2
+  build-essential libssl-dev libcurl4-openssl-dev clang ca-certificates curl $rust_pkg >&2
+sh "$root/scripts/install.sh" --install-bend --install-rust >&2
 sh "$root/scripts/setup-cloud.sh" --check || fail "installed binaries failed the readiness check"
 printf 'mailbend: ready; use %s/scripts/mailbend-cloud call mail_probe\n' "$root" >&2

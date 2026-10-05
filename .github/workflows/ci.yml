@@ -35,6 +35,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential libssl-dev libcurl4-openssl-dev clang openssl
 
+      - name: Install Rust 1.85 (native/rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: "1.85"
+
       - name: Install Bend
         run: |
           sh scripts/install-bend.sh
@@ -62,3 +67,60 @@ jobs:
 
       - name: End-to-end tests
         run: python3 tests/test-e2e.py
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.85 (the MSRV, native/rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: "1.85"
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: native
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: MSRV
+        run: cargo +1.85 check --all-targets --locked
+
+      - name: No way around TLS verification
+        run: |
+          if grep -rnE 'dangerous\(|client::danger|ServerCertVerifier' --include='*.rs' .; then
+            echo "TLS verification must not be configurable" >&2
+            exit 1
+          fi
+
+      - name: The attachment reader has no network or TLS crate
+        run: |
+          cargo tree --locked -p mailbend-attach -e normal --prefix none > "$RUNNER_TEMP/attach-tree.txt"
+          if grep -E '^(rustls|ring|socket2|mio|tokio|hyper|ureq|reqwest|curl|openssl)[ -]' "$RUNNER_TEMP/attach-tree.txt"; then
+            echo "mailbend-attach must not depend on network or TLS crates" >&2
+            exit 1
+          fi
+          if grep -rnE 'std::net|TcpStream|UdpSocket|UnixStream' mailbend-attach/src; then
+            echo "mailbend-attach must not open network sockets" >&2
+            exit 1
+          fi
+
+      - name: Dependency policy (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: native/Cargo.toml

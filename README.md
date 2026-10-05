@@ -30,13 +30,14 @@ compiler (see [Safety](#safety)).
 
 ## Install (Linux)
 
-Needs a C compiler, OpenSSL and libcurl 7.76+ headers, and Bend 2 (clang 14+
-to compile the core; without clang the core runs through `bend` with a slower start).
+Needs a C compiler, OpenSSL and libcurl 7.76+ headers, Rust 1.85+ (cargo and
+rustc), and Bend 2 (clang 14+ to compile the core; without clang the core runs
+through `bend` with a slower start).
 
 ```sh
 sudo apt-get install -y build-essential libssl-dev libcurl4-openssl-dev clang ca-certificates curl
 git clone https://github.com/albertc71/MailBend.git && cd MailBend
-scripts/install.sh --install-bend
+scripts/install.sh --install-bend --install-rust
 ```
 
 `scripts/install.sh` builds `bin/mailbend-tls` and `bin/mailbend-attach`, checks the safety proofs with
@@ -45,7 +46,10 @@ scripts/install.sh --install-bend
 `scripts/install-bend.sh`, which installs the Bend release tested in CI to
 `~/.bend` after checking the archive's sha256. That pinned release is Linux
 x64 only; elsewhere, install Bend 2.0.32 yourself and run
-`scripts/install.sh`. An already installed Bend is reused as is.
+`scripts/install.sh`. An already installed Bend is reused as is. Likewise,
+`--install-rust` runs `scripts/install-rust.sh` (a sha256-checked `rustup-init`
+that installs Rust 1.85 to `~/.cargo`) only when neither `cargo` nor Ubuntu
+24.04's `cargo-1.85` package provides cargo and rustc 1.85+.
 
 On a Grok Bot / Cursor cloud Linux computer, run `sh scripts/setup-cloud.sh`
 for a complete Debian/Ubuntu install, then use `scripts/mailbend-cloud` for
@@ -233,7 +237,7 @@ flowchart LR
   helper <--> imap[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
   helper <--> smtp[("SMTP STARTTLS<br/>default smtp.mail.me.com:587")]
   secrets[["MAILBEND_APP_PASSWORD"]] -. "read by the helper only" .-> helper
-  core -- "dir, path, byte budget" --> reader["mailbend-attach (C)<br/>no credentials, openat2"]
+  core -- "dir, path, byte budget" --> reader["mailbend-attach (Rust)<br/>no credentials, openat2"]
   reader -- "file bytes" --> core
   reader --> files[("MAILBEND_ATTACH_DIR")]
 ```

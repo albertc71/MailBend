@@ -1,0 +1,28 @@
+[graph]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "ISC", "BSD-3-Clause"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+  { name = "openssl" },
+  { name = "openssl-sys" },
+  { name = "native-tls" },
+  { name = "aws-lc-sys" },
+  { name = "aws-lc-rs" },
+  { name = "webpki-roots" },
+  { name = "rustls-pemfile" },
+  { name = "curl-sys" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
