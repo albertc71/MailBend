@@ -271,3 +271,104 @@ def delete_if_pins_uidvalidity(confirm: Bool, mbox: String, uids: List<&2, U32>,
 
 def Laws.delete_pins_callers_uidvalidity(mbox, uids, confirm, uidplus, uidv):
   delete_if_pins_uidvalidity(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
+
+def Laws.create_changes_exactly(mbox):
+  {==}
+
+def Laws.create_changes_no_mail(mbox):
+  {==}
+
+# The subscriptions of a rename, by induction over the moved folders.
+def unsubscribe_old_changes_only_folders(moved: List<&2, String>) -> {Ops.unsubscribe_old(moved) == Ops.mailbox_changes(Ops.unsubscribe_old(moved)) : List<&2, I.Cmd>}:
+  match moved:
+    case Nil{}:
+      {==}
+    case Con{name, t}:
+      %unsubscribe_old_changes_only_folders(t) : {Con{I.CUnsubscribe{name}, Ops.unsubscribe_old(t)} == Con{I.CUnsubscribe{name}, _} : List<&2, I.Cmd>}
+      {==}
+
+def subscribe_moved_changes_only_folders(from: String, to: String, moved: List<&2, String>, rest: List<&2, I.Cmd>) -> {Ops.subscribe_moved(from, to, moved, Ops.mailbox_changes(rest)) == Ops.mailbox_changes(Ops.subscribe_moved(from, to, moved, rest)) : List<&2, I.Cmd>}:
+  match moved:
+    case Nil{}:
+      {==}
+    case Con{name, t}:
+      %subscribe_moved_changes_only_folders(from, to, t, rest) : {Con{I.CSubscribe{Ops.renamed_to(from, to, name)}, Ops.subscribe_moved(from, to, t, Ops.mailbox_changes(rest))} == Con{I.CSubscribe{Ops.renamed_to(from, to, name)}, _} : List<&2, I.Cmd>}
+      {==}
+
+def unsubscribe_old_changes_no_mail(moved: List<&2, String>) -> {Ops.mail_changes(Ops.unsubscribe_old(moved)) == [] : List<&2, I.Cmd>}:
+  match moved:
+    case Nil{}:
+      {==}
+    case Con{name, t}:
+      %unsubscribe_old_changes_no_mail(t) : {Ops.mail_changes(Ops.unsubscribe_old(t)) == _ : List<&2, I.Cmd>}
+      {==}
+
+def subscribe_moved_changes_no_mail(from: String, to: String, moved: List<&2, String>, rest: List<&2, I.Cmd>) -> {Ops.mail_changes(Ops.subscribe_moved(from, to, moved, rest)) == Ops.mail_changes(rest) : List<&2, I.Cmd>}:
+  match moved:
+    case Nil{}:
+      {==}
+    case Con{name, t}:
+      %subscribe_moved_changes_no_mail(from, to, t, rest) : {Ops.mail_changes(Ops.subscribe_moved(from, to, t, rest)) == _ : List<&2, I.Cmd>}
+      {==}
+
+def unsubscribe_old_expunges_nothing(moved: List<&2, String>) -> {I.any_expunges(Ops.unsubscribe_old(moved)) == False{} : Bool}:
+  match moved:
+    case Nil{}:
+      {==}
+    case Con{name, t}:
+      %unsubscribe_old_expunges_nothing(t) : {I.any_expunges(Ops.unsubscribe_old(t)) == _ : Bool}
+      {==}
+
+def subscribe_moved_expunges_nothing(from: String, to: String, moved: List<&2, String>, rest: List<&2, I.Cmd>) -> {I.any_expunges(Ops.subscribe_moved(from, to, moved, rest)) == I.any_expunges(rest) : Bool}:
+  match moved:
+    case Nil{}:
+      {==}
+    case Con{name, t}:
+      %subscribe_moved_expunges_nothing(from, to, t, rest) : {I.any_expunges(Ops.subscribe_moved(from, to, t, rest)) == _ : Bool}
+      {==}
+
+def rename_changes_exactly(+from: String, +to: String, +moved: List<&2, String>) -> {Ops.mailbox_changes(Ops.plan_rename(from, to, moved)) == Con{I.CRename{from, to}, Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))} : List<&2, I.Cmd>}:
+  %subscribe_moved_changes_only_folders(from, to, moved, Ops.unsubscribe_old(moved)) : {Con{I.CRename{from, to}, _} == Con{I.CRename{from, to}, Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))} : List<&2, I.Cmd>}
+  %unsubscribe_old_changes_only_folders(moved) : {Con{I.CRename{from, to}, Ops.subscribe_moved(from, to, moved, _)} == Con{I.CRename{from, to}, Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))} : List<&2, I.Cmd>}
+  {==}
+
+def Laws.rename_changes_exactly(from, to, moved):
+  rename_changes_exactly(from, to, moved)
+
+def Laws.rename_subscribes_each_moved_folder(from, to, name, moved, rest):
+  {==}
+
+def Laws.rename_unsubscribes_each_moved_folder(name, moved):
+  {==}
+
+def Laws.rename_subscribes_before_unsubscribing(from, to, moved):
+  {==}
+
+def rename_changes_no_mail(+from: String, +to: String, +moved: List<&2, String>) -> {Ops.mail_changes(Ops.plan_rename(from, to, moved)) == [] : List<&2, I.Cmd>}:
+  Equal.trans(List<&2, I.Cmd>, Ops.mail_changes(Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))), Ops.mail_changes(Ops.unsubscribe_old(moved)), [], subscribe_moved_changes_no_mail(from, to, moved, Ops.unsubscribe_old(moved)), unsubscribe_old_changes_no_mail(moved))
+
+def Laws.rename_changes_no_mail(from, to, moved):
+  rename_changes_no_mail(from, to, moved)
+
+def folder_plans_destroy_nothing(mbox: String, +from: String, +to: String, +moved: List<&2, String>) -> {Bool.or(I.any_expunges(Ops.plan_create(mbox)), I.any_expunges(Ops.plan_rename(from, to, moved))) == False{} : Bool}:
+  Equal.trans(Bool, I.any_expunges(Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))), I.any_expunges(Ops.unsubscribe_old(moved)), False{}, subscribe_moved_expunges_nothing(from, to, moved, Ops.unsubscribe_old(moved)), unsubscribe_old_expunges_nothing(moved))
+
+def Laws.folder_plans_destroy_nothing(mbox, from, to, moved):
+  folder_plans_destroy_nothing(mbox, from, to, moved)
+
+def Laws.folder_scan_writes_nothing():
+  {==}
+
+def Laws.label_is_move(mbox, uids, label, move, uidplus, uidv):
+  {==}
+
+def Laws.label_creates_no_folder(mbox, uids, label, move, uidplus, uidv):
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}

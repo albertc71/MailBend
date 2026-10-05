@@ -5,7 +5,8 @@ Bend core above it) without touching a real mail account.
 Usage:
     python3 fake_mail_server.py --certdir DIR --fixture FILE --state FILE \\
         --log FILE [--caps MOVE,UIDPLUS,SPECIAL-USE,IDLE] [--no-starttls] \\
-        [--cert-name server] [--silent-port]
+        [--cert-name server] [--silent-port] [--delim /] [--nil-delim INBOX]
+        [--drop-after COPY] [--drop-unanswered COPY] [--reject SUBSCRIBE]
 
 Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
 127.0.0.1 with OS-assigned ports, prints one line
@@ -15,6 +16,14 @@ Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
 and then serves until it receives SIGTERM/SIGINT. Every client command is
 logged to --log as JSONL, and the mailbox/sent state is written to --state
 after every mutation (see State.save below for the exact shape).
+
+--delim sets the hierarchy delimiter LIST reports ("/" by default).
+--drop-after VERB[,VERB] closes the IMAP connection right after answering
+the named command (COPY, STORE, ...), to test a session that is cut off
+part-way through a plan. --drop-unanswered does the same but runs the command
+and never answers it; --reject answers it NO without running it. A fault
+name VERB#N applies only to the Nth such command since the server started.
+--nil-delim NAME[,NAME] (or *) reports a NIL delimiter for those mailboxes.
 
 This file speaks just enough of IMAP4rev1 and ESMTP to drive the MailBend
 transport and Bend parser; it is not a general-purpose mail server.
@@ -106,6 +115,10 @@ class CommandAborted(Exception):
     """A command was rejected before its literal was requested/read."""
 
 
+class UnknownSearchKey(Exception):
+    """A SEARCH key this server does not implement (answered with BAD)."""
+
+
 # --------------------------------------------------------------------------
 # Buffered line/byte reader shared by IMAP and SMTP, over a plain or TLS
 # socket (both expose recv()/sendall()).
@@ -168,6 +181,12 @@ class State:
         self.special_return_fails = False
         self.omit_special_use = set()
         self.special_plain_roles = None
+        self.delim = '/'
+        self.nil_delim = set()
+        self.drop_after = set()
+        self.drop_unanswered = set()
+        self.reject = set()
+        self.seen = {}
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -182,9 +201,30 @@ class State:
             'user': fixture['user'],
             'password': fixture['password'],
             'mailboxes': mailboxes,
+            'subscribed': list(fixture.get('subscribed', [])),
             'sent': [],
         }
         self.save()
+
+    def add_mailbox(self, name: str):
+        """Creates an empty mailbox with a UIDVALIDITY no other mailbox has."""
+        mailboxes = self.data['mailboxes']
+        mailboxes[name] = {
+            'uidvalidity': max(mb['uidvalidity'] for mb in mailboxes.values()) + 1,
+            'special': [],
+            'messages': [],
+            'uidnext': 1,
+        }
+
+    def exists(self, name: str) -> bool:
+        """Whether a mailbox has this name; only INBOX is case-insensitive."""
+        return name in self.data['mailboxes'] or (
+            name.upper() == 'INBOX' and any(n.upper() == 'INBOX' for n in self.data['mailboxes']))
+
+    def superiors(self, name: str):
+        """The names of the folders above `name`, outermost first."""
+        levels = name.split(self.delim)
+        return [self.delim.join(levels[:n]) for n in range(1, len(levels))]
 
     def save(self):
         """Atomically (write-temp + rename) persists the full current state."""
@@ -273,6 +313,16 @@ SPECIAL_USE_ROLES = {'all', 'archive', 'drafts', 'flagged', 'junk', 'sent', 'tra
 def parse_role_names(value: str) -> set:
     """Accept comma-separated role names, with optional leading backslashes."""
     return {name.strip().lstrip('\\').lower() for name in value.split(',') if name.strip()}
+
+
+def parse_upper_names(value: str) -> set:
+    """Accept comma-separated names in upper case, such as COPY,STORE or MOVE,UIDPLUS."""
+    return {name.strip().upper() for name in value.split(',') if name.strip()}
+
+
+def parse_names(value: str) -> set:
+    """Accept comma-separated names as given, such as INBOX,Work."""
+    return {name.strip() for name in value.split(',') if name.strip()}
 
 
 def list_attributes(attributes, state: State, roles_available: bool, requested: bool):
@@ -421,6 +471,16 @@ def parse_search_key(args, i, uids_sorted):
         return (lambda m: '\\Flagged' not in m['flags']), i + 1
     if word == 'DELETED':
         return (lambda m: '\\Deleted' in m['flags']), i + 1
+    if word == 'UNDELETED':
+        return (lambda m: '\\Deleted' not in m['flags']), i + 1
+    if word == 'HEADER':
+        field = astring_val(args[i + 1])
+        needle = to_unicode(astring_val(args[i + 2])).lower()
+
+        def pred(m, f=field, nd=needle):
+            val = get_header_value(m['raw'], f)
+            return val is not None and nd in to_unicode(val).lower()
+        return pred, i + 3
     if word in ('FROM', 'TO', 'CC', 'SUBJECT'):
         needle = to_unicode(astring_val(args[i + 1])).lower()
 
@@ -458,8 +518,7 @@ def parse_search_key(args, i, uids_sorted):
     if word == 'CHARSET':
         # a stray CHARSET not at the very front; skip it and its value
         return (lambda m: True), i + 2
-    # unrecognized key: match everything rather than fail the whole search
-    return (lambda m: True), i + 1
+    raise UnknownSearchKey(word)
 
 
 SECTION_RE = re.compile(rb'^(BODY\.PEEK|BODY)\[([^\]]*)\](?:<(\d+)(?:\.(\d+))?>)?$', re.IGNORECASE)
@@ -560,9 +619,11 @@ class IMAPSession:
         self.mailbox = None
         self.readonly = False
         self.done = False
+        self.muted = False
 
     def send(self, text: str):
-        self.conn.write(text.encode('latin-1'))
+        if not self.muted:
+            self.conn.write(text.encode('latin-1'))
 
     def run(self):
         self.send('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] fake ready\r\n')
@@ -575,7 +636,27 @@ class IMAPSession:
                 return
             tokens, log_line = result
             self.logger.log('imap', log_line)
-            self.dispatch(tokens)
+            self.run_command(tokens)
+
+    def run_command(self, tokens):
+        """Runs one command, applying the --reject and --drop-* faults."""
+        verb = self.verb_of(tokens)
+        self.state.seen[verb] = self.state.seen.get(verb, 0) + 1
+        names = {verb, f'{verb}#{self.state.seen[verb]}'}
+        if names & self.state.reject and tokens and isinstance(tokens[0], bytes):
+            self.send(f'{tokens[0].decode("latin-1")} NO refused by the test server\r\n')
+            return
+        self.muted = bool(names & self.state.drop_unanswered)
+        self.dispatch(tokens)
+        self.muted = False
+        if names & (self.state.drop_after | self.state.drop_unanswered):
+            self.done = True  # cut the connection without a LOGOUT
+
+    @staticmethod
+    def verb_of(tokens) -> str:
+        """The command name in upper case, without a UID prefix."""
+        words = [t.decode('latin-1').upper() for t in tokens[1:3] if isinstance(t, bytes)]
+        return words[1] if len(words) > 1 and words[0] == 'UID' else (words[0] if words else '')
 
     # -- reading one full command, including any literals -----------------
 
@@ -704,6 +785,16 @@ class IMAPSession:
             self.cmd_expunge(tag)
         elif verb == b'APPEND':
             self.cmd_append(tag, args)
+        elif verb == b'CREATE':
+            self.cmd_create(tag, args)
+        elif verb == b'RENAME':
+            self.cmd_rename(tag, args)
+        elif verb == b'LSUB':
+            self.cmd_lsub(tag)
+        elif verb == b'SUBSCRIBE':
+            self.cmd_subscribe(tag, args)
+        elif verb == b'UNSUBSCRIBE':
+            self.cmd_unsubscribe(tag, args)
         else:
             self.send(f'{tag} BAD unknown command\r\n')
 
@@ -744,11 +835,14 @@ class IMAPSession:
         if requested and self.state.special_return_fails:
             self.send(f'{tag} NO [UNAVAILABLE] special-use lookup failed\r\n')
             return
+        delim = self.state.delim
         for name in names:
-            has_children = any(other != name and other.startswith(name + '/') for other in names)
+            has_children = any(other.startswith(name + delim) for other in names)
             attrs = ['\\HasChildren' if has_children else '\\HasNoChildren']
             attrs.extend(list_attributes(specials[name], self.state, 'SPECIAL-USE' in self.caps, requested))
-            self.send(f'* LIST ({" ".join(attrs)}) "/" {imap_quote(mutf7_encode(name))}\r\n')
+            nil = '*' in self.state.nil_delim or name in self.state.nil_delim
+            shown = 'NIL' if nil else f'"{delim}"'
+            self.send(f'* LIST ({" ".join(attrs)}) {shown} {imap_quote(mutf7_encode(name))}\r\n')
         self.send(f'{tag} OK LIST completed\r\n')
 
     def cmd_select(self, tag, args, readonly):
@@ -785,9 +879,13 @@ class IMAPSession:
             uids_sorted = sorted(m['uid'] for m in messages)
             preds = []
             j = i
-            while j < len(args):
-                p, j = parse_search_key(args, j, uids_sorted)
-                preds.append(p)
+            try:
+                while j < len(args):
+                    p, j = parse_search_key(args, j, uids_sorted)
+                    preds.append(p)
+            except UnknownSearchKey as unknown:
+                self.send(f'{tag} BAD unknown search key {unknown}\r\n')
+                return
             matched = sorted(m['uid'] for m in messages if all(p(m) for p in preds))
         self.send('* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n')
         self.send(f'{tag} OK SEARCH completed\r\n')
@@ -1000,6 +1098,89 @@ class IMAPSession:
         if mbox is None:
             return
         self._expunge(tag, mbox, None)
+
+    def cmd_create(self, tag, args):
+        if not args:
+            self.send(f'{tag} BAD missing mailbox\r\n')
+            return
+        name = self.decode_mailbox_token(args[0])
+        with self.state.lock:
+            if self.state.exists(name):
+                self.send(f'{tag} NO [ALREADYEXISTS] mailbox already exists\r\n')
+                return
+            if not name or name.endswith(self.state.delim):
+                self.send(f'{tag} NO invalid mailbox name\r\n')
+                return
+            # RFC 3501 6.3.3: a server may create the missing superior folders.
+            for folder in self.state.superiors(name) + [name]:
+                if not self.state.exists(folder):
+                    self.state.add_mailbox(folder)
+            self.state.save()
+        self.send(f'{tag} OK CREATE completed\r\n')
+
+    def cmd_rename(self, tag, args):
+        if len(args) < 2:
+            self.send(f'{tag} BAD malformed RENAME\r\n')
+            return
+        old, new = self.decode_mailbox_token(args[0]), self.decode_mailbox_token(args[1])
+        delim = self.state.delim
+        with self.state.lock:
+            mailboxes = self.state.data['mailboxes']
+            if old.upper() == 'INBOX':
+                self.send(f'{tag} NO renaming INBOX is not supported by this server\r\n')
+                return
+            if not self.state.exists(old):
+                self.send(f'{tag} NO [NONEXISTENT] no such mailbox\r\n')
+                return
+            moved = {n: new + n[len(old):] for n in mailboxes if n == old or n.startswith(old + delim)}
+            refusal = None
+            if not new or new.endswith(delim) or new.startswith(old + delim):
+                refusal = 'invalid mailbox name'
+            elif any(self.state.exists(target) for target in moved.values()):
+                refusal = '[ALREADYEXISTS] mailbox already exists'
+            if refusal:
+                self.send(f'{tag} NO {refusal}\r\n')
+                return
+            # RFC 3501 6.3.5: children follow, and missing superiors of the
+            # new name may be created.
+            self.state.data['mailboxes'] = {moved.get(n, n): mb for n, mb in mailboxes.items()}
+            for folder in self.state.superiors(new):
+                if not self.state.exists(folder):
+                    self.state.add_mailbox(folder)
+            self.state.save()
+        self.send(f'{tag} OK RENAME completed\r\n')
+
+    def cmd_lsub(self, tag):
+        with self.state.lock:
+            for name in self.state.data['subscribed']:
+                self.send(f'* LSUB () "{self.state.delim}" {imap_quote(mutf7_encode(name))}\r\n')
+        self.send(f'{tag} OK LSUB completed\r\n')
+
+    def cmd_subscribe(self, tag, args):
+        if not args:
+            self.send(f'{tag} BAD missing mailbox\r\n')
+            return
+        name = self.decode_mailbox_token(args[0])
+        with self.state.lock:
+            if not self.state.exists(name):
+                self.send(f'{tag} NO [NONEXISTENT] no such mailbox\r\n')
+                return
+            if name not in self.state.data['subscribed']:
+                self.state.data['subscribed'].append(name)
+            self.state.save()
+        self.send(f'{tag} OK SUBSCRIBE completed\r\n')
+
+    def cmd_unsubscribe(self, tag, args):
+        if not args:
+            self.send(f'{tag} BAD missing mailbox\r\n')
+            return
+        name = self.decode_mailbox_token(args[0])
+        with self.state.lock:
+            # RFC 3501 6.3.7: the name need not exist, it only has to be dropped
+            if name in self.state.data['subscribed']:
+                self.state.data['subscribed'].remove(name)
+            self.state.save()
+        self.send(f'{tag} OK UNSUBSCRIBE completed\r\n')
 
     def cmd_append(self, tag, args):
         if not args:
@@ -1285,6 +1466,15 @@ def main():
                     help='omit these comma-separated roles from ordinary and extended LIST')
     ap.add_argument('--special-plain-roles', type=parse_role_names,
                     help='advertise only these comma-separated roles in ordinary LIST (empty hides all)')
+    ap.add_argument('--delim', default='/', help='hierarchy delimiter reported by LIST')
+    ap.add_argument('--nil-delim', type=parse_names, default=set(),
+                    help='report a NIL delimiter for these comma-separated mailboxes (* for all)')
+    ap.add_argument('--drop-after', type=parse_upper_names, default=set(),
+                    help='close the IMAP connection after answering these comma-separated commands')
+    ap.add_argument('--drop-unanswered', type=parse_upper_names, default=set(),
+                    help='run these comma-separated commands, then close the connection without answering')
+    ap.add_argument('--reject', type=parse_upper_names, default=set(),
+                    help='answer these comma-separated commands NO without running them')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1296,8 +1486,13 @@ def main():
     state.special_return_fails = args.special_return_fails
     state.omit_special_use = args.omit_special_use
     state.special_plain_roles = args.special_plain_roles
+    state.delim = args.delim
+    state.nil_delim = args.nil_delim
+    state.drop_after = args.drop_after
+    state.drop_unanswered = args.drop_unanswered
+    state.reject = args.reject
     logger = Logger(args.log)
-    caps = {x.strip().upper() for x in args.caps.split(',') if x.strip()}
+    caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)
     if args.require_sni:
         def check_sni(sock, name, context):

@@ -30,6 +30,8 @@ type Key is Data:
   KUnseen{}
   KFlagged{}
   KUnflagged{}
+  KUndeleted{}
+  KHeader{name: String, value: String}
   KUidFrom{n: U32}
   KUids{uids: List<&2, U32>}
 
@@ -47,6 +49,7 @@ type Cmd is Data:
   CCapability{}
   CList{}
   CListRoles{}
+  CLsub{}
   CExamine{mbox: String}
   CSelect{mbox: String}
   CSearch{keys: List<&2, Key>}
@@ -55,6 +58,10 @@ type Cmd is Data:
   CCopy{uids: List<&2, U32>, dest: String}
   CMove{uids: List<&2, U32>, dest: String}
   CExpunge{uids: List<&2, U32>}
+  CCreate{mbox: String}
+  CRename{from: String, to: String}
+  CSubscribe{mbox: String}
+  CUnsubscribe{mbox: String}
   CAppend{mbox: String, flags: List<&2, Flag>, msg: String}
   CExpect{text: String}
   CExpectWord{word: String}
@@ -108,46 +115,148 @@ type Folder is Data:
 type Msg is Data:
   Msg{uid: U32, flags: List<&2, String>, date: String, size: U32, headers: String, body: String}
 
-# Whether a command can change the mailbox: open it read-write, change
-# flags, or add or remove messages. EXAMINE, SEARCH and FETCH cannot.
-def writes(+c: Cmd) -> Bool:
+# What a command does to the account. Every command is named in `effect`,
+# with no catch-all case, so a new command cannot be added without deciding
+# how the laws see it.
+type Effect is Data:
+  ENone{}
+  ESelect{}
+  EMail{}
+  ECopy{}
+  EExpunge{}
+  EFolder{}
+
+# ENone: reads and expectations. ESelect: opens a mailbox read-write.
+# EMail: flags, moves or appends messages. ECopy: adds copies. EExpunge:
+# permanently removes messages. EFolder: creates, renames, subscribes or
+# unsubscribes a folder.
+def effect(+c: Cmd) -> Effect:
   match c:
     case CCapability{}:
-      False{}
+      ENone{}
     case CList{}:
-      False{}
+      ENone{}
     case CListRoles{}:
-      False{}
+      ENone{}
+    case CLsub{}:
+      ENone{}
     case CExamine{m}:
-      False{}
+      ENone{}
     case CSelect{m}:
-      True{}
+      ESelect{}
     case CSearch{k}:
-      False{}
+      ENone{}
     case CFetch{u, i}:
-      False{}
+      ENone{}
     case CStore{u, a, f}:
-      True{}
+      EMail{}
     case CCopy{u, d}:
-      True{}
+      ECopy{}
     case CMove{u, d}:
-      True{}
+      EMail{}
     case CExpunge{u}:
-      True{}
+      EExpunge{}
+    case CCreate{m}:
+      EFolder{}
+    case CRename{a, b}:
+      EFolder{}
+    case CSubscribe{m}:
+      EFolder{}
+    case CUnsubscribe{m}:
+      EFolder{}
     case CAppend{m, f, b}:
-      True{}
+      EMail{}
     case CExpect{e}:
-      False{}
+      ENone{}
     case CExpectWord{w}:
+      ENone{}
+
+# Whether an effect can change the mailbox: EXAMINE, SEARCH and FETCH cannot.
+def writes(+e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      True{}
+    case EMail{}:
+      True{}
+    case ECopy{}:
+      True{}
+    case EExpunge{}:
+      True{}
+    case EFolder{}:
+      True{}
+
+# The predicates below name every Effect, with no catch-all case, so a new
+# kind of effect must be classified here too.
+
+# Whether an effect adds, removes or flags messages.
+def changes_mail(+e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      True{}
+    case ECopy{}:
+      True{}
+    case EExpunge{}:
+      True{}
+    case EFolder{}:
+      False{}
+
+# Whether an effect creates, renames, subscribes or unsubscribes a folder.
+def changes_mailbox(+e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      False{}
+    case ECopy{}:
+      False{}
+    case EExpunge{}:
+      False{}
+    case EFolder{}:
+      True{}
+
+# Whether an effect permanently removes messages: only UID EXPUNGE does.
+def destroys_mail(+e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      False{}
+    case ECopy{}:
+      False{}
+    case EExpunge{}:
+      True{}
+    case EFolder{}:
+      False{}
+
+# Whether an effect only adds copies of messages: UID COPY.
+def copies_mail(+e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      False{}
+    case ECopy{}:
+      True{}
+    case EExpunge{}:
+      False{}
+    case EFolder{}:
       False{}
 
 # Whether a command permanently removes messages (UID EXPUNGE).
 def expunges(+c: Cmd) -> Bool:
-  match c:
-    case CExpunge{u}:
-      True{}
-    case _:
-      False{}
+  destroys_mail(effect(c))
 
 # Whether a command marks messages \Deleted.
 def marks_deleted(+c: Cmd) -> Bool:
@@ -162,7 +271,7 @@ def any_writes(+cs: List<&2, Cmd>) -> Bool:
     case Nil{}:
       False{}
     case Con{c, t}:
-      writes(c) || any_writes(t)
+      writes(effect(c)) || any_writes(t)
 
 def any_expunges(+cs: List<&2, Cmd>) -> Bool:
   match cs:
@@ -392,6 +501,10 @@ def key_str(+k: Key) -> String:
       "FLAGGED"
     case KUnflagged{}:
       "UNFLAGGED"
+    case KUndeleted{}:
+      "UNDELETED"
+    case KHeader{n, v}:
+      "HEADER " ++ astring(n) ++ " " ++ astring(v)
     case KUidFrom{n}:
       "UID " ++ U32.show(n) ++ ":*"
     case KUids{us}:
@@ -411,6 +524,8 @@ def key_plain(+k: Key) -> Bool:
       C.is_plain(s)
     case KText{s}:
       C.is_plain(s)
+    case KHeader{n, v}:
+      C.is_plain(n) && C.is_plain(v)
     case _:
       True{}
 
@@ -477,6 +592,8 @@ def cmd_str(+c: Cmd) -> String:
       "LIST \"\" \"*\""
     case CListRoles{}:
       "LIST \"\" \"*\" RETURN (SPECIAL-USE)"
+    case CLsub{}:
+      "LSUB \"\" \"*\""
     case CExamine{m}:
       "EXAMINE " ++ mailbox(m)
     case CSelect{m}:
@@ -493,6 +610,14 @@ def cmd_str(+c: Cmd) -> String:
       "UID MOVE " ++ uid_set(us) ++ " " ++ mailbox(d)
     case CExpunge{us}:
       "UID EXPUNGE " ++ uid_set(us)
+    case CCreate{m}:
+      "CREATE " ++ mailbox(m)
+    case CRename{a, b}:
+      "RENAME " ++ mailbox(a) ++ " " ++ mailbox(b)
+    case CSubscribe{m}:
+      "SUBSCRIBE " ++ mailbox(m)
+    case CUnsubscribe{m}:
+      "UNSUBSCRIBE " ++ mailbox(m)
     case CAppend{m, fs, msg}:
       "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") {" ++ U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
     case CExpect{e}:
@@ -538,6 +663,35 @@ def script_go(+cs: List<&2, Cmd>, +n: U32) -> String:
 
 def script(+cs: List<&2, Cmd>) -> String:
   script_go(cs, 1)
+
+# How many commands of a script carry a tag (expectations carry none).
+def tag_count(+cs: List<&2, Cmd>) -> U32:
+  match cs:
+    case Nil{}:
+      0
+    case Con{c, t}:
+      (Bool.pick(U32, is_expect(c), 0, 1) + tag_count(t) : U32)
+
+# How many commands of a script are UNSUBSCRIBEs.
+def unsubscribe_count(+cs: List<&2, Cmd>) -> U32:
+  match cs:
+    case Nil{}:
+      0
+    case Con{CUnsubscribe{m}, t}:
+      (1 + unsubscribe_count(t) : U32)
+    case Con{c, t}:
+      unsubscribe_count(t)
+
+# The tag number script() gives the first UID COPY, from tag `n` on; 0 when
+# the script has none.
+def copy_tag(+cs: List<&2, Cmd>, +n: U32) -> U32:
+  match cs:
+    case Nil{}:
+      0
+    case Con{CCopy{u, d}, t}:
+      n
+    case Con{c, t}:
+      copy_tag(t, Bool.pick(U32, is_expect(c), n, (n + 1 : U32)))
 
 # ---- dates -------------------------------------------------------------------
 
@@ -905,13 +1059,22 @@ def folder_line(+is_list: Bool, +text: String, +lits: List<&2, String>) -> List<
     case False{}:
       []
 
-# Mailboxes from "* LIST" lines.
-def folders(+lines: List<&2, RLine>) -> List<&2, Folder>:
+# Mailboxes from the untagged lines that start with `prefix` ("* LIST " or
+# "* LSUB ", both 7 characters long).
+def listed(+prefix: String, +lines: List<&2, RLine>) -> List<&2, Folder>:
   match lines:
     case Nil{}:
       []
     case Con{RLine{+text, lits}, t}:
-      List.append(&2, Folder, folder_line(upper_starts(text, "* LIST "), text, lits), folders(t))
+      List.append(&2, Folder, folder_line(upper_starts(text, prefix), text, lits), listed(prefix, t))
+
+# Mailboxes from "* LIST" lines.
+def folders(+lines: List<&2, RLine>) -> List<&2, Folder>:
+  listed("* LIST ", lines)
+
+# The subscribed mailboxes, from "* LSUB" lines.
+def subscribed(+lines: List<&2, RLine>) -> List<&2, Folder>:
+  listed("* LSUB ", lines)
 
 def has_attr_lowered(+attrs: List<&2, String>, +want: String) -> Bool:
   match attrs:
@@ -1079,9 +1242,16 @@ def status_text(+lines: List<&2, RLine>, +n: U32) -> String:
     case Con{RLine{+text, l}, t}:
       Bool.pick(String, String.starts_with(text, tag(n) ++ " "), after_space(after_space(text)), status_text(t, n))
 
+# Whether a tagged status is a refusal.
+def is_refusal(+st: String) -> Bool:
+  String.eq(st, "NO") || String.eq(st, "BAD")
+
 def is_failure(+text: String) -> Bool:
-  +st = String.to_upper(before_space(after_space(text)))
-  String.starts_with(text, "a") && (String.eq(st, "NO") || String.eq(st, "BAD"))
+  String.starts_with(text, "a") && is_refusal(String.to_upper(before_space(after_space(text))))
+
+# Whether command n was refused (NO or BAD).
+def refused(+lines: List<&2, RLine>, +n: U32) -> Bool:
+  is_refusal(status(lines, n))
 
 # The first rejected command's status line, or "" when every command ran.
 def first_failure(+lines: List<&2, RLine>) -> String:

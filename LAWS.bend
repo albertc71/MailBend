@@ -37,6 +37,9 @@ law folders_write_nothing:
 law roles_write_nothing:
   {I.any_writes(Ops.plan_roles()) == False{} : Bool}
 
+law folder_scan_writes_nothing:
+  {I.any_writes(Ops.plan_folder_scan()) == False{} : Bool}
+
 law search_writes_nothing:
   for mbox: String
   for keys: List<&2, I.Key>
@@ -300,3 +303,75 @@ law copy_move_checks_uidplus:
   for dest: String
   for uidv: U32
   {Ops.checks_uidplus(Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv)) == True{} : Bool}
+
+# Folder plans change folders and nothing else: CREATE then SUBSCRIBE, or
+# RENAME, then a SUBSCRIBE of each moved folder's new name, then an
+# UNSUBSCRIBE of each old name; no message command, and never anything that
+# removes mail. Each starts with CAPABILITY, which changes nothing. There is
+# no plan, and no command, that deletes a folder.
+law create_changes_exactly:
+  for mbox: String
+  {Ops.mailbox_changes(Ops.plan_create(mbox)) == [I.CCreate{mbox}, I.CSubscribe{mbox}] : List<&2, I.Cmd>}
+
+law create_changes_no_mail:
+  for mbox: String
+  {Ops.mail_changes(Ops.plan_create(mbox)) == [] : List<&2, I.Cmd>}
+
+law rename_changes_exactly:
+  for from: String
+  for to: String
+  for moved: List<&2, String>
+  {Ops.mailbox_changes(Ops.plan_rename(from, to, moved)) == Con{I.CRename{from, to}, Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))} : List<&2, I.Cmd>}
+
+law rename_subscribes_each_moved_folder:
+  for from: String
+  for to: String
+  for name: String
+  for moved: List<&2, String>
+  for rest: List<&2, I.Cmd>
+  {Ops.subscribe_moved(from, to, Con{name, moved}, rest) == Con{I.CSubscribe{Ops.renamed_to(from, to, name)}, Ops.subscribe_moved(from, to, moved, rest)} : List<&2, I.Cmd>}
+
+law rename_unsubscribes_each_moved_folder:
+  for name: String
+  for moved: List<&2, String>
+  {Ops.unsubscribe_old(Con{name, moved}) == Con{I.CUnsubscribe{name}, Ops.unsubscribe_old(moved)} : List<&2, I.Cmd>}
+
+law rename_subscribes_before_unsubscribing:
+  for from: String
+  for to: String
+  for moved: List<&2, String>
+  {Ops.plan_rename(from, to, moved) == Con{I.CCapability{}, Con{I.CRename{from, to}, Ops.subscribe_moved(from, to, moved, Ops.unsubscribe_old(moved))}} : List<&2, I.Cmd>}
+
+law rename_changes_no_mail:
+  for from: String
+  for to: String
+  for moved: List<&2, String>
+  {Ops.mail_changes(Ops.plan_rename(from, to, moved)) == [] : List<&2, I.Cmd>}
+
+law folder_plans_destroy_nothing:
+  for mbox: String
+  for from: String
+  for to: String
+  for moved: List<&2, String>
+  {Bool.or(I.any_expunges(Ops.plan_create(mbox)), I.any_expunges(Ops.plan_rename(from, to, moved))) == False{} : Bool}
+
+# A label is a move: the very same plan, so the move laws above (never loses
+# mail, expunges only the copied UIDs, changes exactly those commands, pinned
+# to the caller's UIDVALIDITY) cover labels, and labelling creates no folder.
+law label_is_move:
+  for mbox: String
+  for uids: List<&2, U32>
+  for label: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.plan_label(mbox, uids, label, move, uidplus, uidv) == Ops.plan_move(mbox, uids, label, move, uidplus, uidv) : List<&2, I.Cmd>}
+
+law label_creates_no_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for label: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.mailbox_changes(Ops.plan_label(mbox, uids, label, move, uidplus, uidv)) == [] : List<&2, I.Cmd>}

@@ -40,7 +40,9 @@ rendering, response interpretation, MIME behavior, and agent-visible results.
   folders instead of hard-coding names. Resolve each role independently:
   explicit override, unique selectable advertised role, then unique selectable
   conventional name as documented in README.md. Never guess after ambiguous,
-  unselectable, or failed discovery results; never create a target mailbox.
+  unselectable, or failed discovery results. Never create a mailbox
+  implicitly: no tool other than `mail_create_folder` creates one, and it only
+  with a name the caller gives explicitly.
 - Tools build IMAP commands only through the `plan_*` defs in `src/ops.bend`.
 
 ## When using Bend

@@ -58,6 +58,10 @@ def show_uids(uids: List<&2, U32>) -> String:
     case Con{uid, rest}:
       U32.show(uid) ++ " " ++ show_uids(rest)
 
+# The number of tagged commands and the tag of the first COPY.
+def show_tags(+cs: List<&2, I.Cmd>) -> String:
+  U32.show(I.tag_count(cs)) ++ " " ++ U32.show(I.copy_tag(cs, 1))
+
 def check_transcript(+lines: List<&2, I.RLine>) -> IO(Unit):
   do IO<Unit>:
     IO.print(Nat.show(List.length(&2, I.RLine, lines)))
@@ -79,6 +83,8 @@ def main() -> IO(Unit):
     IO.print(I.mutf7_encode("日本 & Co") ++ " " ++ I.mutf7_decode(I.mutf7_encode("日本 & Co")) ++ " " ++ I.mutf7_decode("&ZeVnLA-") ++ " " ++ I.mutf7_encode("😀"))
     IO.print(Maybe.default(&2, String, I.imap_date("2026-02-01"), "bad") ++ " " ++ Maybe.default(&2, String, I.imap_date("2026-13-01"), "bad"))
     IO.print(show_line_endings(I.script([I.CSelect{"INBOX"}, I.CExpect{I.uidv_line(7)}, I.CSearch{[I.KUids{[3, 4]}]}, I.CStore{[3, 4], True{}, I.FSeen{}}])))
+    IO.print(show_line_endings(I.script([I.CCreate{"Reçus 日本"}, I.CRename{"Work", "Projects & Co"}, I.CSubscribe{"Projects & Co"}, I.CUnsubscribe{"Work"}, I.CSearch{[I.KHeader{"Message-ID", "<a@b>"}, I.KUndeleted{}]}])))
+    IO.print(show_tags([I.CCapability{}, I.CExpectWord{"UIDPLUS"}, I.CSelect{"INBOX"}, I.CExpect{I.uidv_line(7)}, I.CSearch{[I.KUids{[3]}]}, I.CCopy{[3], "Work"}, I.CStore{[3], True{}, I.FDeleted{}}, I.CExpunge{[3]}]) ++ " " ++ show_tags([I.CExamine{"INBOX"}, I.CSearch{[I.KAll{}]}]))
     check_transcript(I.frame(transcript()))
     IO.print(Nat.show(List.length(&2, I.RLine, I.frame("a7 OK text {3}\r\nZ OK bye\r\n"))) ++ " " ++ Maybe.default(&2, String, I.imap_date("a\r\nb-02-01"), "bad") ++ " " ++ Maybe.default(&2, String, I.imap_date("{99}-02-01"), "bad"))
 
@@ -87,6 +93,8 @@ def main() -> IO(Unit):
 #|&ZeVnLA- &- Co 日本 & Co 日本 &2D3eAA-
 #|1-Feb-2026 bad
 #|a1 SELECT "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 7]\r\na2 UID SEARCH UID 3,4\r\na3 UID STORE 3,4 +FLAGS.SILENT (\Seen)\r\n
+#|a1 CREATE "Re&AOc-us &ZeVnLA-"\r\na2 RENAME "Work" "Projects &- Co"\r\na3 SUBSCRIBE "Projects &- Co"\r\na4 UNSUBSCRIBE "Work"\r\na5 UID SEARCH HEADER "Message-ID" "<a@b>" UNDELETED\r\n
+#|6 4 2 0
 #|19
 #|IMAP4REV1 MOVE UIDPLUS IDLE
 #|True

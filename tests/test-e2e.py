@@ -23,7 +23,9 @@ FIXTURE = ROOT / "tests" / "fixtures" / "mailbox.json"
 FIX = json.loads(FIXTURE.read_text(encoding="utf-8"))
 PASSWORD = FIX["password"]
 FOLDER_ROLES = ("drafts", "trash", "sent", "junk", "archive")
-MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ", " CREATE ")
+FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
+MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
+TOOL_COUNT = 17
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -146,6 +148,7 @@ def run_all(work):
         srv.stop()
     fallback(work)
     generic_folders(work)
+    folder_tools(work)
 
 
 def reads(srv):
@@ -505,7 +508,7 @@ def mcp(srv):
           and init.get("serverInfo", {}).get("name") == "mailbend", init)
     tools = by_id.get(2, {}).get("result", {}).get("tools", [])
     names = [t["name"] for t in tools]
-    check("mcp: tools/list has all 14 tools with schemas", len(tools) == 14 and all("inputSchema" in t for t in tools), names)
+    check(f"mcp: tools/list has all {TOOL_COUNT} tools with schemas", len(tools) == TOOL_COUNT and all("inputSchema" in t for t in tools), names)
     ann = {t["name"]: t.get("annotations", {}) for t in tools}
     check("mcp: read tools are marked read-only, delete destructive",
           all(ann[n]["readOnlyHint"] for n in ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"])
@@ -532,6 +535,9 @@ MUTATING_CALLS = {
     "mail_mark_read": {"uids": [5], "uidvalidity": 1700000001},
     "mail_mark_unread": {"uids": [5], "uidvalidity": 1700000001},
     "mail_move": {"uids": [5], "destination": "Archive", "uidvalidity": 1700000001},
+    "mail_label": {"uids": [5], "label": "Archive", "uidvalidity": 1700000001},
+    "mail_create_folder": {"name": "Projects"},
+    "mail_rename_folder": {"from": "Work", "to": "Plans"},
     "mail_trash": {"uids": [5], "uidvalidity": 1700000001},
     "mail_delete": {"uids": [5], "uidvalidity": 1700000001, "confirm": "permanently-delete"},
     "mail_save_draft": {"to": "a@example.com", "subject": "x", "body": "x"},
@@ -554,7 +560,7 @@ def read_only(srv):
         c, r = tool(srv, name, args, MAILBEND_READ_ONLY="1")
         if not (c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "")):
             allowed.append((name, r))
-    check("read-only mode refuses all 9 mutating tools before connecting", not allowed and srv.st() == before
+    check(f"read-only mode refuses all {len(MUTATING_CALLS)} mutating tools before connecting", not allowed and srv.st() == before
           and len(srv.log_lines()) == log_before, allowed)
     c, r = tool(srv, "mail_search", {}, MAILBEND_READ_ONLY="1")
     check("read-only mode still allows reads", c == 0 and "messages" in r, r)
@@ -574,11 +580,11 @@ def read_only(srv):
     check("unrecognized switch values fail every tool instead of reading as off", not unclear and srv.st() == before, unclear)
 
     read_tools = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"]
-    check("tools lists all 14 tools by default", len(listed_tools(srv)) == 14)
+    check(f"tools lists all {TOOL_COUNT} tools by default", len(listed_tools(srv)) == TOOL_COUNT)
     check("read-only mode lists only the 5 read tools", listed_tools(srv, MAILBEND_READ_ONLY="1") == read_tools)
     check("a misconfigured switch lists only the read tools", listed_tools(srv, MAILBEND_READ_ONLY="yes") == read_tools)
     names = listed_tools(srv, MAILBEND_DRAFTS_ONLY="1")
-    check("drafts-only mode hides mail_send", len(names) == 13 and "mail_send" not in names and "mail_reply" in names, names)
+    check("drafts-only mode hides mail_send", len(names) == TOOL_COUNT - 1 and "mail_send" not in names and "mail_reply" in names, names)
     res, code = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], MAILBEND_READ_ONLY="1")
     names = [t["name"] for t in res[0].get("result", {}).get("tools", [])] if res else []
     check("mcp: tools/list in read-only mode offers only the read tools", names == read_tools, res)
@@ -858,6 +864,338 @@ def generic_folders(work):
             code, result = tool(srv, name)
             check(f"failed extended LIST after partial plain roles: {name}", code != 0
                   and "special-use folder roles" in result.get("error", ""), result)
+    finally:
+        srv.stop()
+
+
+# ---- folders and labels -------------------------------------------------------------------
+
+FOLDER_TREES = ("Mail", "Mail/Sent", "Deep", "Deep/A", "Deep/A/B", "Taken/Projects", "Stage", "Stage/Sent",
+                "Out/Sent", "Receipts", "Deleted Messages/Old")
+SUBSCRIBED = ("Work", "Work/Projects")
+INBOX_VALIDITY = 1700000001
+NO_MOVE_CAPS = "UIDPLUS,SPECIAL-USE,IDLE"
+
+
+def folder_fixture(delim):
+    """The shared fixture plus ordinary folder trees, with levels joined by `delim`."""
+    fixture = copy.deepcopy(FIX)
+    for name in FOLDER_TREES:
+        fixture["mailboxes"][name] = empty_mailbox()
+    fixture["mailboxes"]["Hierarchy"] = empty_mailbox(["\\Noselect"])
+    fixture["mailboxes"] = {name.replace("/", delim): box for name, box in fixture["mailboxes"].items()}
+    fixture["subscribed"] = [name.replace("/", delim) for name in SUBSCRIBED]
+    return fixture
+
+
+def refused(srv, title, name, args, needle, **env):
+    """The call fails with `needle` in its error and sends no command that changes anything."""
+    before, log_start = srv.st(), len(srv.log_lines())
+    code, result = tool(srv, name, args, **env)
+    changing = [line for line in srv.log_lines()[log_start:] if any(token in line for token in MUTATING_COMMANDS)]
+    check(title, code != 0 and needle in result.get("error", "") and srv.st() == before and not changing, (result, changing))
+
+
+def folder_commands_since(srv, log_start):
+    """The folder commands sent since `log_start`, without their tags."""
+    return [line.split(" ", 1)[1] for line in srv.log_lines()[log_start:] if any(t in line for t in FOLDER_COMMANDS)]
+
+
+def folder_tools(work):
+    for delim in ("/", "."):
+        srv = Server(work, fixture=folder_fixture(delim), extra=["--delim", delim])
+        try:
+            folder_create(srv, delim)
+            folder_rename(srv, delim)
+            check(f"[{delim}] no folder tool sends DELETE or a plain EXPUNGE",
+                  not any(" DELETE " in line or line.split(" ", 1)[-1] == "EXPUNGE" for line in srv.log_lines()))
+        finally:
+            srv.stop()
+        for caps in (None, NO_MOVE_CAPS):
+            folder_label(work, delim, caps)
+    folder_unknown_delimiter(work)
+    folder_subscription_failure(work)
+    folder_cut_off(work)
+    folder_partial_over_mcp(work)
+    for case in INTERRUPTED_LABELS:
+        folder_interrupted(work, *case)
+
+
+def folder_create(srv, delim):
+    tag = f"[{delim}] create: "
+    at = delim.join
+    log_start = len(srv.log_lines())
+    code, result = tool(srv, "mail_create_folder", {"name": "Projects"})
+    state = srv.st()
+    check(tag + "a new folder is made and subscribed", code == 0 and result.get("folder") == "Projects"
+          and result.get("subscribed") is True and "Projects" in state["mailboxes"] and "Projects" in state["subscribed"], result)
+    check(tag + "CREATE comes before SUBSCRIBE", folder_commands_since(srv, log_start) == ['CREATE "Projects"', 'SUBSCRIBE "Projects"'],
+          folder_commands_since(srv, log_start))
+    check(tag + "the new folder is listed with the server's delimiter", any(
+        folder["name"] == "Projects" and folder["delimiter"] == delim
+        for folder in tool(srv, "mail_list_folders")[1].get("folders", [])))
+    refused(srv, tag + "a name that is taken is refused", "mail_create_folder", {"name": "Projects"}, "already exists")
+    for name in ("inbox", "INBOX", "Drafts", "Sent Messages", "Deleted Messages", "trash", "Junk", "Archive",
+                 at(["Archive", "2025"]), at(["Deleted Messages", "Work"]), at(["trash", "x"])):
+        refused(srv, tag + f"{name!r} is protected", "mail_create_folder", {"name": name}, "relies on")
+    refused(srv, tag + "a missing parent is refused, not created", "mail_create_folder", {"name": at(["Nowhere", "Child"])},
+            "does not exist")
+    refused(srv, tag + "a trailing delimiter is refused", "mail_create_folder", {"name": at(["Work", ""])}, "empty level")
+    refused(srv, tag + "an empty name is refused", "mail_create_folder", {"name": ""}, "empty")
+    refused(srv, tag + "a line break in a name is refused", "mail_create_folder", {"name": "a\nb"}, "control characters")
+    refused(srv, tag + "a tab in a name is refused", "mail_create_folder", {"name": "a\tb"}, "control characters")
+    refused(srv, tag + "a role folder configured by the user is protected", "mail_create_folder",
+            {"name": at(["Mail", "Sent"])}, "relies on", MAILBEND_SENT_FOLDER=at(["Mail", "Sent"]))
+    code, result = tool(srv, "mail_create_folder", {"name": at(["Work", "Invoices"])})
+    check(tag + "a folder under an existing ordinary parent", code == 0 and at(["Work", "Invoices"]) in srv.st()["mailboxes"], result)
+    code, result = tool(srv, "mail_create_folder", {"name": "Reçus 日本"})
+    check(tag + "a non-ASCII name goes out in modified UTF-7", code == 0 and "Reçus 日本" in srv.st()["mailboxes"]
+          and 'CREATE "Re&AOc-us &ZeVnLA-"' in " ".join(srv.log_lines()), result)
+    inbox_child = at(["INBOX", "Plans"])
+    code, result = tool(srv, "mail_create_folder", {"name": at(["inbox", "Plans"])})
+    check(tag + "a lower-case inbox prefix is sent as the listed INBOX", code == 0 and result.get("folder") == inbox_child
+          and inbox_child in srv.st()["mailboxes"] and f'CREATE "{inbox_child}"' in " ".join(srv.log_lines()), result)
+    code, result = tool(srv, "mail_create_folder", {"name": "To Delete"})
+    check(tag + "the review folder may be created", code == 0 and "To Delete" in srv.st()["mailboxes"], result)
+    refused(srv, tag + "the review folder only once", "mail_create_folder", {"name": "To Delete"}, "already exists")
+    refused(srv, tag + "the review folder only at top level", "mail_create_folder", {"name": at(["To Delete", "x"])}, "relies on")
+
+
+def folder_rename(srv, delim):
+    """Continues on the server folder_create used: Work then also holds Invoices."""
+    tag = f"[{delim}] rename: "
+    at = delim.join
+    sent_override = {"MAILBEND_SENT_FOLDER": at(["Mail", "Sent"])}
+    refused(srv, tag + "a folder holding a configured role folder is not renamed", "mail_rename_folder",
+            {"from": "Mail", "to": "Post"}, "cannot be renamed", **sent_override)
+    refused(srv, tag + "a subfolder that would land on a configured role folder is refused", "mail_rename_folder",
+            {"from": "Stage", "to": "Out"}, "subfolder", MAILBEND_SENT_FOLDER=at(["Out", "Sent"]))
+    for source in ("inbox", "Archive", "Sent Messages", "Deleted Messages"):
+        refused(srv, tag + f"{source!r} cannot be renamed", "mail_rename_folder", {"from": source, "to": "Other"}, "cannot be renamed")
+    refused(srv, tag + "a missing folder is refused", "mail_rename_folder", {"from": "Nope", "to": "Other"}, "no folder is named")
+    refused(srv, tag + "Work cannot move under Trash", "mail_rename_folder", {"from": "Work", "to": at(["Trash", "Work"])}, "relies on")
+    refused(srv, tag + "Work cannot move under the Trash folder", "mail_rename_folder",
+            {"from": "Work", "to": at(["Deleted Messages", "Work"])}, "relies on")
+    refused(srv, tag + "a missing parent is refused, not created", "mail_rename_folder",
+            {"from": "Work", "to": at(["Missing", "Work"])}, "does not exist")
+    refused(srv, tag + "an existing folder is not replaced", "mail_rename_folder", {"from": "Work", "to": "日本"}, "already exists")
+    refused(srv, tag + "a role folder name is not a destination", "mail_rename_folder", {"from": "Work", "to": "Archive"}, "relies on")
+    refused(srv, tag + "a folder cannot move into itself", "mail_rename_folder", {"from": "Work", "to": at(["Work", "Sub"])}, "into itself")
+    refused(srv, tag + "a subfolder colliding with an existing folder is refused", "mail_rename_folder",
+            {"from": "Work", "to": "Taken"}, "subfolder")
+
+    log_start = len(srv.log_lines())
+    subscribed_before = set(srv.st()["subscribed"])
+    code, result = tool(srv, "mail_rename_folder", {"from": "Work", "to": "Plans"})
+    state = srv.st()
+    check(tag + "a tree follows its root", code == 0 and result.get("subscribed") is True
+          and {"Plans", at(["Plans", "Projects"]), at(["Plans", "Invoices"])} <= set(state["mailboxes"])
+          and not {"Work", at(["Work", "Projects"]), at(["Work", "Invoices"])} & set(state["mailboxes"]), result)
+    commands = folder_commands_since(srv, log_start)
+    moved = [name for name in ("Work", at(["Work", "Projects"]), at(["Work", "Invoices"])) if name in subscribed_before]
+    new_names = ["Plans" + name[len("Work"):] for name in moved]
+    count = len(moved)
+    check(tag + "RENAME, then every SUBSCRIBE, then every UNSUBSCRIBE, only for folders that were subscribed",
+          count == 3 and len(commands) == 1 + 2 * count and commands[0] == 'RENAME "Work" "Plans"'
+          and set(commands[1:1 + count]) == {f'SUBSCRIBE "{n}"' for n in new_names}
+          and set(commands[1 + count:]) == {f'UNSUBSCRIBE "{o}"' for o in moved}, commands)
+    check(tag + "the subscription state is exactly the moved names", set(state["subscribed"]) == (subscribed_before - set(moved)) | set(new_names),
+          state["subscribed"])
+    subscribed_before = set(srv.st()["subscribed"])
+    code, result = tool(srv, "mail_rename_folder", {"from": "Deep", "to": "Renamed"})
+    names = set(srv.st()["mailboxes"])
+    check(tag + "folders that were not subscribed stay unsubscribed", set(srv.st()["subscribed"]) == subscribed_before, srv.st()["subscribed"])
+    check(tag + "a three-level tree follows its root", code == 0 and {"Renamed", at(["Renamed", "A"]), at(["Renamed", "A", "B"])} <= names
+          and not {"Deep", at(["Deep", "A"]), at(["Deep", "A", "B"])} & names, result)
+    code, result = tool(srv, "mail_rename_folder", {"from": "Mail", "to": "Post"})
+    check(tag + "the same folder is renamed once no role depends on it", code == 0 and at(["Post", "Sent"]) in srv.st()["mailboxes"], result)
+    inbox_child = at(["INBOX", "Receipts"])
+    code, result = tool(srv, "mail_rename_folder", {"from": "Receipts", "to": at(["inbox", "Receipts"])})
+    check(tag + "a lower-case inbox prefix is sent as the listed INBOX", code == 0 and result.get("to") == inbox_child
+          and inbox_child in srv.st()["mailboxes"] and f'RENAME "Receipts" "{inbox_child}"' in " ".join(srv.log_lines()), result)
+
+
+def original_message(uid):
+    return next(m for m in FIX["mailboxes"]["INBOX"]["messages"] if m["uid"] == uid)
+
+
+def copies_of(state, raw):
+    return sum(1 for box in state["mailboxes"].values() for m in box["messages"] if m["raw"] == raw)
+
+
+def folder_label(work, delim, caps):
+    method = "UID COPY + UID EXPUNGE" if caps == NO_MOVE_CAPS else "UID MOVE"
+    tag = f"[{delim}] label ({method}): "
+    srv = Server(work, caps=caps, fixture=folder_fixture(delim), extra=["--delim", delim])
+    try:
+        raw = original_message(3)["raw"]
+        code, result = tool(srv, "mail_label", {"uids": [3], "label": "Receipts", "uidvalidity": INBOX_VALIDITY})
+        state = srv.st()
+        check(tag + "the message moves into the label folder", code == 0 and result.get("method") == method
+              and result.get("changed") == [3] and result.get("destination") == "Receipts" and 3 not in msgs(state, "INBOX")
+              and [m["raw"] for m in state["mailboxes"]["Receipts"]["messages"]] == [raw], result)
+        check(tag + "the message exists exactly once", copies_of(state, raw) == 1, state["mailboxes"])
+        label_uid = state["mailboxes"]["Receipts"]["messages"][0]["uid"]
+        label_validity = state["mailboxes"]["Receipts"]["uidvalidity"]
+        for name in ("Archive", "Deleted Messages", "Sent Messages", delim.join(["Deleted Messages", "Old"])):
+            refused(srv, tag + f"{name!r} is not a label", "mail_label",
+                    {"uids": [5], "label": name, "uidvalidity": INBOX_VALIDITY}, "relies on")
+        refused(srv, tag + "INBOX is not a label", "mail_label",
+                {"folder": "Receipts", "uids": [label_uid], "label": "inbox", "uidvalidity": label_validity}, "relies on")
+        refused(srv, tag + "a missing label folder is refused, not created", "mail_label",
+                {"uids": [5], "label": "Nowhere", "uidvalidity": INBOX_VALIDITY}, "does not exist")
+        refused(srv, tag + "a folder that cannot be selected is refused", "mail_label",
+                {"uids": [5], "label": "Hierarchy", "uidvalidity": INBOX_VALIDITY}, "cannot be selected")
+        refused(srv, tag + "the folder the messages are in is refused", "mail_label",
+                {"uids": [5], "label": "inbox", "uidvalidity": INBOX_VALIDITY}, "other than")
+        refused(srv, tag + "a stale UIDVALIDITY is refused", "mail_label",
+                {"uids": [5], "label": "Receipts", "uidvalidity": 42}, "UIDVALIDITY")
+        refused(srv, tag + "UIDVALIDITY is required", "mail_label", {"uids": [5], "label": "Receipts"}, "uidvalidity")
+
+        code, result = tool(srv, "mail_move", {"folder": "Receipts", "uids": [label_uid], "destination": "INBOX",
+                                              "uidvalidity": label_validity})
+        state = srv.st()
+        check(tag + "moving back to INBOX removes the label", code == 0 and not state["mailboxes"]["Receipts"]["messages"]
+              and copies_of(state, raw) == 1 and raw in [m["raw"] for m in state["mailboxes"]["INBOX"]["messages"]], result)
+    finally:
+        srv.stop()
+
+
+def folder_unknown_delimiter(work):
+    """A server whose LIST gives no delimiter for INBOX, or for any folder."""
+    srv = Server(work, fixture=folder_fixture("/"), extra=["--nil-delim", "INBOX"])
+    try:
+        refused(srv, "INBOX without a delimiter: the other folders' delimiter still protects Trash", "mail_create_folder",
+                {"name": "Deleted Messages/Work"}, "relies on")
+        refused(srv, "INBOX without a delimiter: a missing parent is still refused", "mail_create_folder",
+                {"name": "Nowhere/Child"}, "does not exist")
+    finally:
+        srv.stop()
+    srv = Server(work, fixture=folder_fixture("/"), extra=["--nil-delim", "*"])
+    try:
+        refused(srv, "no delimiter at all: a nested-looking name is refused, not guessed", "mail_create_folder",
+                {"name": "Deleted Messages/Work"}, "hierarchy delimiter")
+        refused(srv, "no delimiter at all: a dotted name is refused too", "mail_rename_folder",
+                {"from": "Work", "to": "a.b"}, "hierarchy delimiter")
+        code, result = tool(srv, "mail_create_folder", {"name": "Flat"})
+        check("no delimiter at all: a flat name is still created", code == 0 and "Flat" in srv.st()["mailboxes"], result)
+    finally:
+        srv.stop()
+
+
+def folder_subscription_failure(work):
+    """The change went through but a subscription command failed: success, not an error to retry."""
+    srv = Server(work, fixture=folder_fixture("/"), extra=["--reject", "SUBSCRIBE"])
+    try:
+        code, result = tool(srv, "mail_create_folder", {"name": "Projects"})
+        state = srv.st()
+        check("create with SUBSCRIBE refused: the folder exists, unsubscribed, with a note not to retry",
+              code == 0 and result.get("ok") is True and result.get("subscribed") is False and "Do not retry" in result.get("note", "")
+              and "may not show it" in result["note"] and "Projects" in state["mailboxes"] and "Projects" not in state["subscribed"], result)
+        before = set(state["subscribed"])
+        code, result = tool(srv, "mail_rename_folder", {"from": "Work", "to": "Plans"})
+        state = srv.st()
+        check("rename with SUBSCRIBE refused: renamed, old subscriptions untouched, with a note not to retry",
+              code == 0 and result.get("subscribed") is False and "Do not retry" in result.get("note", "")
+              and "Plans" in state["mailboxes"] and set(state["subscribed"]) == before, result)
+    finally:
+        srv.stop()
+    srv = Server(work, fixture=folder_fixture("/"), extra=["--reject", "UNSUBSCRIBE"])
+    try:
+        before = set(srv.st()["subscribed"])
+        code, result = tool(srv, "mail_rename_folder", {"from": "Work", "to": "Plans"})
+        state = srv.st()
+        check("rename with UNSUBSCRIBE refused: every new name is subscribed, the old names say so in the note",
+              code == 0 and result.get("subscribed") is False and "Do not retry" in result.get("note", "")
+              and "old subscriptions" in result["note"] and "may not show" not in result["note"]
+              and {"Plans", "Plans/Projects"} <= set(state["subscribed"]) and before <= set(state["subscribed"]), result)
+    finally:
+        srv.stop()
+
+
+def folder_cut_off(work):
+    """The connection drops around the change: after it ran but before the answer, or before it started."""
+    changes = (("mail_create_folder", {"name": "Projects"}, "created", "Projects"),
+               ("mail_rename_folder", {"from": "Work", "to": "Plans"}, "renamed", "Plans"))
+    srv = Server(work, fixture=folder_fixture("/"), extra=["--drop-unanswered", "CREATE,RENAME"])
+    try:
+        for name, args, verb, made in changes:
+            code, result = tool(srv, name, args)
+            check(f"{name} cut off before the answer: an error that says to look before retrying",
+                  code != 0 and f"may have been {verb}" in result.get("error", "") and "list the folders" in result["error"]
+                  and made in srv.st()["mailboxes"], result)
+    finally:
+        srv.stop()
+    for name, args, verb, made in changes:
+        # the discovery session is the first CAPABILITY; the second one opens the change session
+        srv = Server(work, fixture=folder_fixture("/"), extra=["--drop-unanswered", "CAPABILITY#2"])
+        try:
+            before = srv.st()
+            code, result = tool(srv, name, args)
+            check(f"{name} cut off before the change started: a plain error, nothing changed",
+                  code != 0 and result.get("error") and "may have been" not in result["error"] and srv.st() == before, result)
+        finally:
+            srv.stop()
+    srv = Server(work, fixture=folder_fixture("/"), extra=["--reject", "CREATE"])
+    try:
+        before = srv.st()
+        code, result = tool(srv, "mail_create_folder", {"name": "Projects"})
+        check("create refused by the server: a plain error, nothing changed", code != 0 and "may have been" not in result.get("error", "x")
+              and "rejected" in result.get("error", "") and srv.st() == before, result)
+    finally:
+        srv.stop()
+
+
+# A label (copy + expunge, no MOVE) whose session is cut off or refused: (title, server options, whether
+# the result is partial, whether the copy really ran). The helper cannot tell a COPY it never got to send
+# from one the server dropped unanswered, so a cut-off right after SEARCH is partial too.
+INTERRUPTED_LABELS = (
+    ("cut off after STORE", ["--drop-after", "STORE"], True, True),
+    ("cut off after COPY", ["--drop-after", "COPY"], True, True),
+    ("cut off before COPY was answered", ["--drop-unanswered", "COPY"], True, True),
+    ("cut off after SEARCH", ["--drop-after", "SEARCH"], True, False),
+    ("refused at COPY", ["--reject", "COPY"], False, False),
+    ("cut off before SEARCH", ["--drop-after", "SELECT"], False, False),
+)
+
+
+def folder_interrupted(work, title, extra, partial, copied):
+    tag = f"label {title}: "
+    srv = Server(work, caps=NO_MOVE_CAPS, fixture=folder_fixture("/"), extra=extra)
+    try:
+        code, result = tool(srv, "mail_label", {"uids": [3], "label": "Receipts", "uidvalidity": INBOX_VALIDITY})
+        state = srv.st()
+        raw = original_message(3)["raw"]
+        if not partial:
+            check(tag + "nothing changed", copies_of(state, raw) == 1 and 3 in msgs(state, "INBOX")
+                  and not state["mailboxes"]["Receipts"]["messages"], state["mailboxes"])
+            check(tag + "a plain error, not partial", code != 0 and "partial" not in result and result.get("error"), result)
+            return
+        check(tag + "the messages are where the cut-off left them", copies_of(state, raw) == (2 if copied else 1)
+              and 3 in msgs(state, "INBOX"), state["mailboxes"])
+        if "STORE" in extra:
+            check(tag + "the source copy is already marked \\Deleted", "\\Deleted" in flags(state, "INBOX", 3), flags(state, "INBOX", 3))
+        message = result.get("message", "")
+        check(tag + "the call fails as partial, not as an error that implies nothing changed", code != 0
+              and result.get("partial") is True and result.get("ok") is False and "error" not in result
+              and "both INBOX and Receipts" in message and "before retrying" in message, result)
+        code, result = tool(srv, "mail_move", {"uids": [5], "destination": "Archive", "uidvalidity": INBOX_VALIDITY})
+        check(tag + "mail_move reports the same", code != 0 and result.get("partial") is True
+              and "both INBOX and Archive" in result.get("message", ""), result)
+    finally:
+        srv.stop()
+
+
+def folder_partial_over_mcp(work):
+    """A partial move is an isError result over MCP, with its structured body."""
+    srv = Server(work, caps=NO_MOVE_CAPS, fixture=folder_fixture("/"), extra=["--drop-after", "COPY"])
+    try:
+        call = {"name": "mail_label", "arguments": {"uids": [3], "label": "Receipts", "uidvalidity": INBOX_VALIDITY}}
+        res, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": call}])
+        result = res[0].get("result", {}) if res else {}
+        body = json.loads(result.get("content", [{}])[0].get("text", "{}"))
+        check("mcp: a partial move is an isError result that keeps ok false and partial true",
+              result.get("isError") is True and body.get("partial") is True and body.get("ok") is False, res)
     finally:
         srv.stop()
 

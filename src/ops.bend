@@ -14,8 +14,11 @@ type Op is Data:
   OMarkRead{}
   OMarkUnread{}
   OMove{}
+  OLabel{}
   OTrash{}
   ODelete{}
+  OCreateFolder{}
+  ORenameFolder{}
   OSaveDraft{}
   OSend{}
   OReply{}
@@ -63,10 +66,16 @@ def name(+op: Op) -> String:
       "mail_mark_unread"
     case OMove{}:
       "mail_move"
+    case OLabel{}:
+      "mail_label"
     case OTrash{}:
       "mail_trash"
     case ODelete{}:
       "mail_delete"
+    case OCreateFolder{}:
+      "mail_create_folder"
+    case ORenameFolder{}:
+      "mail_rename_folder"
     case OSaveDraft{}:
       "mail_save_draft"
     case OSend{}:
@@ -86,8 +95,11 @@ def all_ops() -> List<&2, Op>:
     OMarkRead{},
     OMarkUnread{},
     OMove{},
+    OLabel{},
     OTrash{},
     ODelete{},
+    OCreateFolder{},
+    ORenameFolder{},
     OSaveDraft{},
     OSend{},
     OReply{},
@@ -131,6 +143,11 @@ def plan_preflight(+mbox: String) -> List<&2, I.Cmd>:
 
 def plan_folders() -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}]
+
+# Before a folder change: capabilities, folders and which of them are
+# subscribed (LSUB, read-only).
+def plan_folder_scan() -> List<&2, I.Cmd>:
+  [I.CCapability{}, I.CList{}, I.CLsub{}]
 
 # When SPECIAL-USE is advertised, tools explicitly request its attributes
 # with this plan, even if ordinary LIST already reports some roles. Providers
@@ -229,8 +246,52 @@ def plan_delete_if(+confirm: Bool, +mbox: String, +uids: List<&2, U32>, +uidplus
 def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: String, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
   plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
 
+# A label is an iCloud folder, so labelling is moving: every law about
+# plan_move holds for it unchanged.
+def plan_label(+mbox: String, +uids: List<&2, U32>, +label: String, +move: Bool, +uidplus: Bool, +uidv: U32) -> List<&2, I.Cmd>:
+  plan_move(mbox, uids, label, move, uidplus, uidv)
+
 def plan_draft(+drafts: String, +msg: String) -> List<&2, I.Cmd>:
   [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]
+
+# Folder plans touch no message. Each starts with CAPABILITY, which changes
+# nothing: once it is answered, a session that dies before the change is
+# answered may have made it, and one that dies earlier has not. A new folder is
+# subscribed to straight away so that clients which list only subscribed
+# folders still show it. There is no plan that deletes a folder: IMAP has no
+# way to delete a folder only when it is empty, and iCloud deletes a folder's
+# messages with it.
+def plan_create(+mbox: String) -> List<&2, I.Cmd>:
+  [I.CCapability{}, I.CCreate{mbox}, I.CSubscribe{mbox}]
+
+# The name a folder of a renamed tree gets: `from` becomes `to`, and a folder
+# inside `from` keeps its path below it.
+def renamed_to(+from: String, +to: String, +name: String) -> String:
+  to ++ String.drop(name, String.length(from))
+
+# SUBSCRIBE of the new name of each moved folder, then `rest`.
+def subscribe_moved(+from: String, +to: String, +moved: List<&2, String>, +rest: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  match moved:
+    case Nil{}:
+      rest
+    case Con{+name, t}:
+      I.CSubscribe{renamed_to(from, to, name)} <> subscribe_moved(from, to, t, rest)
+
+# UNSUBSCRIBE of the old name of each moved folder.
+def unsubscribe_old(+moved: List<&2, String>) -> List<&2, I.Cmd>:
+  match moved:
+    case Nil{}:
+      []
+    case Con{+name, t}:
+      I.CUnsubscribe{name} <> unsubscribe_old(t)
+
+# RENAME leaves subscriptions alone (RFC 3501 6.3.5), so each folder that
+# moved and was subscribed (`moved`: its old name, inside `from` or `from`
+# itself) is subscribed under its new name, and only then are the old names
+# dropped: a failure part-way leaves every folder subscribed under at least
+# one name.
+def plan_rename(+from: String, +to: String, +moved: List<&2, String>) -> List<&2, I.Cmd>:
+  I.CCapability{} <> (I.CRename{from, to} <> subscribe_moved(from, to, moved, unsubscribe_old(moved)))
 
 # Whether a plan expunges before it has copied anything. On its own this
 # says nothing about which UIDs were copied; `copied` and `expunged` below
@@ -240,13 +301,8 @@ def loses_mail(+cs: List<&2, I.Cmd>) -> Bool:
     case Nil{}:
       False{}
     case Con{c, t}:
-      match c:
-        case I.CCopy{u, d}:
-          False{}
-        case I.CExpunge{u}:
-          True{}
-        case _:
-          loses_mail(t)
+      +e = I.effect(c)
+      Bool.pick(Bool, I.copies_mail(e) || I.destroys_mail(e), I.destroys_mail(e), loses_mail(t))
 
 # The UIDs of a plan's first UID EXPUNGE, if it has one.
 def expunged(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
@@ -284,6 +340,13 @@ def marked_deleted(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
         case _:
           marked_deleted(t)
 
+def cmd_if(+keep: Bool, +c: I.Cmd, +rest: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  match keep:
+    case True{}:
+      Con{c, rest}
+    case False{}:
+      rest
+
 # The commands of a plan that change mail (store, copy, move, expunge,
 # append), in order. Unlike the first-match helpers above, it keeps every
 # such command, so a law about it also binds any second or later one.
@@ -291,20 +354,17 @@ def mail_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
   match cs:
     case Nil{}:
       []
-    case Con{c, t}:
-      match c:
-        case I.CStore{u, a, f}:
-          Con{I.CStore{u, a, f}, mail_changes(t)}
-        case I.CCopy{u, d}:
-          Con{I.CCopy{u, d}, mail_changes(t)}
-        case I.CMove{u, d}:
-          Con{I.CMove{u, d}, mail_changes(t)}
-        case I.CExpunge{u}:
-          Con{I.CExpunge{u}, mail_changes(t)}
-        case I.CAppend{m, f, b}:
-          Con{I.CAppend{m, f, b}, mail_changes(t)}
-        case _:
-          mail_changes(t)
+    case Con{+c, t}:
+      cmd_if(I.changes_mail(I.effect(c)), c, mail_changes(t))
+
+# The commands of a plan that change folders (create, rename, subscribe,
+# unsubscribe), in order.
+def mailbox_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  match cs:
+    case Nil{}:
+      []
+    case Con{+c, t}:
+      cmd_if(I.changes_mailbox(I.effect(c)), c, mailbox_changes(t))
 
 # Whether `s` starts with `p`. Unlike String.starts_with it looks at `p`
 # first, so it decides as soon as a known prefix is matched even when the

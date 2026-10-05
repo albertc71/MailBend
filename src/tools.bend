@@ -14,6 +14,8 @@ import ./schema.bend as Schema
 type Out is Data:
   Ok{j: J.Json}
   Err{msg: String}
+  # A change that stopped part-way: an error for the caller, with its result.
+  Partial{j: J.Json}
 
 # ---- the TLS helper --------------------------------------------------------------------
 
@@ -33,6 +35,17 @@ type Fs is Data:
 type Uids is Data:
   UidsOk{uids: List<&2, U32>}
   UidsErr{msg: String}
+
+# What folder creation, renaming and labelling must keep clear of: the
+# folders, the lower-case names that are reserved (see guard_of), and the
+# delimiter LIST reports, which nests one folder in another.
+type Guard is Data:
+  Guard{fs: List<&2, I.Folder>, reserved: List<&2, String>, delim: String}
+
+# A folder tool's request: create `name`, or rename `from` to `to`.
+type FolderChange is Data:
+  FolderCreate{name: String}
+  FolderRename{from: String, to: String}
 
 # ---- mail_search ----------------------------------------------------------------------------
 
@@ -185,10 +198,13 @@ def imap_result(p: Proc) -> Run:
     case ProcOk{code, out, err}:
       imap_code(code, I.frame(out), err)
 
+def imap_proc(+cmds: List<&2, I.Cmd>) -> IO(Proc):
+  helper("imap", I.script(cmds))
+
 # Runs one IMAP session: the helper logs in, runs the plan, logs out.
 def imap_run(+cmds: List<&2, I.Cmd>) -> IO(Run):
   do IO<Run>:
-    p : Proc <- helper("imap", I.script(cmds))
+    p : Proc <- imap_proc(cmds)
     return imap_result(p)
 
 def smtp_code(+code: U32, +out: String, +err: String) -> Out:
@@ -376,12 +392,38 @@ def resolved_role(+fs: List<&2, I.Folder>, +override: String, +attr: String, +a:
 def invalid_override(+fs: List<&2, I.Folder>, +value: String, +variable: String) -> String:
   Bool.pick(String, String.is_empty(value) || Bool.not(Maybe.is_none(&2, String, unique_folder(override_candidates(fs, value)))), "", variable ++ " must name one existing selectable mailbox")
 
+# The conventional names role resolution falls back to. reserved_names uses
+# the same list, so a name added here is protected as well.
+def drafts_name() -> String:
+  "Drafts"
+
+def trash_name() -> String:
+  "Trash"
+
+def deleted_messages_name() -> String:
+  "Deleted Messages"
+
+def sent_name() -> String:
+  "Sent"
+
+def sent_messages_name() -> String:
+  "Sent Messages"
+
+def junk_name() -> String:
+  "Junk"
+
+def archive_name() -> String:
+  "Archive"
+
+def conventional_names() -> List<&2, String>:
+  [drafts_name(), trash_name(), deleted_messages_name(), sent_name(), sent_messages_name(), junk_name(), archive_name()]
+
 def folders_resolved(+problem: String, +fs: List<&2, I.Folder>, +drafts: String, +trash: String, +sent: String, +junk: String, +archive: String) -> Fs:
   match problem:
     case SCon{h, t}:
       FsErr{problem}
     case SNil{}:
-      FsOk{fs, resolved_role(fs, drafts, "\\Drafts", "Drafts", "Drafts"), resolved_role(fs, trash, "\\Trash", "Trash", "Deleted Messages"), resolved_role(fs, sent, "\\Sent", "Sent", "Sent Messages"), resolved_role(fs, junk, "\\Junk", "Junk", "Junk"), resolved_role(fs, archive, "\\Archive", "Archive", "Archive")}
+      FsOk{fs, resolved_role(fs, drafts, "\\Drafts", drafts_name(), drafts_name()), resolved_role(fs, trash, "\\Trash", trash_name(), deleted_messages_name()), resolved_role(fs, sent, "\\Sent", sent_name(), sent_messages_name()), resolved_role(fs, junk, "\\Junk", junk_name(), junk_name()), resolved_role(fs, archive, "\\Archive", archive_name(), archive_name())}
 
 def first_of(+a: String, +b: String) -> String:
   Bool.pick(String, String.is_empty(a), b, a)
@@ -448,19 +490,19 @@ def folders_io(+lines: List<&2, I.RLine>) -> IO(Fs):
   roles_if(I.has_cap(I.caps(lines), "SPECIAL-USE"), merge_folders(I.folders(lines), []))
 
 def trash_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  role(fs, "\\Trash", "Deleted Messages", "Trash")
+  role(fs, "\\Trash", deleted_messages_name(), trash_name())
 
 def drafts_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  role(fs, "\\Drafts", "Drafts", "Drafts")
+  role(fs, "\\Drafts", drafts_name(), drafts_name())
 
 def sent_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  role(fs, "\\Sent", "Sent Messages", "Sent")
+  role(fs, "\\Sent", sent_messages_name(), sent_name())
 
 def junk_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  role(fs, "\\Junk", "Junk", "Junk")
+  role(fs, "\\Junk", junk_name(), junk_name())
 
 def archive_of(+fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  role(fs, "\\Archive", "Archive", "Archive")
+  role(fs, "\\Archive", archive_name(), archive_name())
 
 def special_json(+fs: List<&2, I.Folder>, +drafts: Maybe<&2, String>, +trash: Maybe<&2, String>, +sent: Maybe<&2, String>, +junk: Maybe<&2, String>, +archive: Maybe<&2, String>) -> J.Json:
   J.obj([J.kv("inbox", maybe_str(unique_folder(override_candidates(fs, "INBOX")))), J.kv("drafts", maybe_str(drafts)), J.kv("sent", maybe_str(sent)), J.kv("trash", maybe_str(trash)), J.kv("junk", maybe_str(junk)), J.kv("archive", maybe_str(archive))])
@@ -887,21 +929,82 @@ def t_mark(+args: J.Json, +seen: Bool) -> IO(Out):
 def method_name(+move: Bool) -> String:
   Bool.pick(String, move, "UID MOVE", "UID COPY + UID EXPUNGE")
 
+def proc_lines(+p: Proc) -> List<&2, I.RLine>:
+  match p:
+    case ProcFail{m}:
+      []
+    case ProcOk{code, out, err}:
+      I.frame(out)
+
+def run_failure(+r: Run) -> String:
+  match r:
+    case RunErr{m}:
+      m
+    case RunOk{lines}:
+      ""
+
+# Whether the helper gave no result at all (it could not run, or timed out),
+# so what it did to the mailbox is unknown.
+def helper_lost(+p: Proc) -> Bool:
+  match p:
+    case ProcFail{m}:
+      True{}
+    case ProcOk{code, out, err}:
+      False{}
+
+# Whether command `n` was answered OK.
+def ok_at(+lines: List<&2, I.RLine>, +n: U32) -> Bool:
+  String.eq(I.status(lines, n), "OK")
+
+# Whether a plan has a UID COPY (a UID MOVE plan has none).
+def has_copy(+plan: List<&2, I.Cmd>) -> Bool:
+  U32.is_gt(I.copy_tag(plan, 1), 0)
+
+# Whether a session's transcript shows a UID COPY that may have run without
+# the plan finishing: the command before it was answered, the server did not
+# refuse it, and the last command did not finish. A COPY the server dropped
+# unanswered and one the helper never got to send look the same, so both
+# count.
+def copy_unfinished(+plan: List<&2, I.Cmd>, +lines: List<&2, I.RLine>) -> Bool:
+  +c = I.copy_tag(plan, 1)
+  has_copy(plan) && ok_at(lines, (c - 1 : U32)) && Bool.not(I.refused(lines, c)) && Bool.not(ok_at(lines, I.tag_count(plan)))
+
+# A move that may have copied without finishing. A UID MOVE plan has no COPY,
+# so it is never interrupted. A lost helper counts when the plan has a COPY.
+def interrupted(+plan: List<&2, I.Cmd>, +p: Proc) -> Bool:
+  (helper_lost(p) && has_copy(plan)) || copy_unfinished(plan, proc_lines(p))
+
+# The result of a move that stopped part-way. It is an error for the caller,
+# not one that implies nothing changed: the one-copy guarantee holds only for
+# a completed move. `reason` is never empty here: a finished run is not
+# interrupted.
+def partial_out(+reason: String, +folder: String, +dest: String, +move: Bool) -> Out:
+  Partial{J.obj([J.kv("ok", J.bool(False{})), J.kv("partial", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("destination", J.str(dest)), J.kv("method", J.str(method_name(move))), J.kv("message", J.str("the move was cut off and may have copied the messages to " ++ dest ++ ": they may now be in both " ++ folder ++ " and " ++ dest ++ "; check the destination before retrying (" ++ reason ++ ")"))])}
+
+def moved_out(+p: Proc, +plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>, +dest: String, +move: Bool) -> Out:
+  +r = imap_result(p)
+  Bool.pick(Out, interrupted(plan, p), partial_out(run_failure(r), folder, dest, move),
+    changed_out(r, uids, folder, [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("destination", J.str(dest)), J.kv("method", J.str(method_name(move)))]))
+
 def move_plan(+plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>, +dest: String, +move: Bool) -> IO(Out):
   match plan:
     case Nil{}:
       pure_out(Err{"the server supports neither MOVE nor UIDPLUS; refusing to move with a plain EXPUNGE, which could remove other messages"})
     case Con{h, t}:
       do IO<Out>:
-        r : Run <- imap_run(plan)
-        return changed_out(r, uids, folder, [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("destination", J.str(dest)), J.kv("method", J.str(method_name(move)))])
+        p : Proc <- imap_proc(plan)
+        return moved_out(p, plan, folder, uids, dest, move)
 
-def move_if(+problem: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
+# Runs `plan` (a move or a label) unless `problem` rules it out.
+def move_go(+problem: String, +plan: List<&2, I.Cmd>, +folder: String, +uids: List<&2, U32>, +dest: String, +move: Bool) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{problem})
     case SNil{}:
-      move_plan(Ops.plan_move(folder, uids, dest, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS"), uidv), folder, uids, dest, I.has_cap(caps, "MOVE"))
+      move_plan(plan, folder, uids, dest, move)
+
+def move_if(+problem: String, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
+  move_go(problem, Ops.plan_move(folder, uids, dest, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS"), uidv), folder, uids, dest, I.has_cap(caps, "MOVE"))
 
 def move_caps(r: Run, +folder: String, +uids: List<&2, U32>, +dest: String, +uidv: U32) -> IO(Out):
   match r:
@@ -1041,6 +1144,416 @@ def delete_uids(+u: Uids, +folder: String, +confirm: String, +uidv: U32) -> IO(O
 
 def t_delete(+args: J.Json) -> IO(Out):
   delete_uids(uids_arg(args), folder_arg(args), str_arg(args, "confirm", ""), uidv_arg(args))
+
+# ---- folders: create, rename, label --------------------------------------------------------
+# A label is a folder. The rules below keep these tools from touching the
+# folders MailBend relies on, directly or through a parent, a child or a
+# rename that moves a whole subtree. They are decided here, before any
+# command is sent; the plans themselves only create, rename, subscribe and
+# unsubscribe.
+
+def review_folder() -> String:
+  "To Delete"
+
+# Names reserved whether or not the server advertises them: the review folder,
+# and the conventional role names that role resolution falls back to.
+def reserved_names() -> List<&2, String>:
+  review_folder() <> conventional_names()
+
+def reserved_note() -> String:
+  "INBOX, Drafts, Sent, Trash, Junk, Archive (also under their usual names), To Delete, and any folder configured for one of those roles or advertised with any special-use role"
+
+def is_inbox(+name: String) -> Bool:
+  I.same_name(name, "INBOX")
+
+def name_if(+keep: Bool, +name: String, +rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      name <> rest
+    case False{}:
+      rest
+
+def maybe_name(+m: Maybe<&2, String>, +rest: List<&2, String>) -> List<&2, String>:
+  match m:
+    case Some{n}:
+      n <> rest
+    case None{}:
+      rest
+
+# The folders that advertise a role.
+def advertised_names(+fs: List<&2, I.Folder>) -> List<&2, String>:
+  match fs:
+    case Nil{}:
+      []
+    case Con{I.Folder{+name, d, +attrs}, t}:
+      name_if(recognized_role(attrs), name, advertised_names(t))
+
+def lowered(+xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case Con{x, t}:
+      String.to_lower(x) <> lowered(t)
+
+# The delimiter LIST reports for INBOX; "" when INBOX is not listed or has none.
+def inbox_delim(+fs: List<&2, I.Folder>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case Con{I.Folder{+n, +d, a}, t}:
+      Bool.pick(String, is_inbox(n), d, inbox_delim(t))
+
+# The first delimiter LIST reports for any folder; "" when it reports none.
+def any_delim(+fs: List<&2, I.Folder>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case Con{I.Folder{n, +d, a}, t}:
+      first_of(d, any_delim(t))
+
+# The hierarchy delimiter: INBOX's, else any folder's. "" means none is known.
+def delim_of(+fs: List<&2, I.Folder>) -> String:
+  first_of(inbox_delim(fs), any_delim(fs))
+
+# Reserved, in lower case: the resolved role folders, the folders that
+# advertise a role, and the reserved names.
+def guard_of(+fs: List<&2, I.Folder>, +drafts: Maybe<&2, String>, +trash: Maybe<&2, String>, +sent: Maybe<&2, String>, +junk: Maybe<&2, String>, +archive: Maybe<&2, String>) -> Guard:
+  +resolved = maybe_name(drafts, maybe_name(trash, maybe_name(sent, maybe_name(junk, maybe_name(archive, [])))))
+  Guard{fs, lowered(List.append(&2, String, resolved, List.append(&2, String, advertised_names(fs), reserved_names()))), delim_of(fs)}
+
+def guard_fs(+g: Guard) -> List<&2, I.Folder>:
+  match g:
+    case Guard{fs, reserved, delim}:
+      fs
+
+def guard_reserved(+g: Guard) -> List<&2, String>:
+  match g:
+    case Guard{fs, reserved, delim}:
+      reserved
+
+def guard_delim(+g: Guard) -> String:
+  match g:
+    case Guard{fs, reserved, delim}:
+      delim
+
+def has_folder(+g: Guard, +name: String) -> Bool:
+  Bool.not(Maybe.is_none(&2, String, I.named(guard_fs(g), name)))
+
+# Whether `name` lies inside the folder `ancestor` (and is not that folder):
+# "Mail/Sent" lies inside "Mail" when the delimiter is "/". A server with no
+# delimiter has no nesting.
+def inside(+delim: String, +ancestor: String, +name: String) -> Bool:
+  Bool.not(String.is_empty(delim)) && String.starts_with(name, ancestor ++ delim)
+
+def at_or_inside(+delim: String, +ancestor: String, +name: String) -> Bool:
+  String.eq(ancestor, name) || inside(delim, ancestor, name)
+
+# Whether the lower-case `name` is a reserved folder or inside one.
+def inside_reserved(+delim: String, +reserved: List<&2, String>, +name: String) -> Bool:
+  match reserved:
+    case Nil{}:
+      False{}
+    case Con{r, t}:
+      at_or_inside(delim, r, name) || inside_reserved(delim, t, name)
+
+# Whether the lower-case `name` is a reserved folder or contains one.
+def holds_reserved(+delim: String, +reserved: List<&2, String>, +name: String) -> Bool:
+  match reserved:
+    case Nil{}:
+      False{}
+    case Con{r, t}:
+      at_or_inside(delim, name, r) || holds_reserved(delim, t, name)
+
+# INBOX is reserved itself, but not its children: some servers keep every
+# folder under it.
+def reserved_target(+g: Guard, +name: String) -> Bool:
+  is_inbox(name) || inside_reserved(guard_delim(g), guard_reserved(g), String.to_lower(name))
+
+def reserved_source(+g: Guard, +name: String) -> Bool:
+  is_inbox(name) || holds_reserved(guard_delim(g), guard_reserved(g), String.to_lower(name))
+
+# A folder name is split into its levels at the delimiter; a server without
+# one has a single level.
+def levels(+delim: String, +name: String) -> List<&2, String>:
+  match delim:
+    case SCon{c, SNil{}}:
+      String.split(name, c)
+    case _:
+      [name]
+
+def has_empty_level(+ls: List<&2, String>) -> Bool:
+  match ls:
+    case Nil{}:
+      False{}
+    case Con{l, t}:
+      String.is_empty(l) || has_empty_level(t)
+
+# `ls` without its last level, given the level `h` that precedes it.
+def without_last(+ls: List<&2, String>, +h: String) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      []
+    case Con{n, rest}:
+      h <> without_last(rest, n)
+
+def init_of(+ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      []
+    case Con{h, t}:
+      without_last(t, h)
+
+# The folder `name` sits in; "" for a top-level name.
+def parent_of(+delim: String, +name: String) -> String:
+  String.join(init_of(levels(delim, name)), delim)
+
+# `ls` with a first level spelled "inbox" in any case replaced by `inbox`.
+def with_inbox(+inbox: String, +ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      []
+    case Con{+h, t}:
+      Bool.pick(List<&2, String>, is_inbox(h), inbox <> t, h <> t)
+
+# Only the exact name INBOX is case-insensitive, so a server could take
+# "inbox/x" for a new top-level folder: the first level is rewritten to the
+# INBOX name LIST gives.
+def canonical_name(+g: Guard, +name: String) -> String:
+  String.join(with_inbox(Maybe.default(&2, String, I.named(guard_fs(g), "INBOX"), "INBOX"), levels(guard_delim(g), name)), guard_delim(g))
+
+# Checks that need no connection.
+def raw_name_problem(+name: String) -> String:
+  Bool.pick(String, String.is_empty(name), "a folder name cannot be empty",
+    Bool.pick(String, M.no_ctl(name), "", "a folder name cannot contain control characters"))
+
+# With no known delimiter a nested-looking name is refused, not guessed at.
+def shape_problem(+g: Guard, +name: String) -> String:
+  +delim = guard_delim(g)
+  Bool.pick(String, String.is_empty(delim) && (String.contains(name, "/") || String.contains(name, ".")), "cannot tell the server's hierarchy delimiter (LIST reports none), so \"" ++ name ++ "\" cannot be checked as a nested name",
+    Bool.pick(String, has_empty_level(levels(delim, name)), "\"" ++ name ++ "\" has an empty level: a folder name cannot start or end with the delimiter \"" ++ delim ++ "\" or repeat it", ""))
+
+def reserved_problem(+g: Guard, +name: String) -> String:
+  Bool.pick(String, reserved_target(g, name), "\"" ++ name ++ "\" is, or lies inside, a folder MailBend relies on: " ++ reserved_note(), "")
+
+def exists_problem(+g: Guard, +name: String) -> String:
+  Bool.pick(String, has_folder(g, name), "a folder named \"" ++ name ++ "\" already exists", "")
+
+def parent_problem(+g: Guard, +name: String) -> String:
+  +parent = parent_of(guard_delim(g), name)
+  Bool.pick(String, String.is_empty(parent) || has_folder(g, parent), "", "the parent folder \"" ++ parent ++ "\" does not exist; create it first")
+
+# A new folder name: well formed, not reserved or inside a reserved folder,
+# not taken, and directly under a folder that exists (no implicit parents).
+def target_problem(+g: Guard, +name: String) -> String:
+  first_of(shape_problem(g, name), first_of(reserved_problem(g, name), first_of(exists_problem(g, name), parent_problem(g, name))))
+
+# mail_create_folder may also create the review folder, once and at top level.
+def create_problem(+g: Guard, +name: String) -> String:
+  Bool.pick(String, String.eq(name, review_folder()), exists_problem(g, name), target_problem(g, name))
+
+def source_problem(+g: Guard, +name: String) -> String:
+  first_of(Bool.pick(String, has_folder(g, name), "", "no folder is named \"" ++ name ++ "\""),
+    Bool.pick(String, reserved_source(g, name), "\"" ++ name ++ "\" is, or contains, a folder MailBend relies on, so it cannot be renamed: " ++ reserved_note(), ""))
+
+def nesting_problem(+g: Guard, +from: String, +to: String) -> String:
+  Bool.pick(String, at_or_inside(guard_delim(g), from, to), "a folder cannot be renamed to itself or into itself", "")
+
+def moved_problem(+name: String, +moved: String, +problem: String) -> String:
+  Bool.pick(String, String.is_empty(problem), "", "renaming would turn the subfolder \"" ++ name ++ "\" into \"" ++ moved ++ "\": " ++ problem)
+
+# A subfolder follows its parent to the new path, which must be as free as a
+# new folder's. Its parent comes from the rename itself, so only the
+# destination's own parent has to exist already.
+def child_problem(+g: Guard, +from: String, +to: String, +name: String) -> String:
+  +moved = Ops.renamed_to(from, to, name)
+  Bool.pick(String, inside(guard_delim(g), from, name), moved_problem(name, moved, first_of(reserved_problem(g, moved), exists_problem(g, moved))), "")
+
+def children_problem(+g: Guard, +from: String, +to: String, +fs: List<&2, I.Folder>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case Con{I.Folder{+name, d, a}, t}:
+      first_of(child_problem(g, from, to, name), children_problem(g, from, to, t))
+
+def rename_problem(+g: Guard, +from: String, +to: String) -> String:
+  first_of(source_problem(g, from), first_of(target_problem(g, to), first_of(nesting_problem(g, from, to), children_problem(g, from, to, guard_fs(g)))))
+
+# A label folder: it exists, can be opened, and is none of the folders
+# MailBend relies on, nor inside one (use mail_move or mail_trash for those).
+def label_problem(+g: Guard, +label: String) -> String:
+  first_of(Bool.pick(String, has_folder(g, label), "", "the label folder \"" ++ label ++ "\" does not exist: create it with mail_create_folder"),
+    first_of(Bool.pick(String, Maybe.is_none(&2, String, unique_folder(override_candidates(guard_fs(g), label))), "the label folder \"" ++ label ++ "\" cannot be selected", ""),
+      reserved_problem(g, label)))
+
+# What each kind of folder change checks, plans and reports.
+def change_raw_problem(+c: FolderChange) -> String:
+  match c:
+    case FolderCreate{name}:
+      raw_name_problem(name)
+    case FolderRename{from, to}:
+      first_of(raw_name_problem(from), raw_name_problem(to))
+
+def change_problem(+g: Guard, +c: FolderChange) -> String:
+  match c:
+    case FolderCreate{name}:
+      create_problem(g, name)
+    case FolderRename{from, to}:
+      rename_problem(g, from, to)
+
+def change_canonical(+g: Guard, +c: FolderChange) -> FolderChange:
+  match c:
+    case FolderCreate{name}:
+      FolderCreate{canonical_name(g, name)}
+    case FolderRename{from, to}:
+      FolderRename{from, canonical_name(g, to)}
+
+# The folders of `fs` that are `root` or inside it, exist, and are among the
+# subscribed folders `subs`: the ones whose subscription a rename moves.
+def subscribed_tree(+delim: String, +root: String, +fs: List<&2, I.Folder>, +subs: List<&2, I.Folder>) -> List<&2, String>:
+  match fs:
+    case Nil{}:
+      []
+    case Con{I.Folder{+name, d, +attrs}, t}:
+      name_if(at_or_inside(delim, root, name) && Bool.not(I.has_attr(attrs, "\\NonExistent")) && Bool.not(Maybe.is_none(&2, String, I.named(subs, name))), name, subscribed_tree(delim, root, t, subs))
+
+def change_plan(+g: Guard, +subs: List<&2, I.Folder>, +c: FolderChange) -> List<&2, I.Cmd>:
+  match c:
+    case FolderCreate{name}:
+      Ops.plan_create(name)
+    case FolderRename{from, to}:
+      Ops.plan_rename(from, to, subscribed_tree(guard_delim(g), from, guard_fs(g), subs))
+
+def change_verb(+c: FolderChange) -> String:
+  match c:
+    case FolderCreate{name}:
+      "created"
+    case FolderRename{from, to}:
+      "renamed"
+
+def change_result(+c: FolderChange) -> List<&2, J.Json>:
+  match c:
+    case FolderCreate{name}:
+      [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(name))]
+    case FolderRename{from, to}:
+      [J.kv("ok", J.bool(True{})), J.kv("from", J.str(from)), J.kv("to", J.str(to))]
+
+# The change went through; only the subscriptions may have failed, which a
+# retry would not fix (the folder now exists, or the old name is gone).
+# `names_ok`: every new name got subscribed, so only dropping old names failed.
+def folder_done(+names_ok: Bool, +all_ok: Bool, +c: FolderChange, +reason: String) -> Out:
+  ok_obj(List.append(&2, J.Json, change_result(c),
+    Bool.pick(List<&2, J.Json>, all_ok, [J.kv("subscribed", J.bool(True{}))],
+      [J.kv("subscribed", J.bool(False{})), J.kv("note", J.str("the folder was " ++ change_verb(c) ++ ", but " ++ Bool.pick(String, names_ok, "dropping its old subscriptions failed (" ++ reason ++ "); the old names may still be listed as subscribed", "updating its subscriptions failed (" ++ reason ++ "); some clients may not show it until it is subscribed") ++ ". Do not retry"))])))
+
+# Whether the change (tag 2, after the CAPABILITY anchor) may have run
+# unanswered: the session got past the anchor and the change got no answer,
+# or the helper was lost. Anything earlier changed nothing.
+def folder_unanswered(+p: Proc) -> Bool:
+  +lines = proc_lines(p)
+  helper_lost(p) || (ok_at(lines, 1) && String.is_empty(I.status(lines, 2)))
+
+# The plan is CAPABILITY, the change, then its subscriptions. A refused change
+# or one that never started is a plain error; one that may have run
+# unanswered tells the agent to look before retrying.
+def folder_out(+p: Proc, +plan: List<&2, I.Cmd>, +c: FolderChange) -> Out:
+  +lines = proc_lines(p)
+  +reason = run_failure(imap_result(p))
+  +last = I.tag_count(plan)
+  Bool.pick(Out, ok_at(lines, 2), folder_done(ok_at(lines, (last - I.unsubscribe_count(plan) : U32)), ok_at(lines, last), c, reason),
+    Bool.pick(Out, folder_unanswered(p), Err{"the folder may have been " ++ change_verb(c) ++ "; list the folders before retrying (" ++ reason ++ ")"}, Err{reason}))
+
+def folder_go(+problem: String, +plan: List<&2, I.Cmd>, +c: FolderChange) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      do IO<Out>:
+        p : Proc <- imap_proc(plan)
+        return folder_out(p, plan, c)
+
+def folder_guarded(+g: Guard, +subs: List<&2, I.Folder>, +c: FolderChange) -> IO(Out):
+  +canonical = change_canonical(g, c)
+  folder_go(change_problem(g, canonical), change_plan(g, subs, canonical), canonical)
+
+def folder_fs(+f: Fs, +subs: List<&2, I.Folder>, +c: FolderChange) -> IO(Out):
+  match f:
+    case FsErr{m}:
+      pure_out(Err{m ++ "; nothing was changed"})
+    case FsOk{+fs, drafts, trash, sent, junk, archive}:
+      folder_guarded(guard_of(fs, drafts, trash, sent, junk, archive), subs, c)
+
+def folder_found(r: Run, +c: FolderChange) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      do IO<Out>:
+        f : Fs <- folders_io(lines)
+        folder_fs(f, I.subscribed(lines), c)
+
+def folder_asked(+problem: String, +c: FolderChange) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_folder_scan())
+        folder_found(r, c)
+
+def folder_change(+c: FolderChange) -> IO(Out):
+  folder_asked(change_raw_problem(c), c)
+
+def t_create_folder(+args: J.Json) -> IO(Out):
+  folder_change(FolderCreate{str_arg(args, "name", "")})
+
+def t_rename_folder(+args: J.Json) -> IO(Out):
+  folder_change(FolderRename{str_arg(args, "from", ""), str_arg(args, "to", "")})
+
+def label_fs(+f: Fs, +caps: List<&2, String>, +folder: String, +uids: List<&2, U32>, +label: String, +uidv: U32) -> IO(Out):
+  match f:
+    case FsErr{m}:
+      pure_out(Err{m ++ "; nothing was changed"})
+    case FsOk{+fs, drafts, trash, sent, junk, archive}:
+      move_go(label_problem(guard_of(fs, drafts, trash, sent, junk, archive), label), Ops.plan_label(folder, uids, label, I.has_cap(caps, "MOVE"), I.has_cap(caps, "UIDPLUS"), uidv), folder, uids, label, I.has_cap(caps, "MOVE"))
+
+def label_if(+problem: String, +lines: List<&2, I.RLine>, +folder: String, +uids: List<&2, U32>, +label: String, +uidv: U32) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      do IO<Out>:
+        f : Fs <- folders_io(lines)
+        label_fs(f, I.caps(lines), folder, uids, label, uidv)
+
+def label_found(r: Run, +folder: String, +uids: List<&2, U32>, +label: String, +uidv: U32) -> IO(Out):
+  match r:
+    case RunErr{m}:
+      pure_out(Err{m})
+    case RunOk{+lines}:
+      label_if(uidv_problem(lines, uidv, folder), lines, folder, uids, label, uidv)
+
+def label_asked(+problem: String, +folder: String, +uids: List<&2, U32>, +label: String, +uidv: U32) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
+      do IO<Out>:
+        r : Run <- imap_run(Ops.plan_preflight(folder))
+        label_found(r, folder, uids, label, uidv)
+
+def label_request(+uidv: U32, +folder: String, +label: String) -> String:
+  Bool.pick(String, String.is_empty(label) || same_mailbox(label, folder), "\"label\" must name a folder other than the one the messages are in",
+    Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
+
+def label_uids(+u: Uids, +folder: String, +label: String, +uidv: U32) -> IO(Out):
+  match u:
+    case UidsErr{m}:
+      pure_out(Err{m})
+    case UidsOk{uids}:
+      label_asked(label_request(uidv, folder, label), folder, uids, label, uidv)
+
+def t_label(+args: J.Json) -> IO(Out):
+  label_uids(uids_arg(args), folder_arg(args), str_arg(args, "label", ""), uidv_arg(args))
 
 def bytes_str(+xs: List<&2, U32>) -> String:
   match xs:
@@ -1318,6 +1831,8 @@ def sent_out(+o: Out, +msgid: String, +n: U32) -> Out:
   match o:
     case Err{m}:
       Err{m}
+    case Partial{j}:
+      Partial{j}
     case Ok{reply}:
       ok_obj([J.kv("ok", J.bool(True{})), J.kv("sent", J.bool(True{})), J.kv("message_id", J.str(msgid)), J.kv("recipients", J.num(n)), J.kv("server_reply", reply)])
 
@@ -1572,10 +2087,16 @@ def run_op(+op: Ops.Op, +args: J.Json) -> IO(Out):
       t_mark(args, False{})
     case Ops.OMove{}:
       t_move(args)
+    case Ops.OLabel{}:
+      t_label(args)
     case Ops.OTrash{}:
       t_trash(args)
     case Ops.ODelete{}:
       t_delete(args)
+    case Ops.OCreateFolder{}:
+      t_create_folder(args)
+    case Ops.ORenameFolder{}:
+      t_rename_folder(args)
     case Ops.OSaveDraft{}:
       t_compose(args, True{})
     case Ops.OSend{}:

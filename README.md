@@ -16,8 +16,11 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
 | `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
 | `mail_move` | Move to another folder | yes |
+| `mail_label` | Move into an existing label folder (a label is a folder; one copy, `uidvalidity` required) | yes |
 | `mail_trash` | Move to the resolved Trash folder (recoverable) | yes |
 | `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity` | yes |
+| `mail_create_folder` | Create and subscribe to a folder: the only tool that creates a mailbox | yes |
+| `mail_rename_folder` | Rename a folder with its subfolders; the subscriptions of the moved folders follow | yes |
 | `mail_save_draft` | Compose into Drafts (with attachments) | yes |
 | `mail_send` | Compose and send over SMTP (to/cc/bcc, attachments) | sends |
 | `mail_reply` | Reply or reply-all, threaded; or save as draft (needs `uidvalidity`) | sends |
@@ -114,7 +117,8 @@ Use them for localized or nested folders. Invalid overrides fail visibly.
 Multiple role matches or multiple fallback aliases are ambiguous, and an
 advertised but unselectable role blocks fallback. A fallback mailbox cannot
 carry a different recognized role. Unresolved Drafts or Trash prevents writes
-that require that role; MailBend never creates a mailbox or guesses a path.
+that require that role; MailBend never creates a mailbox implicitly or guesses
+a path. Only `mail_create_folder` creates one, with the name the caller gives.
 
 When the authenticated server advertises SPECIAL-USE, MailBend requests
 `LIST RETURN (SPECIAL-USE)` and merges its metadata with ordinary LIST; a
@@ -195,6 +199,28 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 - **Folder targets must be resolved.** Overrides, advertised roles and
   conventional names follow the per-role precedence above; ambiguous or
   unselectable targets never trigger a guessed mutation.
+- **Labels are folders, and no tool deletes one.** On iCloud a label is a
+  folder: `mail_label` is the proven move plan (so every move law holds for
+  it), and moving the messages back to INBOX removes the label.
+  `mail_create_folder` and `mail_rename_folder` only create, rename and
+  (un)subscribe (proven: they change no message and expunge nothing). A
+  rename subscribes the new name of each moved folder that was subscribed,
+  then unsubscribes its old name; if only a subscription fails, the call
+  succeeds with `subscribed: false` and a note not to retry. They refuse INBOX
+  itself, the Drafts, Sent, Trash, Junk and Archive folders (by any usual name
+  or configured override) and anything inside them, anything inside
+  `To Delete` (which `mail_create_folder` may create once, at top level), and a
+  rename that would move one of them with its parent. The parent of a new
+  folder must already exist. IMAP has no way to delete a folder only when it
+  is empty, and iCloud deletes a folder's messages with it, so delete folders
+  in Apple Mail or iCloud.com.
+- **An interrupted move says so.** A move (`mail_move`, `mail_trash`,
+  `mail_label`) cut off when its COPY may have run fails with `partial: true`
+  (the messages may be in both folders; `isError` over MCP, exit 1 on the
+  CLI), never as an error that implies nothing changed. A refused or earlier
+  failure is an ordinary error. A folder change cut off after CAPABILITY
+  answered says the folder may have been created or renamed: list folders
+  before retrying.
 - **Attachments stay inside one directory.** Attachments are read only from
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   `mailbend-attach`, a separate program with no credentials. It opens them
@@ -229,7 +255,7 @@ flowchart LR
   agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["14 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["17 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]
@@ -270,9 +296,9 @@ to report a vulnerability privately.
   keeps a person in front of every outgoing message.
 - Monitoring: a watcher with IDLE/polling, filters and a delivery ledger.
   `mail_get_new` already provides the checkpoint semantics it needs.
-- Folder create/delete, and copying sent mail into Sent (check first whether
-  the provider already files SMTP-sent mail there). SMTP delivery may succeed
-  without a Sent copy; resolving the Sent role does not append one.
+- Copying sent mail into Sent (check first whether the provider already files
+  SMTP-sent mail there). SMTP delivery may succeed without a Sent copy;
+  resolving the Sent role does not append one.
 
 Known limits: each character of a fetched message is a separate value in
 memory, so very large messages (the 16 MiB `mail_get` / 25 MiB forward caps)
