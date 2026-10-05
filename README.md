@@ -71,7 +71,8 @@ For the default iCloud profile:
 
    Or keep the password out of every environment with
    `MAILBEND_PASSWORD_FILE`: the absolute path of a file you own with mode
-   600, holding just the password, outside `MAILBEND_ATTACH_DIR`. Only
+   600, holding just the password, outside `MAILBEND_ATTACH_DIR`, given by
+   a path with no symlink in any component (Linux 5.6+). Only
    `mailbend-tls` opens it; setting both variables is an error.
 
 Optional variables are listed in [.env.example](.env.example): server
@@ -176,9 +177,11 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   Permanent delete needs the exact confirmation word (proven: otherwise the
   plan is empty) and UIDPLUS; its first `UID EXPUNGE` names the same UIDs
   as its first `\Deleted` store, and with the confirmation those are the
-  caller's UIDs (proven). These laws compare first commands only: they do
-  not bind move/trash's `\Deleted` store or any later command, which the
-  current plans build from the caller's UIDs. Expunging always renders as
+  caller's UIDs (proven). Every command that changes mail is pinned too:
+  move and trash do exactly one `UID MOVE`, or exactly one `UID COPY`, one
+  `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
+  `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
+  second or later change (proven). Expunging always renders as
   `UID EXPUNGE` (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
   caller's UIDVALIDITY in the same IMAP session (proven for every plan): if

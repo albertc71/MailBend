@@ -215,6 +215,21 @@ def Laws.delete_expunges_only_marked(mbox, uids, confirm, uidplus, uidv):
 def Laws.delete_expunges_given_uids(mbox, uids, uidv):
   {==}
 
+def Laws.move_changes_exactly(mbox, uids, dest, uidplus, uidv):
+  {==}
+
+def Laws.copy_move_changes_exactly(mbox, uids, dest, uidv):
+  {==}
+
+def Laws.trash_changes_exactly(mbox, uids, trash, uidplus, uidv):
+  {==}
+
+def Laws.copy_trash_changes_exactly(mbox, uids, trash, uidv):
+  {==}
+
+def Laws.delete_changes_exactly(mbox, uids, uidv):
+  {==}
+
 def Laws.expunge_renders_uid_expunge(uids):
   {==}
 

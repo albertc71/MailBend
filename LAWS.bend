@@ -114,8 +114,9 @@ law trash_never_loses_mail:
 # A move or trash plan's first UID EXPUNGE names the same UIDs as its first
 # UID COPY, and a delete plan's first UID EXPUNGE names the same UIDs as its
 # first \Deleted store; with the confirmation and UIDPLUS those are the
-# caller's UIDs. Only the first matching commands are compared: these laws
-# do not bind move/trash's \Deleted store or any later command.
+# caller's UIDs. Only the first matching commands are compared: on their own
+# these laws do not bind move/trash's \Deleted store or any later command.
+# The *_changes_exactly laws below close that gap.
 law move_expunges_only_copied:
   for mbox: String
   for uids: List<&2, U32>
@@ -147,6 +148,49 @@ law delete_expunges_given_uids:
   for uids: List<&2, U32>
   for uidv: U32
   {Ops.expunged(Ops.plan_delete(mbox, uids, Ops.confirm_word(), True{}, uidv)) == Some{uids} : Maybe<&2, List<&2, U32>>}
+
+# Every command that changes mail, in order, is exactly this: UID MOVE of the
+# caller's UIDs; or, without MOVE but with UIDPLUS, one UID COPY, one \Deleted
+# store and one UID EXPUNGE, all of the caller's UIDs; or, for a confirmed
+# delete with UIDPLUS, one \Deleted store and one UID EXPUNGE of them. So the
+# \Deleted store names the copied UIDs, and no second or later COPY, STORE,
+# MOVE, EXPUNGE or APPEND exists. (Without MOVE or UIDPLUS, or without the
+# confirmation, the plan is empty; see the laws on those plans.)
+law move_changes_exactly:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_move(mbox, uids, dest, True{}, uidplus, uidv)) == [I.CMove{uids, dest}] : List<&2, I.Cmd>}
+
+law copy_move_changes_exactly:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv)) == [I.CCopy{uids, dest}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}] : List<&2, I.Cmd>}
+
+law trash_changes_exactly:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_trash(mbox, uids, trash, True{}, uidplus, uidv)) == [I.CMove{uids, trash}] : List<&2, I.Cmd>}
+
+law copy_trash_changes_exactly:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_trash(mbox, uids, trash, False{}, True{}, uidv)) == [I.CCopy{uids, trash}, I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}] : List<&2, I.Cmd>}
+
+law delete_changes_exactly:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_delete(mbox, uids, Ops.confirm_word(), True{}, uidv)) == [I.CStore{uids, True{}, I.FDeleted{}}, I.CExpunge{uids}] : List<&2, I.Cmd>}
 
 # Expunging always renders as UID EXPUNGE, never a plain EXPUNGE.
 law expunge_renders_uid_expunge:

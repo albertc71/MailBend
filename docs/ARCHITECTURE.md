@@ -200,7 +200,8 @@ helper wipes its copies after login and does not forward the server's
 login replies, so no transcript, tool result or log can contain the
 password. An environment variable is still inherited by the core and
 readable by any process of the same user; with `MAILBEND_PASSWORD_FILE`
-(absolute, a regular file owned by the user, mode 600, no symlink) the
+(absolute, a regular file owned by the user, mode 600, no symlink in any
+path component) the
 helper reads the password from that file instead, and it is in no
 environment. Setting both is refused.
 
@@ -320,7 +321,11 @@ These tests use the fake TLS server, not a live provider.
 - marking read/unread never marks `\Deleted` or expunges;
 - move and trash never expunge before copying, for every capability set,
   and their first `UID EXPUNGE` names the same UIDs as their first
-  `UID COPY` (their `\Deleted` store and later commands are not compared);
+  `UID COPY`;
+- every mail-changing command of move, trash and confirmed delete is pinned:
+  one `UID MOVE`, or one `UID COPY`, one `\Deleted` store and one
+  `UID EXPUNGE`, or (delete) one `\Deleted` store and one `UID EXPUNGE`, all
+  of the caller's UIDs, with nothing after them;
 - delete is the empty plan unless the confirmation is exactly
   `permanently-delete` (the tool passes the caller's string straight in); its
   first `UID EXPUNGE` names the same UIDs as its first `\Deleted` store,
