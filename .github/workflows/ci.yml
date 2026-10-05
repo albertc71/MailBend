@@ -15,16 +15,15 @@ concurrency:
 
 env:
   BEND_NO_TELEMETRY: "1"
-  # Pinned Bend release and the sha256 its official installer vouches for.
-  BEND_VERSION: "2.0.32"
-  BEND_SHA256: "5c365ddb12954d0933cef751802e0f7d9875f842edcb80f9661f89cd1a9ff7b6"
 
 jobs:
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
@@ -33,15 +32,7 @@ jobs:
 
       - name: Install Bend
         run: |
-          name="bend-${BEND_VERSION}-linux-x64.tar.gz"
-          tmp=$(mktemp -d)
-          curl --proto '=https' --tlsv1.2 -fsSL -o "$tmp/$name" \
-            "https://github.com/bendlang/bend/releases/download/v${BEND_VERSION}/$name"
-          echo "${BEND_SHA256}  $tmp/$name" | sha256sum -c -
-          tar -xzf "$tmp/$name" -C "$tmp"
-          mkdir -p "$HOME/.bend/bin"
-          mv "$tmp/bend/bend2" "$tmp/bend/guide" "$HOME/.bend/"
-          mv "$tmp/bend/bin/bend" "$HOME/.bend/bin/bend"
+          sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
 
       - name: Generated schema is up to date

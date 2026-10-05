@@ -54,8 +54,9 @@ bash tests/test-transport.sh
 scripts/install.sh && python3 tests/test-e2e.py
 ```
 
-CI (`.github/workflows/ci.yml`) runs these checks on a pinned Bend
-release; bump `BEND_VERSION` and `BEND_SHA256` there together.
+CI (`.github/workflows/ci.yml`) runs these checks on the Bend release pinned
+in `scripts/install-bend.sh`; bump `BEND_VERSION` and `BEND_SHA256` there
+together.
 
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`.
