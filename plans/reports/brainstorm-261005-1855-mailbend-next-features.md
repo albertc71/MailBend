@@ -52,7 +52,9 @@ several labels per message. Guard it with:
 Better approaches: none for the requested behaviour; C is the honest fallback
 if duplicate copies turn out to be unacceptable.
 
-**Decision (user, 2026-10-05): approach A, copy-based labels.**
+**Decision (user, 2026-10-05): approach A, copy-based labels.** Superseded
+later the same day: labels move mail into a folder with no duplicates
+(approach C); see the plan's validation log.
 
 ## 2. Jev (TypeSafe) for classification, labelling and delete safety
 

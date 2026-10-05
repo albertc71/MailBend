@@ -11,18 +11,24 @@ dependencies: []
 
 ## Goal
 
-Add explicit folder management and Gmail-style labels emulated as copies on
-iCloud: `mail_create_folder`, `mail_rename_folder`, `mail_delete_folder`
-(empty only, confirmed), `mail_label`, `mail_unlabel` (confirmed),
-`mail_labels_of`, with laws that can actually see mailbox-level commands.
+Add explicit folder management and labels as iCloud folders:
+`mail_create_folder`, `mail_rename_folder`, `mail_delete_folder` (empty
+only, confirmed), and `mail_label`, which moves messages into a label
+folder (no duplicate copies), with laws that can actually see
+mailbox-level commands.
 
 ## Evidence
 
 - User asked for "the tool call to create folders that act like a label for
-  iCloud mail similarly to gmail"; approach A (copies) chosen; unlabel is a
-  permanent expunge guarded by the confirmation word (user, red-team round).
-- codefuturist/email-mcp emulates Proton labels the same way: COPY into a
-  label folder, remove by Message-ID (`label-strategy.ts`).
+  iCloud mail similarly to gmail", then decided: "mail label should move to
+  a folder in icloud mail please, no duplicate mails". On iCloud a label is
+  therefore a folder, one per message (brainstorm approach C), applied with
+  the existing move plan. Removing a label is a move back to INBOX with
+  `mail_move`; the folder a message is in is its label, so no unlabel or
+  labels-of tool is needed.
+- `plan_move` is already proven never to lose mail and to expunge only the
+  copied UIDs (`LAWS.bend` `move_never_loses_mail`,
+  `move_expunges_only_copied`, `copy_move_changes_exactly`).
 - `mailbend-tls` refuses only LOGIN, AUTHENTICATE, STARTTLS, LOGOUT
   (`native/mailbend-tls.c:588-589`), so CREATE/RENAME/DELETE/SUBSCRIBE pass.
 - AGENTS.md:42 "never create a target mailbox"; README.md:113. Rewording
@@ -34,7 +40,7 @@ iCloud: `mail_create_folder`, `mail_rename_folder`, `mail_delete_folder`
 - **Laws would be vacuous without new predicates:** `mail_changes`
   (`src/ops.bend:290-307`) and `loses_mail` (`:238-248`) end in `case _`, so
   CREATE/RENAME/DELETE would be silently skipped and a law such as
-  `label_changes_exactly` would still hold for a plan containing
+  a law about label plans would still hold for a plan containing
   `CDelete{"Archive"}`. `writes` (`src/imap.bend:113-145`) has no catch-all,
   which is the pattern to follow.
 - **Test-server bug:** `tests/fake_mail_server.py:461-462` makes any
@@ -80,13 +86,10 @@ Plans:
   emptiness check and DELETE are adjacent in one session. Whether iCloud
   accepts DELETE of the examined mailbox is a live check; if not, the tool
   reports the server's refusal and deletes nothing.
-- `plan_label(src, uids, label, uidv)` = pinned guard + `CCopy{uids, label}`.
-- `plan_unlabel(label, uids, confirm, uidplus, uidv)` = exactly the
-  confirmed delete plan applied to the label folder (empty without the
-  confirmation word or UIDPLUS).
-- `plan_labels_of(folders, mid)` = per folder
-  `[CExamine{f}, CSearch{[KHeader{"Message-ID", mid}, KUndeleted{}]}]`,
-  followed by header fetches so Message-IDs are compared exactly.
+- `plan_label(src, uids, label, move, uidplus, uidv) = plan_move(src, uids, label, move, uidplus, uidv)`:
+  a label is a move, so every move law applies to it unchanged.
+- `KHeader` and `KUndeleted` are added here for phases 5 and 7 (Sent-copy
+  de-duplication and threads), together with the fake-server fix.
 
 Tool rules (`src/tools.bend`, deterministic, no Jev):
 
@@ -100,21 +103,10 @@ Tool rules (`src/tools.bend`, deterministic, no Jev):
 - Delete folder: refused when LIST shows children (`name<delim>...`); a
   failed emptiness expectation is reported as "the folder is not empty;
   nothing was deleted". Marked destructive.
-- Label: label folder exists, selectable, not protected, differs from the
-  source. Candidates in the label folder come from the HEADER search, then
-  the fetched Message-ID is compared exactly (whole angle-bracketed value);
-  only absent messages are copied; report `copied`, `already_labelled`,
-  `no_message_id` (copied without dedupe).
-- Unlabel: requires `confirm: "permanently-delete"` and the label folder's
-  `uidvalidity`; marked destructive; the phase 11 delete gate applies when
-  Jev is on. Before expunging, each message must have a non-empty
-  Message-ID and an exact match (Message-ID and RFC822.SIZE) in another
-  folder that is not Trash, Junk, Drafts, `To Delete` or the label folder
-  itself; otherwise that UID is kept and reported in `kept_last_copy`. The
-  check runs in a session before the expunge session; the window is one
-  tool call and is documented.
-- Labels of: searches user folders (not INBOX, not protected), compares
-  Message-IDs exactly.
+- Label: the label folder must exist (created with `mail_create_folder`),
+  be selectable, not be protected, and differ from the source; the call
+  takes the source folder's `uidvalidity` like `mail_move` and reports
+  `changed` and `missing` the same way.
 
 Laws (`LAWS.bend`, proofs in `PROOF.bend`):
 
@@ -125,11 +117,9 @@ Laws (`LAWS.bend`, proofs in `PROOF.bend`):
 - `delete_folder_is_exact`: with the word,
   `plan_delete_folder(m, w) == [CExamine{m}, CExpect{"* 0 EXISTS"}, CDelete{m}]`
   (the deleted mailbox is the examined one).
-- `label_changes_exactly`: `mail_changes(plan_label(...)) == [CCopy{uids, label}]`
-  and `mailbox_changes(plan_label(...)) == []` and `any_destroys_mail == False`.
-- `label_is_pinned`; `unlabel_equals_confirmed_delete`;
-  `unlabel_needs_confirmation`.
-- `labels_of_writes_nothing`.
+- `label_is_move`: `plan_label(...) == plan_move(...)` for every argument,
+  so `move_never_loses_mail`, `move_expunges_only_copied` and the pinning
+  laws cover labels; and `mailbox_changes(plan_label(...)) == []`.
 - `read_only_tools_are_exactly_five` is renamed and restated with the final
   list from phases 3, 6, 7 and 9 (each change explained in the PR; the law
   still pins the exact list).
@@ -137,10 +127,10 @@ Laws (`LAWS.bend`, proofs in `PROOF.bend`):
 ## Contract consumers to update
 
 - `src/ops.bend:8-120` (Op, `name`, `all_ops`, `is_read_only`,
-  `is_destructive` adds `ODeleteFolder` and `OUnlabel`).
+  `is_destructive` adds `ODeleteFolder`).
 - `src/tools.bend:1557-1586` (`run_op`), `:1589-1603` (`sends`, `refusal`).
-- `tools/gen-schema.py` (destructive annotations on delete folder and
-  unlabel); `src/schema.bend` regenerated.
+- `tools/gen-schema.py` (destructive annotation on delete folder);
+  `src/schema.bend` regenerated.
 - `tests/test-e2e.py:508` (tool count), `:511` (read tools), `:531`
   (`MUTATING_CALLS` gains every new mutating tool), `:576-580` (read-only
   and drafts-only lists), `:59-72` (`env()` pops every new `MAILBEND_*`
@@ -165,10 +155,10 @@ Laws (`LAWS.bend`, proofs in `PROOF.bend`):
 6. e2e: create; duplicate create refused; protected names refused
    (including `inbox`, `Sent Messages`, `Deleted Messages`); rename;
    delete non-empty refused with the "not empty" message; delete without the
-   word refused; delete empty; label twice gives one copy; label without
-   Message-ID; unlabel without the word refused; unlabel whose only other
-   copy is in Trash kept; unlabel with a forged Message-ID of different
-   size kept; unlabel with a true copy removed; labels_of.
+   word refused; delete empty; label moves the message (gone from the
+   source, present once in the label folder) on servers with and without
+   MOVE; label into a protected folder refused; moving back to INBOX with
+   `mail_move` removes the label.
 7. Reword AGENTS.md:42: "Never create a mailbox implicitly: role
    resolution, move, label, triage and save never create their target. Only
    `mail_create_folder` creates a mailbox, with a name the caller gives
@@ -181,15 +171,13 @@ Laws (`LAWS.bend`, proofs in `PROOF.bend`):
 
 ## Risks
 
-- Unlabel's other-copy check and the expunge run in separate sessions; a
-  concurrent delete of the other copy in that window could leave none.
-  Mitigated by the confirmation word and the delete gate; documented.
 - iCloud HEADER search, delimiter and DELETE of the examined mailbox are
   unverified: phase 13 live checklist.
 
 ## Security
 
-- Labels never touch the source message and never change mailboxes (laws).
+- Labels are proven moves: no duplicate copies, nothing lost, no mailbox
+  changes (laws).
 - Every message-destroying command (UID EXPUNGE, DELETE) needs the
   confirmation word and is marked destructive.
 - No implicit mailbox creation; role resolution cannot be redirected through

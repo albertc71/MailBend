@@ -110,10 +110,26 @@ Bend side, new `src/jev.bend`:
   "jev-1.13.0", content: headers|body, derived_from_untrusted_content: true,
   decision: proceeded|blocked, reasons, signals}`.
 
-`mail_classify` (does not change mail; `is_read_only` True; listed only when
-Jev is on; MCP `openWorldHint: true`): per UID returns category (Choice with
-"none"), labels (one Noul each; caller passes names and descriptions),
-reply_needed, action_required, deadline_present, priority (Score),
+`mail_classify(folder, uids, candidates?)` (does not change mail;
+`is_read_only` True; listed only when Jev is on; MCP `openWorldHint: true`):
+
+- A message's label is its category: one folder per message (user decision:
+  labels move mail, no duplicates). Category options are discovered, not
+  configured: the existing user folders from LIST (excluding INBOX, every role folder and `To Delete`),
+  in a stable sorted order (Jev has option-order bias, jev-1.13 jaggedness
+  page), plus "none". At most 254 folders fit one Choice (255 options,
+  `/api.md`); more is an error that names the limit.
+- Jev returns typed answers only and cannot invent names. When a message's
+  category is "none" or below the confidence floor, the result marks it
+  `needs_new_category`. The agent then proposes new names and calls
+  `mail_classify` again with `candidates`: a second Jev request in which
+  the Choice options are the existing folders plus the agent's candidates
+  (plus "none"), so Jev picks for every message from one consistent list.
+  A chosen candidate is returned as `new_category`; it is never created
+  implicitly: the agent creates it with `mail_create_folder` (phase 3)
+  before triage can file into it. Candidate names go through phase 3's
+  protected-name rules.
+- Per UID it also returns reply_needed, action_required, deadline_present, priority (Score),
 suggested_action (Choice: read_now, read_later, label, review, none), the
 delete verdict inputs, and suspected_injection when flagged. Messages are
 sent in batches of at most 20 per request so the state stays under 32k

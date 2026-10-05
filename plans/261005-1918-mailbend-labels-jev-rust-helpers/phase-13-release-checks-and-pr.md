@@ -38,8 +38,9 @@ Each item records pass/fail and the observed value:
    of an empty folder: does iCloud accept DELETE of the examined mailbox?
 5. `UID SEARCH HEADER Message-ID` finds a known message; whether searches
    return `\Deleted`-but-not-expunged messages (sweetrb PR #255 report).
-6. `mail_label` twice gives one copy; `mail_unlabel` (with the confirmation
-   word) removes a true copy and keeps a last copy.
+6. `mail_label` moves a message into a label folder on iCloud (copy
+   fallback, since iCloud has no MOVE): it appears once there, is gone from
+   INBOX, and no duplicate remains; `mail_move` back to INBOX removes it.
 7. `mail_flag` with each colour: shown colour in Apple Mail matches; whether
    iCloud keeps `$MailFlagBit*` (PERMANENTFLAGS `\*`).
 8. Send to self: does iCloud file SMTP mail in Sent by itself? Decides the

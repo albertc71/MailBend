@@ -11,20 +11,24 @@ dependencies: [3, 8, 9]
 
 ## Goal
 
-Add `mail_triage`: apply Jev's labels and move safe-to-delete mail into the
-protected "To Delete" review folder for the user's review. Jev never deletes.
+Add `mail_triage`: move each message into its label (category) folder
+(inbox-zero style, no duplicate copies), or move safe-to-delete mail into
+the protected "To Delete" review folder for the user's review. Jev never
+deletes.
 
 ## Evidence
 
 - User decisions: Jev never deletes; safe-to-delete is a move into "To
-  Delete"; labels are copies.
+  Delete"; a label is a move into one folder, no duplicates; the category
+  is that label folder; categories come from existing folders, with new ones
+  proposed by the agent and chosen by Jev in a second call (phase 9).
 - iCloud has no MOVE (`docs/CLOUD_AGENT.md:285`), so `plan_move` falls back
   to COPY, `\Deleted` store and UID EXPUNGE of exactly the copied UIDs
   (`src/ops.bend:179-197`; laws `copy_move_changes_exactly`,
   `move_expunges_only_copied`). A law "triage never expunges" would be false;
   the correct law ties triage to the proven move plan and the review folder.
-- After a copy-fallback move the source UIDs are expunged, so a label copy
-  run afterwards would name UIDs that no longer exist (red team).
+- After a copy-fallback move the source UIDs are expunged, so each message
+  may get exactly one move per triage call (red team).
 - Red team: a caller-chosen review folder could be Trash, which iCloud
   purges, breaking "Jev never deletes"; role overrides are environment-only
   today (`src/tools.bend:390-402`).
@@ -50,24 +54,32 @@ Triage verdict (pure, `src/jev.bend`):
   disposability is `High` with high confidence, and content mode is `body`;
   `Keep` when any veto fires; `Review` otherwise.
 
-`mail_triage(folder, uids, uidvalidity, labels?, dry_run?)`:
+`mail_triage(folder, uids, uidvalidity, dry_run?)`:
 
-- All label copies first (phase 3 `plan_label`, de-duplicated), labels
-  reported from the server's COPYUID response; then `SafeToDelete`
-  messages move into `To Delete` with `plan_move`.
+- Runs the phase 9 classification over the existing folders (one Jev
+  request per batch).
+- One move per message, decided in this order: `SafeToDelete` moves
+  into `To Delete`; otherwise a category at or above the confidence floor
+  moves into that existing label folder (phase 3 `plan_label`, a proven
+  move); otherwise the message stays.
+  Messages marked `needs_new_category` stay put and are returned so the
+  agent can run the phase 9 candidate step, create the folder with
+  `mail_create_folder`, and call triage again.
+- Moves into the same destination are grouped into one `plan_move`.
 - `dry_run` goes through phase 8's `preview_or_run`.
-- Returns per message: labels applied, moved, verdict, and the `jev` object.
+- Returns per message: destination (label folder, `To Delete` or none),
+  verdict, and the `jev` object.
 
 Laws:
 
-- `triage_moves_only_to_review`: for every verdict list, every move plan in
-  triage has destination `To Delete`.
-- `triage_labels_only_copy`: every label plan's `mail_changes` is one CCopy
-  and its `mailbox_changes` is empty.
+- `triage_moves_only_to_known_folders`: for every verdict list and folder
+  list, every move plan's destination is `To Delete` or a member of the
+  discovered category folders passed in; never INBOX or a role folder.
+- `triage_creates_no_mailbox`: `mailbox_changes` of every triage plan is
+  empty (new categories exist only through `mail_create_folder`).
+- `triage_one_move_per_message`: no UID appears in two move plans.
 - `triage_expunges_only_moved`: any `destroys_mail` command in a triage plan
   sits inside a move plan whose expunge equals its copy.
-- `triage_labels_before_moves`: in the triage command sequence, no COPY to a
-  label folder follows the first move.
 - `uncertain_changes_nothing`: `Review` and `Missing` produce no plan.
 
 The explicit-delete gate is phase 11's, not this verdict: triage asks "is
@@ -85,8 +97,9 @@ this proven disposable?", the delete gate asks "did any veto fire?".
 1. Verdict function with exhaustive unit tests over bands.
 2. Triage plans and laws.
 3. `mail_triage` with `dry_run`; schema; MCP annotations.
-4. e2e on a server without MOVE (copy fallback) and with MOVE: labels
-   copied once and before moves, safe message moved to review, vetoed
+4. e2e on a server without MOVE (copy fallback) and with MOVE: each message
+   ends up in exactly one folder (no duplicate copies), safe message moved
+   to review, vetoed
    message untouched, missing review folder refused, headers mode never
    moves, `mail_move` and `mail_rename_folder` into `To Delete` refused.
 

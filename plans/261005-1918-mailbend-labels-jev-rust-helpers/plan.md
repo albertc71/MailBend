@@ -17,7 +17,7 @@ created: 2026-10-05
 
 Delivers the accepted brainstorm
 ([brainstorm report](../reports/brainstorm-261005-1855-mailbend-next-features.md)):
-copy-based labels on iCloud, flag colours, Sent copies with a recipient
+labels as iCloud folders (a move, no duplicates), flag colours, Sent copies with a recipient
 allowlist and send limit, attachment download, threads, dry-run previews,
 TypeSafe Jev consulted inside the tool calls where it helps (veto before outbound and irreversible actions, annotations on mail content), and
 both native helpers rewritten in Rust with an unchanged contract. The user
@@ -31,17 +31,17 @@ check.
 
 | Decision | Source |
 | --- | --- |
-| Labels are copies into label folders (approach A) | user, brainstorm section 1 |
+| A label is an iCloud folder: `mail_label` moves the message there (no duplicate copies); removing a label is a move back to INBOX; there is no unlabel or labels-of tool | user, after the review PR opened (replaces the earlier copy-based labels) |
+| Jev's category is the label: triage moves each message into one existing folder; when none fits, the agent proposes names and Jev chooses in a second call; a new folder exists only via `mail_create_folder` | user, after the review PR opened |
 | `mail_create_folder` is the only way a mailbox is created; AGENTS.md rule reworded | user, brainstorm section 7 |
 | Jev never deletes; a safe verdict moves mail into a "To Delete" review folder | user, brainstorm section 7 |
 | Bodies go to TypeSafe only with `MAILBEND_TYPESAFE_ZERO_RETENTION=1`; headers by default | user, brainstorm section 2 |
 | Tiered Jev (when `MAILBEND_TYPESAFE=1` and a key is set): veto before send/reply/forward and permanent delete; annotations on get, search, new mail, threads; classify and triage tools; no Jev on reversible or content-free calls. Jev can only veto or annotate | user, after [Jev gating research](./research/researcher-jev-gating-evidence.md) |
 | A separate `mailbend-typesafe` helper calls TypeSafe with a key read only from `MAILBEND_TYPESAFE_KEY_FILE`; a key in the environment is a configuration error, so the key never reaches the core or `mailbend-tls` | user, this session; red team |
-| `mail_unlabel` permanently expunges a label copy only with `confirm: "permanently-delete"`, only when an exact copy exists outside Trash/Junk/Drafts/To Delete, and Jev can block it | user, red-team round |
 | The daily send limit is a local counter file kept by `mailbend-attach count`, reserved before sending; no tool can change it | user, red-team round |
 | `mail_get_attachment` is not a read tool: refused and hidden in read-only mode | user, red-team round |
 | One PR for all phases; no MCP registry `server.json` now | user, red-team round |
-| TypeSafe unreachable: block send, reply, forward, permanent delete and unlabel; reads continue marked "unchecked" | user, this session |
+| TypeSafe unreachable: block send, reply, forward and permanent delete; reads continue marked "unchecked" | user, this session |
 | Both helpers rewritten in Rust; all related docs updated | user, brainstorm section 8 |
 
 ## Components
@@ -127,7 +127,7 @@ sequenceDiagram
 
 Gated before the change: send, reply, forward (a local secret check in Bend
 plus Jev on headers and recipients; the body only in body mode), permanent
-delete and unlabel (blocked only when a veto scores high). For
+delete (blocked only when a veto scores high). For
 `mail_get` (full) and search, new mail and threads (headers only) the order
 is fetch, then Jev on the fetched content, then the result with a `jev`
 object (reply_needed, priority, category, suggested_action, and
@@ -137,18 +137,22 @@ functions the tools must call (`outbound_checked`, `delete_checked`) return
 the plan without Jev or nothing; that the IO code calls only them is covered
 by end-to-end tests and a CI grep, not by a proof.
 
-## Workflow: labels and the "To Delete" review
+## Workflow: labels (folders) and the "To Delete" review
 
 ```mermaid
 flowchart LR
-  m["Message in INBOX"] --> c{"Jev classify<br/>(category, labels, delete vetoes)"}
-  c -- "label p >= threshold" --> l["UID COPY into label folder<br/>(skip if Message-ID already there)"]
+  m["Message in INBOX"] --> c{"Jev classify<br/>(label folder, delete vetoes)"}
   c -- "all vetoes low, body mode,<br/>code facts pass" --> r["Move into 'To Delete'<br/>(proven move plan)"]
+  c -- "label = existing folder,<br/>confident" --> cat["Move into label folder<br/>(proven move plan, no duplicate)"]
+  c -- "label = none" --> nn["needs_new_category"]
+  nn --> ag["Agent proposes names"]
+  ag --> c2{"Jev call 2: choose among<br/>existing folders + candidates"}
+  c2 --> mk["Agent: mail_create_folder<br/>(explicit, never implicit)"]
+  mk --> c
   c -- "any veto or uncertain" --> k["Keep; report to agent"]
   r --> u{"User reviews in Apple Mail"}
   u -- "agrees" --> del["User deletes"]
   u -- "keeps" --> back["Moves it back"]
-  l --> un["mail_unlabel removes a copy only<br/>if the Message-ID exists elsewhere"]
 ```
 
 ## Phase dependencies
@@ -228,6 +232,10 @@ flowchart LR
 | 14 | Rust install path, toolchain pin, live TLS checks, C deletion | Medium | Accept (user: one PR) | Phases 1, 2, 13 |
 | 15 | Ordering, dry-run coverage, triage order, citations, scope extras | Medium | Accept | Phases 4, 7, 8, 10, 12, 13 |
 
+Note (after the review PR opened): finding 2 is superseded. Labels are now
+moves into a folder, so `mail_unlabel`, its expunge and its Message-ID check
+no longer exist.
+
 ### Whole-Plan Consistency Sweep
 - Files reread: plan.md, phase-01 to phase-13, research/*.md.
 - Decision deltas checked: 12 (key file, unlabel confirm, counter file,
@@ -262,4 +270,21 @@ download in read-only, delivery, registry file).
   (now `:461-462`), `native/attach/` path; `gated` is at
   `src/tools.bend:1608` (the plan references the function by name).
 - Unverified items remain marked and are on the phase 13 live checklist.
+
+### Session 2 — 2026-10-05 (after the review PR opened)
+
+| Question | Answer |
+| --- | --- |
+| Should triage file the category? | Move into the category folder |
+| Where do categories come from? | Existing folders; when none fits, the agent proposes names and Jev chooses in a second call |
+| Labels: copy or move? | "mail label should move to a folder in icloud mail please, no duplicate mails" |
+
+Propagated to phases 3, 9, 10, 11, 12, 13 and this file: `mail_label` is a
+proven move; `mail_unlabel` and `mail_labels_of` are removed; the category
+is the label; triage makes at most one move per message.
+
+#### Whole-Plan Consistency Sweep
+- Searched all plan files for `unlabel`, `labels_of`, label copies and
+  per-label Nouls; remaining mentions are the decision row and this log.
+- Unresolved contradictions: 0.
 
