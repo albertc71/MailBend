@@ -24,9 +24,14 @@ an Apple Mail colour, and report the flags the server actually kept.
   meaningful while `\Flagged` is set; clients SHOULD clear the bits on unflag
   (draft-eggert-mailflagcolors-00, an expired individual draft, not an RFC;
   sweetrb/apple-mail-mcp writes the same bits over IMAP).
-- Colour order red 0, orange 1, yellow 2, green 3, blue 4, purple 5, grey 6
-  comes from sweetrb; the fetched draft rendering showed green and grey with
-  the same bits, so the mapping is **unverified** until the live check.
+- Colour index = Bit0 x 1 + Bit1 x 2 + Bit2 x 4: red 0 (no bits), orange 1
+  (Bit0), yellow 2 (Bit1), green 3 (Bit0 + Bit1), blue 4 (Bit2), purple 5
+  (Bit0 + Bit2), grey 6 (Bit1 + Bit2). draft-eggert-mailflagcolors-00 lists
+  green and grey with the same bits, an error in the draft. The green = 3
+  value follows sweetrb/apple-mail-mcp's `imapClient.ts`, which says it was
+  "Verified against live Mail.app state 2026-08-03: $MailFlagBit0 +
+  $MailFlagBit1 -> 3 = green". That quote comes from a fetched summary of
+  the file, so the live check still confirms it.
 - Whether iCloud keeps arbitrary keywords (`\*` in PERMANENTFLAGS) is
   unverified; the result therefore reports the server's FLAGS after the store.
 
@@ -42,7 +47,9 @@ an Apple Mail colour, and report the flags the server actually kept.
   `flag_changes_only_flag_bits` (every store in `mail_changes` is on
   `FFlagged` or a colour bit), and the existing `fetch_items_never_set_seen`
   covers the trailing fetch.
-- Schema: `colour` enum `red, orange, yellow, green, blue, purple, grey`.
+- Schema: `colour` enum `red, orange, yellow, green, blue, purple, grey`,
+  mapped to bits with the index table above (a pure function with a unit
+  test per colour).
 
 ## Files
 

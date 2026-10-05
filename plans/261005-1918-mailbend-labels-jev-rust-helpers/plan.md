@@ -332,12 +332,11 @@ the source and accepted.
 | 4 | `SafeToDelete` with a missing category matched two rows | The missing-category row is limited to `Keep` and `Review`; the rows are disjoint; tests cover every combination (phase 10) |
 | — | Byte bound described as a proof | Reworded as a local size estimate; 422 is a general validation error and its detail is kept; one bounded retry, then a terminal error; triage classifies every batch before any move; tests where the fake service disagrees with the estimate (phases 9, 10) |
 
-The research findings on flag colours and the Sent folder name are not
-applied; the user has not decided on them.
+The research findings on flag colours and the Sent folder name were applied
+after the user approved them (phases 4 and 5).
 
 #### Whole-Plan Consistency Sweep
 - Searched for "proceeds only with that status", "upper bound on tokens",
   "any | category answer", "child's new path must also pass" and "one Jev
   request per batch"; none remain.
 - Unresolved contradictions: 0.
-

@@ -19,6 +19,17 @@ in a local counter the agent cannot change.
 
 - `docs/CLOUD_AGENT.md:315-317`: "SMTP delivery does not guarantee a Sent
   copy, and MailBend does not append one automatically."
+- iCloud's Sent folder: Nylas's iCloud folder table maps Sent to `Sent
+  Messages`, and JulienRabault/icloud-mcp appends to `Sent Messages`, but
+  the user's own live run listed `Sent` with the `\Sent` role advertised
+  (`docs/CLOUD_AGENT.md:286-287`). MailBend therefore never hard-codes the
+  name: role resolution takes the advertised `\Sent` folder first, then the
+  conventional `Sent` or `Sent Messages` (`src/tools.bend:384`). Tests cover
+  both names.
+- Three iCloud clients append the Sent copy themselves (epinethrone,
+  JulienRabault, sweetrb), and epinethrone's README says "iCloud doesn't
+  file sent mail by itself"; medium confidence, so the live check still
+  decides the default.
 - epinethrone/icloud-mcp states iCloud does not file SMTP-sent mail itself;
   **unverified** for this account, so the copy is opt-in and de-duplicated.
 - README "Not yet": "A recipient allowlist for sending."
