@@ -201,11 +201,12 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   be sent, so use an empty, dedicated directory holding only files you are
   willing to mail. The reader refuses `/`, your home directory or any
   directory containing it, and a directory holding `.ssh`, `.gnupg`, `.aws`,
-  `.config` or `.git`; it checks the file's type before opening it, so a
-  device or FIFO is not opened (one a concurrent local writer substitutes
-  just before the read open may be opened, but is then refused), and it
-  refuses a file with a second hard link (whose other name may be
-  elsewhere).
+  `.config` or `.git`; it checks the file's type on an `O_PATH` descriptor
+  first, so a device or FIFO is not opened, then reopens that probed inode
+  for reading through `/proc/self/fd/<probe>` (not by walking the path
+  again), so a file a concurrent local writer substitutes under the name is
+  never opened. It refuses a file with a second hard link (whose other name
+  may be elsewhere).
 - **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
   test server; whoever sets it decides which servers are trusted, so never
   set it in production. `scripts/mailbend` prints a warning when it is set.
