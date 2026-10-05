@@ -16,7 +16,17 @@
  * refused. The file is opened beneath it with openat2(RESOLVE_BENEATH |
  * RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS), so no symlink or ".." leads
  * outside, and only a regular file of at most <max-bytes> (never more than
- * 25 MiB) is read, checked on the opened descriptor itself.
+ * 25 MiB) is read, checked on the opened descriptor itself. The file's type
+ * is checked first on an O_PATH descriptor, so a device or FIFO found there
+ * is not opened. That descriptor is then closed and the path opened again
+ * (non-blocking) for reading: a file a concurrent local writer substitutes
+ * in between may be opened, but is refused because its inode differs. A
+ * file with more than one hard link is refused (another name for it may
+ * live outside <dir>).
+ *
+ * <dir> must be a dedicated directory: "/", the user's home directory or any
+ * directory containing it, and a directory holding .ssh, .gnupg, .aws,
+ * .config or .git are refused, since every file inside <dir> can be mailed.
  *
  * stdout: the file's bytes, each byte 0x80-0xFF written as the UTF-8
  * encoding of U+0080-U+00FF (the same encoding as mailbend-tls), so the Bend
@@ -28,6 +38,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,8 +131,32 @@ static int open_attachment_directory(const char *root) {
   return fd;
 }
 
-static int open_attachment(int directory_fd, const char *relative, const char *path) {
-  int fd = open2(directory_fd, relative, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY,
+/* Whether `outer` is `inner` or one of its parent directories (both canonical). */
+static int contains_path(const char *outer, const char *inner) {
+  size_t n = strlen(outer);
+  if (n == 1 && outer[0] == '/') return 1;
+  return strncmp(outer, inner, n) == 0 && (inner[n] == '\0' || inner[n] == '/');
+}
+
+/* Every file beneath the directory can be mailed, so it must not be one that
+ * holds the user's keys or configuration. The home directory comes from the
+ * password database: the environment is already gone. */
+static void refuse_broad_directory(const char *root, int directory_fd) {
+  if (strcmp(root, "/") == 0) die("MAILBEND_ATTACH_DIR must not be /: use a dedicated directory");
+  struct passwd *pw = getpwuid(getuid());
+  char home[PATH_MAX];
+  if (pw && pw->pw_dir && realpath(pw->pw_dir, home) && contains_path(root, home))
+    die("MAILBEND_ATTACH_DIR must not be your home directory or contain it: use a dedicated directory");
+  static const char *const sensitive[] = {".ssh", ".gnupg", ".aws", ".config", ".git"};
+  for (size_t i = 0; i < sizeof sensitive / sizeof *sensitive; i++) {
+    struct stat st;
+    if (fstatat(directory_fd, sensitive[i], &st, AT_SYMLINK_NOFOLLOW) == 0)
+      die("MAILBEND_ATTACH_DIR holds %s, so it is not a dedicated attachment directory", sensitive[i]);
+  }
+}
+
+static int open_beneath(int directory_fd, const char *relative, const char *path, unsigned long long flags) {
+  int fd = open2(directory_fd, relative, flags | O_CLOEXEC,
                  RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS);
   if (fd < 0) {
     if (errno == ENOENT) die("attachment not found: %s", path);
@@ -132,9 +167,26 @@ static int open_attachment(int directory_fd, const char *relative, const char *p
   return fd;
 }
 
+/* Checks the file through an O_PATH descriptor (opening nothing), then opens
+ * it for reading and makes sure it is still the same file. No O_NOFOLLOW on
+ * the probe: with O_PATH it would return a final symlink itself instead of
+ * letting RESOLVE_NO_SYMLINKS refuse it. */
+static int open_attachment(int directory_fd, const char *relative, const char *path) {
+  int probe = open_beneath(directory_fd, relative, path, O_PATH);
+  struct stat before;
+  if (fstat(probe, &before) != 0 || !S_ISREG(before.st_mode)) die("attachment %s is not a regular file", path);
+  close(probe);
+  int fd = open_beneath(directory_fd, relative, path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY);
+  struct stat after;
+  if (fstat(fd, &after) != 0 || after.st_dev != before.st_dev || after.st_ino != before.st_ino)
+    die("attachment %s changed while it was opened", path);
+  return fd;
+}
+
 static void validate_attachment(int fd, const char *path, unsigned long long max) {
   struct stat st;
   if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) die("attachment %s is not a regular file", path);
+  if (st.st_nlink > 1) die("attachment %s has more than one hard link", path);
   struct statfs fs;
   if (fstatfs(fd, &fs) != 0 || fs.f_type == PROC_SUPER_MAGIC || fs.f_type == SYSFS_MAGIC)
     die("attachment %s is a kernel file (procfs or sysfs)", path);
@@ -165,6 +217,7 @@ int main(int argc, char **argv) {
   if (!realpath(dir, root)) die("MAILBEND_ATTACH_DIR does not exist");
   const char *relative = relative_attachment_path(dir, root, path);
   int directory_fd = open_attachment_directory(root);
+  refuse_broad_directory(root, directory_fd);
   int fd = open_attachment(directory_fd, relative, path);
   validate_attachment(fd, path, max);
   emit_attachment(fd, path, max);

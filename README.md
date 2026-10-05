@@ -74,11 +74,20 @@ For the default iCloud profile:
    export MAILBEND_APP_PASSWORD='xxxx-xxxx-xxxx-xxxx'
    ```
 
+   Or keep the password out of every environment with
+   `MAILBEND_PASSWORD_FILE`: the absolute path of a file you own with mode
+   600, holding just the password, outside `MAILBEND_ATTACH_DIR`. Only
+   `mailbend-tls` opens it; setting both variables is an error.
+
 Optional variables are listed in [.env.example](.env.example): server
-overrides, `MAILBEND_READ_ONLY=1` (refuse every tool that changes mail),
-`MAILBEND_ATTACH_DIR` (the only directory attachments may come from;
-attachments are off without it), `MAILBEND_TIMEOUT_MS`, and
-`MAILBEND_TLS_HELPER` / `MAILBEND_ATTACH_HELPER`.
+overrides, `MAILBEND_READ_ONLY=1` (refuse every tool that changes mail, and
+list only the read tools), `MAILBEND_DRAFTS_ONLY=1` (allow changes but never
+send: `mail_send` is refused and hidden, replies and forwards only as drafts,
+so a person sends each message from Drafts), `MAILBEND_ATTACH_DIR` (the only
+directory attachments may come from; attachments are off without it),
+`MAILBEND_TIMEOUT_MS`, and `MAILBEND_TLS_HELPER` / `MAILBEND_ATTACH_HELPER`.
+The two switches take `1`/`true` or `0`/`false`/empty; any other value is a
+configuration error that fails every tool, rather than silently meaning off.
 
 Other providers require compatible password-authenticated IMAP over implicit
 TLS and SMTP with STARTTLS. Set `MAILBEND_IMAP_HOST`, `MAILBEND_IMAP_PORT`,
@@ -138,8 +147,8 @@ Register the MCP server (stdio) with your agent, using the absolute path:
 }
 ```
 
-The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from its
-environment. Cursor Cloud Agent / Grok Bot setup, including secrets and
+The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` (or
+`MAILBEND_PASSWORD_FILE`) from its environment. Cursor Cloud Agent / Grok Bot setup, including secrets and
 passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 
 ## Safety
@@ -149,18 +158,35 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 - **Credentials stay in the helper.** Only `mailbend-tls` reads the password;
   it sends it only to the verified server and never prints it. The Bend core
   never reads it, so no tool result or log contains it. This is a code-level
-  separation, not an OS boundary: the password is an environment variable
-  that every MailBend process inherits (see [Not yet](#not-yet)).
+  separation, not an OS boundary: `MAILBEND_APP_PASSWORD` is inherited by
+  every MailBend process, and any process of the same user can read it.
+  `MAILBEND_PASSWORD_FILE` keeps it out of the environment; the file is
+  still readable by that user.
+- **Mail is untrusted input, and the agent decides.** Anything that can call
+  the tools can act on the account. A message read with `mail_get` can try
+  to talk the agent into forwarding mail, sending files from
+  `MAILBEND_ATTACH_DIR` or deleting messages. `confirm: "permanently-delete"`
+  only stops a mistaken call; it is not a person's approval, because the
+  agent supplies it. Read-only mode still shows mail to the agent. Use
+  `MAILBEND_READ_ONLY=1` when writes are not needed and
+  `MAILBEND_DRAFTS_ONLY=1` to keep a person in front of every send, and
+  have your MCP client ask before it runs a tool that changes mail.
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
   every read plan (probe, folders, search, get, new mail) contains no command
   that can change a mailbox, for every argument, and that what is rendered on
   the wire is `EXAMINE` and `BODY.PEEK`.
-- **Nothing is lost by accident.** Move and trash never expunge before copying
-  (proven for every server capability). Permanent delete needs the exact
-  confirmation word (proven: otherwise the plan is empty) and UIDPLUS, so only
-  the given UIDs are expunged.
+- **Nothing is lost by accident.** Move and trash never expunge before
+  copying (proven for every server capability), and their first
+  `UID EXPUNGE` names the same UIDs as their first `UID COPY` (proven).
+  Permanent delete needs the exact confirmation word (proven: otherwise the
+  plan is empty) and UIDPLUS; its first `UID EXPUNGE` names the same UIDs
+  as its first `\Deleted` store, and with the confirmation those are the
+  caller's UIDs (proven). These laws compare first commands only: they do
+  not bind move/trash's `\Deleted` store or any later command, which the
+  current plans build from the caller's UIDs. Expunging always renders as
+  `UID EXPUNGE` (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
-  folder's UIDVALIDITY in the same IMAP session (proven for every plan): if
+  caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
@@ -175,10 +201,23 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   cannot make the agent mail out a file from outside that directory (such as
   `/proc/self/environ`), even by racing a path swap. Any file inside it can
   be sent, so use an empty, dedicated directory holding only files you are
-  willing to mail; never your home directory, a repository with secrets, or `/`.
+  willing to mail. The reader refuses `/`, your home directory or any
+  directory containing it, and a directory holding `.ssh`, `.gnupg`, `.aws`,
+  `.config` or `.git`; it checks the file's type before opening it, so a
+  device or FIFO is not opened (one a concurrent local writer substitutes
+  just before the read open may be opened, but is then refused), and it
+  refuses a file with a second hard link (whose other name may be
+  elsewhere).
+- **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
+  test server; whoever sets it decides which servers are trusted, so never
+  set it in production. `scripts/mailbend` prints a warning when it is set.
 - Commands run one at a time and stop at the first rejection; message
   contents are framed as IMAP literals, so a message cannot spoof a server
   reply.
+- **What the proofs cover.** The laws are about the pure IMAP command plans
+  and their rendering. The native helpers, TLS, MIME parsing, the agent's
+  choices and the runtime configuration are covered by tests and review,
+  not by proofs.
 
 ## How it works
 
@@ -224,10 +263,8 @@ to report a vulnerability privately.
 
 ## Not yet
 
-- An optional credential file (`MAILBEND_PASSWORD_FILE`): `mailbend-tls`
-  would open it itself and refuse insecure permissions, so the password need
-  not sit in any environment. v1 takes it from the environment or the agent's
-  secret store; only `mailbend-tls` reads it.
+- A recipient allowlist for sending. Until then, `MAILBEND_DRAFTS_ONLY=1`
+  keeps a person in front of every outgoing message.
 - Monitoring: a watcher with IDLE/polling, filters and a delivery ledger.
   `mail_get_new` already provides the checkpoint semantics it needs.
 - Folder create/delete, and copying sent mail into Sent (check first whether

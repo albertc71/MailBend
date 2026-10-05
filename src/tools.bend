@@ -78,15 +78,56 @@ def env_or(+name: String, +d: String) -> IO(String):
     r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
     return env_pick(r, d)
 
-def truthy(+v: String) -> Bool:
-  String.eq(v, "1") || String.eq(String.to_lower(v), "true")
+# The safety switches. A value that is not clearly on or off is refused
+# rather than read as off: MAILBEND_READ_ONLY=yes must not leave writes on.
+type Mode is Data:
+  Mode{read_only: Bool, drafts_only: Bool}
+  ModeBad{msg: String}
+
+type Flag is Data:
+  FlagOn{}
+  FlagOff{}
+  FlagBad{msg: String}
+
+def flag_value(+name: String, +v: String) -> Flag:
+  +low = String.to_lower(v)
+  Bool.pick(Flag, String.is_empty(v) || String.eq(v, "0") || String.eq(low, "false"), FlagOff{},
+    Bool.pick(Flag, String.eq(v, "1") || String.eq(low, "true"), FlagOn{},
+      FlagBad{name ++ " must be 1, true, 0, false or empty"}))
+
+def flag(+name: String) -> IO(Flag):
+  do IO<Flag>:
+    v : String <- env_or(name, "")
+    return flag_value(name, v)
+
+def mode_drafts(+ro: Bool, +f: Flag) -> Mode:
+  match f:
+    case FlagOn{}:
+      Mode{ro, True{}}
+    case FlagOff{}:
+      Mode{ro, False{}}
+    case FlagBad{m}:
+      ModeBad{m}
+
+def mode_of(+r: Flag, +d: Flag) -> Mode:
+  match r:
+    case FlagOn{}:
+      mode_drafts(True{}, d)
+    case FlagOff{}:
+      mode_drafts(False{}, d)
+    case FlagBad{m}:
+      ModeBad{m}
 
 # MAILBEND_READ_ONLY=1 refuses every tool that could change the mailbox or
 # send mail, for trying MailBend safely against a real account.
-def read_only_mode() -> IO(Bool):
-  do IO<Bool>:
-    v : String <- env_or("MAILBEND_READ_ONLY", "")
-    return truthy(v)
+# MAILBEND_DRAFTS_ONLY=1 still allows changes but refuses to send: mail_send,
+# and replies or forwards without as_draft, so a person reviews every
+# outgoing message in Drafts first.
+def mode() -> IO(Mode):
+  do IO<Mode>:
+    r : Flag <- flag("MAILBEND_READ_ONLY")
+    d : Flag <- flag("MAILBEND_DRAFTS_ONLY")
+    return mode_of(r, d)
 
 def proc_of(r: Result<&1, &1, U32 & String, U32 & (String & String)>) -> Proc:
   match r:
@@ -1544,15 +1585,36 @@ def run_op(+op: Ops.Op, +args: J.Json) -> IO(Out):
     case Ops.OForward{}:
       t_respond(args, 1)
 
-def gate(+refuse: Bool, +op: Ops.Op, +args: J.Json) -> IO(Out):
-  match refuse:
-    case True{}:
-      pure_out(Err{Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set"})
-    case False{}:
+# Whether this call would send mail over SMTP.
+def sends(+op: Ops.Op, +args: J.Json) -> Bool:
+  match op:
+    case Ops.OSend{}:
+      True{}
+    case Ops.OReply{}:
+      Bool.not(bool_arg(args, "as_draft", False{}))
+    case Ops.OForward{}:
+      Bool.not(bool_arg(args, "as_draft", False{}))
+    case _:
+      False{}
+
+def refusal(+op: Ops.Op, +args: J.Json, +ro: Bool, +drafts: Bool) -> String:
+  Bool.pick(String, ro && Bool.not(Ops.is_read_only(op)), Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
+    Bool.pick(String, drafts && sends(op, args), Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use mail_save_draft, or as_draft for a reply or forward",
+      ""))
+
+def gate(+problem: String, +op: Ops.Op, +args: J.Json) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{problem})
+    case SNil{}:
       run_op(op, args)
 
-def gated(+op: Ops.Op, +args: J.Json, +ro: Bool) -> IO(Out):
-  gate(ro && Bool.not(Ops.is_read_only(op)), op, args)
+def gated(+op: Ops.Op, +args: J.Json, +m: Mode) -> IO(Out):
+  match m:
+    case Mode{ro, drafts}:
+      gate(refusal(op, args, ro, drafts), op, args)
+    case ModeBad{msg}:
+      pure_out(Err{"configuration error: " ++ msg})
 
 def call_op(+m: Maybe<&2, Ops.Op>, +name: String, +args: J.Json) -> IO(Out):
   match m:
@@ -1560,8 +1622,57 @@ def call_op(+m: Maybe<&2, Ops.Op>, +name: String, +args: J.Json) -> IO(Out):
       pure_out(Err{"unknown tool: " ++ name})
     case Some{op}:
       do IO<Out>:
-        ro : Bool <- read_only_mode()
-        gated(op, args, ro)
+        md : Mode <- mode()
+        gated(op, args, md)
+
+# ---- the tools offered --------------------------------------------------------------------
+# Read-only mode lists only the read-only tools (also when a switch is
+# misconfigured, since every call then fails); drafts-only mode hides
+# mail_send. Hidden tools are refused anyway if called.
+
+def has_name(+ns: List<&2, String>, +n: String) -> Bool:
+  match ns:
+    case Nil{}:
+      False{}
+    case Con{h, t}:
+      String.eq(h, n) || has_name(t, n)
+
+def offered(+n: String, +ro: Bool, +drafts: Bool) -> Bool:
+  Bool.not(ro && Bool.not(has_name(Ops.read_only_names(Ops.all_ops()), n))) && Bool.not(drafts && String.eq(n, "mail_send"))
+
+def tools_if(+keep: Bool, +t: J.Json, +rest: J.Json) -> J.Json:
+  match keep:
+    case True{}:
+      J.JCons{t, rest}
+    case False{}:
+      rest
+
+def offered_items(+ts: J.Json, +ro: Bool, +drafts: Bool) -> J.Json:
+  match ts:
+    case J.JCons{+t, rest}:
+      tools_if(offered(str_arg(t, "name", ""), ro, drafts), t, offered_items(rest, ro, drafts))
+    case _:
+      J.JEnd{}
+
+def offered_in(+ts: J.Json, +ro: Bool, +drafts: Bool) -> J.Json:
+  match ts:
+    case J.JArr{xs}:
+      J.JArr{offered_items(xs, ro, drafts)}
+    case _:
+      ts
+
+def offered_for(+ts: J.Json, +m: Mode) -> J.Json:
+  match m:
+    case Mode{ro, drafts}:
+      offered_in(ts, ro, drafts)
+    case ModeBad{msg}:
+      offered_in(ts, True{}, False{})
+
+# The tool definitions `ts` (a JSON array) that this configuration offers.
+def offered_tools(+ts: J.Json) -> IO(J.Json):
+  do IO<J.Json>:
+    md : Mode <- mode()
+    return offered_for(ts, md)
 
 # ---- arguments checked against the tool's input schema -------------------------------
 # A value of the wrong type, or a misspelt name, is refused rather than read as

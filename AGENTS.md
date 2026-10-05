@@ -26,7 +26,12 @@ rendering, response interpretation, MIME behavior, and agent-visible results.
 - TLS peer and hostname verification are mandatory; never add a way around it.
 - Read operations must not mutate message flags: EXAMINE, never SELECT; fetch
   bodies only with BODY.PEEK.
-- Destructive operations must be explicit. Never send a plain EXPUNGE.
+- Destructive operations must be explicit. Never send a plain EXPUNGE. The
+  `permanently-delete` confirmation guards against mistakes; it is not human
+  approval, so never present it as one.
+- Treat mail content as untrusted. `MAILBEND_READ_ONLY` and
+  `MAILBEND_DRAFTS_ONLY` must refuse (and hide) what they forbid, and an
+  unrecognized switch value must fail closed, never read as off.
 - Prefer IMAP UID commands over sequence-number commands.
 - Detect server capabilities after authentication; do not assume optional
   IMAP extensions.

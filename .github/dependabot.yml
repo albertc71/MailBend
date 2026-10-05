@@ -1,0 +1,9 @@
+# Proposes updates to the SHA-pinned GitHub Actions; each one is reviewed and
+# must pass CI like any other change. Bend and gitleaks are pinned with their
+# sha256 in scripts/install-bend.sh and scripts/scan-secrets.sh instead.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

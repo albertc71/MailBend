@@ -1,1 +1,11 @@
 * @albertc71
+
+# Safety-critical paths, listed explicitly so they stay owned if the default
+# above ever changes.
+/native/ @albertc71
+/LAWS.bend @albertc71
+/PROOF.bend @albertc71
+/src/ops.bend @albertc71
+/tools/gen-schema.py @albertc71
+/scripts/ @albertc71
+/.github/ @albertc71

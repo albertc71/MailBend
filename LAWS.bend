@@ -4,7 +4,9 @@ import ./src/ops.bend as Ops
 
 # MailBend's safety laws. Each is a claim about the pure command plans in
 # src/ops.bend, which are the only way the tools build IMAP commands.
-# PROOF.bend proves every law; `bend PROOF.bend` is the gate.
+# PROOF.bend proves every law; `bend PROOF.bend` is the gate. The laws cover
+# these plans and their rendering only, not the native helpers, TLS, MIME
+# parsing, agent behaviour or the runtime configuration.
 
 # Reading is read-only, and permanent deletion is not.
 law read_is_read_only:
@@ -18,6 +20,11 @@ law delete_is_not_read_only:
 
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
+
+# Exactly these five tools are read-only (MAILBEND_READ_ONLY allows and
+# lists only them); every other tool can change mail or send it.
+law read_only_tools_are_exactly_five:
+  {Ops.read_only_names(Ops.all_ops()) == ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"] : List<&2, String>}
 
 # Read plans open mailboxes with EXAMINE, fetch with BODY.PEEK and never
 # change anything: for every mailbox, UID, size, key list and checkpoint.
@@ -104,6 +111,48 @@ law trash_never_loses_mail:
   for uidv: U32
   {Ops.loses_mail(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv)) == False{} : Bool}
 
+# A move or trash plan's first UID EXPUNGE names the same UIDs as its first
+# UID COPY, and a delete plan's first UID EXPUNGE names the same UIDs as its
+# first \Deleted store; with the confirmation and UIDPLUS those are the
+# caller's UIDs. Only the first matching commands are compared: these laws
+# do not bind move/trash's \Deleted store or any later command.
+law move_expunges_only_copied:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.expunged(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)) == Ops.copied(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)) : Maybe<&2, List<&2, U32>>}
+
+law trash_expunges_only_copied:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.expunged(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv)) == Ops.copied(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv)) : Maybe<&2, List<&2, U32>>}
+
+law delete_expunges_only_marked:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.expunged(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) == Ops.marked_deleted(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) : Maybe<&2, List<&2, U32>>}
+
+law delete_expunges_given_uids:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  {Ops.expunged(Ops.plan_delete(mbox, uids, Ops.confirm_word(), True{}, uidv)) == Some{uids} : Maybe<&2, List<&2, U32>>}
+
+# Expunging always renders as UID EXPUNGE, never a plain EXPUNGE.
+law expunge_renders_uid_expunge:
+  for uids: List<&2, U32>
+  {Ops.has_prefix("UID EXPUNGE ", I.cmd_str(I.CExpunge{uids})) == True{} : Bool}
+
 # Unless the confirmation is exactly "permanently-delete", deletion does
 # nothing at all.
 law delete_needs_confirmation:
@@ -150,6 +199,40 @@ law delete_is_pinned:
   for uidplus: Bool
   for uidv: U32
   {Ops.pinned_or_empty(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) == True{} : Bool}
+
+# The guard expects the caller's exact UIDVALIDITY, not just any value.
+law mark_pins_callers_uidvalidity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for seen: Bool
+  for uidv: U32
+  {Ops.pin_line_or(Ops.plan_mark(mbox, uids, seen, uidv), I.uidv_line(uidv)) == I.uidv_line(uidv) : String}
+
+law move_pins_callers_uidvalidity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.pin_line_or(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv), I.uidv_line(uidv)) == I.uidv_line(uidv) : String}
+
+law trash_pins_callers_uidvalidity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.pin_line_or(Ops.plan_trash(mbox, uids, trash, move, uidplus, uidv), I.uidv_line(uidv)) == I.uidv_line(uidv) : String}
+
+law delete_pins_callers_uidvalidity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.pin_line_or(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv), I.uidv_line(uidv)) == I.uidv_line(uidv) : String}
 
 # Saving a draft only appends; it never removes anything.
 law draft_never_removes:

@@ -94,6 +94,21 @@ def all_ops() -> List<&2, Op>:
     OForward{}
   ]
 
+def names_if(+keep: Bool, +op: Op, +rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      name(op) <> rest
+    case False{}:
+      rest
+
+# The names of the read-only operations among `ops`, in order.
+def read_only_names(+ops: List<&2, Op>) -> List<&2, String>:
+  match ops:
+    case Nil{}:
+      []
+    case Con{+op, t}:
+      names_if(is_read_only(op), op, read_only_names(t))
+
 def find_op(+ops: List<&2, Op>, +n: String) -> Maybe<&2, Op>:
   match ops:
     case Nil{}:
@@ -217,8 +232,9 @@ def plan_delete(+mbox: String, +uids: List<&2, U32>, +confirm: String, +uidplus:
 def plan_draft(+drafts: String, +msg: String) -> List<&2, I.Cmd>:
   [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]
 
-# Whether a plan expunges before it has copied the messages anywhere, i.e.
-# whether it can lose mail.
+# Whether a plan expunges before it has copied anything. On its own this
+# says nothing about which UIDs were copied; `copied` and `expunged` below
+# let the laws tie the expunged set to the copied (or marked) one.
 def loses_mail(+cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
@@ -231,6 +247,42 @@ def loses_mail(+cs: List<&2, I.Cmd>) -> Bool:
           True{}
         case _:
           loses_mail(t)
+
+# The UIDs of a plan's first UID EXPUNGE, if it has one.
+def expunged(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
+  match cs:
+    case Nil{}:
+      None{}
+    case Con{c, t}:
+      match c:
+        case I.CExpunge{u}:
+          Some{u}
+        case _:
+          expunged(t)
+
+# The UIDs of a plan's first UID COPY, if it has one.
+def copied(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
+  match cs:
+    case Nil{}:
+      None{}
+    case Con{c, t}:
+      match c:
+        case I.CCopy{u, d}:
+          Some{u}
+        case _:
+          copied(t)
+
+# The UIDs a plan first marks \Deleted, if any.
+def marked_deleted(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
+  match cs:
+    case Nil{}:
+      None{}
+    case Con{c, t}:
+      match c:
+        case I.CStore{u, True{}, I.FDeleted{}}:
+          Some{u}
+        case _:
+          marked_deleted(t)
 
 # Whether `s` starts with `p`. Unlike String.starts_with it looks at `p`
 # first, so it decides as soon as a known prefix is matched even when the
@@ -261,6 +313,19 @@ def pinned(+cs: List<&2, I.Cmd>) -> Bool:
       pinned(t)
     case _:
       False{}
+
+# The exact UIDVALIDITY line a plan's guard expects: `empty` for no plan at
+# all, and "" for a plan that changes messages without the guard.
+def pin_line_or(+cs: List<&2, I.Cmd>, +empty: String) -> String:
+  match cs:
+    case Nil{}:
+      empty
+    case Con{I.CSelect{m}, Con{I.CExpect{e}, t}}:
+      e
+    case Con{I.CCapability{}, Con{I.CExpectWord{w}, t}}:
+      pin_line_or(t, "")
+    case _:
+      ""
 
 # Whether a plan confirms UIDPLUS in its own session before anything else:
 # CAPABILITY, then the expectation of the word UIDPLUS.

@@ -63,7 +63,7 @@ TOOLS = [
          ["uids", "destination", "uidvalidity"]), ann(False)),
     ("mail_trash", "Move messages to the resolved trash folder (configured override, advertised special use, or unique conventional name). Recoverable; does not delete permanently.",
      obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False)),
-    ("mail_delete", "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly these UIDs). Cannot be undone; prefer mail_trash. Requires confirm = \"permanently-delete\" and the folder's uidvalidity.",
+    ("mail_delete", "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly these UIDs). Cannot be undone; prefer mail_trash. Requires confirm = \"permanently-delete\" and the folder's uidvalidity. The confirm word guards against mistakes; it is not the user's approval, so ask the user first.",
      obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV, "confirm": {"type": "string", "enum": ["permanently-delete"]}},
          ["uids", "uidvalidity", "confirm"]), ann(False, destructive=True)),
     ("mail_save_draft", "Compose a message and save it to the resolved drafts folder (configured override, advertised special use, or unique conventional name) without sending. Preserves Bcc recipients in the draft.",

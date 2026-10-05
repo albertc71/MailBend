@@ -159,11 +159,12 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | TLS chain and host name always verified | `native/mailbend-tls.c` | transport tests (bad CA, wrong host, expired, self-signed) |
 | Only the helper reads the password; no output contains it | helper (login, login replies not forwarded) | transport cases 2 and 18, e2e output scan |
 | Reads never change mail (`EXAMINE`, `BODY.PEEK`) | `src/ops.bend` read plans | laws in `LAWS.bend`, e2e server log |
-| Move and trash never expunge before copying | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail` |
-| Delete needs `permanently-delete` and UIDPLUS | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus` |
-| Stale UIDs never touch other messages | `=EXPECT` after `SELECT` in every change plan | laws `*_is_pinned`, e2e stale-UIDVALIDITY cases |
-| No plain `EXPUNGE` | plans use `UID EXPUNGE` only | e2e server log |
-| Attachments only from `MAILBEND_ATTACH_DIR`, at most 32 and 25 MB | `mailbend-attach` (openat2), `src/tools.bend` budget | e2e (symlink, `..`, `/proc/self/environ`, count, budget) |
+| Move and trash never expunge before copying; the first `UID EXPUNGE` names the first `UID COPY`'s UIDs | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail`, `move/trash_expunges_only_copied` |
+| Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
+| Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
+| No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
+| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_five`, e2e (all 9 mutating tools, switch values, tool lists) |
+| Attachments only from a dedicated `MAILBEND_ATTACH_DIR`, at most 32 and 25 MB | `mailbend-attach` (openat2, broad-directory and hard-link refusal, O_PATH type check), `src/tools.bend` budget | e2e (symlink, `..`, `/proc/self/environ`, `/`, home, `.ssh`, hard link, FIFO, count, budget) |
 | Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
 | Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
 | Folder roles resolve independently; uncertain targets never trigger guessed writes | `src/tools.bend` discovery and resolution, `src/ops.bend` discovery plans | local e2e partial-role, override, ambiguity and failed-discovery cases |
@@ -197,7 +198,11 @@ run a short discovery session before the action session.
 The core never reads `MAILBEND_APP_PASSWORD`; only the helper does. The
 helper wipes its copies after login and does not forward the server's
 login replies, so no transcript, tool result or log can contain the
-password.
+password. An environment variable is still inherited by the core and
+readable by any process of the same user; with `MAILBEND_PASSWORD_FILE`
+(absolute, a regular file owned by the user, mode 600, no symlink) the
+helper reads the password from that file instead, and it is in no
+environment. Setting both is refused.
 
 ## Semantics
 
@@ -278,7 +283,10 @@ These tests use the fake TLS server, not a live provider.
   (from an absolute `MAILBEND_ATTACH_HELPER`) with `openat2` beneath that
   directory (no symlinks,
   no `..` that leaves it; the directory itself is opened by its canonical path without
-  following symlinks) and checked on the opened descriptor.
+  following symlinks) and checked on the opened descriptor. The directory
+  must be dedicated: `/`, the home directory or one containing it, and one
+  holding `.ssh`, `.gnupg`, `.aws`, `.config` or `.git` are refused, as are
+  files with a second hard link, devices and FIFOs.
 - A `mail_get_new` checkpoint is a UID with its UIDVALIDITY: `since_uid`
   without `uidvalidity` is refused.
 - Replies read the first 256 KB of the original. The result reports
@@ -310,14 +318,26 @@ These tests use the fake TLS server, not a live provider.
 - rendered read scripts start with `EXAMINE`, and every fetch item renders as
   `BODY.PEEK[...]` or metadata;
 - marking read/unread never marks `\Deleted` or expunges;
-- move and trash never expunge before copying, for every capability set;
+- move and trash never expunge before copying, for every capability set,
+  and their first `UID EXPUNGE` names the same UIDs as their first
+  `UID COPY` (their `\Deleted` store and later commands are not compared);
 - delete is the empty plan unless the confirmation is exactly
-  `permanently-delete` (the tool passes the caller's string straight in);
+  `permanently-delete` (the tool passes the caller's string straight in); its
+  first `UID EXPUNGE` names the same UIDs as its first `\Deleted` store,
+  which with the confirmation and UIDPLUS are the caller's UIDs;
+- `CExpunge` renders as `UID EXPUNGE`;
 - saving a draft never removes anything;
-- mark, move, trash and delete plans open with `SELECT` and the UIDVALIDITY
-  expectation (or are empty);
+- mark, move, trash and delete plans open with `SELECT` and the expectation
+  of the caller's exact UIDVALIDITY (or are empty);
 - delete and copy-based move plans confirm UIDPLUS in their own session
-  before anything else.
+  before anything else;
+- exactly the five read tools are read-only.
+
+The laws are about these pure plans and their rendering. The native helpers,
+TLS, MIME parsing, the agent's choices and the runtime configuration are
+outside them and covered by the transport, unit and e2e tests. The
+confirmation word is supplied by the agent, so it guards against mistakes,
+not against a manipulated agent: it is not a person's approval.
 
 Fetch items are a closed type with no non-PEEK body item, so a read cannot
 set `\Seen` by construction; the e2e suite also checks the server log.
