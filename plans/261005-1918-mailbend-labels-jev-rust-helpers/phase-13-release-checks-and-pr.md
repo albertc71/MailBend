@@ -34,13 +34,14 @@ Each item records pass/fail and the observed value:
 2. Hierarchy delimiter from `mail_list_folders`.
 3. `mail_create_folder` at top level and nested; visible on iCloud.com and
    Apple Mail; creation under INBOX accepted or refused.
-4. `mail_rename_folder`; `mail_delete_folder` (with the confirmation word)
-   of an empty folder: does iCloud accept DELETE of the examined mailbox?
+4. `mail_rename_folder` of a folder with a subfolder; renaming a parent of
+   a role folder is refused.
 5. `UID SEARCH HEADER Message-ID` finds a known message; whether searches
    return `\Deleted`-but-not-expunged messages (sweetrb PR #255 report).
 6. `mail_label` moves a message into a label folder on iCloud (copy
    fallback, since iCloud has no MOVE): it appears once there, is gone from
-   INBOX, and no duplicate remains; `mail_move` back to INBOX removes it.
+   INBOX, and no duplicate remains after a completed move; `mail_move` back
+   to INBOX removes it.
 7. `mail_flag` with each colour: shown colour in Apple Mail matches; whether
    iCloud keeps `$MailFlagBit*` (PERMANENTFLAGS `\*`).
 8. Send to self: does iCloud file SMTP mail in Sent by itself? Decides the
@@ -50,7 +51,10 @@ Each item records pass/fail and the observed value:
 11. With Jev on (headers mode): `mail_classify` on 20 messages; a blocked
     send to an obviously wrong recipient; a delete of junk proceeds; TypeSafe
     unreachable blocks a send and lets a search continue marked "unchecked";
-    `mail_triage` moves only into `To Delete`.
+    `mail_triage` in headers mode files messages into confident existing
+    category folders and never into `To Delete`; in body mode a disposable
+    message goes to `To Delete` (the phase 10 table); a large batch is not
+    refused by TypeSafe (checks the byte-bound assumption).
 12. The send limit: with `MAILBEND_MAX_SENDS_PER_DAY=2`, the third send is
     refused, and trashing the Sent copies does not reset it.
 

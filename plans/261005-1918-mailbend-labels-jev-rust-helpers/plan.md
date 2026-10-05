@@ -17,7 +17,7 @@ created: 2026-10-05
 
 Delivers the accepted brainstorm
 ([brainstorm report](../reports/brainstorm-261005-1855-mailbend-next-features.md)):
-labels as iCloud folders (a move, no duplicates), flag colours, Sent copies with a recipient
+labels as iCloud folders (a move, one copy once it completes), flag colours, Sent copies with a recipient
 allowlist and send limit, attachment download, threads, dry-run previews,
 TypeSafe Jev consulted inside the tool calls where it helps (veto before outbound and irreversible actions, annotations on mail content), and
 both native helpers rewritten in Rust with an unchanged contract. The user
@@ -31,7 +31,8 @@ check.
 
 | Decision | Source |
 | --- | --- |
-| A label is an iCloud folder: `mail_label` moves the message there (no duplicate copies); removing a label is a move back to INBOX; there is no unlabel or labels-of tool | user, after the review PR opened (replaces the earlier copy-based labels) |
+| A label is an iCloud folder: `mail_label` moves the message there (one copy once the move completes; an interrupted fallback move is reported as `partial`); removing a label is a move back to INBOX; there is no unlabel or labels-of tool | user, after the review PR opened (replaces the earlier copy-based labels) |
+| No folder-delete tool: MailBend creates and renames folders only; folders are deleted in Apple Mail or iCloud.com (IMAP has no "delete only if empty") | user, after the plan review |
 | Jev's category is the label: triage moves each message into one existing folder; when none fits, the agent proposes names and Jev chooses in a second call; a new folder exists only via `mail_create_folder` | user, after the review PR opened |
 | `mail_create_folder` is the only way a mailbox is created; AGENTS.md rule reworded | user, brainstorm section 7 |
 | Jev never deletes; a safe verdict moves mail into a "To Delete" review folder | user, brainstorm section 7 |
@@ -143,7 +144,7 @@ by end-to-end tests and a CI grep, not by a proof.
 flowchart LR
   m["Message in INBOX"] --> c{"Jev classify<br/>(label folder, delete vetoes)"}
   c -- "all vetoes low, body mode,<br/>code facts pass" --> r["Move into 'To Delete'<br/>(proven move plan)"]
-  c -- "label = existing folder,<br/>confident" --> cat["Move into label folder<br/>(proven move plan, no duplicate)"]
+  c -- "label = existing folder,<br/>confident" --> cat["Move into label folder<br/>(proven move plan)"]
   c -- "label = none" --> nn["needs_new_category"]
   nn --> ag["Agent proposes names"]
   ag --> c2{"Jev call 2: choose among<br/>existing folders + candidates"}
@@ -234,7 +235,8 @@ flowchart LR
 
 Note (after the review PR opened): finding 2 is superseded. Labels are now
 moves into a folder, so `mail_unlabel`, its expunge and its Message-ID check
-no longer exist.
+no longer exist. Finding 4 is superseded by the decision in validation
+session 3: there is no folder-delete tool.
 
 ### Whole-Plan Consistency Sweep
 - Files reread: plan.md, phase-01 to phase-13, research/*.md.
@@ -287,4 +289,36 @@ is the label; triage makes at most one move per message.
 - Searched all plan files for `unlabel`, `labels_of`, label copies and
   per-label Nouls; remaining mentions are the decision row and this log.
 - Unresolved contradictions: 0.
+
+### Session 3 — 2026-10-05 (external plan review of `ef0ef98`)
+
+The review reported 11 issues (3 high, 8 medium). All were checked against
+the source and accepted.
+
+| # | Issue | Resolution |
+| --- | --- | --- |
+| 1 | Empty-folder delete races with arriving mail; `=EXPECT` stays satisfied once matched (`native/mailbend-tls.c:529-533`) | User: no folder-delete tool. `CDelete` is removed from the command model (phase 3) |
+| 2 | Secret check misses the forwarded original (`src/tools.bend:1490-1500`) | Scan the decoded outgoing content, including `message/rfc822` and `text/*` parts, within limits; a scan that cannot cover everything reports `incomplete` (phase 11) |
+| 3 | Triage rules, laws, tests and checklist contradicted each other | The delete-review verdict is separated from the final filing action; one table drives the law, the unit tests, the e2e and the checklist (phases 10, 13) |
+| 4 | Exact-name checks miss parents and children | Checks cover the whole hierarchy using the reported delimiter; parents must already exist (phase 3) |
+| 5 | A 20-message batch ignores both token limits | Batches are split by size against the 32k and 64k limits, using the byte count as the token bound; single oversized messages are handled; the fake service enforces the limits (phase 9) |
+| 6 | "Proven no duplicates" is too strong for an interrupted fallback | The one-copy guarantee holds only for a completed move; an interrupted one returns `partial`; fault-injection tests (phase 3) |
+| 7 | Rust dispatch would break relative attach directories | The mode is chosen by argument count (3, 4 or 6); a parity test runs both helpers on directories named `attachments`, `count` and `save` (phase 1) |
+| 8 | The installer ignores `native/rust-toolchain.toml` | Build from inside `native/`; check the cargo and rustc versions; test with an older default toolchain (phase 1) |
+| 9 | The save helper cannot see the caller's PATH | PATH is passed as an explicit non-secret argument and compared by inode (phase 6) |
+| 10 | Dry-run tests ignore local file changes | Snapshot the download directory and the counter; record helper calls (phase 8) |
+| 11 | The fake server cannot serve BODYSTRUCTURE | Fixture responses are added; missing or malformed structure is `Unknown` and never counts as "no attachments" (phases 9, 10) |
+
+#### Whole-Plan Consistency Sweep
+- I searched every plan file for folder delete, `CDelete`, "no duplicate",
+  "batches of at most 20", the delete-only triage expectation and absolute
+  directory dispatch. I updated phases 1, 3, 5, 6, 8, 9, 10, 11, 12 and 13
+  and this file.
+- The earlier sweep results (0 contradictions) applied to the plan as it
+  stood then. After this session the triage table, its laws, its tests and
+  the checklist agree.
+- Unresolved contradictions: 0.
+- Still unverified and on the phase 13 checklist: that TypeSafe's tokenizer
+  is byte-level (the byte bound depends on it), the iCloud delimiter, and
+  HEADER search behaviour.
 

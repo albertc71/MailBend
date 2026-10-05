@@ -40,12 +40,23 @@ Full table: [Jev gating research](./research/researcher-jev-gating-evidence.md).
 
 | Tool | Jev | On TypeSafe failure |
 | --- | --- | --- |
-| `mail_send`, `mail_reply`, `mail_forward` (not `as_draft`) | Before SMTP: a local, deterministic check in Bend for credentials and secrets (private-key blocks, common token prefixes, password lines) in the body and attachment names, in every mode; Jev questions on headers and recipients (does the recipient fit the conversation, is reply-all appropriate, did the original ask for this forward), plus the body only in body mode | Block, say why, suggest `mail_save_draft` |
+| `mail_send`, `mail_reply`, `mail_forward` (not `as_draft`) | Before SMTP: a local, deterministic check in Bend for credentials and secrets (private-key blocks, common token prefixes, password lines) over the decoded outgoing content, in every mode (see below); Jev questions on headers and recipients (does the recipient fit the conversation, is reply-all appropriate, did the original ask for this forward), plus the body only in body mode | Block, say why, suggest `mail_save_draft` |
 | `mail_delete` | Before the expunge: the five delete vetoes; block only when a veto is `High` (no body requirement, no `SafeToDelete` requirement) | Block |
 | `mail_get` | After the fetch: reply_needed, action_required, priority, category, suggested_action, suspected_injection when flagged | Result returned, `jev.status: unchecked` |
-| `mail_search`, `mail_get_new`, `mail_get_thread` | After the fetch: headers-only annotations, batches of at most 20 messages per request | `unchecked` |
+| `mail_search`, `mail_get_new`, `mail_get_thread` | After the fetch: headers-only annotations, batched by size under both token limits (phase 9) | `unchecked` |
 | `mail_classify`, `mail_triage` | Jev is the tool (phases 9-10) | classify: error; triage: no change |
-| Probe, folders, mark, flag, label, folder create/rename/delete, move, trash, save draft, attachment download | No Jev | n/a |
+| Probe, folders, mark, flag, label, folder create/rename, move, trash, save draft, attachment download | No Jev | n/a |
+
+Local secret scan scope. Forward attaches the whole original as
+`M.Attach{"forwarded-message.eml", "message/rfc822", raw}`
+(`src/tools.bend:1490-1500`), so a scan of the body and attachment names
+alone would miss the original's text. The scan runs over the outgoing
+content before transfer encoding: the composed body, attachment names, the
+decoded text of `text/*` attachments, and the decoded text parts of
+forwarded `message/rfc822` parts (recursively). It is bounded: at most
+1 MB of text and 3 levels of nesting. Content beyond those bounds, or parts
+it cannot decode, make the result `secret_scan: incomplete`. A send then
+proceeds only with that status shown; it never shows a plain "checked".
 
 `jev.status` says what was checked (`checked`, with `content: headers` or
 `body`), so a headers-mode send never claims the body was judged by Jev.
@@ -84,11 +95,16 @@ tool that is not read-only and asserts it accepts `dry_run`.
 
 ## Steps
 
-1. Local secret rules with unit tests (true and false positives).
+1. Local secret rules and the decoded-content scan, with unit tests (true
+   and false positives; base64 and quoted-printable parts; nested
+   forwards; limits reached gives `incomplete`).
 2. Send gate and wrappers; laws.
 3. Delete gate on `mail_delete`; laws.
 4. Annotations for get and lists with batching.
-5. e2e: Jev off changes nothing; Jev on in headers mode: a send carrying a
+5. e2e: the same fake secret in a normal body, in a forwarded original
+   (`mail_forward`) and in a text attachment is refused locally in all
+   three cases, in headers mode, with no SMTP DATA and no body text in the
+   recorded TypeSafe request. Jev off changes nothing; Jev on in headers mode: a send carrying a
    fake credential is blocked locally and nothing reaches SMTP or TypeSafe
    with the body; a normal send proceeds; a delete with low vetoes
    proceeds; a high veto blocks; TypeSafe down blocks send, reply, forward,

@@ -74,7 +74,8 @@ is added to any message.
 
 Daily limit (`mailbend-attach count`, Rust, credential-free):
 
-- `mailbend-attach count <state-dir> <limit> <utc-date>`: opens
+- `mailbend-attach count <state-dir> <limit> <utc-date>` (4 arguments; the
+  helper picks the mode by argument count, phase 1): opens
   `<state-dir>/sends` beneath the directory (created 0700 by the helper if
   missing, same symlink rules as attachments), takes an exclusive `flock`,
   counts lines for the date, and if the count is below `limit` appends one

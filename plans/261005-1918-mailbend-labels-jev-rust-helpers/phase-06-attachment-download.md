@@ -44,12 +44,18 @@ atomically, outside `MAILBEND_ATTACH_DIR`, and never in read-only mode.
 - File name policy (Bend): default the attachment name; take the last path
   component; remove NUL, control and Unicode format (Cf) characters; strip
   every leading dot; at most 255 bytes; `filename` may be passed.
-- `mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes>`:
+- `mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>`
+  (6 arguments; mode chosen by argument count, phase 1). The helper
+  re-executes with an empty environment (`native/mailbend-attach.c:96-101`),
+  so the caller's `PATH` is passed explicitly as `<path-list>`, a
+  non-secret value; no other environment value is passed:
   - canonicalises both directories and refuses when they are the same inode
     or either contains the other (dev/inode ancestry walk);
   - download-dir refusals: everything the read mode refuses, plus any
     directory under `~/.config`, `~/.local/bin`, `~/.local/share/applications`,
-    any `autostart` or `systemd` directory, and any directory on `PATH`;
+    any `autostart` or `systemd` directory, and any directory in
+    `<path-list>`, each entry canonicalised and compared by device and
+    inode, so a symlink alias of a PATH directory is refused too;
   - `name` must be one component;
   - writes with `O_TMPFILE` in the download directory, then `linkat` to
     the final name (fails with EEXIST rather than overwrite), so a killed
@@ -73,7 +79,10 @@ atomically, outside `MAILBEND_ATTACH_DIR`, and never in read-only mode.
 4. e2e: byte-for-byte round trip of a file holding every byte 0x00-0xFF;
    EEXIST refused; `..`, `/`, U+202E and leading dots handled; download dir
    equal to, inside, or a symlink alias of the attach dir refused;
-   `~/.config/autostart` refused; truncated fetch refused; read-only mode
+   `~/.config/autostart` refused; a temporary directory added to `PATH`, and
+   a symlink alias of it, refused after the re-exec while
+   `/proc/<pid>/environ` of the helper holds no `MAILBEND_APP_PASSWORD`;
+   truncated fetch refused; read-only mode
    refuses and hides the tool; a helper killed mid-write leaves no file.
 
 ## Verification

@@ -40,6 +40,13 @@ the exact commands it would run, without running them.
 - Modify: `src/tools.bend`, `tools/gen-schema.py`, `tests/test-e2e.py`,
   `README.md`.
 
+Dry runs must leave local state alone too: the download directory
+(`mail_get_attachment`, phase 6) and the send counter (phase 5) never appear
+in the mail server's log, so the e2e also snapshots both before and after
+each dry run, and a helper-call recorder (a wrapper set as
+`MAILBEND_ATTACH_HELPER` in the test) asserts that no `save` or `count`
+call happens.
+
 ## Steps
 
 1. `preview_or_run` and the summary renderer, with unit tests.
@@ -50,4 +57,7 @@ the exact commands it would run, without running them.
 ## Verification
 
 - `python3 tests/test-e2e.py` (asserts no STORE/COPY/MOVE/EXPUNGE/APPEND/
-  CREATE/RENAME/DELETE/SMTP DATA in the log during dry runs).
+  CREATE/RENAME/SMTP DATA in the log, no new file in the download
+  directory, an unchanged send counter and no `save`/`count` helper call
+  during dry runs of send, reply, forward and attachment download, with Jev
+  off and on).

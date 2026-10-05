@@ -56,10 +56,16 @@ native/
 
 - `mailbend-attach` keeps the exact 3-argument read form
   (`mailbend-attach <dir> <path> <max-bytes>`, called positionally by
-  `tests/test-e2e.py:287,350`); phase 5 adds `count` and phase 6 adds
-  `save` as named first arguments that cannot collide with a directory
-  path (they never start with `/`, and the read form requires an absolute
-  directory).
+  `tests/test-e2e.py:287,350`). The current C helper accepts relative
+  directories (it calls `realpath` without requiring an absolute path,
+  `native/mailbend-attach.c:215-225`; the caller passes the value through,
+  `src/tools.bend:1083-1109`), and a plan-review check confirmed that
+  relative directories named `attachments`, `count` and `save` all read the
+  fixture correctly today. So the mode is chosen by argument count only:
+  3 arguments is always the read form; phase 5's `count` takes 4
+  (`count <state-dir> <limit> <utc-date>`) and phase 6's `save` takes 6
+  (`save <attach-dir> <download-dir> <name> <max-bytes> <path-list>`), and
+  each checks its literal first word.
 - A panic hook exits 2 without printing the payload.
 - Error messages keep the substrings tests assert ("home directory",
   ".ssh", "hard link", "outside", "must not be /").
@@ -76,8 +82,12 @@ native/
   test).
 - Modify: `scripts/install.sh` (resolve `${CARGO:-cargo}`, else
   `cargo-1.85` (Ubuntu's package installs only `/usr/bin/cargo-1.85`),
-  else fail with an actionable message; `cargo build --release --locked
-  --manifest-path native/Cargo.toml`; copy binaries to `bin/`; fmt and
+  else fail with an actionable message; check that both `cargo --version`
+  and the `rustc` it uses report at least 1.85; build from inside `native/`
+  (`(cd native && cargo build --release --locked)`) because rustup finds
+  `rust-toolchain.toml` from the working directory and its parents, not from
+  `--manifest-path` (rust-lang.github.io/rustup/overrides.html), while
+  `install.sh` runs from the repository root (`scripts/install.sh:8-10`); copy binaries to `bin/`; fmt and
   clippy are not needed to install; add `--install-rust` mirroring
   `--install-bend`: download rustup-init, check sha256, minimal profile,
   toolchain 1.85; keep the C compiler requirement, which ring's build and
@@ -89,7 +99,9 @@ native/
 
 1. Workspace files, lints, deny and clippy configs.
 2. Port attach step for step; Rust unit tests for path relativisation and
-   limits in `lib.rs`.
+   limits in `lib.rs`; a parity test runs the C and Rust helpers on relative
+   directories named `attachments`, `count` and `save` and on the existing
+   directory-symlink cases, and compares exit codes and bytes.
 3. Install and CI: fmt, clippy `-D warnings`, test, deny, MSRV check, grep
    backstop, then the existing suites against the Rust binary.
 4. Run `python3 tests/test-e2e.py` unchanged; delete the C file.
@@ -100,6 +112,9 @@ native/
 - `cargo deny check`.
 - `scripts/install.sh && python3 tests/test-e2e.py` (all attachment checks).
 - `ldd bin/mailbend-attach` shows only libc (and libgcc_s).
+- `scripts/install.sh` with an older rustup default (1.84) while 1.85 is
+  installed builds with 1.85; the system `cargo-1.85` path without rustup
+  builds too.
 
 ## Risks
 

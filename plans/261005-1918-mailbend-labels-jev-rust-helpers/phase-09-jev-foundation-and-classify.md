@@ -99,8 +99,9 @@ Bend side, new `src/jev.bend`:
   Precedence; new `IStructure` renders `BODYSTRUCTURE`. `peek_safe` accepts
   `BODYSTRUCTURE` (deliberate, explained in the PR; the law
   `fetch_items_never_set_seen` keeps its statement).
-- `Facts` record: headers, flags, size, attachment list from BODYSTRUCTURE;
-  it has no body field. `state_of(Headers, facts)` reads only `Facts`;
+- `Facts` record: headers, flags, size, and attachments as
+  `Known(list) | Unknown` from BODYSTRUCTURE; a missing or malformed
+  BODYSTRUCTURE is `Unknown`, never an empty list. It has no body field. `state_of(Headers, facts)` reads only `Facts`;
   `state_of(Body, facts, text)` adds at most 16 KB of plain text with quoted
   replies and signatures removed.
 - Strict response parser into typed answers; probabilities are quantised
@@ -131,9 +132,24 @@ Bend side, new `src/jev.bend`:
   protected-name rules.
 - Per UID it also returns reply_needed, action_required, deadline_present, priority (Score),
 suggested_action (Choice: read_now, read_later, label, review, none), the
-delete verdict inputs, and suspected_injection when flagged. Messages are
-sent in batches of at most 20 per request so the state stays under 32k
-tokens.
+delete verdict inputs, and suspected_injection when flagged.
+
+Request budget (both TypeSafe limits, `/models.md`: 32k tokens for state
+plus the longest question, 64k for state plus all questions):
+
+- Batches are split by size, not by message count. MailBend counts the
+  UTF-8 bytes of the serialised JSON as an upper bound on tokens. This
+  assumes a byte-level tokenizer, which emits at most one token per byte.
+  The assumption is documented, is checked by the fake service, and is
+  recorded in the live checklist; if TypeSafe answers 422, the batch is
+  halved once.
+- Each request reserves room for all its questions and metadata (category
+  options included) before any message is added: state + longest question
+  <= 32,000 and state + all questions <= 64,000 by that bound, with a
+  safety margin.
+- A single message that does not fit alone: its body is cut to fit and the
+  result says `body_truncated`; if its headers alone do not fit, that
+  message is `unchecked` and the rest proceed.
 
 Laws:
 
@@ -164,13 +180,20 @@ Laws:
    existing switch tests still pass.
 2. `mailbend-typesafe` with Rust tests for environment allow-listing, exit
    codes, proxy CONNECT and key redaction.
-3. Fetch items and `Facts`; laws.
+3. Fetch items and `Facts`; laws. The fake mail server gains
+   fixture-backed BODYSTRUCTURE responses (today it silently omits unknown
+   FETCH items, `tests/fake_mail_server.py:799-819`), plus an option to omit
+   or corrupt it; unit tests for no attachments, a nested MIME message with
+   an attachment, missing and malformed BODYSTRUCTURE (both `Unknown`).
 4. `jev.bend`: request builder, parser, bands; unit tests.
 5. `mail_classify`; e2e against the fake: headers mode request has no body
    text (recorded request), body mode without attestation fails, env key
    set fails every tool, key file missing fails every Jev tool, 401/422/429
    map to TypeSafe messages, `/proc/<pid>/environ` of `mailbend-typesafe`
-   holds no `MAILBEND_APP_PASSWORD`.
+   holds no `MAILBEND_APP_PASSWORD`. The fake TypeSafe service enforces both
+   token limits with the same byte bound and answers 422 when they are
+   exceeded; tests cover maximum-size bodies, long headers, multibyte text,
+   many attachment names and 254 category options.
 
 ## Verification
 
