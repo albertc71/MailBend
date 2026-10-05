@@ -54,9 +54,18 @@ alone would miss the original's text. The scan runs over the outgoing
 content before transfer encoding: the composed body, attachment names, the
 decoded text of `text/*` attachments, and the decoded text parts of
 forwarded `message/rfc822` parts (recursively). It is bounded: at most
-1 MB of text and 3 levels of nesting. Content beyond those bounds, or parts
-it cannot decode, make the result `secret_scan: incomplete`. A send then
-proceeds only with that status shown; it never shows a plain "checked".
+1 MB of text and 3 levels of nesting. The scan result is a type
+`Scan = Found | Incomplete | Clean`, and it decides execution:
+
+| Local scan result | Send behaviour |
+| --- | --- |
+| `Found` (a secret in any part, even if another part is incomplete) | Block, name the part |
+| `Incomplete` (text beyond 1 MB, beyond 3 levels, or a required text part that cannot be decoded) | Block, report `secret_scan: incomplete` |
+| `Clean` (every required part inspected, nothing found) | Continue to the allowlist and Jev checks |
+
+Saving a draft stays available in every case (drafts never reach SMTP).
+Showing a status after delivery would not stop a secret, so an incomplete
+scan never lets a message out.
 
 `jev.status` says what was checked (`checked`, with `content: headers` or
 `body`), so a headers-mode send never claims the body was judged by Jev.
@@ -65,8 +74,9 @@ The local secret check reports its own result.
 Pure wrappers that the IO code must call (a CI grep checks there is no
 other path to `smtp_run` or to the delete plan):
 
-- `outbound_checked(allow, verdict, rcpts, from, msg) -> Maybe<String>`
-  (wraps phase 5's `outbound`).
+- `outbound_checked(scan, allow, verdict, rcpts, from, msg) -> Maybe<String>`
+  (wraps phase 5's `outbound`; the scan result is an input, so it affects
+  execution, not only the report).
 - `delete_checked(verdict, plan) -> List<Cmd>`.
 
 Laws (about these pure functions; IO wiring is covered by e2e, and the
@@ -77,6 +87,8 @@ README says so):
 - `delete_veto_only_subtracts`: for every verdict, the result is the plan
   or `[]`.
 - `failure_blocks_outbound`: `Missing` gives None / `[]`.
+- `secret_scan_blocks`: for every input, `outbound_checked` with `Found` or
+  `Incomplete` is None; only `Clean` can yield an envelope.
 - `outgoing_headers_state_has_no_body`: the outgoing Jev state in headers
   mode has no body field (extends phase 9's law).
 
@@ -97,14 +109,19 @@ tool that is not read-only and asserts it accepts `dry_run`.
 
 1. Local secret rules and the decoded-content scan, with unit tests (true
    and false positives; base64 and quoted-printable parts; nested
-   forwards; limits reached gives `incomplete`).
+   forwards; limits reached gives `Incomplete`; a `Found` part wins over an
+   `Incomplete` one).
 2. Send gate and wrappers; laws.
 3. Delete gate on `mail_delete`; laws.
 4. Annotations for get and lists with batching.
 5. e2e: the same fake secret in a normal body, in a forwarded original
    (`mail_forward`) and in a text attachment is refused locally in all
    three cases, in headers mode, with no SMTP DATA and no body text in the
-   recorded TypeSafe request. Jev off changes nothing; Jev on in headers mode: a send carrying a
+   recorded TypeSafe request. The same fake secret placed just beyond the
+   1 MB limit, just beyond the nesting limit, and inside a text part that
+   cannot be decoded is refused with `secret_scan: incomplete`, again with
+   no SMTP DATA and no body text sent to TypeSafe; a complete, clean
+   message is sent. Jev off changes nothing; Jev on in headers mode: a send carrying a
    fake credential is blocked locally and nothing reaches SMTP or TypeSafe
    with the body; a normal send proceeds; a delete with low vetoes
    proceeds; a high veto blocks; TypeSafe down blocks send, reply, forward,

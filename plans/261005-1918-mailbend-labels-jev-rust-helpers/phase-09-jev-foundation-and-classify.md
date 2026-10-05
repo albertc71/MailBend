@@ -137,18 +137,30 @@ delete verdict inputs, and suspected_injection when flagged.
 Request budget (both TypeSafe limits, `/models.md`: 32k tokens for state
 plus the longest question, 64k for state plus all questions):
 
-- Batches are split by size, not by message count. MailBend counts the
-  UTF-8 bytes of the serialised JSON as an upper bound on tokens. This
-  assumes a byte-level tokenizer, which emits at most one token per byte.
-  The assumption is documented, is checked by the fake service, and is
-  recorded in the live checklist; if TypeSafe answers 422, the batch is
-  halved once.
+- Batches are split by size, not by message count. MailBend uses the UTF-8
+  byte count of the serialised JSON, with a margin, as a local size
+  estimate. TypeSafe documents the 32k and 64k limits but not its tokenizer
+  or how it forms model input (`/models.md`; the SDKs have no counting
+  helper), so this is an estimate, not a proven bound. A fake service using
+  the same formula checks only MailBend's packing arithmetic. The live
+  check gives compatibility evidence, not proof.
+- 422 is a general validation error (`/api.md`), not specifically "too
+  large". The error detail is kept in the result. A 422 or 400 on a batch
+  gets one bounded retry with the batch halved; if that also fails, the
+  operation stops with a clear terminal error that includes TypeSafe's
+  detail. It is never reported as "batch too large" unless the detail says
+  so.
+- `usage.input_tokens`, when present, is recorded in `detail` for
+  calibration. It may be absent (the SDK types it as optional), so nothing
+  depends on it.
 - Each request reserves room for all its questions and metadata (category
   options included) before any message is added: state + longest question
   <= 32,000 and state + all questions <= 64,000 by that bound, with a
   safety margin.
 - A single message that does not fit alone: its body is cut to fit and the
-  result says `body_truncated`; if its headers alone do not fit, that
+  message's `Facts` record `body: Partial` (the same applies to a fetch cut
+  by `max`, the 16 KB cap, or a part that cannot be decoded); the result
+  says `body_truncated`; if its headers alone do not fit, that
   message is `unchecked` and the rest proceed.
 
 Laws:
@@ -193,7 +205,12 @@ Laws:
    holds no `MAILBEND_APP_PASSWORD`. The fake TypeSafe service enforces both
    token limits with the same byte bound and answers 422 when they are
    exceeded; tests cover maximum-size bodies, long headers, multibyte text,
-   many attachment names and 254 category options.
+   many attachment names and 254 category options. The fake service can
+   also behave differently from the estimate: it can reject a request
+   below MailBend's local cap, return 422 for a malformed question, reject
+   again after the split, and succeed on the first batch but fail a later
+   one. Tests check that every case ends with the promised terminal
+   result.
 
 ## Verification
 

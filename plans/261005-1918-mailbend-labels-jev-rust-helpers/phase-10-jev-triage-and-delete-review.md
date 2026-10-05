@@ -52,8 +52,11 @@ Triage verdict (pure, `src/jev.bend`):
   written, open action or deadline, needed again; plus a disposability
   Score.
 - Delete-review verdict: `SafeToDelete` only when all code vetoes pass,
-  every Jev veto is `Low`, disposability is `High` with high confidence, and
-  content mode is `body`; `Keep` when any veto fires; `Review` otherwise.
+  every Jev veto is `Low`, disposability is `High` with high confidence,
+  content mode is `body`, and the body Jev saw was `Complete` (a body cut by
+  the fetch limit, the 16 KB cap or the request budget, or a part that
+  could not be decoded, is `Partial` and rules out `SafeToDelete`, just as
+  `Unknown` attachments do); `Keep` when any veto fires; `Review` otherwise.
   This verdict only decides whether "To Delete" is allowed; it is not the
   final action.
 
@@ -66,15 +69,20 @@ used by the laws, unit tests, e2e and the live checklist):
 | `Keep` or `Review` (any mode, including headers mode) | confident existing folder | Move into that folder |
 | `Keep` or `Review` | none, low confidence, or `needs_new_category` | Stay |
 | delete answers `Missing` | confident existing folder | Move into that folder (delete review is skipped; category filing is a recoverable move) |
-| any | category answer `Missing` | Stay |
+| `Keep` or `Review` | category answer `Missing` | Stay |
 | TypeSafe unreachable (all answers `Missing`) | n/a | Stay; nothing changes |
 
 So headers mode can file into category folders but never into `To Delete`.
+The rows are disjoint: every combination of delete verdict and category
+answer matches exactly one row (`SafeToDelete` with a missing category is
+the first row).
 
 `mail_triage(folder, uids, uidvalidity, dry_run?)`:
 
-- Runs the phase 9 classification over the existing folders (one Jev
-  request per batch).
+- Runs the phase 9 classification over the existing folders, for every
+  batch, before any move. If any batch ends in a terminal TypeSafe failure,
+  nothing moves (the "TypeSafe unreachable" row covers the whole call), so
+  a later failing batch never leaves earlier messages already filed.
 - One move per message, decided in this order: `SafeToDelete` moves
   into `To Delete`; otherwise a category at or above the confidence floor
   moves into that existing label folder (phase 3 `plan_label`, a proven
@@ -120,12 +128,18 @@ this proven disposable?", the delete gate asks "did any veto fire?".
 1. Verdict function with exhaustive unit tests over bands.
 2. Triage plans and laws.
 3. `mail_triage` with `dry_run`; schema; MCP annotations.
-4. Unit tests: one per table row.
+4. Unit tests: every combination of delete verdict and category answer
+   (including `SafeToDelete` with a `Missing` category, which moves into
+   `To Delete`), checked against the table.
 5. e2e on a server without MOVE (copy fallback) and with MOVE, one case per
    table row: body-mode safe message moved to `To Delete`; vetoed message
    with a confident category moved to its folder; headers-mode message with
    a confident category moved to its folder and never to `To Delete`; no
-   confident category stays; TypeSafe down changes nothing; missing review
+   confident category stays; TypeSafe down changes nothing; the first batch
+   classifies and a later batch fails: no message moved; a message whose
+   body the request builder actually shortened, with a deadline marker in
+   the removed tail and fake answers of low vetoes and high disposability,
+   is reported `body_truncated` and does not enter `To Delete`; missing review
    folder refused for `SafeToDelete` messages; `mail_move` and
    `mail_rename_folder` into `To Delete` refused; each moved message ends
    up in one folder.

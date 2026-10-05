@@ -322,3 +322,22 @@ the source and accepted.
   is byte-level (the byte bound depends on it), the iCloud delimiter, and
   HEADER search behaviour.
 
+### Session 4 — 2026-10-05 (re-review of `f6b98c8`)
+
+| # | Issue | Resolution |
+| --- | --- | --- |
+| 1 | An incomplete secret scan still let a send through | The scan result is `Found`, `Incomplete` or `Clean`, and it is an input to `outbound_checked`; anything other than `Clean` blocks SMTP; drafts stay available; law `secret_scan_blocks`; tests place a secret beyond each limit (phase 11) |
+| 2 | A truncated body could still reach `SafeToDelete` | Body completeness (`Complete` or `Partial`) is part of `Facts`; `Partial` rules out `SafeToDelete`, as `Unknown` attachments do; test with a deadline marker in the removed tail (phases 9, 10) |
+| 3 | Child-path checks refused ordinary renames | Children are checked against the tree the rename produces; the existing-parent rule applies only to the root destination's parent; tests for two-level and three-level renames (phase 3) |
+| 4 | `SafeToDelete` with a missing category matched two rows | The missing-category row is limited to `Keep` and `Review`; the rows are disjoint; tests cover every combination (phase 10) |
+| — | Byte bound described as a proof | Reworded as a local size estimate; 422 is a general validation error and its detail is kept; one bounded retry, then a terminal error; triage classifies every batch before any move; tests where the fake service disagrees with the estimate (phases 9, 10) |
+
+The research findings on flag colours and the Sent folder name are not
+applied; the user has not decided on them.
+
+#### Whole-Plan Consistency Sweep
+- Searched for "proceeds only with that status", "upper bound on tokens",
+  "any | category answer", "child's new path must also pass" and "one Jev
+  request per batch"; none remain.
+- Unresolved contradictions: 0.
+

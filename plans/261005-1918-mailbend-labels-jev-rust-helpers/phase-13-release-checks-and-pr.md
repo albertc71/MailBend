@@ -54,7 +54,7 @@ Each item records pass/fail and the observed value:
     `mail_triage` in headers mode files messages into confident existing
     category folders and never into `To Delete`; in body mode a disposable
     message goes to `To Delete` (the phase 10 table); a large batch is not
-    refused by TypeSafe (checks the byte-bound assumption).
+    refused by TypeSafe (compatibility evidence for the size estimate, not a proof).
 12. The send limit: with `MAILBEND_MAX_SENDS_PER_DAY=2`, the third send is
     refused, and trashing the Sent copies does not reset it.
 

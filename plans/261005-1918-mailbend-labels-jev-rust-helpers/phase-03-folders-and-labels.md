@@ -110,8 +110,13 @@ Tool rules (`src/tools.bend`, deterministic, no Jev):
   - the target's parent must already exist (no implicit superior creation),
     and the target must not exist;
   - for rename, the source must not be protected, must not be an ancestor of
-    any protected folder (renaming `Mail` would move `Mail/Sent`), and every
-    child's new path must also pass the target checks.
+    any protected folder (renaming `Mail` would move `Mail/Sent`). Children
+    are checked against the folder tree the rename produces: a child's new
+    path must not be protected or under a protected folder, and must not
+    collide with an existing folder outside the renamed tree. Its new parent
+    is supplied by the same rename, so the existing-parent rule applies only
+    to the root destination's parent (renaming `Work` with `Work/Invoices`
+    to `Projects` is allowed when `Projects` does not exist).
   `mail_create_folder` may create `To Delete` itself, once, at top level.
 - Create: name non-empty, no NUL/CR/LF; the only tool that creates a
   mailbox.
@@ -172,7 +177,9 @@ Laws (`LAWS.bend`, proofs in `PROOF.bend`):
    (including `inbox`, `Sent Messages`, `Deleted Messages`); rename;
    renaming `Mail` refused when `Mail/Sent` is a role or override (both
    delimiters); `Work` to `Trash/Work` refused; rename or create under a
-   missing parent refused; label moves the message (gone from the source,
+   missing parent refused; renaming two-level and three-level ordinary
+   trees succeeds with "/" and "."; a destination that collides with an
+   existing folder refused; label moves the message (gone from the source,
    present once in the label folder) on servers with and without MOVE;
    label into a protected folder refused; moving back to INBOX with
    `mail_move` removes the label; connection dropped after COPY and after
