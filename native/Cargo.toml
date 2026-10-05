@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["mailbend-attach"]
+members = ["mailbend-attach", "mailbend-io", "mailbend-net", "mailbend-tls"]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +9,16 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 publish = false
+
+# One version of each dependency for the whole workspace.
+[workspace.dependencies]
+base64ct = { version = "1.8.3", features = ["alloc"] }
+mailbend-io = { path = "mailbend-io" }
+mailbend-net = { path = "mailbend-net" }
+nix = { version = "0.31.3", default-features = false, features = ["fs", "user"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.4"
+zeroize = "1.9.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -146,9 +146,10 @@ The address is within IANA's non-global
 An HTTP-aware fake-IP route can fail for raw IMAP/SMTP sockets; DNS success
 alone does not prove the returned address is usable.
 
-The native helper uses libcurl's [DoH support](https://curl.se/libcurl/c/CURLOPT_DOH_URL.html)
-for A/AAAA lookup and TCP connection setup. Mail TLS and authentication remain
-in the existing OpenSSL path. The cloud launcher defaults to:
+The native helper has its own small [RFC 8484](https://www.rfc-editor.org/rfc/rfc8484)
+DNS-over-HTTPS client for A/AAAA lookup. Mail TLS and authentication use the
+same verified rustls configuration as before the lookup. The cloud launcher
+defaults to:
 
 ```text
 MAILBEND_DOH_URL=https://cloudflare-dns.com/dns-query
@@ -158,9 +159,10 @@ The helper bootstraps that resolver using `1.1.1.1` and `1.0.0.1`, still
 verifying `cloudflare-dns.com` over HTTPS, so a broken system lookup for the
 resolver cannot defeat the default. Apple IPs are never hard-coded. Each
 helper invocation resolves again, including later calls in an MCP process
-that has stayed running through sleep/wake. Multiple A/AAAA answers and TCP
-address fallback are handled by libcurl; no TTL cache or refresh daemon is
-maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
+that has stayed running through sleep/wake. The lookup succeeds when either
+the A or the AAAA question returns addresses; the helper then tries each
+address in turn (IPv4 first), giving each attempt an equal share of the time
+left. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
 default). A connected endpoint that fails TLS/protocol checks stops the call;
 MailBend does not replay mail operations on another address.
 
@@ -168,7 +170,7 @@ MailBend does not replay mail operations on another address.
 | --- | --- |
 | `/etc/hosts` pins from DoH | Root plus repeated refresh; stale on Apple IP churn and lost on rebuild. Useful as a temporary system-wide diagnostic. |
 | Numeric connection override | A currently reachable address; becomes stale without manual refresh. Preserves the service's TLS name. |
-| Native DoH (recommended here) | Reachable HTTPS resolver and outbound mail TCP; fails when either is blocked. Adds libcurl headers/runtime. |
+| Native DoH (recommended here) | Reachable HTTPS resolver and outbound mail TCP; fails when either is blocked. No extra dependency. |
 | Desktop routing | Connected desktop and traffic coverage; not a documented raw IMAP/SMTP route. |
 
 The old `# mailbend-dns-pin` workaround is unnecessary with DoH. MailBend does
@@ -198,13 +200,16 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
   default resolver bootstrap requires IPv4 connectivity; an IPv6-only
   environment needs a reachable approved resolver URL/bootstrap. Bad IPv6
   routing can consume part of the connection budget.
-- **DNS timeouts:** the DNS deadline needs a libcurl build with asynchronous
-  DNS, as provided by the tested Ubuntu 24.04 packages. With a custom
-  synchronous resolver build, system DNS or a custom DoH resolver's bootstrap
-  lookup can exceed the deadline; see [libcurl's timeout limitation](https://curl.se/libcurl/c/CURLOPT_NOSIGNAL.html).
-- **Proxies:** raw mail TCP does not use `HTTP_PROXY`/`HTTPS_PROXY`; libcurl's
-  separate DoH HTTPS requests may honor proxy environment settings. DNS
-  changes cannot fix a network that permits only proxied HTTP(S).
+- **DNS timeouts:** system DNS lookups (including a custom resolver's
+  bootstrap) run on their own thread and are abandoned at the deadline, so
+  `MAILBEND_TIMEOUT_MS` bounds every lookup, proxy reply and handshake.
+- **Proxies:** raw mail TCP never uses a proxy. The DoH requests use an
+  `http://` proxy from `https_proxy`, `HTTPS_PROXY`, `all_proxy` or
+  `ALL_PROXY` (through HTTP `CONNECT`, with optional Basic credentials in the
+  URL) unless `no_proxy`/`NO_PROXY` lists the resolver. Other proxy schemes,
+  such as `socks5://` or `https://`, are not supported: the helper then exits
+  with a usage error rather than bypassing the proxy. DNS changes cannot fix a network that
+  permits only proxied HTTP(S).
 - **Sleep and retries:** reconnecting resolves fresh addresses. Sleeping
   computers do not provide an always-on mail watcher. If sending mail times
   out after DATA, delivery may already have happened; never automatically

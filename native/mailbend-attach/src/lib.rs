@@ -1,5 +1,5 @@
 //! The pure parts of `mailbend-attach`: argument checks, path relativisation
-//! and the output encoding. Everything that touches the file system is in
+//! and error messages. Everything that touches the file system is in
 //! `main.rs`.
 
 use nix::errno::Errno;
@@ -13,12 +13,13 @@ pub const SENSITIVE: [&str; 5] = [".ssh", ".gnupg", ".aws", ".config", ".git"];
 
 /// The byte limit argument: a positive decimal number, capped at
 /// `MAX_ATTACHMENT`.
-pub fn parse_max(s: &str) -> Result<u64, String> {
-    let bad = || format!("bad byte limit {s}");
-    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+pub fn parse_max(arg: &[u8]) -> Result<u64, String> {
+    let bad = || format!("bad byte limit {}", show(arg));
+    let digits = std::str::from_utf8(arg).map_err(|_| bad())?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad());
     }
-    match s.parse::<u64>() {
+    match digits.parse::<u64>() {
         Ok(0) | Err(_) => Err(bad()),
         Ok(v) => Ok(v.min(MAX_ATTACHMENT)),
     }
@@ -94,18 +95,13 @@ pub fn attachment_open_error(errno: Errno, path: &[u8]) -> String {
     }
 }
 
-/// Appends `bytes` to `out`, each byte 0x80-0xFF as the UTF-8 encoding of
-/// U+0080-U+00FF (the same encoding as mailbend-tls), so the Bend side reads
-/// one character per byte.
-pub fn encode(bytes: &[u8], out: &mut Vec<u8>) {
-    for &c in bytes {
-        if c < 0x80 {
-            out.push(c);
-        } else {
-            out.push(0xC0 | (c >> 6));
-            out.push(0x80 | (c & 0x3F));
-        }
-    }
+pub fn not_regular(path: &[u8]) -> String {
+    format!("attachment {} is not a regular file", show(path))
+}
+
+/// The reason for refusing a file over the remaining byte budget.
+pub fn too_large(max: u64, path: &[u8]) -> String {
+    format!("attachments would exceed {max} bytes (at {})", show(path))
 }
 
 /// A path for an error message.
@@ -119,8 +115,9 @@ mod tests {
 
     #[test]
     fn byte_limit_is_positive_decimal_and_capped() {
-        assert_eq!(parse_max("1000"), Ok(1000));
-        assert_eq!(parse_max("999999999999"), Ok(MAX_ATTACHMENT));
+        assert_eq!(parse_max(b"1000"), Ok(1000));
+        assert_eq!(parse_max(b"999999999999"), Ok(MAX_ATTACHMENT));
+        assert!(parse_max(b"\xff").is_err());
         for bad in [
             "",
             "0",
@@ -131,7 +128,10 @@ mod tests {
             "1e3",
             "99999999999999999999999",
         ] {
-            assert_eq!(parse_max(bad), Err(format!("bad byte limit {bad}")));
+            assert_eq!(
+                parse_max(bad.as_bytes()),
+                Err(format!("bad byte limit {bad}"))
+            );
         }
     }
 
@@ -202,21 +202,5 @@ mod tests {
         );
         assert!(attachment_open_error(Errno::EXDEV, b"x").contains("outside"));
         assert!(attachment_open_error(Errno::ELOOP, b"x").contains("symlink"));
-    }
-
-    #[test]
-    fn high_bytes_become_two_byte_utf8() {
-        let mut out = Vec::new();
-        encode(&[0x41, 0x7F, 0x80, 0xE9, 0xFF], &mut out);
-        assert_eq!(out, [0x41, 0x7F, 0xC2, 0x80, 0xC3, 0xA9, 0xC3, 0xBF]);
-        let all: Vec<u8> = (0..=255).collect();
-        let mut out = Vec::new();
-        encode(&all, &mut out);
-        let decoded: Vec<u8> = String::from_utf8(out)
-            .expect("valid UTF-8")
-            .chars()
-            .map(|c| u8::try_from(u32::from(c)).expect("one byte per character"))
-            .collect();
-        assert_eq!(decoded, all);
     }
 }

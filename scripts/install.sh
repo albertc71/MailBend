@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Builds MailBend in place:
-#   bin/mailbend-tls     the TLS helper (C, OpenSSL, libcurl)
+#   bin/mailbend-tls     the TLS helper (Rust, rustls)
 #   bin/mailbend-attach  the attachment reader (Rust, no credentials)
 #   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install the pinned,
@@ -64,28 +64,17 @@ if ! find_cargo; then
   fi
 fi
 
+# ring (the TLS helper's cryptography) is partly C, built by cargo.
 command -v cc >/dev/null 2>&1 || fail "a C compiler is needed (apt-get install build-essential)"
-probe=$(mktemp -d)
-trap 'rm -rf "$probe"' EXIT
-cat > "$probe/check.c" <<'EOF'
-#include <openssl/ssl.h>
-#include <curl/curl.h>
-#if LIBCURL_VERSION_NUM < 0x074c00
-#error libcurl 7.76+ required
-#endif
-int main(void) { return 0; }
-EOF
-cc "$probe/check.c" -o "$probe/check" -lssl -lcrypto -lcurl 2>/dev/null \
-  || fail "OpenSSL and libcurl 7.76+ headers are needed (apt-get install libssl-dev libcurl4-openssl-dev)"
 
 mkdir -p bin
-say "building bin/mailbend-tls"
-cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto -lcurl
-say "building bin/mailbend-attach ($rustc_version)"
+say "building bin/mailbend-tls and bin/mailbend-attach ($rustc_version)"
 # Build from native/: rustup finds rust-toolchain.toml from the working
 # directory, not from --manifest-path.
-(CDPATH= cd native && "$cargo" build --release --locked --quiet -p mailbend-attach)
+(CDPATH= cd native && "$cargo" build --release --locked --quiet -p mailbend-tls -p mailbend-attach)
+cp native/target/release/mailbend-tls bin/mailbend-tls
 cp native/target/release/mailbend-attach bin/mailbend-attach
+bin/mailbend-tls --check || fail "the built TLS helper cannot run"
 
 say "checking the safety laws (bend PROOF.bend)"
 bend PROOF.bend

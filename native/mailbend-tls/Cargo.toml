@@ -1,0 +1,19 @@
+[package]
+name = "mailbend-tls"
+description = "MailBend's verified TLS transport: runs Bend-generated IMAP and SMTP command plans"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64ct.workspace = true
+mailbend-io.workspace = true
+mailbend-net.workspace = true
+nix.workspace = true
+rustls.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

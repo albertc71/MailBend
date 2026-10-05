@@ -1,0 +1,17 @@
+[package]
+name = "mailbend-net"
+description = "Verified TLS, connection routing and DNS-over-HTTPS shared by MailBend's network helpers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64ct.workspace = true
+mailbend-io.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+
+[lints]
+workspace = true

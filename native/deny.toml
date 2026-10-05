@@ -7,11 +7,13 @@ yanked = "deny"
 
 [licenses]
 version = 2
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "ISC", "BSD-3-Clause"]
+allow = ["MIT", "Apache-2.0", "ISC", "BSD-3-Clause"]
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Our own crates depend on each other by path; none is published.
+allow-wildcard-paths = true
 deny = [
   { name = "openssl" },
   { name = "openssl-sys" },
@@ -22,6 +24,11 @@ deny = [
   { name = "rustls-pemfile" },
   { name = "curl-sys" },
 ]
+
+# Only the ring provider: no aws-lc and no FIPS build of rustls.
+[[bans.features]]
+crate = "rustls"
+deny = ["aws_lc_rs", "aws-lc-rs", "fips"]
 
 [sources]
 unknown-registry = "deny"

@@ -30,12 +30,12 @@ compiler (see [Safety](#safety)).
 
 ## Install (Linux)
 
-Needs a C compiler, OpenSSL and libcurl 7.76+ headers, Rust 1.85+ (cargo and
-rustc), and Bend 2 (clang 14+ to compile the core; without clang the core runs
+Needs a C compiler, Rust 1.85+ (cargo and rustc), the system CA certificates,
+and Bend 2 (clang 14+ to compile the core; without clang the core runs
 through `bend` with a slower start).
 
 ```sh
-sudo apt-get install -y build-essential libssl-dev libcurl4-openssl-dev clang ca-certificates curl
+sudo apt-get install -y build-essential clang ca-certificates curl
 git clone https://github.com/albertc71/MailBend.git && cd MailBend
 scripts/install.sh --install-bend --install-rust
 ```
@@ -232,7 +232,7 @@ flowchart LR
     tools["14 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
-  core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (C, OpenSSL)<br/>verified TLS, login,<br/>lock-step commands"]
+  core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]
   helper -- "transcript on stdout" --> core
   helper <--> imap[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
   helper <--> smtp[("SMTP STARTTLS<br/>default smtp.mail.me.com:587")]

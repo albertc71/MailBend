@@ -4,38 +4,14 @@
 //!
 //! Kept apart from mailbend-tls so the credential-bearing helper never reads
 //! files: this program opens no connection, and before anything else it
-//! re-executes itself with an empty environment. (Clearing the environment
-//! is not enough: /proc/self/environ shows the environment the process
-//! started with, which may hold the app password.) Files on procfs or sysfs
-//! are refused as well.
-//!
-//! <path> is relative to <dir>, or absolute inside it. <dir> is resolved once
-//! with realpath() and opened by that canonical path with
-//! RESOLVE_NO_SYMLINKS, so a component swapped for a symlink afterwards is
-//! refused. The file is opened beneath it with openat2(RESOLVE_BENEATH |
-//! RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS), so no symlink or ".." leads
-//! outside, and only a regular file of at most <max-bytes> (never more than
-//! 25 MiB) is read, checked on the opened descriptor itself. The file's type
-//! is checked first on an O_PATH descriptor, so a device or FIFO found there
-//! is not opened. That same inode is then reopened for reading through
-//! /proc/self/fd, not by walking the path again, so a file a concurrent local
-//! writer substitutes under the name is never opened. A file with more than
-//! one hard link is refused (another name for it may live outside <dir>).
-//!
-//! <dir> must be a dedicated directory: "/", the user's home directory or any
-//! directory containing it, and a directory holding .ssh, .gnupg, .aws,
-//! .config or .git are refused, since every file inside <dir> can be mailed.
-//!
-//! The mode is chosen by the argument count alone, so a relative <dir> of any
-//! name keeps working: three arguments is always the read form.
-//!
-//! stdout: the file's bytes, each byte 0x80-0xFF written as the UTF-8
-//! encoding of U+0080-U+00FF (the same encoding as mailbend-tls), so the Bend
-//! side reads one character per byte.
+//! re-executes itself with an empty environment. How the file is opened, and
+//! which directories and files are refused, is specified in
+//! native/README.md ("Attachments"); each step is documented where it is
+//! done below.
 //!
 //! Exit status: 0 ok, 2 refused or unreadable (the reason is on stderr).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -46,14 +22,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use mailbend_attach::{
-    SENSITIVE, attachment_open_error, contains_path, directory_open_error, encode, parse_max,
-    relative_attachment_path, show,
+    SENSITIVE, attachment_open_error, contains_path, directory_open_error, not_regular, parse_max,
+    relative_attachment_path, show, too_large,
 };
-use nix::fcntl::{AT_FDCWD, OFlag, OpenHow, ResolveFlag, openat2};
-use nix::sys::stat::{FileStat, SFlag, fstat, fstatat};
+use mailbend_io::fs::{is_regular, open_at};
+use mailbend_io::report::report;
+use mailbend_io::transcript::encode_bytes;
+use nix::errno::Errno;
+use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, ResolveFlag};
+use nix::sys::stat::{fstat, fstatat};
 use nix::sys::statfs::{PROC_SUPER_MAGIC, SYSFS_MAGIC, fstatfs};
 use nix::unistd::{Uid, User};
 
+const PROGRAM: &str = "mailbend-attach";
 const EX_REFUSED: u8 = 2;
 
 type Refusal = String;
@@ -61,14 +42,14 @@ type Refusal = String;
 fn main() -> ExitCode {
     // A panic must not print its payload, which could hold file names.
     std::panic::set_hook(Box::new(|_| {
-        eprintln!("mailbend-attach: internal error");
+        report(PROGRAM, "internal error");
         std::process::exit(i32::from(EX_REFUSED))
     }));
     let args: Vec<OsString> = std::env::args_os().collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(reason) => {
-            eprintln!("mailbend-attach: {reason}");
+            report(PROGRAM, reason);
             ExitCode::from(EX_REFUSED)
         }
     }
@@ -77,7 +58,7 @@ fn main() -> ExitCode {
 fn run(args: &[OsString]) -> Result<(), Refusal> {
     drop_inherited_environment(args)?;
     match args {
-        [_, dir, path, max] => read_attachment(dir.as_bytes(), path.as_bytes(), max),
+        [_, dir, path, max] => read_attachment(dir.as_bytes(), path.as_bytes(), max.as_bytes()),
         _ => Err("usage: mailbend-attach <dir> <path> <max-bytes>".to_string()),
     }
 }
@@ -98,9 +79,9 @@ fn drop_inherited_environment(args: &[OsString]) -> Result<(), Refusal> {
     Err("cannot drop the inherited environment".to_string())
 }
 
-fn read_attachment(dir: &[u8], path: &[u8], max: &OsString) -> Result<(), Refusal> {
-    let max = parse_max(&max.to_string_lossy())?;
-    let root = std::fs::canonicalize(Path::new(std::ffi::OsStr::from_bytes(dir)))
+fn read_attachment(dir: &[u8], path: &[u8], max: &[u8]) -> Result<(), Refusal> {
+    let max = parse_max(max)?;
+    let root = std::fs::canonicalize(Path::new(OsStr::from_bytes(dir)))
         .map_err(|_| "MAILBEND_ATTACH_DIR does not exist".to_string())?;
     let root = root.as_os_str().as_bytes();
     let relative = relative_attachment_path(dir, root, path)?;
@@ -111,23 +92,11 @@ fn read_attachment(dir: &[u8], path: &[u8], max: &OsString) -> Result<(), Refusa
     emit_attachment(file, path, max)
 }
 
-fn open2(
-    dirfd: impl std::os::fd::AsFd,
-    path: &[u8],
-    flags: OFlag,
-    resolve: ResolveFlag,
-) -> nix::Result<OwnedFd> {
-    let how = OpenHow::new()
-        .flags(flags | OFlag::O_CLOEXEC)
-        .resolve(resolve);
-    openat2(dirfd, std::ffi::OsStr::from_bytes(path), how)
-}
-
 /// `root` is canonical, so it holds no symlink; opening it with
 /// RESOLVE_NO_SYMLINKS fails if a component was swapped for one since
 /// realpath() read it.
 fn open_attachment_directory(root: &[u8]) -> Result<OwnedFd, Refusal> {
-    open2(
+    open_at(
         AT_FDCWD,
         root,
         OFlag::O_RDONLY | OFlag::O_DIRECTORY,
@@ -153,7 +122,7 @@ fn refuse_broad_directory(root: &[u8], directory: &OwnedFd) -> Result<(), Refusa
         }
     }
     for name in SENSITIVE {
-        if fstatat(directory, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW).is_ok() {
+        if fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW).is_ok() {
             return Err(format!(
                 "MAILBEND_ATTACH_DIR holds {name}, so it is not a dedicated attachment directory"
             ));
@@ -168,7 +137,7 @@ fn open_beneath(
     path: &[u8],
     flags: OFlag,
 ) -> Result<OwnedFd, Refusal> {
-    open2(
+    open_at(
         directory,
         relative,
         flags,
@@ -177,10 +146,6 @@ fn open_beneath(
             | ResolveFlag::RESOLVE_NO_MAGICLINKS,
     )
     .map_err(|errno| attachment_open_error(errno, path))
-}
-
-fn is_regular(st: &FileStat) -> bool {
-    SFlag::from_bits_truncate(st.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG
 }
 
 /// Checks the file through an O_PATH descriptor (opening nothing), then
@@ -192,10 +157,9 @@ fn is_regular(st: &FileStat) -> bool {
 /// refuse it.
 fn open_attachment(directory: &OwnedFd, relative: &[u8], path: &[u8]) -> Result<File, Refusal> {
     let probe = open_beneath(directory, relative, path, OFlag::O_PATH)?;
-    let not_regular = || format!("attachment {} is not a regular file", show(path));
-    let before = fstat(&probe).map_err(|_| not_regular())?;
+    let before = fstat(&probe).map_err(|_| not_regular(path))?;
     if !is_regular(&before) {
-        return Err(not_regular());
+        return Err(not_regular(path));
     }
     let self_path = format!("/proc/self/fd/{}", probe.as_raw_fd());
     let file = OpenOptions::new()
@@ -220,16 +184,16 @@ fn open_attachment(directory: &OwnedFd, relative: &[u8], path: &[u8]) -> Result<
 /// The C library's text for an I/O error, without Rust's "(os error N)".
 fn os_error_text(e: &std::io::Error) -> String {
     match e.raw_os_error() {
-        Some(code) => nix::errno::Errno::from_raw(code).desc().to_string(),
+        Some(code) => Errno::from_raw(code).desc().to_string(),
         None => e.to_string(),
     }
 }
 
 fn validate_attachment(file: &File, path: &[u8], max: u64) -> Result<(), Refusal> {
     let shown = show(path);
-    let st = fstat(file).map_err(|_| format!("attachment {shown} is not a regular file"))?;
+    let st = fstat(file).map_err(|_| not_regular(path))?;
     if !is_regular(&st) {
-        return Err(format!("attachment {shown} is not a regular file"));
+        return Err(not_regular(path));
     }
     if st.st_nlink > 1 {
         return Err(format!("attachment {shown} has more than one hard link"));
@@ -240,7 +204,7 @@ fn validate_attachment(file: &File, path: &[u8], max: u64) -> Result<(), Refusal
         return Err(kernel());
     }
     if u64::try_from(st.st_size).unwrap_or(u64::MAX) > max {
-        return Err(format!("attachments would exceed {max} bytes (at {shown})"));
+        return Err(too_large(max, path));
     }
     Ok(())
 }
@@ -263,13 +227,10 @@ fn emit_attachment(mut file: File, path: &[u8], max: u64) -> Result<(), Refusal>
         }
         total += count as u64;
         if total > max {
-            return Err(format!(
-                "attachments would exceed {max} bytes (at {})",
-                show(path)
-            ));
+            return Err(too_large(max, path));
         }
         encoded.clear();
-        encode(&buf[..count], &mut encoded);
+        encode_bytes(&buf[..count], &mut encoded);
         out.write_all(&encoded).map_err(cannot_write)?;
     }
     out.flush().map_err(cannot_write)

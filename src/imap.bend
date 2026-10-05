@@ -2,7 +2,7 @@ import Base
 import ./codec.bend as C
 
 # IMAP commands as data, their wire form, and the parsing of server
-# transcripts. The helper (native/mailbend-tls.c) logs in and out; the
+# transcripts. The helper (native/mailbend-tls/) logs in and out; the
 # commands here are everything in between.
 
 # ---- the command model -----------------------------------------------------------

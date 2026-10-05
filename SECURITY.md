@@ -10,8 +10,7 @@ Use GitHub's private vulnerability reporting:
 (the **Security** tab, then **Report a vulnerability**). Do not open a public
 issue, pull request or discussion for a suspected vulnerability.
 
-Include the MailBend commit, your Linux distribution, OpenSSL and libcurl
-versions, and the smallest steps that reproduce the problem. Use the local
+Include the MailBend commit, your Linux distribution, and the smallest steps that reproduce the problem. Use the local
 fake server (`tests/fake_mail_server.py`) or a throwaway mailbox when you can.
 
 **Never include real credentials or mail.** Leave out app passwords

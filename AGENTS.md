@@ -2,7 +2,7 @@
 
 MailBend is a small Linux-first IMAP/SMTP connector for AI agents, with
 iCloud Mail as the default and live-tested profile: a Bend 2 core plus two
-small native helpers (`native/mailbend-tls.c` and the Rust
+small native helpers, both in Rust (`native/mailbend-tls/` and
 `native/mailbend-attach/`).
 
 ## Native boundaries

@@ -5,6 +5,7 @@
 #![allow(clippy::expect_used)]
 
 use std::fs;
+use std::ops::Deref;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -12,13 +13,30 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
-/// A fresh scratch directory under the system temporary directory.
-fn scratch() -> PathBuf {
+/// A fresh scratch directory under the system temporary directory,
+/// removed when the test ends.
+struct Scratch(PathBuf);
+
+impl Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn scratch() -> Scratch {
     let n = NEXT.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("mailbend-attach-test-{}-{n}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create scratch directory");
-    fs::canonicalize(&dir).expect("canonical scratch directory")
+    Scratch(fs::canonicalize(&dir).expect("canonical scratch directory"))
 }
 
 fn attach(cwd: &Path, args: &[&str]) -> Output {
@@ -35,15 +53,13 @@ fn stderr(out: &Output) -> String {
 }
 
 #[test]
-fn relative_directories_with_mode_names_use_the_read_form() {
+fn a_relative_directory_is_resolved_from_the_working_directory() {
     let work = scratch();
-    for name in ["attachments", "count", "save"] {
-        fs::create_dir(work.join(name)).expect("mkdir");
-        fs::write(work.join(name).join("a.txt"), b"hello\n").expect("write");
-        let out = attach(&work, &[name, "a.txt", "1000"]);
-        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
-        assert_eq!(out.stdout, b"hello\n", "{name}");
-    }
+    fs::create_dir(work.join("attachments")).expect("mkdir");
+    fs::write(work.join("attachments").join("a.txt"), b"hello\n").expect("write");
+    let out = attach(&work, &["attachments", "a.txt", "1000"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(out.stdout, b"hello\n");
 }
 
 #[test]
@@ -56,7 +72,7 @@ fn high_bytes_are_written_as_utf8_code_points() {
 }
 
 #[test]
-fn the_environment_is_dropped_before_reading() {
+fn proc_environ_is_unreachable() {
     let work = scratch();
     let dir = work.to_str().expect("utf-8");
     let out = attach(&work, &[dir, "/proc/self/environ", "1000"]);

@@ -33,7 +33,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential libssl-dev libcurl4-openssl-dev clang openssl
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl
 
       - name: Install Rust 1.85 (native/rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
@@ -124,3 +124,30 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: native/Cargo.toml
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: native/fuzz
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned nightly (fuzzing only)
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: nightly-2026-10-01
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        with:
+          tool: cargo-fuzz@0.13.2
+
+      - name: Fuzz each parser for 60 seconds
+        run: |
+          for target in imap_script imap_response smtp_envelope smtp_reply dns_answer http_response url_and_proxy; do
+            cargo +nightly-2026-10-01 fuzz run "$target" -O -- -max_total_time=60
+          done

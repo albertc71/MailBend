@@ -2,27 +2,42 @@
 
 MailBend has two small native programs:
 
-- `mailbend-tls.c`: sockets, TLS and login, the only code that reads the
+- `mailbend-tls/` (Rust): sockets, TLS and login, the only code that reads the
   password. Which commands to send, and what the answers mean, is decided
-  by the Bend core. It links against OpenSSL and libcurl 7.76+ (with HTTPS
-  support). libcurl only resolves names and connects TCP sockets; OpenSSL
-  and this helper still own mail TLS, authentication and protocol framing.
+  by the Bend core. TLS is rustls with the ring provider; name resolution
+  is the system resolver or the helper's own DNS-over-HTTPS client
+  (`mailbend-net/`). It links only libc and libgcc_s.
 - `mailbend-attach/` (Rust): reads one attachment file safely (Bend cannot open a
   file without following symlinks). It holds no credentials: it first
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
 
 ```sh
-cc -std=c11 -O2 -Wall -Wextra -o bin/mailbend-tls native/mailbend-tls.c -lssl -lcrypto -lcurl
-(cd native && cargo build --release --locked -p mailbend-attach)
+(cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach)
 ```
 
 The Rust workspace (`native/Cargo.toml`) pins Rust 1.85 in
 `native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
 up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
 native-tls and other TLS stacks from the dependency tree.
-`mailbend-attach` depends only on `nix`. Its tests run with
-`cargo test --locked`, and its mode is chosen by the argument count alone.
+`mailbend-attach` depends only on `nix` and the local, network-free
+`mailbend-io` crate (the shared output encoding and `openat2` helpers).
+Tests run with `cargo test --locked`.
+
+## Layout
+
+- `mailbend-io/`: the stdout byte encoding and `openat2` helpers (no
+  network), shared by both programs.
+- `mailbend-net/`: `connect` (deadline, system DNS, address fallback),
+  `tls` (the one verified client configuration), and the DoH client:
+  `doh` built on `dns`, `http`, `url` and `proxy`.
+- `mailbend-tls/`: the binary is a thin `main.rs` over the library.
+  `settings`, `creds` and `route` are read and checked before connecting;
+  `connection` owns the socket and the transcript; `imap/` and `smtp/` each
+  hold the input validator (`script`, `envelope`), the response parser
+  (`response`, `reply`) and the `session` that drives them.
+- `mailbend-attach/`: the attachment reader.
+- `fuzz/`: one cargo-fuzz target per parser (its own workspace, nightly).
 
 ## Contract
 
@@ -33,15 +48,20 @@ mailbend-tls --check  # credential-free local runtime check; no network
 mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 ```
 
-- **TLS**: TLS 1.2+, peer certificate required, chain verified against the
-  system trust store (or `MAILBEND_CA_FILE`, which replaces it), host name
-  verified (`SSL_set1_host` for DNS names; IP identity verification for numeric
-  hosts), SNI sent for DNS names. There is no way to skip verification.
+- **TLS**: rustls (ring provider), TLS 1.2+, peer certificate required,
+  chain verified against the system trust store (or `MAILBEND_CA_FILE`, which
+  replaces it), host name verified (DNS names against the certificate's DNS
+  names, numeric hosts against its IP addresses), SNI sent for DNS names.
+  There is no way to skip verification: one function builds every TLS
+  configuration, clippy forbids rustls's `dangerous()` API, and CI greps for
+  it. Certificates must carry subjectAltName entries (no CN-only
+  certificates).
   SMTP must offer STARTTLS; the helper refuses to authenticate without it.
 - **Resolution**: system DNS by default; a nonempty `MAILBEND_DOH_URL`
   selects an HTTPS DNS resolver without fallback to system DNS for the mail
-  hostname. libcurl performs standard A/AAAA resolution, address selection
-  and TCP fallback. The default cloud resolver, `cloudflare-dns.com:443`, is
+  hostname. The helper asks for A and AAAA records (RFC 8484 POST) and uses
+  whichever answers; it then tries each address in turn within the time
+  budget. The default cloud resolver, `cloudflare-dns.com:443`, is
   bootstrapped with Cloudflare's `1.1.1.1` and `1.0.0.1` anycast addresses.
   Other resolver hostnames use system DNS for bootstrap. DoH verifies both
   its peer and hostname, using the system CA store or `MAILBEND_CA_FILE`.
@@ -51,20 +71,25 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   `MAILBEND_SMTP_CONNECT_IP` each accept one bare numeric IPv4/IPv6 address.
   They take precedence over DoH for that service, without changing `*_HOST`,
   SNI, the certificate name, port, or command plan. They are manual overrides,
-  not refreshed DNS. Invalid nonempty values fail with exit 2. An invalid
-  non-HTTPS DoH URL also fails with exit 2.
-- **TCP only**: libcurl uses `CONNECT_ONLY` with an HTTP URL as an address
-  container, sends no HTTP request, and never authenticates to mail or
-  executes/retries mail operations. HTTP proxy environment variables do not
-  route the raw mail socket; libcurl's separate DoH HTTPS requests may use
-  HTTPS proxy environment settings. A TLS/protocol failure after TCP connects
-  stops the session rather than replaying commands on another address.
+  not refreshed DNS. Invalid nonempty values fail with exit 2, as do an
+  invalid or non-HTTPS DoH URL, an invalid host name or port, and any set
+  setting that is not UTF-8.
+- **No proxy for mail**: the raw mail socket is never routed through a
+  proxy. Only the DoH requests may use an `http://` proxy (HTTP `CONNECT`)
+  from `https_proxy`/`HTTPS_PROXY`/`all_proxy`/`ALL_PROXY`, honouring
+  `no_proxy`; another proxy scheme, or an unreadable proxy setting, is a
+  usage error (exit 2) when DoH is configured. A TLS/protocol
+  failure after TCP connects stops the session rather than replaying
+  commands on another address.
+- **TypeSafe key**: if `MAILBEND_TYPESAFE_API_KEY` is set, `imap` and `smtp`
+  exit 2 before reading anything: the TypeSafe key must never share a
+  process with the mail password.
 - **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
   environment, or the password from `MAILBEND_PASSWORD_FILE` (an absolute
   path to a regular file owned by the user, mode 600, opened with
   `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)`, so no component
   of the path may be a symlink: give its real path; needs Linux 5.6+; one
-  trailing newline is ignored; setting both is
+  trailing LF or CRLF is ignored; setting both is
   refused). The helper sends `L LOGIN` (IMAP) or `AUTH PLAIN`/`LOGIN`
   (SMTP) itself, wipes temporary password-bearing buffers, and never writes
   credentials to stdout or stderr.
@@ -114,11 +139,11 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   encoding of U+0080-U+00FF, so the core reads one character per byte and
   literal lengths stay exact. IMAP literals are consumed by byte count and
   emitted with the same encoding, so message content can never be mistaken
-  for a tagged reply. Attachment output uses this encoding too.
+  for a tagged reply. IMAP `+` continuation requests are consumed, not
+  copied. Attachment output uses this encoding too.
 - **Limits**: DNS plus TCP connect budget and per-read timeout
-  `MAILBEND_TIMEOUT_MS` (default 30 s). Bounding system/bootstrap DNS requires
-  a libcurl build with asynchronous DNS (the tested Ubuntu packages provide
-  it). Size limits are 32 MiB per line, 64 MiB per literal and per script,
+  `MAILBEND_TIMEOUT_MS` (default 30 s), which also bounds system DNS (run on
+  its own thread), the DoH exchange and any proxy reply. Size limits are 32 MiB per line, 64 MiB per literal and per script,
   and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
   (at most 120 MiB after encoding).
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
