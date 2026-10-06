@@ -146,10 +146,10 @@ def find.go(
       None{}
 
 # The value of the first member named key.
-def find(+items: Json, +key: String) -> Maybe<&2, Json>:
+def find(items: Json, key: String) -> Maybe<&2, Json>:
   find.go(items, key, False{}, None{})
 
-def get(+j: Json, +key: String) -> Maybe<&2, Json>:
+def get(j: Json, key: String) -> Maybe<&2, Json>:
   match j:
     case JObj{items}:
       find(items, key)
@@ -342,7 +342,7 @@ def norm_step(+c: Char, toks: List<&2, Tok>) -> Lexer:
 # -------
 
 # The reversed string acc, with U+FFFD for a pending lone high surrogate.
-def flush_hi(+acc: String, +hi: U32) -> String:
+def flush_hi(+acc: String, hi: U32) -> String:
   Bool.pick(String, U32.is_zero(hi), acc, SCon{Char.from_u32(65533), acc})
 
 # Appends c to the string, after any pending lone high surrogate.

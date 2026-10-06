@@ -4,13 +4,13 @@ import Base
 # in 0..255, one per byte: that is how mailbend-tls hands over server data,
 # and how composed messages are built before they go to the wire.
 
-def u(+c: Char) -> U32:
+def u(c: Char) -> U32:
   Char.to_u32(c)
 
-def chr(+n: U32) -> Char:
+def chr(n: U32) -> Char:
   Char.from_u32(n)
 
-def between(+x: U32, +lo: U32, +hi: U32) -> Bool:
+def between(+x: U32, lo: U32, hi: U32) -> Bool:
   U32.is_ge(x, lo) && U32.is_le(x, hi)
 
 # The replacement character U+FFFD, for input that cannot be decoded.
@@ -380,7 +380,7 @@ def wrap76(s: String, +col: U32) -> String:
 # ----------------
 
 # The value of hex digit c, either case; 16 marks a char that is not one.
-def hex_val(+c: Char) -> U32:
+def hex_val(c: Char) -> U32:
   +n = u(c)
   Bool.pick(U32, between(n, 48, 57), (n - 48 : U32),
     Bool.pick(U32, between(n, 65, 70), (n - 55 : U32),

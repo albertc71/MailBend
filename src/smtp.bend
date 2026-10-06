@@ -37,7 +37,7 @@ def rcpt_lines(recipients: List<&2, String>) -> String:
 
 # The envelope: sender and recipients are bare, already validated
 # addresses; `msg` is the composed 7-bit message.
-def envelope(+from: String, +rcpts: List<&2, String>, +msg: String) -> String:
+def envelope(from: String, rcpts: List<&2, String>, msg: String) -> String:
   commands = "MAIL FROM:<" ++ from ++ ">\r\n" ++ rcpt_lines(rcpts) ++ "DATA\r\n"
   body = dot_stuff(ensure_crlf(msg), True{})
   commands ++ body ++ ".\r\n"
@@ -52,7 +52,7 @@ def last_reply.if(line: String, found: String, hit: Bool) -> String:
       found
 
 # The last reply line of a transcript that starts with a 4xx/5xx code.
-def last_error(+lines: List<&2, String>, +found: String) -> String:
+def last_error(lines: List<&2, String>, found: String) -> String:
   match lines:
     case Nil{}:
       found
@@ -61,7 +61,7 @@ def last_error(+lines: List<&2, String>, +found: String) -> String:
       last_error(rest, last_reply.if(line, found, is_error))
 
 # The text of the last "250 " reply (the queue confirmation after DATA).
-def last_ok(+lines: List<&2, String>, +found: String) -> String:
+def last_ok(lines: List<&2, String>, found: String) -> String:
   match lines:
     case Nil{}:
       found
