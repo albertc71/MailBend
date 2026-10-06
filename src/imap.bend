@@ -1314,16 +1314,16 @@ def folders(lines: List<&2, RLine>) -> List<&2, Folder>:
 def subscribed(lines: List<&2, RLine>) -> List<&2, Folder>:
   listed("* LSUB ", lines)
 
-def has_attr.lowered(attrs: List<&2, String>, +want: String) -> Bool:
+def has_attr.go(attrs: List<&2, String>, +want: String) -> Bool:
   match attrs:
     case Nil{}:
       False{}
     case attr <> rest:
-      String.eq(String.to_lower(attr), want) || has_attr.lowered(rest, want)
+      String.eq(String.to_lower(attr), want) || has_attr.go(rest, want)
 
 # Whether folder attributes or message flags include `a`, in any case.
 def has_attr(attrs: List<&2, String>, a: String) -> Bool:
-  has_attr.lowered(attrs, String.to_lower(a))
+  has_attr.go(attrs, String.to_lower(a))
 
 # Whether two mailbox names are the same mailbox: only INBOX is matched in
 # any case, as IMAP requires (other names may differ only in case, e.g.

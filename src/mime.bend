@@ -559,7 +559,7 @@ def boundary(hs: List<&2, Hdr>) -> String:
 
 # The open part's lines, joined, pushed onto the finished parts when
 # `inside` a part.
-def cut_push(
+def subparts.push(
   cur: List<&2, String>, parts: List<&2, String>, inside: Bool
 ) -> List<&2, String>:
   match inside:
@@ -572,24 +572,24 @@ def cut_push(
 # part and opens the next, the closing boundary (`close`) finishes it and
 # ends the body, and any other line joins the open part. Lines after the
 # closing boundary are ignored.
-def cut_line.put(line: String, +c: Cut, close: Bool, open: Bool) -> Cut:
+def subparts.line.if(line: String, +c: Cut, close: Bool, open: Bool) -> Cut:
   match c:
     case Cut{cur, parts, inside, done}:
       match done close open:
         case True{} _ _:
           Cut{cur, parts, inside, True{}}
         case False{} True{} _:
-          Cut{[], cut_push(cur, parts, inside), False{}, True{}}
+          Cut{[], subparts.push(cur, parts, inside), False{}, True{}}
         case False{} False{} True{}:
-          Cut{[], cut_push(cur, parts, inside), True{}, False{}}
+          Cut{[], subparts.push(cur, parts, inside), True{}, False{}}
         case False{} False{} False{}:
           kept = Bool.pick(List<&2, String>, inside, line <> cur, cur)
           Cut{kept, parts, inside, False{}}
 
-def cut_line(+line: String, b: String, c: Cut) -> Cut:
+def subparts.line(+line: String, b: String, c: Cut) -> Cut:
   +l = String.trim_end(line)
   +delimiter = "--" ++ b
-  cut_line.put(line, c,
+  subparts.line.if(line, c,
     String.eq(l, delimiter ++ "--"), String.eq(l, delimiter))
 
 def subparts.go(lines: List<&2, String>, +b: String, c: Cut) -> Cut:
@@ -597,11 +597,11 @@ def subparts.go(lines: List<&2, String>, +b: String, c: Cut) -> Cut:
     case Nil{}:
       c
     case l <> t:
-      subparts.go(t, b, cut_line(strip_cr(l), b, c))
+      subparts.go(t, b, subparts.line(strip_cr(l), b, c))
 
 def subparts.fin(c: Cut) -> List<&2, String>:
   Cut{cur, parts, inside, done} = c
-  List.reverse(&2, String, cut_push(cur, parts, inside && Bool.not(done)))
+  List.reverse(&2, String, subparts.push(cur, parts, inside && Bool.not(done)))
 
 # The parts of a multipart body cut at boundary `b` (without the preamble
 # and epilogue); a truncated message keeps its last, partial part. A

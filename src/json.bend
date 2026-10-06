@@ -306,7 +306,7 @@ def num_tok(rev: String) -> Tok:
 # --------------
 
 # Starts a number or a word, skips whitespace, and rejects anything else.
-def norm_other(+c: Char, +toks: List<&2, Tok>) -> Lexer:
+def lex.norm.other(+c: Char, +toks: List<&2, Tok>) -> Lexer:
   Bool.pick(Lexer, Char.is_digit(c) || Char.is_eq(c, '-'),
     Lexer{LNum{SCon{c, SNil{}}}, toks},
     Bool.pick(Lexer, Char.is_alpha(c), Lexer{LWord{SCon{c, SNil{}}}, toks},
@@ -330,7 +330,7 @@ def lex.norm(c: Char, toks: List<&2, Tok>) -> Lexer:
     case '"':
       Lexer{LStr{"", 0}, toks}
     case _:
-      norm_other(c, toks)
+      lex.norm.other(c, toks)
 
 # Strings
 # -------

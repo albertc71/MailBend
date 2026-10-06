@@ -1324,7 +1324,7 @@ def new_request(since: U32, known: U32) -> String:
       "that checkpoint",
     "")
 
-def new_asked(problem: String, +args: J.Json) -> IO(Out):
+def t_get_new.if(problem: String, +args: J.Json) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -1336,7 +1336,7 @@ def new_asked(problem: String, +args: J.Json) -> IO(Out):
         new_found(r, folder, since, uidv_arg(args), clamp(u32_arg(args, "limit", 50), 1, 500))
 
 def t_get_new(+args: J.Json) -> IO(Out):
-  new_asked(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
+  t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
 
 # Changing mail
 # =============
@@ -1686,7 +1686,7 @@ def flag_cut(+p: Proc, +plan: List<&2, I.Cmd>) -> Maybe<&2, Cut>:
   Bool.pick(Maybe<&2, Cut>, stopped,
     Some{Cut{acked, unconfirmed, ok_at(lines, (last - 1 : U32))}}, None{})
 
-def flag_out.if(
+def flag_out.put(
   cut: Maybe<&2, Cut>,
   p: Proc,
   plan: List<&2, I.Cmd>,
@@ -1709,7 +1709,7 @@ def flag_out(
   folder: String,
   mark: Mark
 ) -> Out:
-  flag_out.if(flag_cut(p, plan), p, plan, uids, folder, mark)
+  flag_out.put(flag_cut(p, plan), p, plan, uids, folder, mark)
 
 def mark_result(
   p: Proc,
@@ -1863,22 +1863,7 @@ def move_plan(
         p : Proc <- imap_proc(plan)
         return moved_out(p, plan, folder, uids, dest, move)
 
-# Runs `plan` (a move or a label) unless `problem` rules it out.
-def run_move(
-  problem: String,
-  plan: List<&2, I.Cmd>,
-  folder: String,
-  uids: List<&2, U32>,
-  dest: String,
-  move: Bool
-) -> IO(Out):
-  match problem:
-    case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
-    case SNil{}:
-      move_plan(plan, folder, uids, dest, move)
-
-def move_caps.run(
+def move_caps.if(
   problem: String,
   +caps: List<&2, String>,
   +folder: String,
@@ -1886,9 +1871,13 @@ def move_caps.run(
   +dest: String,
   uidv: U32
 ) -> IO(Out):
-  +move = I.has_cap(caps, "MOVE")
-  run_move(problem, Ops.plan_move(folder, uids, dest, move, I.has_cap(caps, "UIDPLUS"), uidv),
-    folder, uids, dest, move)
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+    case SNil{}:
+      +move = I.has_cap(caps, "MOVE")
+      move_plan(Ops.plan_move(folder, uids, dest, move, I.has_cap(caps, "UIDPLUS"), uidv),
+        folder, uids, dest, move)
 
 def move_caps(
   r: Run(),
@@ -1901,14 +1890,14 @@ def move_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      move_caps.run(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv)
+      move_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv)
 
 def move_request(uidv: U32, folder: String, +dest: String) -> String:
   Bool.pick(String, String.is_empty(dest) || I.same_name(dest, folder),
     "\"destination\" must name a different folder",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
-def move_asked(
+def move_uids.if(
   problem: String,
   +folder: String,
   uids: List<&2, U32>,
@@ -1928,7 +1917,7 @@ def move_uids(u: Uids(), +folder: String, +dest: String, +uidv: U32) -> IO(Out):
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      move_asked(move_request(uidv, folder, dest), folder, uids, dest, uidv)
+      move_uids.if(move_request(uidv, folder, dest), folder, uids, dest, uidv)
 
 def t_move(+args: J.Json) -> IO(Out):
   move_uids(uids_arg(args), folder_arg(args), str_arg(args, "destination", ""), uidv_arg(args))
@@ -2060,7 +2049,7 @@ def delete_caps(
     case Done{+lines}:
       delete_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, confirm, uidv)
 
-def delete_asked(
+def delete_uids.if(
   problem: String,
   +folder: String,
   uids: List<&2, U32>,
@@ -2088,7 +2077,7 @@ def delete_uids(u: Uids(), folder: String, +confirm: String, +uidv: U32) -> IO(O
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      delete_asked(delete_request(confirm, uidv), folder, uids, confirm, uidv)
+      delete_uids.if(delete_request(confirm, uidv), folder, uids, confirm, uidv)
 
 def t_delete(+args: J.Json) -> IO(Out):
   delete_uids(uids_arg(args), folder_arg(args), str_arg(args, "confirm", ""), uidv_arg(args))
@@ -2505,7 +2494,7 @@ def folder_out.if(
 def folder_out(+p: Proc, plan: List<&2, I.Cmd>, c: FolderChange) -> Out:
   folder_out.if(ok_at(proc_lines(p), 2), p, plan, c, run_failure(imap_result(p)))
 
-def folder_guarded.run(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
+def folder_guarded.if(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -2516,7 +2505,7 @@ def folder_guarded.run(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange)
 
 def folder_guarded(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange) -> IO(Out):
   +canonical = change_canonical(g, c)
-  folder_guarded.run(change_problem(g, canonical), change_plan(g, subs, canonical), canonical)
+  folder_guarded.if(change_problem(g, canonical), change_plan(g, subs, canonical), canonical)
 
 def folder_fs(f: Fs(), subs: List<&2, I.Folder>, c: FolderChange) -> IO(Out):
   match f:
@@ -2534,7 +2523,7 @@ def folder_found(r: Run(), c: FolderChange) -> IO(Out):
         f : Fs() <- folders_io(lines)
         folder_fs(f, I.subscribed(lines), c)
 
-def folder_asked(problem: String, c: FolderChange) -> IO(Out):
+def folder_change.if(problem: String, c: FolderChange) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -2544,13 +2533,28 @@ def folder_asked(problem: String, c: FolderChange) -> IO(Out):
         folder_found(r, c)
 
 def folder_change(+c: FolderChange) -> IO(Out):
-  folder_asked(change_raw_problem(c), c)
+  folder_change.if(change_raw_problem(c), c)
 
 def t_create_folder(args: J.Json) -> IO(Out):
   folder_change(FolderCreate{str_arg(args, "name", "")})
 
 def t_rename_folder(+args: J.Json) -> IO(Out):
   folder_change(FolderRename{str_arg(args, "from", ""), str_arg(args, "to", "")})
+
+# Runs the label plan unless `problem` rules it out.
+def label_fs.if(
+  problem: String,
+  plan: List<&2, I.Cmd>,
+  folder: String,
+  uids: List<&2, U32>,
+  label: String,
+  move: Bool
+) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+    case SNil{}:
+      move_plan(plan, folder, uids, label, move)
 
 def label_fs(
   f: Fs(),
@@ -2565,7 +2569,7 @@ def label_fs(
       pure_out(Err{m ++ "; nothing was changed"})
     case Done{folders}:
       +move = I.has_cap(caps, "MOVE")
-      run_move(label_problem(guard_for(folders), label),
+      label_fs.if(label_problem(guard_for(folders), label),
         Ops.plan_label(folder, uids, label, move, I.has_cap(caps, "UIDPLUS"), uidv),
         folder, uids, label, move)
 
@@ -2598,7 +2602,7 @@ def label_found(
     case Done{+lines}:
       label_found.if(uidv_problem(lines, uidv), lines, folder, uids, label, uidv)
 
-def label_asked(
+def label_uids.if(
   problem: String,
   +folder: String,
   uids: List<&2, U32>,
@@ -2623,7 +2627,7 @@ def label_uids(u: Uids(), +folder: String, +label: String, +uidv: U32) -> IO(Out
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      label_asked(label_request(uidv, folder, label), folder, uids, label, uidv)
+      label_uids.if(label_request(uidv, folder, label), folder, uids, label, uidv)
 
 def t_label(+args: J.Json) -> IO(Out):
   label_uids(uids_arg(args), folder_arg(args), str_arg(args, "label", ""), uidv_arg(args))
@@ -3011,7 +3015,7 @@ def check_want(+w: Want, from: String) -> String:
       Bool.pick(String, List.is_empty(&2, String, rcpts) && Bool.not(is_draft(w)),
         "at least one recipient (to, cc or bcc) is needed", "")))
 
-def compose_checked(problem: String, w: Want, from: String) -> IO(Out):
+def with_atts.if(problem: String, w: Want, from: String) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -3020,8 +3024,8 @@ def compose_checked(problem: String, w: Want, from: String) -> IO(Out):
         st : Stamp <- stamp()
         deliver(w, from, st)
 
-def with_atts.run(+w: Want, +from: String) -> IO(Out):
-  compose_checked(check_want(w, from), w, from)
+def with_atts.want(+w: Want, +from: String) -> IO(Out):
+  with_atts.if(check_want(w, from), w, from)
 
 def with_atts(
   a: Attachments(),
@@ -3040,7 +3044,7 @@ def with_atts(
     case Done{xs}:
       do IO<Out>:
         from : String <- env_or("MAILBEND_EMAIL", "")
-        with_atts.run(Want{to, cc, bcc, subject, text, irt, refs, xs, draft}, from)
+        with_atts.want(Want{to, cc, bcc, subject, text, irt, refs, xs, draft}, from)
 
 # Composes from the common arguments: to, cc, bcc, subject, body,
 # in_reply_to, references and attachments ([{path, filename?, content_type?}]).
@@ -3243,7 +3247,7 @@ def respond_request(+args: J.Json) -> String:
     "\"uid\" (the message to answer) is required",
     Bool.pick(String, U32.is_zero(uidv_arg(args)), uidv_missing(), ""))
 
-def respond_asked(problem: String, +args: J.Json, mode: U32, +max: U32) -> IO(Out):
+def t_respond.if(problem: String, +args: J.Json, mode: U32, +max: U32) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -3254,7 +3258,7 @@ def respond_asked(problem: String, +args: J.Json, mode: U32, +max: U32) -> IO(Ou
         orig_found(r, args, mode, max, me)
 
 def t_respond(+args: J.Json, +mode: U32) -> IO(Out):
-  respond_asked(respond_request(args), args, mode,
+  t_respond.if(respond_request(args), args, mode,
     Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()))
 
 # Dispatch
@@ -3324,7 +3328,7 @@ def refusal(+op: Ops.Op, args: J.Json, ro: Bool, drafts: Bool) -> String:
         "mail_save_draft, or as_draft for a reply or forward",
       ""))
 
-def gate(problem: String, op: Ops.Op, args: J.Json) -> IO(Out):
+def gated.if(problem: String, op: Ops.Op, args: J.Json) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -3334,7 +3338,7 @@ def gate(problem: String, op: Ops.Op, args: J.Json) -> IO(Out):
 def gated(+op: Ops.Op, +args: J.Json, m: Mode) -> IO(Out):
   match m:
     case Mode{ro, drafts}:
-      gate(refusal(op, args, ro, drafts), op, args)
+      gated.if(refusal(op, args, ro, drafts), op, args)
     case ModeBad{msg}:
       pure_out(Err{"configuration error: " ++ msg})
 
@@ -3553,7 +3557,7 @@ def schema_problem(input: Maybe<&2, J.Json>, args: J.Json, tool: String) -> Stri
     case Some{i}:
       args_obj_problem(args, i, tool)
 
-def call_checked(problem: String, +name: String, args: J.Json) -> IO(Out):
+def call.if(problem: String, +name: String, args: J.Json) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -3562,4 +3566,4 @@ def call_checked(problem: String, +name: String, args: J.Json) -> IO(Out):
 
 # Runs the named tool with its JSON arguments, once they match its schema.
 def call(+name: String, +args: J.Json) -> IO(Out):
-  call_checked(schema_problem(tool_input(name), args, name), name, args)
+  call.if(schema_problem(tool_input(name), args, name), name, args)

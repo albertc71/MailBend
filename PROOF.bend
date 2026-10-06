@@ -4,7 +4,7 @@
 # branches on a Bool or a fetch item, the proof matches that parameter so
 # each branch computes. A plan that branches on a computed value gets a
 # lemma taking that value as a parameter, named after its law: `.if` for a
-# computed Bool, `.fin` for computed colour bits. Lemma parameters that
+# computed Bool, `.put` for computed colour bits. Lemma parameters that
 # only appear in the goal are erased.
 
 import Base
@@ -101,7 +101,7 @@ def Laws.fetch_items_never_set_seen(item):
 # Marking and flagging
 # --------------------
 
-# A flag law with a colour goes through a .fin lemma that matches the
+# A flag law with a colour goes through a .put lemma that matches the
 # colour's bits, I.colour_bits(c), as a parameter: plan_flag_bits builds
 # one store from each bit.
 
@@ -112,7 +112,7 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
     case False{}:
       {==}
 
-def flag_never_deletes.fin(
+def flag_never_deletes.put(
   -mbox: String, -uids: List<&2, U32>, bits: I.Bits, -uidv: U32)
   -> {Bool.or(
        I.any_marks_deleted(Ops.plan_flag_bits(mbox, uids, bits, uidv)),
@@ -126,9 +126,9 @@ def Laws.flag_never_deletes(mbox, uids, colour, uidv):
     case None{}:
       ({==}, {==})
     case Some{c}:
-      (flag_never_deletes.fin(mbox, uids, I.colour_bits(c), uidv), {==})
+      (flag_never_deletes.put(mbox, uids, I.colour_bits(c), uidv), {==})
 
-def flag_changes_only_flag_and_colour.fin(
+def flag_changes_only_flag_and_colour.put(
   -mbox: String, -uids: List<&2, U32>, bits: I.Bits, -uidv: U32)
   -> {Ops.only_flag_stores(Ops.mail_changes(Ops.plan_flag_bits(mbox, uids, bits, uidv))) ==
        True{} : Bool}:
@@ -141,10 +141,10 @@ def Laws.flag_changes_only_flag_and_colour(mbox, uids, colour, uidv):
     case None{}:
       ({==}, {==})
     case Some{c}:
-      (flag_changes_only_flag_and_colour.fin(mbox, uids, I.colour_bits(c), uidv), {==})
+      (flag_changes_only_flag_and_colour.put(mbox, uids, I.colour_bits(c), uidv), {==})
 
 # e names the bits: rewrite them to that literal, then compute
-def flag_changes_exactly.fin(
+def flag_changes_exactly.put(
   -mbox: String, -uids: List<&2, U32>, bits: I.Bits,
   -b0: Bool, -b1: Bool, -b2: Bool, -uidv: U32,
   e: {bits == I.Bits{b0, b1, b2} : I.Bits})
@@ -165,7 +165,7 @@ def flag_changes_exactly.fin(
 
 def Laws.flag_changes_exactly(mbox, uids, colour, b0, b1, b2, uidv):
   ({==},
-   e => flag_changes_exactly.fin(mbox, uids, I.colour_bits(colour), b0, b1, b2, uidv, e))
+   e => flag_changes_exactly.put(mbox, uids, I.colour_bits(colour), b0, b1, b2, uidv, e))
 
 def Laws.unflag_clears_flag_and_colour(mbox, uids, uidv):
   {==}
