@@ -492,6 +492,33 @@ def is_plain.go(s: String, ok: Bool) -> Bool:
 def is_plain(s: String) -> Bool:
   is_plain.go(s, True{})
 
+# Text
+# ----
+
+# Whether every char is an ASCII digit; true for "".
+def all_digits(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      Char.is_digit(c) && all_digits(t)
+
+# s with '"' and '\' backslash-escaped.
+def quoted.escape(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'"', t}:
+      "\\\"" ++ quoted.escape(t)
+    case SCon{'\\', t}:
+      "\\\\" ++ quoted.escape(t)
+    case SCon{c, t}:
+      SCon{c, quoted.escape(t)}
+
+# A quoted string (IMAP and RFC 5322 alike), with '"' and '\' escaped.
+def quoted(s: String) -> String:
+  "\"" ++ quoted.escape(s) ++ "\""
+
 # Dates
 # -----
 

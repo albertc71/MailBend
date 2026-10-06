@@ -3435,11 +3435,8 @@ def call_op(m: Maybe<&2, Ops.Op>, name: String, args: J.Json) -> IO(Out):
 # misconfigured, since every call then fails); drafts-only mode hides
 # mail_send. Hidden tools are refused anyway if called.
 
-def has_name(ns: List<&2, String>, n: String) -> Bool:
-  List.contains(~String, ~String.eq, ns, n)
-
 def offered(+n: String, ro: Bool, drafts: Bool) -> Bool:
-  Bool.not(ro && Bool.not(has_name(Ops.read_only_names(Ops.all_ops()), n))) &&
+  Bool.not(ro && Bool.not(key_in(n, Ops.read_only_names(Ops.all_ops())))) &&
     Bool.not(drafts && String.eq(n, "mail_send"))
 
 def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
@@ -3509,19 +3506,12 @@ def input_of(m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
 def tool_input(name: String) -> Maybe<&2, J.Json>:
   input_of(tool_named(array_items(J.parse(Schema.tool_defs())), name))
 
-def digits(s: String) -> Bool:
-  match s:
-    case SNil{}:
-      True{}
-    case SCon{c, t}:
-      Char.is_digit(c) && digits(t)
-
 def int_raw(+s: String) -> Bool:
   match s:
     case SCon{'-', t}:
-      digits(t)
+      C.all_digits(t)
     case _:
-      digits(s)
+      C.all_digits(s)
 
 def prim_ok(want: String, v: J.Json) -> Bool:
   match v:

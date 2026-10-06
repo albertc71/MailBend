@@ -1,6 +1,7 @@
 # JSON values for tool arguments, tool results and MCP messages.
 
 import Base
+import ./codec.bend as C
 
 # Arrays and objects hold their items as a chain of JCons cells ending in
 # JEnd, and object members are JKv items. Keeping the chain inside Json
@@ -241,9 +242,6 @@ def is_num_char(+c: Char) -> Bool:
   Char.is_digit(c) || Char.is_eq(c, '-') || Char.is_eq(c, '+')
     || Char.is_eq(c, '.') || is_exp(c)
 
-def in_range(+x: U32, lo: U32, hi: U32) -> Bool:
-  U32.is_ge(x, lo) && U32.is_le(x, hi)
-
 # A word from its reversed letters.
 def word_tok(rev: String) -> Tok:
   +w = String.reverse(rev)
@@ -351,7 +349,7 @@ def put(c: Char, acc: String, hi: U32) -> LexState:
 
 # A lone surrogate code becomes U+FFFD.
 def safe_scalar(+code: U32) -> U32:
-  Bool.pick(U32, in_range(code, 55296, 57343), 65533, code)
+  Bool.pick(U32, C.between(code, 55296, 57343), 65533, code)
 
 # A low surrogate completes the pending high one; any other unit stands
 # alone.
@@ -369,19 +367,19 @@ def uni_high(high: Bool, acc: String, +hi: U32, +code: U32) -> LexState:
     case True{}:
       LStr{flush_hi(acc, hi), code}
     case False{}:
-      paired = in_range(code, 56320, 57343) && Bool.not(U32.is_zero(hi))
+      paired = C.between(code, 56320, 57343) && Bool.not(U32.is_zero(hi))
       uni_low(paired, acc, hi, code)
 
 # A complete \u escape: one UTF-16 code unit.
 def uni_unit(acc: String, hi: U32, +code: U32) -> LexState:
-  uni_high(in_range(code, 55296, 56319), acc, hi, code)
+  uni_high(C.between(code, 55296, 56319), acc, hi, code)
 
 # The value of c as a hex digit, if it is one.
 def hex_val(+c: Char) -> Maybe<&2, U32>:
   +u = Char.to_u32(c)
   Bool.pick(Maybe<&2, U32>, Char.is_digit(c), Some{(u - 48 : U32)},
-    Bool.pick(Maybe<&2, U32>, in_range(u, 97, 102), Some{(u - 87 : U32)},
-      Bool.pick(Maybe<&2, U32>, in_range(u, 65, 70), Some{(u - 55 : U32)},
+    Bool.pick(Maybe<&2, U32>, C.between(u, 97, 102), Some{(u - 87 : U32)},
+      Bool.pick(Maybe<&2, U32>, C.between(u, 65, 70), Some{(u - 55 : U32)},
         None{})))
 
 # Counts down the n digits of a \u escape; code already holds this one.

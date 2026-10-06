@@ -432,21 +432,10 @@ def mutf7_decode(s: String) -> String:
 def crlf() -> String:
   "\r\n"
 
-def esc_quoted(s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{'"', t}:
-      "\\\"" ++ esc_quoted(t)
-    case SCon{'\\', t}:
-      "\\\\" ++ esc_quoted(t)
-    case SCon{c, t}:
-      SCon{c, esc_quoted(t)}
-
 def astring.if(plain: Bool, +s: String) -> String:
   match plain:
     case True{}:
-      "\"" ++ esc_quoted(s) ++ "\""
+      C.quoted(s)
     case False{}:
       "{" ++ U32.show(C.utf8_len(s)) ++ "}" ++ crlf() ++ s
 
@@ -783,13 +772,6 @@ def copy_tag(cs: List<&2, Cmd>, n: U32) -> U32:
 # Dates
 # -----
 
-def all_digits(s: String) -> Bool:
-  match s:
-    case SNil{}:
-      True{}
-    case SCon{c, t}:
-      Char.is_digit(c) && all_digits(t)
-
 def imap_date.if(ok: Bool, y: String, m: U32, d: U32) -> Maybe<&2, String>:
   match ok:
     case True{}:
@@ -800,7 +782,7 @@ def imap_date.if(ok: Bool, y: String, m: U32, d: U32) -> Maybe<&2, String>:
 # The date when the year has four digits, the month is 1-12 and the day 1-31.
 def imap_date.check(+y: String, +m: U32, +d: U32) -> Maybe<&2, String>:
   ok = C.between(m, 1, 12) && C.between(d, 1, 31) &&
-    Nat.is_eq(String.length(y), 4n) && all_digits(y)
+    Nat.is_eq(String.length(y), 4n) && C.all_digits(y)
   imap_date.if(ok, y, m, d)
 
 def imap_date.nums(

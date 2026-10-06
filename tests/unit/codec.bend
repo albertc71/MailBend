@@ -139,6 +139,8 @@ def main() -> IO(Unit):
     IO.print(vis_all(C.qp_encode(String.repeat("v", 160n), 0)))
     # Plain-text check.
     IO.print(Bool.show(C.is_plain("")) ++ " " ++ Bool.show(C.is_plain(" ~")) ++ " " ++ Bool.show(C.is_plain(ch(127))) ++ " " ++ Bool.show(C.is_plain(ch(31))) ++ " " ++ Bool.show(C.is_plain("ab" ++ ch(0))))
+    # Digit strings and quoted strings.
+    IO.print(Bool.show(C.all_digits("")) ++ " " ++ Bool.show(C.all_digits("0429")) ++ " " ++ Bool.show(C.all_digits("4a")) ++ " " ++ C.quoted("") ++ " " ++ C.quoted("say \"hi\" a\\b"))
     # Month abbreviations, and "" outside 1..12.
     IO.print(bracket(C.month_name(0)) ++ " " ++ C.month_name(1) ++ " " ++ C.month_name(6) ++ " " ++ C.month_name(12) ++ " " ++ bracket(C.month_name(13)))
 
@@ -210,4 +212,5 @@ def main() -> IO(Unit):
 #|a=\r\nb =\r\na =\r\n=3D
 #|vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv=\r\nvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv=\r\nvvvvvvvvvv
 #|True True False False False
+#|True True False "" "say \"hi\" a\\b"
 #|[] Jan Jun Dec []

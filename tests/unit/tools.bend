@@ -3,6 +3,7 @@
 # and the schema checks. IO paths are left to the end-to-end suite.
 
 import Base
+import ../../src/codec.bend as C
 import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/mime.bend as M
@@ -824,7 +825,7 @@ def check_dispatch() -> IO(Unit):
       show_bool(T.offered("mail_trash", True{}, False{})) ++ " " ++
       show_bool(T.offered("mail_send", False{}, True{})) ++ " " ++
       show_bool(T.offered("mail_reply", False{}, True{})) ++ " " ++
-      show_bool(T.has_name(["a", "b"], "b")) ++ " " ++ show_bool(T.has_name([], "b")))
+      show_bool(T.key_in("b", ["a", "b"])) ++ " " ++ show_bool(T.key_in("b", [])))
     IO.print(tool_names(T.offered_for(tool_defs(), T.Mode{False{}, False{}})))
     IO.print(tool_names(T.offered_for(tool_defs(), T.Mode{True{}, False{}})))
     IO.print(tool_names(T.offered_for(tool_defs(), T.Mode{False{}, True{}})))
@@ -840,7 +841,7 @@ def schema(+tool: String, args: String) -> String:
 def check_schema() -> IO(Unit):
   do IO<Unit>:
     IO.print(show_bool(Maybe.is_none(&2, J.Json, T.tool_input("nope"))) ++ " " ++
-      show_bool(T.digits("")) ++ " " ++ show_bool(T.digits("12a")) ++ " " ++
+      show_bool(C.all_digits("")) ++ " " ++ show_bool(C.all_digits("12a")) ++ " " ++
       show_bool(T.int_raw("-5")) ++ " " ++ show_bool(T.int_raw("5.0")) ++ " " ++
       show_bool(T.int_raw("1e3")))
     IO.print(String.join([

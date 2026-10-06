@@ -862,25 +862,10 @@ def all_addrs_ok(xs: List<&2, String>) -> Bool:
     case x <> t:
       addr_ok(x) && all_addrs_ok(t)
 
-def quote_esc(s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{'"', t}:
-      "\\\"" ++ quote_esc(t)
-    case SCon{'\\', t}:
-      "\\\\" ++ quote_esc(t)
-    case SCon{c, t}:
-      SCon{c, quote_esc(t)}
-
-# A quoted string, with '"' and '\' escaped.
-def quoted(s: String) -> String:
-  "\"" ++ quote_esc(s) ++ "\""
-
 def encode_display.if(name: String, plain: Bool) -> String:
   match plain:
     case True{}:
-      quoted(name)
+      C.quoted(name)
     case False{}:
       encoded_words(name)
 
@@ -1044,7 +1029,7 @@ def cont_params(+key: String, pieces: List<&2, String>, +i: U32) -> String:
 def name_param.if(+key: String, +name: String, plain: Bool) -> String:
   match plain:
     case True{}:
-      key ++ "=" ++ quoted(name)
+      key ++ "=" ++ C.quoted(name)
     case False{}:
       fallback = ascii_name(String.take(name, 60n))
       pieces = pct_pieces(pct_tokens(C.utf8_encode(name)), "", 0)
