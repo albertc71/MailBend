@@ -102,7 +102,7 @@ def utf8_decode.lead(+b: U32, out: String) -> Utf8State:
 
 # A match, not a Bool.pick: an argument is built before the call, and the
 # runtime refuses a Char that is a surrogate or out of range.
-def utf8_decode.char.put(bad: Bool, cp: U32) -> Char:
+def utf8_decode.char.if(bad: Bool, cp: U32) -> Char:
   match bad:
     case True{}:
       repl()
@@ -114,7 +114,7 @@ def utf8_decode.char.put(bad: Bool, cp: U32) -> Char:
 def utf8_decode.char(+cp: U32, min: U32) -> Char:
   bad = between(cp, 55296, 57343) || U32.is_gt(cp, 1114111)
     || U32.is_lt(cp, min)
-  utf8_decode.char.put(bad, cp)
+  utf8_decode.char.if(bad, cp)
 
 # Adds a continuation byte's bits; `last` ends the sequence.
 def utf8_decode.more(
@@ -160,13 +160,13 @@ def utf8_decode.go(s: String, st: Utf8State) -> Utf8State:
       utf8_decode.go(t, utf8_decode.step(st, u(c)))
 
 # The decoded text; a sequence still open at the end becomes U+FFFD.
-def utf8_decode.end(st: Utf8State) -> String:
+def utf8_decode.fin(st: Utf8State) -> String:
   Utf8State{_, need, _, +out} = st
   String.reverse(Bool.pick(String, U32.is_zero(need), out, SCon{repl(), out}))
 
 # UTF-8 bytes to text. Invalid sequences decode to U+FFFD.
 def utf8_decode(bytes: String) -> String:
-  utf8_decode.end(utf8_decode.go(bytes, Utf8State{0, 0, 0, ""}))
+  utf8_decode.fin(utf8_decode.go(bytes, Utf8State{0, 0, 0, ""}))
 
 # Other charsets
 # --------------
@@ -357,13 +357,13 @@ def b64_decode.go(s: String, st: B64State) -> B64State:
       +v = b64_decode.value(c)
       b64_decode.go(t, b64_decode.step(U32.is_lt(v, 64), v, st))
 
-def b64_decode.end(st: B64State) -> String:
+def b64_decode.fin(st: B64State) -> String:
   B64State{_, _, out} = st
   String.reverse(out)
 
 # Base64 (either alphabet) to bytes; whitespace, padding and junk are skipped.
 def b64_decode(s: String) -> String:
-  b64_decode.end(b64_decode.go(s, B64State{0, 0, ""}))
+  b64_decode.fin(b64_decode.go(s, B64State{0, 0, ""}))
 
 # Breaks a line of ASCII into CRLF-terminated lines of at most 76 chars,
 # starting at column `col`.
@@ -429,7 +429,7 @@ def qp_encode.escape(+n: U32) -> String:
 def qp_encode.needs(+n: U32) -> Bool:
   U32.is_gt(n, 126) || U32.is_eq(n, 61) || (U32.is_lt(n, 32) && U32.is_ne(n, 9))
 
-def qp_encode.token.put(escape: Bool, c: Char) -> String:
+def qp_encode.token.if(escape: Bool, c: Char) -> String:
   match escape:
     case True{}:
       qp_encode.escape(u(c))
@@ -438,7 +438,7 @@ def qp_encode.token.put(escape: Bool, c: Char) -> String:
 
 # One output token for a byte: the byte itself or its "=XX" escape.
 def qp_encode.token(+c: Char) -> String:
-  qp_encode.token.put(qp_encode.needs(u(c)), c)
+  qp_encode.token.if(qp_encode.needs(u(c)), c)
 
 # The soft break to put before `w` more chars at column `col`, if any.
 def qp_encode.soft_break(col: U32, w: U32) -> String:

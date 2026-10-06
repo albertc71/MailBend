@@ -319,7 +319,7 @@ def norm_other(+c: Char, +toks: List<&2, Tok>) -> Lexer:
       Bool.pick(Lexer, is_ws(c), Lexer{LNorm{}, toks},
         Lexer{LNorm{}, TBad{} <> toks})))
 
-def norm_step(+c: Char, toks: List<&2, Tok>) -> Lexer:
+def lex.norm(+c: Char, toks: List<&2, Tok>) -> Lexer:
   match c:
     case '{':
       Lexer{LNorm{}, TLBrace{} <> toks}
@@ -395,7 +395,7 @@ def uni_digit(n: Nat, acc: String, hi: U32, code: U32) -> LexState:
       LStr{acc, hi}
 
 # \u takes exactly four hex digits; anything else rejects the input.
-def uni_step(
+def lex.uni(
   digit: Maybe<&2, U32>, n: Nat, acc: String, hi: U32, code: U32
 ) -> LexState:
   match digit:
@@ -404,7 +404,7 @@ def uni_step(
     case None{}:
       LErr{}
 
-def esc_step(+c: Char, acc: String, hi: U32) -> LexState:
+def lex.esc(+c: Char, acc: String, hi: U32) -> LexState:
   match c:
     case 'u':
       LUni{acc, hi, 4n, 0}
@@ -428,73 +428,73 @@ def esc_step(+c: Char, acc: String, hi: U32) -> LexState:
       LErr{}
 
 # A raw control character (below U+0020) inside a string is invalid JSON.
-def str_step.if(ctrl: Bool, c: Char, acc: String, hi: U32) -> LexState:
+def lex.str.if(ctrl: Bool, c: Char, acc: String, hi: U32) -> LexState:
   match ctrl:
     case True{}:
       LErr{}
     case False{}:
       put(c, acc, hi)
 
-def str_step(+c: Char, acc: String, hi: U32, toks: List<&2, Tok>) -> Lexer:
+def lex.str(+c: Char, acc: String, hi: U32, toks: List<&2, Tok>) -> Lexer:
   match c:
     case '"':
       Lexer{LNorm{}, TStr{String.reverse(flush_hi(acc, hi))} <> toks}
     case '\\':
       Lexer{LEsc{acc, hi}, toks}
     case _:
-      Lexer{str_step.if(U32.is_lt(Char.to_u32(c), 32), c, acc, hi), toks}
+      Lexer{lex.str.if(U32.is_lt(Char.to_u32(c), 32), c, acc, hi), toks}
 
 # Lexing
 # ------
 
 # `more` says whether c continues the number; if not, the number ends and
 # c starts the next token.
-def num_step.if(
+def lex.num.if(
   more: Bool, c: Char, acc: String, toks: List<&2, Tok>
 ) -> Lexer:
   match more:
     case True{}:
       Lexer{LNum{SCon{c, acc}}, toks}
     case False{}:
-      norm_step(c, num_tok(acc) <> toks)
+      lex.norm(c, num_tok(acc) <> toks)
 
-def num_step(+c: Char, acc: String, toks: List<&2, Tok>) -> Lexer:
-  num_step.if(is_num_char(c), c, acc, toks)
+def lex.num(+c: Char, acc: String, toks: List<&2, Tok>) -> Lexer:
+  lex.num.if(is_num_char(c), c, acc, toks)
 
 # `more` says whether c continues the word; if not, the word ends and c
 # starts the next token.
-def word_step.if(
+def lex.word.if(
   more: Bool, c: Char, acc: String, toks: List<&2, Tok>
 ) -> Lexer:
   match more:
     case True{}:
       Lexer{LWord{SCon{c, acc}}, toks}
     case False{}:
-      norm_step(c, word_tok(acc) <> toks)
+      lex.norm(c, word_tok(acc) <> toks)
 
-def word_step(+c: Char, acc: String, toks: List<&2, Tok>) -> Lexer:
-  word_step.if(Char.is_alpha(c), c, acc, toks)
+def lex.word(+c: Char, acc: String, toks: List<&2, Tok>) -> Lexer:
+  lex.word.if(Char.is_alpha(c), c, acc, toks)
 
-def lex_step(c: Char, lx: Lexer) -> Lexer:
+def lex.step(c: Char, lx: Lexer) -> Lexer:
   match lx:
     case Lexer{LNorm{}, toks}:
-      norm_step(c, toks)
+      lex.norm(c, toks)
     case Lexer{LStr{acc, hi}, toks}:
-      str_step(c, acc, hi, toks)
+      lex.str(c, acc, hi, toks)
     case Lexer{LEsc{acc, hi}, toks}:
-      Lexer{esc_step(c, acc, hi), toks}
+      Lexer{lex.esc(c, acc, hi), toks}
     case Lexer{LUni{acc, hi, n, code}, toks}:
-      Lexer{uni_step(hex_val(c), n, acc, hi, code), toks}
+      Lexer{lex.uni(hex_val(c), n, acc, hi, code), toks}
     case Lexer{LNum{acc}, toks}:
-      num_step(c, acc, toks)
+      lex.num(c, acc, toks)
     case Lexer{LWord{acc}, toks}:
-      word_step(c, acc, toks)
+      lex.word(c, acc, toks)
     case Lexer{LErr{}, toks}:
       Lexer{LErr{}, toks}
 
 # The tokens, newest first; input ending inside a string or after an
 # error yields a bad token.
-def lex_end(lx: Lexer) -> List<&2, Tok>:
+def lex.fin(lx: Lexer) -> List<&2, Tok>:
   match lx:
     case Lexer{LNorm{}, toks}:
       toks
@@ -508,9 +508,9 @@ def lex_end(lx: Lexer) -> List<&2, Tok>:
 def lex(s: String, lx: Lexer) -> List<&2, Tok>:
   match s:
     case SNil{}:
-      lex_end(lx)
+      lex.fin(lx)
     case SCon{c, t}:
-      lex(t, lex_step(c, lx))
+      lex(t, lex.step(c, lx))
 
 # Builder
 # -------

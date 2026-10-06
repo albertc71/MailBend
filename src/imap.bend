@@ -307,7 +307,7 @@ def mutf7_encode.ascii(+c: Char) -> String:
     case _:
       SCon{c, SNil{}}
 
-def mutf7_encode.put(
+def mutf7_encode.if(
   printable: Bool,
   c: Char,
   out: String,
@@ -321,7 +321,7 @@ def mutf7_encode.put(
 
 def mutf7_encode.step(+c: Char, st: Utf7Encoder) -> Utf7Encoder:
   Utf7Encoder{out, run} = st
-  mutf7_encode.put(C.between(C.u(c), 32, 126), c, out, run)
+  mutf7_encode.if(C.between(C.u(c), 32, 126), c, out, run)
 
 def mutf7_encode.go(s: String, st: Utf7Encoder) -> Utf7Encoder:
   match s:
@@ -330,13 +330,13 @@ def mutf7_encode.go(s: String, st: Utf7Encoder) -> Utf7Encoder:
     case SCon{c, t}:
       mutf7_encode.go(t, mutf7_encode.step(c, st))
 
-def mutf7_encode.finish(st: Utf7Encoder) -> String:
+def mutf7_encode.fin(st: Utf7Encoder) -> String:
   Utf7Encoder{out, run} = st
   String.reverse(mutf7_encode.flush(out, run))
 
 # Mailbox name to its modified UTF-7 wire form.
 def mutf7_encode(name: String) -> String:
-  mutf7_encode.finish(mutf7_encode.go(name, Utf7Encoder{"", ""}))
+  mutf7_encode.fin(mutf7_encode.go(name, Utf7Encoder{"", ""}))
 
 # `out` with U+FFFD for the unpaired high surrogate `hi`, if any (0 is none).
 def utf16_decode.unpaired(hi: U32, +out: String) -> String:
@@ -418,13 +418,13 @@ def mutf7_decode.go(s: String, st: Utf7Decoder) -> Utf7Decoder:
       mutf7_decode.go(t, mutf7_decode.step(c, st))
 
 # The decoded text; an unterminated run is dropped.
-def mutf7_decode.finish(st: Utf7Decoder) -> String:
+def mutf7_decode.fin(st: Utf7Decoder) -> String:
   Utf7Decoder{out, _, _} = st
   String.reverse(out)
 
 # Modified UTF-7 wire form to the mailbox name.
 def mutf7_decode(s: String) -> String:
-  mutf7_decode.finish(mutf7_decode.go(s, Utf7Decoder{"", "", False{}}))
+  mutf7_decode.fin(mutf7_decode.go(s, Utf7Decoder{"", "", False{}}))
 
 # Rendering
 # ---------
@@ -993,13 +993,13 @@ def frame.last(
       List.reverse(&2, RLine,
         RLine{String.reverse(line), List.reverse(&2, String, lits)} <> lines)
 
-def frame.finish(f: Framer) -> List<&2, RLine>:
+def frame.fin(f: Framer) -> List<&2, RLine>:
   Framer{line, lits, lines, _, _, _} = f
   frame.last(line, lits, lines)
 
 # Splits a transcript into response lines, keeping literals exact.
 def frame(transcript: String) -> List<&2, RLine>:
-  frame.finish(frame.go(transcript, Framer{"", [], [], 0, "", False{}}))
+  frame.fin(frame.go(transcript, Framer{"", [], [], 0, "", False{}}))
 
 # Tokens
 # ------
@@ -1197,7 +1197,7 @@ def tokens.flatten(stack: List<&2, List<&2, Value>>) -> List<&2, Value>:
       tokens.flatten.go(rest, List.reverse(&2, Value, top))
 
 # The values once the text ends: an open atom or quoted string is kept.
-def tokens.finish(t: Tokenizer) -> List<&2, Value>:
+def tokens.fin(t: Tokenizer) -> List<&2, Value>:
   match t:
     case Tokenizer{TAtom{acc, depth}, stack, lits}:
       tokens.flatten(tokens.atom_end(acc, stack))
@@ -1208,7 +1208,7 @@ def tokens.finish(t: Tokenizer) -> List<&2, Value>:
 
 # The values of a response text, with its literals put back in place.
 def tokens(text: String, lits: List<&2, String>) -> List<&2, Value>:
-  tokens.finish(tokens.go(text, Tokenizer{TPlain{}, [[]], lits}))
+  tokens.fin(tokens.go(text, Tokenizer{TPlain{}, [[]], lits}))
 
 # The text of an atom or string; "" for NIL and lists.
 def Value.text(v: Value) -> String:

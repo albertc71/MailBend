@@ -60,7 +60,7 @@ def Laws.preflight_writes_nothing(mbox):
 # plan_new branches on whether the checkpoint is the largest UID: both the
 # EXAMINE-only plan there and the search plan elsewhere write nothing
 def get_new_writes_nothing.if(at_end: Bool, -mbox: String, -since: U32)
-  -> {I.any_writes(Ops.plan_new_if(at_end, mbox, since)) == False{} : Bool}:
+  -> {I.any_writes(Ops.plan_new.if(at_end, mbox, since)) == False{} : Bool}:
   match at_end:
     case True{}:
       {==}
@@ -223,8 +223,8 @@ def Laws.trash_expunges_only_copied(mbox, uids, trash, move, uidplus, uidv):
 
 def delete_expunges_only_marked.if(
   confirm: Bool, -mbox: String, -uids: List<&2, U32>, uidplus: Bool, -uidv: U32)
-  -> {Ops.expunged(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) ==
-       Ops.marked_deleted(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv))
+  -> {Ops.expunged(Ops.plan_delete.if(confirm, mbox, uids, uidplus, uidv)) ==
+       Ops.marked_deleted(Ops.plan_delete.if(confirm, mbox, uids, uidplus, uidv))
        : Maybe<&2, List<&2, U32>>}:
   match confirm:
     case True{}:
@@ -264,12 +264,12 @@ def Laws.expunge_renders_uid_expunge(uids):
 # the premise `wrong` rewrites the confirmation's verdict to False{}
 def Laws.delete_needs_confirmation(mbox, uids, confirm, wrong, uidplus, uidv):
   %Equal.sym(Bool, String.eq(confirm, Ops.confirm_word()), False{}, wrong) :
-    {Ops.plan_delete_if(_, mbox, uids, uidplus, uidv) == [] : List<&2, I.Cmd>}
+    {Ops.plan_delete.if(_, mbox, uids, uidplus, uidv) == [] : List<&2, I.Cmd>}
   {==}
 
 def delete_checks_uidplus.if(
   confirm: Bool, -mbox: String, -uids: List<&2, U32>, uidplus: Bool, -uidv: U32)
-  -> {Ops.checks_uidplus_or_empty(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) ==
+  -> {Ops.checks_uidplus_or_empty(Ops.plan_delete.if(confirm, mbox, uids, uidplus, uidv)) ==
        True{} : Bool}:
   match confirm:
     case True{}:
@@ -325,7 +325,7 @@ def Laws.trash_is_pinned(mbox, uids, trash, move, uidplus, uidv):
 
 def delete_is_pinned.if(
   confirm: Bool, -mbox: String, -uids: List<&2, U32>, uidplus: Bool, -uidv: U32)
-  -> {Ops.pinned_or_empty(Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv)) ==
+  -> {Ops.pinned_or_empty(Ops.plan_delete.if(confirm, mbox, uids, uidplus, uidv)) ==
        True{} : Bool}:
   match confirm:
     case True{}:
@@ -376,7 +376,7 @@ def Laws.trash_pins_callers_uidvalidity(mbox, uids, trash, move, uidplus, uidv):
 def delete_pins_callers_uidvalidity.if(
   confirm: Bool, -mbox: String, -uids: List<&2, U32>, uidplus: Bool, -uidv: U32)
   -> {Ops.pin_line_or(
-         Ops.plan_delete_if(confirm, mbox, uids, uidplus, uidv), I.uidv_line(uidv)) ==
+         Ops.plan_delete.if(confirm, mbox, uids, uidplus, uidv), I.uidv_line(uidv)) ==
        I.uidv_line(uidv) : String}:
   match confirm:
     case True{}:

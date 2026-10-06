@@ -147,7 +147,7 @@ def hdr_cont(line: String, acc: List<&2, Hdr>) -> List<&2, Hdr>:
 
 # Folds one line into the fields so far (newest first): a continuation
 # extends the last field, "name: value" adds one, anything else is ignored.
-def hdr_line.put(
+def hdr_line.if(
   +line: String, acc: List<&2, Hdr>, cont: Bool, colon: Bool
 ) -> List<&2, Hdr>:
   match cont colon:
@@ -160,7 +160,7 @@ def hdr_line.put(
       acc
 
 def hdr_line(+line: String, acc: List<&2, Hdr>) -> List<&2, Hdr>:
-  hdr_line.put(line, acc, is_cont(line), String.contains(line, ":"))
+  hdr_line.if(line, acc, is_cont(line), String.contains(line, ":"))
 
 def hdr_fold(lines: List<&2, String>, acc: List<&2, Hdr>) -> List<&2, Hdr>:
   match lines:
@@ -336,7 +336,7 @@ def param_raw(+ps: List<&2, String>, +name: String) -> String:
       Bool.pick(String, String.eq(param_key(p), name), after_eq(p),
         param_raw(t, name))
 
-def param_first.put(
+def param_first.if(
   val: String, rest: String, plain: Bool, ext: Bool
 ) -> String:
   match plain ext:
@@ -354,7 +354,7 @@ def param_first(+ps: List<&2, String>, +name: String) -> String:
       ""
     case p <> t:
       +key = param_key(p)
-      param_first.put(after_eq(p), param_first(t, name),
+      param_first.if(after_eq(p), param_first(t, name),
         String.eq(key, name), String.eq(key, name ++ "*"))
 
 # An RFC 2231 attr-char: kept as is in an extended parameter value.
@@ -378,7 +378,7 @@ def pct_tokens(bytes: String) -> List<&2, String>:
 def pct_encode(bytes: String) -> String:
   String.concat(pct_tokens(bytes))
 
-def cont_seg.put(
+def cont_seg.if(
   enc: String, plain: String, has_enc: Bool, has_plain: Bool
 ) -> Maybe<&2, String>:
   match has_enc has_plain:
@@ -397,7 +397,7 @@ def cont_seg(
   +key = name ++ "*" ++ U32.show(n)
   +enc = param_raw(ps, key ++ "*")
   +plain = unquote(param_raw(ps, key))
-  cont_seg.put(enc, plain,
+  cont_seg.if(enc, plain,
     Bool.not(String.is_empty(enc)), Bool.not(String.is_empty(plain)))
 
 # An RFC 2231 continuation value ("name*0*=...;name*1*=..."), joined in
@@ -459,7 +459,7 @@ def param(v: String, +name: String) -> String:
 # Bodies
 # ------
 
-def transfer_decode.put(body: String, b64: Bool, qp: Bool) -> String:
+def transfer_decode.if(body: String, b64: Bool, qp: Bool) -> String:
   match b64 qp:
     case True{} _:
       C.b64_decode(body)
@@ -471,7 +471,7 @@ def transfer_decode.put(body: String, b64: Bool, qp: Bool) -> String:
 # A body with its Content-Transfer-Encoding undone.
 def transfer_decode(cte: String, body: String) -> String:
   +e = String.to_lower(String.trim(cte))
-  transfer_decode.put(body,
+  transfer_decode.if(body,
     String.eq(e, "base64"), String.eq(e, "quoted-printable"))
 
 def default_cs(+cs: String) -> String:
@@ -502,7 +502,7 @@ def lf_lines(s: String) -> String:
 def leaf.text(ct: String, bytes: String) -> String:
   lf_lines(C.charset_decode(default_cs(param(ct, "charset")), bytes))
 
-def leaf.put(
+def leaf.if(
   ct: String, typ: String, name: String, bytes: String,
   attached: Bool, plain: Bool, html: Bool
 ) -> Parts:
@@ -537,11 +537,11 @@ def leaf(+hs: List<&2, Hdr>, body: String) -> Parts:
   attached = String.eq(main_value(cd), "attachment")
     || Bool.not(String.is_empty(name))
   bytes = transfer_decode(header(hs, "content-transfer-encoding"), body)
-  leaf.put(ct, typ, name, bytes, attached,
+  leaf.if(ct, typ, name, bytes, attached,
     String.eq(typ, "text/plain"), String.eq(typ, "text/html"))
 
 # A single part's content; a multipart has none of its own.
-def leaf.if(hs: List<&2, Hdr>, body: String, single: Bool) -> Parts:
+def walk.if(hs: List<&2, Hdr>, body: String, single: Bool) -> Parts:
   match single:
     case True{}:
       leaf(hs, body)
@@ -592,14 +592,14 @@ def cut_line(+line: String, b: String, c: Cut) -> Cut:
   cut_line.put(line, c,
     String.eq(l, delimiter ++ "--"), String.eq(l, delimiter))
 
-def cut_go(lines: List<&2, String>, +b: String, c: Cut) -> Cut:
+def subparts.go(lines: List<&2, String>, +b: String, c: Cut) -> Cut:
   match lines:
     case Nil{}:
       c
     case l <> t:
-      cut_go(t, b, cut_line(strip_cr(l), b, c))
+      subparts.go(t, b, cut_line(strip_cr(l), b, c))
 
-def cut_end(c: Cut) -> List<&2, String>:
+def subparts.fin(c: Cut) -> List<&2, String>:
   Cut{cur, parts, inside, done} = c
   List.reverse(&2, String, cut_push(cur, parts, inside && Bool.not(done)))
 
@@ -612,7 +612,7 @@ def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
       []
     case False{}:
       lines = String.split(body, '\n')
-      cut_end(cut_go(lines, b, Cut{[], [], False{}, False{}}))
+      subparts.fin(subparts.go(lines, b, Cut{[], [], False{}, False{}}))
 
 # Walks nested multiparts up to `depth` levels. A single part reads as a
 # leaf and a multipart as its subparts; the side not taken is empty, which
@@ -631,7 +631,7 @@ def walk(+depth: Nat, +parts: List<&2, String>) -> Parts:
           +body = body_of(entity)
           +b = boundary(hs)
           +single = String.is_empty(b)
-          here = merge(leaf.if(hs, body, single),
+          here = merge(walk.if(hs, body, single),
             walk(p, subparts(body, b, single)))
           merge(here, walk(1n+p, rest))
 
@@ -644,7 +644,7 @@ def parts(msg: String) -> Parts:
 
 # One character of HTML: '<' opens a tag, '>' closes it and leaves a space,
 # and other characters are kept outside tags. A '>' outside a tag is kept.
-def strip_step(+c: Char, +st: Strip) -> Strip:
+def html_text.step(+c: Char, +st: Strip) -> Strip:
   match c:
     case '<':
       Strip{out, tag} = st
@@ -656,14 +656,14 @@ def strip_step(+c: Char, +st: Strip) -> Strip:
       Strip{out, tag} = st
       Strip{Bool.pick(String, tag, out, SCon{c, out}), tag}
 
-def strip_go(s: String, st: Strip) -> Strip:
+def html_text.go(s: String, st: Strip) -> Strip:
   match s:
     case SNil{}:
       st
     case SCon{c, t}:
-      strip_go(t, strip_step(c, st))
+      html_text.go(t, html_text.step(c, st))
 
-def strip_out(st: Strip) -> String:
+def html_text.fin(st: Strip) -> String:
   Strip{out, tag} = st
   String.reverse(out)
 
@@ -703,7 +703,7 @@ def squeeze(s: String, sp: Bool) -> String:
 
 # A rough plain-text view of HTML: tags removed, common entities decoded.
 def html_text(html: String) -> String:
-  squeeze(entities(strip_out(strip_go(html, Strip{"", False{}}))), False{})
+  squeeze(entities(html_text.fin(html_text.go(html, Strip{"", False{}}))), False{})
 
 # A def, not a Bool.pick, so the HTML is stripped only when there is no
 # text/plain part.

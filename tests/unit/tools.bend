@@ -237,10 +237,10 @@ def check_arguments() -> IO(Unit):
       String.join(T.strs_arg(json("{\"to\":5}"), "to"), ","),
       String.join(T.strs_arg(json("{}"), "to"), ",")], "|"))
     IO.print(String.join([
-      show_maybe_u32s(T.uids_go(J.unchain(json("[3,4]")))),
-      show_maybe_u32s(T.uids_go(J.unchain(json("[3,0]")))),
-      show_maybe_u32s(T.uids_go(J.unchain(json("[\"3\"]")))),
-      show_maybe_u32s(T.uids_go(J.unchain(json("[]"))))], "|"))
+      show_maybe_u32s(T.uids_from.go(J.unchain(json("[3,4]")))),
+      show_maybe_u32s(T.uids_from.go(J.unchain(json("[3,0]")))),
+      show_maybe_u32s(T.uids_from.go(J.unchain(json("[\"3\"]")))),
+      show_maybe_u32s(T.uids_from.go(J.unchain(json("[]"))))], "|"))
     IO.print(show_uids(T.uids_arg(json("{\"uids\":[3,4]}"))))
     IO.print(show_uids(T.uids_arg(json("{\"uids\":[]}"))))
     IO.print(show_uids(T.uids_arg(json("{\"uids\":[3,-1]}"))))

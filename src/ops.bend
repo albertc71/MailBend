@@ -120,7 +120,7 @@ def all_ops() -> List<&2, Op>:
   ]
 
 # `op`'s name before `rest` when `keep` holds, else just `rest`.
-def names_if(keep: Bool, op: Op, rest: List<&2, String>) -> List<&2, String>:
+def read_only_names.if(keep: Bool, op: Op, rest: List<&2, String>) -> List<&2, String>:
   match keep:
     case True{}:
       name(op) <> rest
@@ -133,7 +133,7 @@ def read_only_names(+ops: List<&2, Op>) -> List<&2, String>:
     case Nil{}:
       []
     case op <> t:
-      names_if(is_read_only(op), op, read_only_names(t))
+      read_only_names.if(is_read_only(op), op, read_only_names(t))
 
 # The first operation among `ops` named `n`. The list is short, so the
 # search simply walks all of it.
@@ -187,7 +187,7 @@ def max_uid() -> U32:
 
 # No UID follows the largest one, so a checkpoint there only examines the
 # folder (for its UIDVALIDITY): since + 1 would wrap to the invalid UID 0.
-def plan_new_if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
+def plan_new.if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
   match at_end:
     case True{}:
       [I.CExamine{mbox}]
@@ -196,7 +196,7 @@ def plan_new_if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
 
 # The UIDs in `mbox` above the checkpoint `since`.
 def plan_new(mbox: String, +since: U32) -> List<&2, I.Cmd>:
-  plan_new_if(U32.is_eq(since, max_uid()), mbox, since)
+  plan_new.if(U32.is_eq(since, max_uid()), mbox, since)
 
 # The summaries (flags, date, size, header fields) of `uids`.
 def plan_headers(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
@@ -326,7 +326,7 @@ def confirm_word() -> String:
   "permanently-delete"
 
 # Permanent deletion of `uids` once `confirm` holds; without it, no plan.
-def plan_delete_if(
+def plan_delete.if(
   confirm: Bool,
   mbox: String,
   +uids: List<&2, U32>,
@@ -350,7 +350,7 @@ def plan_delete(
   uidplus: Bool,
   uidv: U32
 ) -> List<&2, I.Cmd>:
-  plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
+  plan_delete.if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
 
 # A label is an iCloud folder, so labelling is moving: every law about
 # plan_move holds for it unchanged.

@@ -419,14 +419,14 @@ def positive(m: Maybe<&2, U32>) -> Maybe<&2, U32>:
       None{}
 
 # The UIDs of a JSON array; None when one of them is not a UID.
-def uids_go(xs: List<&2, J.Json>) -> Maybe<&2, List<&2, U32>>:
+def uids_from.go(xs: List<&2, J.Json>) -> Maybe<&2, List<&2, U32>>:
   match xs:
     case Nil{}:
       Some{[]}
     case x <> t:
       do Maybe<&2, List<&2, U32>>:
         u : U32 <- positive(J.as_u32(Some{x}))
-        rest : List<&2, U32> <- uids_go(t)
+        rest : List<&2, U32> <- uids_from.go(t)
         return u <> rest
 
 def uids_of(m: Maybe<&2, List<&2, U32>>) -> Uids():
@@ -448,9 +448,9 @@ def one_uid(m: Maybe<&2, J.Json>) -> List<&2, J.Json>:
 def uids_from(m: Maybe<&2, List<&2, J.Json>>, args: J.Json) -> Uids():
   match m:
     case Some{xs}:
-      uids_of(uids_go(xs))
+      uids_of(uids_from.go(xs))
     case None{}:
-      uids_of(uids_go(one_uid(J.get(args, "uid"))))
+      uids_of(uids_from.go(one_uid(J.get(args, "uid"))))
 
 # The "uids" argument (an array), or "uid" (one number).
 def uids_arg(+args: J.Json) -> Uids():
@@ -753,7 +753,7 @@ def roles_of(r: Run(), ordinary: List<&2, I.Folder>) -> IO(Fs()):
     case Done{lines}:
       folders_overrides(merge_folders(I.folders(lines), ordinary))
 
-def roles_if(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
+def folders_io.if(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
   match ask:
     case False{}:
       folders_overrides(fs)
@@ -765,7 +765,7 @@ def roles_if(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
 # SPECIAL-USE may be partial even in ordinary LIST: always request the
 # extended metadata when the authenticated capability advertises it.
 def folders_io(+lines: List<&2, I.RLine>) -> IO(Fs()):
-  roles_if(I.has_cap(I.caps(lines), "SPECIAL-USE"), merge_folders(I.folders(lines), []))
+  folders_io.if(I.has_cap(I.caps(lines), "SPECIAL-USE"), merge_folders(I.folders(lines), []))
 
 def special_json(f: Folders) -> J.Json:
   Folders{fs, drafts, trash, sent, junk, archive} = f
@@ -1585,7 +1585,7 @@ def flag_run(
       flag_done(lines, plan, uids, folder, mark)
 
 # A store as the change it asks for, such as "+\Flagged" or "-$MailFlagBit0".
-def change_if(keep: Bool, add: Bool, f: I.Flag, rest: List<&2, String>) -> List<&2, String>:
+def store_changes.if(keep: Bool, add: Bool, f: I.Flag, rest: List<&2, String>) -> List<&2, String>:
   match keep:
     case True{}:
       (Bool.pick(String, add, "+", "-") ++ I.flag_name(f)) <> rest
@@ -1613,7 +1613,7 @@ def store_changes(
     case Nil{}:
       []
     case I.CStore{u, add, f} <> t:
-      change_if(store_is(which, lines, n), add, f, store_changes(t, (n + 1 : U32), lines, which))
+      store_changes.if(store_is(which, lines, n), add, f, store_changes(t, (n + 1 : U32), lines, which))
     case c <> t:
       store_changes(t, Bool.pick(U32, I.is_expect(c), n, (n + 1 : U32)), lines, which)
 
@@ -1706,7 +1706,7 @@ def mark_result(
     case _:
       flag_out(p, plan, uids, folder, mark)
 
-def mark_go(+uids: List<&2, U32>, +folder: String, +mark: Mark, uidv: U32) -> IO(Out):
+def mark_checked.run(+uids: List<&2, U32>, +folder: String, +mark: Mark, uidv: U32) -> IO(Out):
   +plan = mark_plan(uids, folder, mark, uidv)
   do IO<Out>:
     p : Proc <- imap_proc(plan)
@@ -1723,7 +1723,7 @@ def mark_checked(
     case True{}:
       pure_out(Err{uidv_missing()})
     case False{}:
-      mark_go(uids, folder, mark, uidv)
+      mark_checked.run(uids, folder, mark, uidv)
 
 def mark_uids(u: Uids(), folder: String, mark: Mark, +uidv: U32) -> IO(Out):
   match u:
@@ -1846,7 +1846,7 @@ def move_plan(
         return moved_out(p, plan, folder, uids, dest, move)
 
 # Runs `plan` (a move or a label) unless `problem` rules it out.
-def move_go(
+def run_move(
   problem: String,
   plan: List<&2, I.Cmd>,
   folder: String,
@@ -1860,7 +1860,7 @@ def move_go(
     case SNil{}:
       move_plan(plan, folder, uids, dest, move)
 
-def move_if(
+def move_caps.run(
   problem: String,
   +caps: List<&2, String>,
   +folder: String,
@@ -1869,7 +1869,7 @@ def move_if(
   uidv: U32
 ) -> IO(Out):
   +move = I.has_cap(caps, "MOVE")
-  move_go(problem, Ops.plan_move(folder, uids, dest, move, I.has_cap(caps, "UIDPLUS"), uidv),
+  run_move(problem, Ops.plan_move(folder, uids, dest, move, I.has_cap(caps, "UIDPLUS"), uidv),
     folder, uids, dest, move)
 
 def move_caps(
@@ -1883,7 +1883,7 @@ def move_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      move_if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, dest, uidv)
+      move_caps.run(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, dest, uidv)
 
 # Whether two names denote the same mailbox; INBOX is case-insensitive in
 # IMAP, other names are compared as given.
@@ -1964,7 +1964,7 @@ def trash_fs(
     case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
       trash_to(trash, caps, folder, uids, uidv)
 
-def trash_if(
+def trash_found.if(
   problem: String,
   +lines: List<&2, I.RLine>,
   folder: String,
@@ -1984,7 +1984,7 @@ def trash_found(r: Run(), +folder: String, uids: List<&2, U32>, +uidv: U32) -> I
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      trash_if(uidv_problem(lines, uidv, folder), lines, folder, uids, uidv)
+      trash_found.if(uidv_problem(lines, uidv, folder), lines, folder, uids, uidv)
 
 def trash_checked(missing: Bool, +folder: String, uids: List<&2, U32>, uidv: U32) -> IO(Out):
   match missing:
@@ -2019,7 +2019,7 @@ def delete_plan(+plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) ->
           J.kv("permanently_deleted", J.bool(True{}))
         ])
 
-def delete_if(
+def delete_caps.if(
   problem: String,
   caps: List<&2, String>,
   +folder: String,
@@ -2045,7 +2045,7 @@ def delete_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      delete_if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, confirm, uidv)
+      delete_caps.if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, confirm, uidv)
 
 def delete_asked(
   problem: String,
@@ -2499,7 +2499,7 @@ def folder_out.if(
 def folder_out(+p: Proc, plan: List<&2, I.Cmd>, c: FolderChange) -> Out:
   folder_out.if(ok_at(proc_lines(p), 2), p, plan, c, run_failure(imap_result(p)))
 
-def folder_go(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
+def folder_guarded.run(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -2510,7 +2510,7 @@ def folder_go(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Ou
 
 def folder_guarded(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange) -> IO(Out):
   +canonical = change_canonical(g, c)
-  folder_go(change_problem(g, canonical), change_plan(g, subs, canonical), canonical)
+  folder_guarded.run(change_problem(g, canonical), change_plan(g, subs, canonical), canonical)
 
 def folder_fs(f: Fs(), subs: List<&2, I.Folder>, c: FolderChange) -> IO(Out):
   match f:
@@ -2559,11 +2559,11 @@ def label_fs(
       pure_out(Err{m ++ "; nothing was changed"})
     case Done{folders}:
       +move = I.has_cap(caps, "MOVE")
-      move_go(label_problem(guard_for(folders), label),
+      run_move(label_problem(guard_for(folders), label),
         Ops.plan_label(folder, uids, label, move, I.has_cap(caps, "UIDPLUS"), uidv),
         folder, uids, label, move)
 
-def label_if(
+def label_found.if(
   problem: String,
   +lines: List<&2, I.RLine>,
   folder: String,
@@ -2590,7 +2590,7 @@ def label_found(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      label_if(uidv_problem(lines, uidv, folder), lines, folder, uids, label, uidv)
+      label_found.if(uidv_problem(lines, uidv, folder), lines, folder, uids, label, uidv)
 
 def label_asked(
   problem: String,
@@ -2805,7 +2805,7 @@ def att_gate(go: Bool, n: U32, a: J.Json, +budget: U32) -> IO(Attachment()):
     case True{}:
       att_gated(U32.is_ge(n, max_attachments()), U32.is_zero(budget), a, budget)
 
-def atts_go(
+def atts_read_within.go(
   xs: List<&2, J.Json>,
   +go: Bool,
   +n: U32,
@@ -2818,11 +2818,11 @@ def atts_go(
       do IO<List<&2, Attachment()>>:
         +o : Attachment() <- att_gate(go, n, a, budget)
         rest : List<&2, Attachment()> <-
-          atts_go(t, go && att_ok(o), (n + 1 : U32), (budget - att_size(o) : U32))
+          atts_read_within.go(t, go && att_ok(o), (n + 1 : U32), (budget - att_size(o) : U32))
         return o <> rest
 
 def atts_read_within(xs: List<&2, J.Json>, budget: U32) -> IO(List<&2, Attachment()>):
-  atts_go(xs, True{}, 0, budget)
+  atts_read_within.go(xs, True{}, 0, budget)
 
 def atts_read(xs: List<&2, J.Json>) -> IO(List<&2, Attachment()>):
   atts_read_within(xs, max_attachment())
@@ -3044,7 +3044,7 @@ def compose_checked(problem: String, w: Want, from: String) -> IO(Out):
         st : Stamp <- stamp()
         deliver(w, from, st)
 
-def compose_go(+w: Want, +from: String) -> IO(Out):
+def with_atts.run(+w: Want, +from: String) -> IO(Out):
   compose_checked(check_want(w, from), w, from)
 
 def with_atts(
@@ -3064,7 +3064,7 @@ def with_atts(
     case Done{xs}:
       do IO<Out>:
         from : String <- env_or("MAILBEND_EMAIL", "")
-        compose_go(Want{to, cc, bcc, subject, text, irt, refs, xs, draft}, from)
+        with_atts.run(Want{to, cc, bcc, subject, text, irt, refs, xs, draft}, from)
 
 # Composes from the common arguments: to, cc, bcc, subject, body,
 # in_reply_to, references and attachments ([{path, filename?, content_type?}]).
@@ -3422,7 +3422,7 @@ def offered(+n: String, ro: Bool, drafts: Bool) -> Bool:
   Bool.not(ro && Bool.not(has_name(Ops.read_only_names(Ops.all_ops()), n))) &&
     Bool.not(drafts && String.eq(n, "mail_send"))
 
-def tools_if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
+def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
   match keep:
     case True{}:
       J.JCons{t, rest}
@@ -3432,7 +3432,7 @@ def tools_if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
 def offered_items(ts: J.Json, +ro: Bool, +drafts: Bool) -> J.Json:
   match ts:
     case J.JCons{+t, rest}:
-      tools_if(offered(str_arg(t, "name", ""), ro, drafts), t, offered_items(rest, ro, drafts))
+      offered_items.if(offered(str_arg(t, "name", ""), ro, drafts), t, offered_items(rest, ro, drafts))
     case _:
       J.JEnd{}
 
