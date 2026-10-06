@@ -34,7 +34,7 @@ compiler (see [Safety](#safety)).
 
 ## Install (Linux)
 
-Needs a C compiler, Rust 1.85+ (cargo and rustc), the system CA certificates,
+Needs a C compiler, Rust 1.99+ (cargo and rustc), the system CA certificates,
 and Bend 2 (clang 14+ to compile the core; without clang the core runs
 through `bend` with a slower start).
 
@@ -52,8 +52,9 @@ scripts/install.sh --install-bend --install-rust
 x64 only; elsewhere, install Bend 2.0.32 yourself and run
 `scripts/install.sh`. An already installed Bend is reused as is. Likewise,
 `--install-rust` runs `scripts/install-rust.sh` (a sha256-checked `rustup-init`
-that installs Rust 1.85 to `~/.cargo`) only when neither `cargo` nor Ubuntu
-24.04's `cargo-1.85` package provides cargo and rustc 1.85+.
+that installs Rust 1.99 to `~/.cargo`) only when `cargo` does not provide
+cargo and rustc 1.99+. Debian and Ubuntu do not package Rust 1.99, so use
+rustup rather than a distribution `cargo`.
 
 On a Grok Bot / Cursor cloud Linux computer, run `sh scripts/setup-cloud.sh`
 for a complete Debian/Ubuntu install, then use `scripts/mailbend-cloud` for
