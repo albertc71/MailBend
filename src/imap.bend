@@ -783,35 +783,6 @@ def copy_tag(+cs: List<&2, Cmd>, +n: U32) -> U32:
 # Dates
 # -----
 
-def month_name(m: U32) -> String:
-  match m:
-    case 1:
-      "Jan"
-    case 2:
-      "Feb"
-    case 3:
-      "Mar"
-    case 4:
-      "Apr"
-    case 5:
-      "May"
-    case 6:
-      "Jun"
-    case 7:
-      "Jul"
-    case 8:
-      "Aug"
-    case 9:
-      "Sep"
-    case 10:
-      "Oct"
-    case 11:
-      "Nov"
-    case 12:
-      "Dec"
-    case _:
-      ""
-
 def all_digits(s: String) -> Bool:
   match s:
     case SNil{}:
@@ -822,7 +793,7 @@ def all_digits(s: String) -> Bool:
 def imap_date.if(ok: Bool, y: String, m: U32, d: U32) -> Maybe<&2, String>:
   match ok:
     case True{}:
-      Some{U32.show(d) ++ "-" ++ month_name(m) ++ "-" ++ y}
+      Some{U32.show(d) ++ "-" ++ C.month_name(m) ++ "-" ++ y}
     case False{}:
       None{}
 

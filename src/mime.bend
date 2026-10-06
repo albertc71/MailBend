@@ -1150,33 +1150,6 @@ def day_name(n: U32) -> String:
 def wday(+days: U32) -> String:
   day_name(((days + 4) % 7 : U32))
 
-def mon(m: U32) -> String:
-  match m:
-    case 1:
-      "Jan"
-    case 2:
-      "Feb"
-    case 3:
-      "Mar"
-    case 4:
-      "Apr"
-    case 5:
-      "May"
-    case 6:
-      "Jun"
-    case 7:
-      "Jul"
-    case 8:
-      "Aug"
-    case 9:
-      "Sep"
-    case 10:
-      "Oct"
-    case 11:
-      "Nov"
-    case _:
-      "Dec"
-
 # Days since 1970-01-01 to "D Mon YYYY" (civil-from-days, H. Hinnant),
 # shifted by 719468 days so all arithmetic stays unsigned.
 def civil(+days: U32) -> String:
@@ -1189,7 +1162,7 @@ def civil(+days: U32) -> String:
   +d = (doy - (153 * mp + 2) / 5 + 1 : U32)
   +m = Bool.pick(U32, U32.is_lt(mp, 10), (mp + 3 : U32), (mp - 9 : U32))
   +y = (yoe + era * 400 + Bool.to_u32(U32.is_le(m, 2)) : U32)
-  U32.show(d) ++ " " ++ mon(m) ++ " " ++ U32.show(y)
+  U32.show(d) ++ " " ++ C.month_name(m) ++ " " ++ U32.show(y)
 
 # Seconds since the epoch to an RFC 5322 date in UTC.
 def rfc5322_date(+secs: U32) -> String:

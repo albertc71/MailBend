@@ -491,3 +491,36 @@ def is_plain.go(s: String, ok: Bool) -> Bool:
 # Whether every char is printable ASCII or a tab (no CR, LF or 8-bit).
 def is_plain(s: String) -> Bool:
   is_plain.go(s, True{})
+
+# Dates
+# -----
+
+# The English abbreviation of month m, "Jan" to "Dec"; "" outside 1..12.
+def month_name(m: U32) -> String:
+  match m:
+    case 1:
+      "Jan"
+    case 2:
+      "Feb"
+    case 3:
+      "Mar"
+    case 4:
+      "Apr"
+    case 5:
+      "May"
+    case 6:
+      "Jun"
+    case 7:
+      "Jul"
+    case 8:
+      "Aug"
+    case 9:
+      "Sep"
+    case 10:
+      "Oct"
+    case 11:
+      "Nov"
+    case 12:
+      "Dec"
+    case _:
+      ""
