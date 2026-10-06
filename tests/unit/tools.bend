@@ -397,8 +397,8 @@ def check_changes() -> IO(Unit):
     IO.print(show_bool(T.uidv_is(Some{7}, 7)) ++ " " ++ show_bool(T.uidv_is(Some{7}, 8)) ++ " " ++
       show_bool(T.uidv_is(None{}, 0)) ++ " " ++ show_bool(T.same_uidv(Some{7}, Some{7})) ++ " " ++
       show_bool(T.same_uidv(Some{7}, None{})) ++ " " ++ show_bool(T.same_uidv(None{}, None{})))
-    IO.print("[" ++ T.uidv_problem(I.frame(headers_transcript(7)), 7, "INBOX") ++ "] " ++
-      T.uidv_problem(I.frame(headers_transcript(7)), 8, "INBOX"))
+    IO.print("[" ++ T.uidv_problem(I.frame(headers_transcript(7)), 7) ++ "] " ++
+      T.uidv_problem(I.frame(headers_transcript(7)), 8))
     IO.print(T.uidv_missing())
     IO.print(show_u32s(T.minus([5, 3, 4, 3], [3])))
     IO.print(show_out(T.changed_found([], [3], "INBOX", [])))

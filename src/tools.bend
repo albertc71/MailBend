@@ -882,7 +882,7 @@ def moved_msg() -> String:
     "name other messages; search again"
 
 # The preflight's early check (the plans check again in the changing session).
-def uidv_problem(lines: List<&2, I.RLine>, want: U32, folder: String) -> String:
+def uidv_problem(lines: List<&2, I.RLine>, want: U32) -> String:
   Bool.pick(String, uidv_is(I.ok_code(lines, "UIDVALIDITY"), want), "", stale_msg())
 
 def uidv_missing() -> String:
@@ -1874,7 +1874,7 @@ def move_caps.run(
 
 def move_caps(
   r: Run(),
-  +folder: String,
+  folder: String,
   uids: List<&2, U32>,
   dest: String,
   +uidv: U32
@@ -1883,7 +1883,7 @@ def move_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      move_caps.run(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, dest, uidv)
+      move_caps.run(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv)
 
 # Whether two names denote the same mailbox; INBOX is case-insensitive in
 # IMAP, other names are compared as given.
@@ -1979,12 +1979,12 @@ def trash_found.if(
         f : Fs() <- folders_io(lines)
         trash_fs(f, I.caps(lines), folder, uids, uidv)
 
-def trash_found(r: Run(), +folder: String, uids: List<&2, U32>, +uidv: U32) -> IO(Out):
+def trash_found(r: Run(), folder: String, uids: List<&2, U32>, +uidv: U32) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      trash_found.if(uidv_problem(lines, uidv, folder), lines, folder, uids, uidv)
+      trash_found.if(uidv_problem(lines, uidv), lines, folder, uids, uidv)
 
 def trash_checked(missing: Bool, +folder: String, uids: List<&2, U32>, uidv: U32) -> IO(Out):
   match missing:
@@ -2036,7 +2036,7 @@ def delete_caps.if(
 
 def delete_caps(
   r: Run(),
-  +folder: String,
+  folder: String,
   uids: List<&2, U32>,
   confirm: String,
   +uidv: U32
@@ -2045,7 +2045,7 @@ def delete_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      delete_caps.if(uidv_problem(lines, uidv, folder), I.caps(lines), folder, uids, confirm, uidv)
+      delete_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, confirm, uidv)
 
 def delete_asked(
   problem: String,
@@ -2581,7 +2581,7 @@ def label_found.if(
 
 def label_found(
   r: Run(),
-  +folder: String,
+  folder: String,
   uids: List<&2, U32>,
   label: String,
   +uidv: U32
@@ -2590,7 +2590,7 @@ def label_found(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      label_found.if(uidv_problem(lines, uidv, folder), lines, folder, uids, label, uidv)
+      label_found.if(uidv_problem(lines, uidv), lines, folder, uids, label, uidv)
 
 def label_asked(
   problem: String,
