@@ -47,16 +47,24 @@ The Bend files follow `bend guide` and Base (`bend base`). In particular:
 - A file opens with a short comment saying what it is, then a blank line,
   then its imports. Sections are a title underlined with `-` (or `=` for a
   group of sections), with a blank line above and below.
+- Lines in `src/`, `main.bend`, `LAWS.bend` and `PROOF.bend` stay within
+  100 columns; the generated `src/schema.bend` keeps 80. Unit tests are
+  exempt, as their expected-output lines cannot wrap.
 - Lists are matched as `Nil{}` and `h <> t`.
 - Write `+` only on a value that is used more than once on some path.
 - A helper is named after the def it serves, with a dotted suffix for its
   role: `.go` for the loop, `.step` for one step of it, `.fin` for the
   result from its final state, `.if` for a branch on a computed Bool or
-  check, `.put` for a branch on another computed value, `.run` for the IO
-  work once the checks pass, or a noun for any other part.
+  check (a problem string, empty when the check passes), `.put` for a
+  branch on another computed value, `.run` for the IO work once the checks
+  pass, or a noun for any other part. A def that computes the problem
+  string keeps a descriptive noun name, such as `uidv_problem`.
 - Arguments are built before the call, so `Bool.pick`, `&&` and `||` build
-  both sides. Where a side is costly or recursive, pass the test to a
-  helper that matches it.
+  both sides. Where a side is costly, or both sides recurse, pass the test
+  to a helper that matches it.
+- Where the first of several problems wins, new code checks them in a
+  `do Result` block, which stops at the first; the existing `first_of`
+  chains stay.
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) messages
 (`fix:`, `feat:`, `docs:`, ...). By contributing you agree that your work is
