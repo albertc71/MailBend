@@ -1,5 +1,6 @@
 # Header address lists: quotes, comments, escapes and groups; and the
 # address checks and encodings MIME composition applies to them.
+
 import Base
 import ../../src/tools.bend as T
 import ../../src/mime.bend as M

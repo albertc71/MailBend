@@ -1,4 +1,5 @@
 # UTF-8, base64 and quoted-printable codecs.
+
 import Base
 import ../../src/codec.bend as C
 

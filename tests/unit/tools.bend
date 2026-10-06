@@ -1,6 +1,7 @@
 # The pure parts of the mail tools: switches, helper results, argument
 # parsing, role resolution, folder guards, flag and move results, composing
 # and the schema checks. IO paths are left to the end-to-end suite.
+
 import Base
 import ../../src/json.bend as J
 import ../../src/imap.bend as I

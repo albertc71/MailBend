@@ -1,4 +1,5 @@
 # SMTP envelope: CRLF ending, dot-stuffing, RCPT lines and reply scanning.
+
 import Base
 import ../../src/smtp.bend as S
 

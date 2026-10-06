@@ -1,6 +1,7 @@
 # The generated MCP tool list: each tool's name, true hints, required
 # arguments and typed parameters with their enums, then the length and a
 # rolling hash of the whole JSON text, so any changed byte shows.
+
 import Base
 import ../../src/json.bend as J
 import ../../src/schema.bend as Schema

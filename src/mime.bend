@@ -1,6 +1,3 @@
-import Base
-import ./codec.bend as C
-
 # Reading RFC 5322 / MIME messages (from byte strings) and composing new
 # ones. Composed messages are 7-bit ASCII: headers use RFC 2047 encoded
 # words, text is quoted-printable and attachments base64.
@@ -8,6 +5,9 @@ import ./codec.bend as C
 # An argument is built before the call, so Bool.pick builds both of its
 # branches. Where a branch decodes, encodes or scans a body, a helper
 # (`.if`, `.put`) matches the Bool instead and builds only the branch taken.
+
+import Base
+import ./codec.bend as C
 
 # Types
 # =====

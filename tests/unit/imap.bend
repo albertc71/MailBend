@@ -1,4 +1,5 @@
 # IMAP command rendering and transcript parsing on a synthetic transcript.
+
 import Base
 import ../../src/codec.bend as C
 import ../../src/imap.bend as I

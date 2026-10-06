@@ -1,4 +1,5 @@
 # JSON parser and serializer round trips, including rejected inputs.
+
 import Base
 import ../../src/json.bend as J
 

@@ -1,8 +1,8 @@
-import Base
-
 # Byte-level codecs. A "byte string" is a String whose characters are all
 # in 0..255, one per byte: that is how mailbend-tls hands over server data,
 # and how composed messages are built before they go to the wire.
+
+import Base
 
 def u(c: Char) -> U32:
   Char.to_u32(c)

@@ -1,6 +1,7 @@
 # The SMTP envelope handed to mailbend-tls, which greets, upgrades with
 # STARTTLS and authenticates before sending these lines; and the reading of
 # the replies it gives back.
+
 import Base
 
 # `msg` as is when it already ends in CRLF, else with one appended. A def, not

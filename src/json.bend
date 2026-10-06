@@ -1,7 +1,7 @@
+# JSON values for tool arguments, tool results and MCP messages.
+
 import Base
 
-# JSON values for tool arguments, tool results and MCP messages.
-#
 # Arrays and objects hold their items as a chain of JCons cells ending in
 # JEnd, and object members are JKv items. Keeping the chain inside Json
 # itself lets every walk over a value be one structurally recursive def

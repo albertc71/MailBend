@@ -1,15 +1,15 @@
-import Base
-import ./src/codec.bend as C
-import ./src/json.bend as J
-import ./src/tools.bend as T
-import ./src/schema.bend as Schema
-
 # MailBend: IMAP/SMTP mail tools for AI agents.
 #
 #   mailbend mcp                   MCP server on stdin/stdout (JSON-RPC lines)
 #   mailbend tools                 print the tool list as JSON
 #   mailbend call <tool> [json]    run one tool and print its JSON result
 #   mailbend version               print the version
+
+import Base
+import ./src/codec.bend as C
+import ./src/json.bend as J
+import ./src/tools.bend as T
+import ./src/schema.bend as Schema
 
 def version() -> String:
   "0.1.0"
