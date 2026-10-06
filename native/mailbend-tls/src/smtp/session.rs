@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 
 use crate::connection::Connection;
 use crate::creds::Credentials;
+use crate::limits::MAX_OUTPUT;
 use crate::smtp::envelope::Step;
 use crate::smtp::reply::{has_auth, has_extension, parse_line};
 use crate::{Exit, Outcome};
@@ -49,7 +50,9 @@ pub fn run(
     })
 }
 
-/// Reads one (possibly multi-line) reply, copying it to the transcript.
+/// Reads one (possibly multi-line) reply, copying it to the transcript. The
+/// reply is bounded like the transcript, also while the transcript is
+/// paused for authentication.
 fn read_reply(conn: &mut Connection) -> Result<Reply, Exit> {
     let mut lines = Vec::new();
     loop {
@@ -58,6 +61,9 @@ fn read_reply(conn: &mut Connection) -> Result<Reply, Exit> {
             .ok_or_else(|| Exit::protocol("connection closed while waiting for a reply"))?;
         conn.emit(&line)?;
         let parsed = parse_line(&line)?;
+        if (lines.len() + line.len()) as u64 > MAX_OUTPUT {
+            return Err(Exit::protocol("SMTP reply exceeds the output limit"));
+        }
         lines.extend_from_slice(&line);
         if !parsed.more {
             return Ok(Reply {
@@ -202,6 +208,35 @@ fn quit(conn: &mut Connection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn an_endless_reply_is_refused_while_authenticating() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().expect("accept");
+            let mut line = vec![b'x'; 1 << 20];
+            line[..4].copy_from_slice(b"235-");
+            let end = line.len() - 2;
+            line[end..].copy_from_slice(b"\r\n");
+            // One continuation line past the limit, never a last line.
+            for _ in 0..=(MAX_OUTPUT >> 20) {
+                if peer.write_all(&line).is_err() {
+                    return;
+                }
+            }
+        });
+        let mut conn = Connection::new(TcpStream::connect(addr).expect("connect"));
+        let code = conn.quietly(read_reply).map(|reply| reply.code);
+        assert_eq!(
+            code,
+            Err(Exit::protocol("SMTP reply exceeds the output limit"))
+        );
+        drop(conn);
+        server.join().expect("server");
+    }
 
     #[test]
     fn base64_lines_fill_their_buffer_exactly() {

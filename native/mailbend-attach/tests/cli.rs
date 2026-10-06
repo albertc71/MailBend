@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use mailbend_io::transcript::encode_bytes;
+use mailbend_io::core_bytes::encode_bytes;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 

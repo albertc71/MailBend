@@ -1,6 +1,7 @@
 //! The pure parts of `mailbend-attach`: argument checks, path relativisation,
 //! send counting, the download refusal rules and error messages. Everything
-//! that touches the file system is in `main.rs` and `save.rs`.
+//! that touches the file system is in the binary's modules (`read.rs`,
+//! `count.rs`, `save.rs` and `dirs.rs`).
 
 use std::fmt;
 

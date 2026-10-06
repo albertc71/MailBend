@@ -4,8 +4,8 @@
 //! opens a network connection, so the credential-free `mailbend-attach` can
 //! depend on it too.
 
+pub mod core_bytes;
 pub mod env;
 pub mod fs;
 pub mod report;
 pub mod secret;
-pub mod transcript;

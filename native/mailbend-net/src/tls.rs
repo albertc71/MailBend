@@ -14,8 +14,8 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 use crate::NetError;
 
-/// A verified TLS stream over a mail socket.
-pub type TlsStream = StreamOwned<ClientConnection, TcpStream>;
+/// A verified TLS stream, by default over a mail socket.
+pub type TlsStream<S = TcpStream> = StreamOwned<ClientConnection, S>;
 
 /// TLS 1.3 and 1.2 with the ring provider, trusting the certificates in
 /// `ca_file` when given, else the system trust store.
@@ -86,7 +86,7 @@ pub fn connect<S: Read + Write>(
     config: &Arc<ClientConfig>,
     host: &str,
     mut sock: S,
-) -> Result<StreamOwned<ClientConnection, S>, NetError> {
+) -> Result<TlsStream<S>, NetError> {
     let name = server_name(host)?;
     let mut conn = ClientConnection::new(Arc::clone(config), name)
         .map_err(|_| NetError::Tls("cannot create a TLS session".to_string()))?;
@@ -103,6 +103,8 @@ pub fn connect<S: Read + Write>(
     Ok(StreamOwned::new(conn, sock))
 }
 
+/// Why the handshake failed, with the rustls or I/O reason: the handshake
+/// comes before any credential is sent, so neither can hold one.
 fn handshake_error(e: &io::Error) -> NetError {
     if matches!(
         e.kind(),
@@ -119,7 +121,8 @@ fn handshake_error(e: &io::Error) -> NetError {
             | rustls::Error::NoCertificatesPresented
             | rustls::Error::InvalidCertRevocationList(_)),
         ) => NetError::Tls(format!("TLS verification failed: {err}")),
-        _ => NetError::Tls("TLS handshake failed".to_string()),
+        Some(err) => NetError::Tls(format!("TLS handshake failed: {err}")),
+        None => NetError::Tls(format!("TLS handshake failed: {}", e.kind())),
     }
 }
 
@@ -140,6 +143,24 @@ mod tests {
         ));
         assert!(server_name("bad host").is_err());
         assert!(server_name("").is_err());
+    }
+
+    #[test]
+    fn handshake_errors_keep_their_reason() {
+        let alert = io::Error::other(rustls::Error::AlertReceived(
+            rustls::AlertDescription::HandshakeFailure,
+        ));
+        assert!(matches!(
+            handshake_error(&alert),
+            NetError::Tls(message) if message.starts_with("TLS handshake failed: received fatal alert")
+        ));
+        let reset = io::Error::from(io::ErrorKind::ConnectionReset);
+        assert_eq!(
+            handshake_error(&reset),
+            NetError::Tls("TLS handshake failed: connection reset".into())
+        );
+        let late = io::Error::from(io::ErrorKind::WouldBlock);
+        assert_eq!(handshake_error(&late), NetError::TimedOut);
     }
 
     #[test]

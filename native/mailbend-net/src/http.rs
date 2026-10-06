@@ -136,6 +136,10 @@ fn parse_head(head: &[u8], max_body: usize) -> Result<(u16, Framing), NetError> 
         let (name, value) = line.split_once(':').ok_or_else(malformed)?;
         let value = value.trim();
         if name.eq_ignore_ascii_case("content-length") {
+            // Digits only: `parse` would also take a sign.
+            if !value.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(malformed());
+            }
             let n = value.parse::<usize>().map_err(|_| malformed())?;
             if n > max_body {
                 return Err(too_long());
@@ -184,7 +188,13 @@ impl Chunked {
                 return Ok(None);
             };
             let size_line = std::str::from_utf8(&pending[..line_end]).map_err(|_| malformed())?;
-            let size = size_line.split(';').next().unwrap_or(size_line).trim();
+            let size = size_line
+                .split_once(';')
+                .map_or(size_line, |(size, _)| size)
+                .trim();
+            if !size.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(malformed());
+            }
             let size = usize::from_str_radix(size, 16).map_err(|_| malformed())?;
             if size > max_body || self.body.len() + size > max_body {
                 return Err(too_long());
@@ -300,6 +310,8 @@ mod tests {
             b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n",
             b"HTTP/2 200\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Length: +1\r\n\r\na",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n+1\r\na\r\n0\r\n\r\n",
         ] {
             assert!(parse_response(bad, false, MAX).is_err());
         }

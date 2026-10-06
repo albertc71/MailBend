@@ -12,13 +12,14 @@ use mailbend_attach::{
     ATTACHMENTS, DOWNLOADS, STARTUP_HOME, STARTUP_NAMES, Setting, named_component, parse_file_name,
     parse_max, path_entries, show,
 };
-use mailbend_io::transcript::decode_bytes;
+use mailbend_io::core_bytes::decode_bytes;
 use nix::errno::Errno;
 use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, open, openat};
 use nix::sys::stat::{FileStat, Mode, fstat, stat};
 use nix::unistd::linkat;
 
-use super::{Refusal, home_directory, open_dedicated_directory, os_error_text, same_file};
+use crate::Refusal;
+use crate::dirs::{home_directory, open_dedicated_directory, os_error_text, same_file};
 
 /// Saves stdin as `name` in the download directory, after checking the
 /// directory and before reading any of stdin. `attach` is

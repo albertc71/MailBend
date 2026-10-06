@@ -48,7 +48,8 @@ pub fn read_secret_file(path: &[u8], name: &str) -> Result<Zeroizing<Vec<u8>>, S
     .map_err(|errno| match errno {
         Errno::ENOSYS => format!("{name} needs Linux 5.6+ (openat2)"),
         Errno::ELOOP => format!("{name} must not be or sit under a symlink: use its real path"),
-        _ => format!("cannot open {name} (it must exist)"),
+        Errno::ENOENT => format!("{name} does not exist"),
+        errno => format!("cannot open {name}: {}", errno.desc()),
     })?;
     let not_regular = || format!("{name} is not a regular file");
     let stat = fstat(&fd).map_err(|_| not_regular())?;
@@ -128,7 +129,15 @@ mod tests {
         assert!(refused(bytes).contains("KEY_FILE must not be readable"));
         assert!(refused(b"relative/key").contains("KEY_FILE must be an absolute path"));
         let missing = dir.join("missing");
-        assert!(refused(missing.as_os_str().as_bytes()).contains("cannot open KEY_FILE"));
+        assert_eq!(
+            refused(missing.as_os_str().as_bytes()),
+            "KEY_FILE does not exist"
+        );
+        let under_a_file = path.join("key");
+        assert_eq!(
+            refused(under_a_file.as_os_str().as_bytes()),
+            "cannot open KEY_FILE: Not a directory"
+        );
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
         let link = dir.join("link");
         symlink(&path, &link).expect("symlink");

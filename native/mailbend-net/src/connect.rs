@@ -3,10 +3,13 @@
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+use rustls::ClientConfig;
+
 use crate::NetError;
+use crate::doh::Resolver;
 
 /// One time budget shared by resolution, connecting and the DoH exchange.
 #[derive(Clone, Copy, Debug)]
@@ -93,7 +96,29 @@ pub fn resolve_system(
         Ok(Ok(addrs)) if !addrs.is_empty() => Ok(addrs),
         Ok(Ok(_)) => Err(NetError::Dns(format!("{host} has no addresses"))),
         Ok(Err(e)) => Err(NetError::Dns(format!("cannot resolve {host}: {e}"))),
-        Err(_) => Err(NetError::Dns(format!("resolving {host} timed out"))),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(NetError::TimedOut),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(NetError::Dns(format!("cannot resolve {host}")))
+        }
+    }
+}
+
+/// The addresses of `host:port`, from the DoH resolver when one is given,
+/// else from system DNS.
+pub fn resolve(
+    doh: Option<&Resolver>,
+    config: &Arc<ClientConfig>,
+    host: &str,
+    port: u16,
+    deadline: &Deadline,
+) -> Result<Vec<SocketAddr>, NetError> {
+    match doh {
+        Some(resolver) => Ok(resolver
+            .resolve(config, host, deadline)?
+            .into_iter()
+            .map(|ip| SocketAddr::new(ip, port))
+            .collect()),
+        None => resolve_system(host, port, deadline),
     }
 }
 

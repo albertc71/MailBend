@@ -7,7 +7,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
 use mailbend_net::NetError;
-use mailbend_net::connect::{Deadline, connect_any, resolve_system, set_timeouts};
+use mailbend_net::connect::{Deadline, connect_any, resolve, set_timeouts};
 use rustls::ClientConfig;
 
 use crate::Exit;
@@ -43,14 +43,11 @@ fn addresses(
             Ok(vec![SocketAddr::new(ip, port)]),
         );
     }
-    if let Some(resolver) = &settings.doh {
-        let ips = resolver.resolve(tls, &settings.host, deadline);
-        let addrs = ips.map(|ips| {
-            ips.into_iter()
-                .map(|ip| SocketAddr::new(ip, port))
-                .collect()
-        });
-        return ("DNS-over-HTTPS", addrs);
-    }
-    ("system DNS", resolve_system(&settings.host, port, deadline))
+    let route = if settings.doh.is_some() {
+        "DNS-over-HTTPS"
+    } else {
+        "system DNS"
+    };
+    let doh = settings.doh.as_ref();
+    (route, resolve(doh, tls, &settings.host, port, deadline))
 }

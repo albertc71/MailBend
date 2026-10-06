@@ -9,7 +9,7 @@ pub enum NetError {
     TimedOut,
     /// A name could not be resolved, by system DNS or the DoH resolver.
     Dns(String),
-    /// No address accepted a TCP connection.
+    /// Connecting failed, or the connected socket could not be used.
     Connect(String),
     /// The DoH exchange failed: the request, or the resolver's HTTP response.
     Doh(String),

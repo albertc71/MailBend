@@ -9,14 +9,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use mailbend_io::env::text_var;
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
+use rustls::ClientConfig;
 
 use crate::NetError;
 use crate::connect::{BoundedStream, Deadline, connect_any, resolve_system};
 use crate::dns::{RecordType, build_query, parse_answer};
 use crate::http::read_response;
 use crate::proxy::{Proxy, proxy_for};
-use crate::tls;
+use crate::tls::{self, TlsStream};
 use crate::url::{DohUrl, format_authority};
 
 /// The default cloud resolver, reached without consulting system DNS. These
@@ -28,31 +28,25 @@ const BOOTSTRAP_ADDRS: [Ipv4Addr; 2] = [Ipv4Addr::new(1, 1, 1, 1), Ipv4Addr::new
 /// refused.
 const MAX_BODY: usize = 65535;
 
-type DohStream = StreamOwned<ClientConnection, BoundedStream>;
-
 /// A DoH resolver and the way to reach it.
 #[derive(Debug)]
 pub struct Resolver {
-    pub url: DohUrl,
-    pub proxy: Option<Proxy>,
+    url: DohUrl,
+    proxy: Option<Proxy>,
 }
 
 impl Resolver {
-    /// The resolver at `url`, reached through the proxy the environment
-    /// configures for it, if any.
-    pub fn from_env(url: DohUrl) -> Result<Resolver, NetError> {
-        let proxy = proxy_for(&url.host)?;
-        Ok(Resolver { url, proxy })
-    }
-
-    /// The resolver MAILBEND_DOH_URL names, if it is set and nonempty. The
-    /// error is a message for the operator: a bad URL or proxy setting.
+    /// The resolver MAILBEND_DOH_URL names, if it is set and nonempty,
+    /// reached through the proxy the environment configures for it, if
+    /// any. The error is a message for the operator: a bad URL or proxy
+    /// setting.
     pub fn from_setting() -> Result<Option<Resolver>, String> {
         let Some(url) = text_var("MAILBEND_DOH_URL")? else {
             return Ok(None);
         };
         let url = DohUrl::parse(&url).ok_or("MAILBEND_DOH_URL must be an HTTPS URL")?;
-        Resolver::from_env(url).map(Some).map_err(|e| e.to_string())
+        let proxy = proxy_for(&url.host).map_err(|e| e.to_string())?;
+        Ok(Some(Resolver { url, proxy }))
     }
 
     /// Looks up `name`'s IPv4 and IPv6 addresses (IPv4 first); an IP
@@ -150,7 +144,7 @@ impl Resolver {
 
 /// Reads the HTTP response and returns its body, which must come with
 /// status 200.
-fn read_answer(stream: &mut DohStream) -> Result<Vec<u8>, NetError> {
+fn read_answer(stream: &mut TlsStream<BoundedStream>) -> Result<Vec<u8>, NetError> {
     let response = read_response(stream, MAX_BODY).map_err(|e| match e {
         NetError::Http(message) => NetError::Doh(format!("{message} from the resolver")),
         e => e,

@@ -40,7 +40,7 @@ settings and the key file. The checks, including the cargo ones, are in
 
 - `mailbend-io/`: `env` (environment settings), `fs` (`openat2` helpers),
   `secret` (the mail password and TypeSafe key files, and the refusal of a
-  key in the environment), `report` (stderr reports) and `transcript` (the
+  key in the environment), `report` (stderr reports) and `core_bytes` (the
   byte encoding of what the helpers and the core pass each other); no
   network, shared by all three programs.
 - `mailbend-net/`: `connect` (deadline, system DNS, address fallback),
@@ -52,8 +52,9 @@ settings and the key file. The checks, including the cargo ones, are in
   `connection` owns the socket and the transcript; `imap/` and `smtp/` each
   hold the input validator (`script`, `envelope`), the response parser
   (`response`, `reply`) and the `session` that drives them.
-- `mailbend-attach/`: the attachment reader, the download writer (`save`)
-  and the send counter.
+- `mailbend-attach/`: the attachment reader (`read`), the send counter
+  (`count`) and the download writer (`save`), on the directory checks they
+  share (`dirs`).
 - `mailbend-typesafe/`: `environment` (the allow-listed re-execution),
   `settings` (key, request, time budget and route, checked before
   connecting), `api` (the fixed endpoint, retries, redaction) and `exit`
@@ -206,7 +207,8 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   `MAILBEND_TIMEOUT_MS` (default 30 s), which also bounds system DNS (run on
   its own thread), the DoH exchange and any proxy reply. Size limits are 32 MiB per line, 64 MiB per literal and per script,
   and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
-  (at most 120 MiB after encoding).
+  (at most 120 MiB after encoding); one SMTP reply is held to 60 MiB too,
+  also during authentication, when it is not copied to the transcript.
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
 

@@ -5,15 +5,14 @@
 //! core asks for a single attempt.
 
 use std::io::{self, Write};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use mailbend_net::NetError;
-use mailbend_net::connect::{BoundedStream, Deadline, connect_any, resolve_system};
+use mailbend_net::connect::{BoundedStream, Deadline, connect_any, resolve};
 use mailbend_net::http::{HttpResponse, read_response};
-use mailbend_net::tls;
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
+use mailbend_net::tls::{self, TlsStream};
+use rustls::ClientConfig;
 use zeroize::Zeroizing;
 
 use crate::exit::{Exit, Failure};
@@ -24,8 +23,6 @@ const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 const BACKOFF: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(2)];
 /// Shown instead of the key wherever an answer repeats it.
 const REDACTED: &[u8] = b"[redacted]";
-
-type ApiStream = StreamOwned<ClientConnection, BoundedStream>;
 
 /// How many attempts the core allows: the Bend core chooses, and the
 /// helper only follows.
@@ -180,14 +177,7 @@ fn socket(
     if let Some(proxy) = &settings.proxy {
         return proxy.tunnel(HOST, PORT, deadline);
     }
-    let addrs: Vec<SocketAddr> = match &settings.doh {
-        Some(resolver) => resolver
-            .resolve(config, HOST, deadline)?
-            .into_iter()
-            .map(|ip| SocketAddr::new(ip, PORT))
-            .collect(),
-        None => resolve_system(HOST, PORT, deadline)?,
-    };
+    let addrs = resolve(settings.doh.as_ref(), config, HOST, PORT, deadline)?;
     Ok(BoundedStream::new(
         connect_any(&addrs, deadline)?,
         *deadline,
@@ -196,7 +186,7 @@ fn socket(
 
 /// Writes the request. The head holds the key, so it is built in a buffer
 /// wiped on drop, never in a formatted string.
-fn send(stream: &mut ApiStream, key: &[u8], request: &[u8]) -> io::Result<()> {
+fn send(stream: &mut TlsStream<BoundedStream>, key: &[u8], request: &[u8]) -> io::Result<()> {
     let mut head = Zeroizing::new(Vec::with_capacity(256 + key.len()));
     head.extend_from_slice(format!("POST {PATH} HTTP/1.1\r\nHost: {HOST}\r\n").as_bytes());
     head.extend_from_slice(b"Authorization: Bearer ");

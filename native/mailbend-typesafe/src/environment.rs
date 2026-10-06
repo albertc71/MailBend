@@ -4,8 +4,8 @@
 //! the password never shares this process, not even in /proc/self/environ.
 
 use std::ffi::OsString;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
+
+use mailbend_io::env::reexec_with;
 
 /// The only variables kept: the key file, the time budget, and the routing
 /// and trust settings shared with `mailbend-tls`.
@@ -22,47 +22,21 @@ pub const ALLOWED: [&str; 10] = [
     "NO_PROXY",
 ];
 
-/// Whether a raw `NAME=value` environment entry is one of the allowed
-/// settings. An entry without `=` is never allowed.
-fn is_allowed_entry(entry: &[u8]) -> bool {
-    entry
-        .iter()
-        .position(|&b| b == b'=')
-        .is_some_and(|eq| ALLOWED.iter().any(|name| name.as_bytes() == &entry[..eq]))
-}
-
-/// Re-executes this program with only the allowed settings, unless the
-/// kernel's copy of its environment already holds nothing else (std skips
-/// entries without "=", which /proc/self/environ would still show). Returns
-/// only when no re-execution is needed; a failed one is an error.
+/// Re-executes this program with only the allowed settings, unless it
+/// already has no others. Returns only when no re-execution is needed; a
+/// failed one is an error.
 pub fn confine(args: &[OsString]) -> Result<(), String> {
-    let environ = std::fs::read("/proc/self/environ")
-        .map_err(|_| "cannot read /proc/self/environ".to_string())?;
-    if environ
-        .split(|&b| b == 0)
-        .filter(|entry| !entry.is_empty())
-        .all(is_allowed_entry)
-    {
-        return Ok(());
-    }
-    let kept: Vec<(&str, OsString)> = ALLOWED
-        .iter()
-        .filter_map(|&name| std::env::var_os(name).map(|value| (name, value)))
-        .collect();
-    let mut command = Command::new("/proc/self/exe");
-    if let Some((program, rest)) = args.split_first() {
-        command.arg0(program).args(rest);
-    }
-    let _error = command.env_clear().envs(kept).exec();
-    Err("cannot drop the inherited environment".to_string())
+    reexec_with(args, &ALLOWED)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mailbend_io::env::is_kept_entry;
 
     #[test]
     fn only_listed_settings_are_kept() {
+        let is_allowed_entry = |entry: &[u8]| is_kept_entry(entry, &ALLOWED);
         assert!(is_allowed_entry(b"MAILBEND_TYPESAFE_KEY_FILE=/k"));
         assert!(is_allowed_entry(b"https_proxy=http://p:3128"));
         assert!(is_allowed_entry(b"NO_PROXY="));

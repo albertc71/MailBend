@@ -25,7 +25,10 @@ impl DohUrl {
         let path = match path {
             "" => "/".to_string(),
             query if query.starts_with('?') => format!("/{query}"),
-            path => path.split('#').next().unwrap_or(path).to_string(),
+            path => path
+                .split_once('#')
+                .map_or(path, |(path, _)| path)
+                .to_string(),
         };
         if path.bytes().any(is_control_or_space) {
             return None;

@@ -6,7 +6,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Stdout, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
-use mailbend_io::transcript::encode_bytes;
+use mailbend_io::core_bytes::encode_bytes;
 use mailbend_net::tls::{self, TlsStream};
 use rustls::ClientConfig;
 

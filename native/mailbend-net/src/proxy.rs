@@ -2,7 +2,7 @@
 //! API) may use, chosen like curl chooses one for HTTPS. Mail connections
 //! never use a proxy.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 
 use base64ct::{Base64, Encoding};
 use mailbend_io::env::text_var;
@@ -64,8 +64,10 @@ impl Proxy {
         deadline: &Deadline,
     ) -> Result<BoundedStream, NetError> {
         let addrs = resolve_system(&self.host, self.port, deadline)?;
-        let sock =
-            connect_any(&addrs, deadline).map_err(|e| NetError::Proxy(format!("proxy: {e}")))?;
+        let sock = connect_any(&addrs, deadline).map_err(|e| match e {
+            NetError::TimedOut => e,
+            e => NetError::Proxy(format!("proxy: {e}")),
+        })?;
         let mut sock = BoundedStream::new(sock, *deadline);
         sock.write_all(self.connect_request(host, port).as_bytes())
             .map_err(|_| NetError::Proxy("proxy: write failed".to_string()))?;
@@ -103,6 +105,9 @@ fn read_reply_head(sock: &mut BoundedStream) -> Result<Vec<u8>, NetError> {
         }
         match sock.read(&mut byte) {
             Ok(1) => head.push(byte[0]),
+            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return Err(NetError::TimedOut);
+            }
             _ => return Err(NetError::Proxy("proxy: no reply to CONNECT".to_string())),
         }
     }
