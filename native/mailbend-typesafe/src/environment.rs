@@ -7,10 +7,12 @@ use std::ffi::OsString;
 
 use mailbend_io::env::reexec_with;
 
+use crate::settings::KEY_FILE;
+
 /// The only variables kept: the key file, the time budget, and the routing
 /// and trust settings shared with `mailbend-tls`.
 pub const ALLOWED: [&str; 10] = [
-    "MAILBEND_TYPESAFE_KEY_FILE",
+    KEY_FILE,
     "MAILBEND_TIMEOUT_MS",
     "MAILBEND_DOH_URL",
     "MAILBEND_CA_FILE",

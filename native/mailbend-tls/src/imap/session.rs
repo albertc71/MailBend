@@ -58,10 +58,11 @@ pub fn run(
 fn login(conn: &mut Connection, creds: &Credentials) -> Result<(), Exit> {
     conn.write(&login_command(creds))?;
     let reply = conn.quietly(|conn| wait(conn, LOGIN_TAG, false, None))?;
-    if reply.answer != Answer::Tagged(Status::Ok) {
-        return Err(Exit::auth("IMAP login rejected"));
+    match reply.answer {
+        Answer::Tagged(Status::Ok) => Ok(()),
+        Answer::Closed => Err(Exit::protocol("server closed the connection during login")),
+        Answer::Tagged(_) | Answer::Continue => Err(Exit::auth("IMAP login rejected")),
     }
-    Ok(())
 }
 
 /// `L LOGIN "user" "password"` in a buffer wiped on drop. Its capacity
@@ -202,5 +203,51 @@ fn logout(conn: &mut Connection) {
         if conn.emit(&line).is_err() || tagged_status(&line, LOGOUT_TAG).is_some() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    /// Runs `login` against a server that reads the LOGIN line, then sends
+    /// `answer` (if any) and closes the connection.
+    fn login_against(answer: &'static [u8]) -> Result<(), Exit> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let (peer, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(peer);
+            let mut line = Vec::new();
+            reader.read_until(b'\n', &mut line).expect("read LOGIN");
+            reader.get_mut().write_all(answer).expect("answer");
+        });
+        let creds = Credentials {
+            user: Zeroizing::new(b"user@example.com".to_vec()),
+            pass: Zeroizing::new(b"fixture-password".to_vec()),
+        };
+        let mut conn = Connection::new(TcpStream::connect(addr).expect("connect"));
+        let result = login(&mut conn, &creds);
+        drop(conn);
+        server.join().expect("server");
+        result
+    }
+
+    #[test]
+    fn a_rejected_login_is_an_authentication_failure() {
+        assert_eq!(
+            login_against(b"L NO [AUTHENTICATIONFAILED] invalid\r\n"),
+            Err(Exit::auth("IMAP login rejected"))
+        );
+    }
+
+    #[test]
+    fn a_connection_closed_during_login_is_a_protocol_failure() {
+        assert_eq!(
+            login_against(b""),
+            Err(Exit::protocol("server closed the connection during login"))
+        );
     }
 }

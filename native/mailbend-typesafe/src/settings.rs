@@ -21,7 +21,9 @@ pub const HOST: &str = "api.typesafe.ai";
 pub const PORT: u16 = 443;
 pub const PATH: &str = "/v1/systemone";
 
-const KEY_FILE: &str = "MAILBEND_TYPESAFE_KEY_FILE";
+/// The setting naming the key file, kept through the re-execution.
+pub const KEY_FILE: &str = "MAILBEND_TYPESAFE_KEY_FILE";
+
 /// The shortest key accepted: redacting a shorter one from answers could
 /// also hide ordinary text.
 const MIN_KEY: usize = 8;

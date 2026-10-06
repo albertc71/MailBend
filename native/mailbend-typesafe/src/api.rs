@@ -17,6 +17,7 @@ use zeroize::Zeroizing;
 
 use crate::exit::{Exit, Failure};
 use crate::settings::{HOST, PATH, PORT, Settings};
+
 /// TypeSafe's answers are a few kilobytes per question; this bounds them.
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 /// The waits before the second and third attempts (at most two retries).

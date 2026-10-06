@@ -346,6 +346,8 @@ fn other_argument_counts_are_usage_errors() {
         &["a", "b", "c", "d"][..],
         &["a", "b", "c", "d", "e"][..],
         &["read", "b", "c", "d", "e", "f"][..],
+        &["count", "b", "c"][..],
+        &["save", "b", "c"][..],
     ] {
         let out = attach(&work, args);
         assert_eq!(out.status.code(), Some(2));
@@ -447,6 +449,10 @@ fn a_bad_save_writes_nothing() {
     let out = save("", &work.join("missing"), "a", "", b"x");
     let missing = "MAILBEND_DOWNLOAD_DIR does not exist";
     assert!(stderr(&out).contains(missing), "{}", stderr(&out));
+    fs::write(work.join("file"), b"").expect("write");
+    let out = save("", &work.join("file").join("sub"), "a", "", b"x");
+    let not_dir = "cannot resolve MAILBEND_DOWNLOAD_DIR: Not a directory";
+    assert!(stderr(&out).contains(not_dir), "{}", stderr(&out));
     fs::create_dir(download.join(".ssh")).expect("mkdir");
     let out = save("", &download, "a", "", b"x");
     assert!(stderr(&out).contains("holds .ssh"), "{}", stderr(&out));

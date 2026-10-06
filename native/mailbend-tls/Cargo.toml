@@ -11,7 +11,6 @@ publish.workspace = true
 base64ct.workspace = true
 mailbend-io.workspace = true
 mailbend-net.workspace = true
-nix.workspace = true
 rustls.workspace = true
 zeroize.workspace = true
 

@@ -2,6 +2,7 @@
 //! that is not dedicated, and comparing files and reporting OS errors.
 
 use std::ffi::OsStr;
+use std::io::ErrorKind;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -21,8 +22,11 @@ pub fn open_dedicated_directory(
     dir: &[u8],
     setting: &Setting,
 ) -> Result<(PathBuf, OwnedFd), Refusal> {
-    let root = std::fs::canonicalize(Path::new(OsStr::from_bytes(dir)))
-        .map_err(|_| format!("{} does not exist", setting.name))?;
+    let root =
+        std::fs::canonicalize(Path::new(OsStr::from_bytes(dir))).map_err(|e| match e.kind() {
+            ErrorKind::NotFound => format!("{} does not exist", setting.name),
+            _ => format!("cannot resolve {}: {}", setting.name, os_error_text(&e)),
+        })?;
     let bytes = root.as_os_str().as_bytes();
     let directory =
         open_canonical_directory(bytes).map_err(|errno| directory_open_error(errno, setting))?;

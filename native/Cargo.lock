@@ -108,7 +108,6 @@ dependencies = [
  "base64ct",
  "mailbend-io",
  "mailbend-net",
- "nix",
  "rustls",
  "zeroize",
 ]

@@ -128,6 +128,7 @@ name = "mailbend-io"
 version = "0.1.0"
 dependencies = [
  "nix",
+ "zeroize",
 ]
 
 [[package]]
@@ -147,7 +148,6 @@ dependencies = [
  "base64ct",
  "mailbend-io",
  "mailbend-net",
- "nix",
  "rustls",
  "zeroize",
 ]

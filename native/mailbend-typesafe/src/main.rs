@@ -6,9 +6,10 @@
 //! The Bend core builds the request and interprets the answer; this program
 //! only carries it to the fixed endpoint `https://api.typesafe.ai/v1/systemone`
 //! over verified TLS. It retries an overloaded or timed-out TypeSafe twice,
-//! unless the core asks for one attempt with `--once`. The key comes only from MAILBEND_TYPESAFE_KEY_FILE,
-//! and the program first re-executes itself with an allow-listed
-//! environment, so the key never shares a process with the mail password.
+//! unless the core asks for one attempt with `--once`. The key comes only
+//! from MAILBEND_TYPESAFE_KEY_FILE, and the program first re-executes itself
+//! with an allow-listed environment, so the key never shares a process with
+//! the mail password.
 //! A refused request's answer is written to stdout too, as it holds
 //! TypeSafe's reason. Exit statuses are listed in `exit.rs`.
 

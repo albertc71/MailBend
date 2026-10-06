@@ -2,7 +2,7 @@
 //! API) may use, chosen like curl chooses one for HTTPS. Mail connections
 //! never use a proxy.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 
 use base64ct::{Base64, Encoding};
 use mailbend_io::env::text_var;
@@ -18,10 +18,10 @@ const DEFAULT_PROXY_PORT: u16 = 1080;
 /// An HTTP proxy, reached with `CONNECT`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Proxy {
-    pub host: String,
-    pub port: u16,
+    host: String,
+    port: u16,
     /// `user:password` for Basic proxy authentication, percent-decoded.
-    pub credentials: Option<String>,
+    credentials: Option<String>,
 }
 
 impl Proxy {
@@ -70,7 +70,7 @@ impl Proxy {
         })?;
         let mut sock = BoundedStream::new(sock, *deadline);
         sock.write_all(self.connect_request(host, port).as_bytes())
-            .map_err(|_| NetError::Proxy("proxy: write failed".to_string()))?;
+            .map_err(|e| proxy_io_error(&e, "proxy: write failed"))?;
         let reply = read_reply_head(&mut sock)?;
         let accepted = reply.starts_with(b"HTTP/1.") && reply.get(8..10) == Some(&b" 2"[..]);
         if !accepted {
@@ -105,13 +105,21 @@ fn read_reply_head(sock: &mut BoundedStream) -> Result<Vec<u8>, NetError> {
         }
         match sock.read(&mut byte) {
             Ok(1) => head.push(byte[0]),
-            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
-                return Err(NetError::TimedOut);
-            }
-            _ => return Err(NetError::Proxy("proxy: no reply to CONNECT".to_string())),
+            Err(e) => return Err(proxy_io_error(&e, "proxy: no reply to CONNECT")),
+            Ok(_) => return Err(NetError::Proxy("proxy: no reply to CONNECT".to_string())),
         }
     }
     Ok(head)
+}
+
+/// A timed-out read or write is a timeout (which callers may retry); any
+/// other I/O failure with the proxy is reported as `failure`.
+fn proxy_io_error(e: &io::Error, failure: &str) -> NetError {
+    if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) {
+        NetError::TimedOut
+    } else {
+        NetError::Proxy(failure.to_string())
+    }
 }
 
 /// The proxy configured for an HTTPS request to `host`, like curl:
@@ -215,6 +223,17 @@ mod tests {
             proxy.connect_request("::1", 443),
             "CONNECT [::1]:443 HTTP/1.1\r\nHost: [::1]:443\r\n\
              Proxy-Authorization: Basic dTpw\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn proxy_timeouts_are_told_apart_from_failures() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::WouldBlock] {
+            assert_eq!(proxy_io_error(&kind.into(), "x"), NetError::TimedOut);
+        }
+        assert_eq!(
+            proxy_io_error(&ErrorKind::BrokenPipe.into(), "proxy: write failed"),
+            NetError::Proxy("proxy: write failed".to_string())
         );
     }
 

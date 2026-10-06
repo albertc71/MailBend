@@ -213,7 +213,7 @@ pub fn directory_open_error(errno: Errno, setting: &Setting) -> String {
     match errno {
         Errno::ENOSYS => format!("{holds}s need Linux 5.6+ (openat2)"),
         Errno::ELOOP => format!("{name} changed while it was opened"),
-        _ => format!("cannot open {name}"),
+        _ => format!("cannot open {name}: {}", errno.desc()),
     }
 }
 
@@ -413,7 +413,7 @@ mod tests {
         );
         assert_eq!(
             directory_open_error(Errno::EACCES, &ATTACHMENTS),
-            "cannot open MAILBEND_ATTACH_DIR"
+            "cannot open MAILBEND_ATTACH_DIR: Permission denied"
         );
         assert_eq!(
             directory_open_error(Errno::ENOSYS, &DOWNLOADS),

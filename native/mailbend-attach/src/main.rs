@@ -68,7 +68,7 @@ fn run(args: &[OsString]) -> Result<(), Refusal> {
             max.as_bytes(),
             paths.as_bytes(),
         ),
-        [_, dir, path, max] => {
+        [_, dir, path, max] if dir != "count" && dir != "save" => {
             read::read_attachment(dir.as_bytes(), path.as_bytes(), max.as_bytes())
         }
         _ => Err(USAGE.to_string()),
