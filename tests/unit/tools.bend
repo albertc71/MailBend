@@ -776,9 +776,9 @@ def check_reply() -> IO(Unit):
       String.join(T.spec_keys(["B@y", "c <C@z>"]), ",") ++ " " ++
       show_bool(T.key_in("b@y", ["a", "b@y"])) ++ " " ++ show_bool(T.key_in("b", [])))
     IO.print(String.join(T.fresh(["A <a@x>", "a@X", "b@y", "C <c@z>", "B@Y"], ["c@z"]), "|"))
-    IO.print(T.body_text(M.Parts{"plain", "<b>html</b>", []}) ++ "|" ++
-      T.body_text(M.Parts{"", "<p>Hi &amp; bye</p>", []}) ++ "|" ++
-      T.body_text(M.Parts{"", "", []}))
+    IO.print(M.readable_text(M.Parts{"plain", "<b>html</b>", []}) ++ "|" ++
+      M.readable_text(M.Parts{"", "<p>Hi &amp; bye</p>", []}) ++ "|" ++
+      M.readable_text(M.Parts{"", "", []}))
     check_reply_headers(reply_headers())
     IO.print(T.cut_note(True{}) ++ "[" ++ T.cut_note(False{}) ++ "]")
     IO.print(

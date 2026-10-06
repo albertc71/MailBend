@@ -705,6 +705,20 @@ def squeeze(s: String, sp: Bool) -> String:
 def html_text(+html: String) -> String:
   squeeze(entities(strip_out(strip_go(html, Strip{"", False{}}))), False{})
 
+# A def, not a Bool.pick, so the HTML is stripped only when there is no
+# text/plain part.
+def readable_text.if(no_text: Bool, text: String, html: String) -> String:
+  match no_text:
+    case True{}:
+      html_text(html)
+    case False{}:
+      text
+
+# A message's readable text: its text/plain part, else its HTML as text.
+def readable_text(p: Parts) -> String:
+  Parts{+text, html, _} = p
+  readable_text.if(String.is_empty(text), text, html)
+
 # Composing
 # =========
 

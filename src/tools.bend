@@ -1098,27 +1098,16 @@ def atts_json(xs: List<&2, M.Att>) -> List<&2, J.Json>:
       J.obj([J.kv("filename", J.str(n)), J.kv("content_type", J.str(t)), J.kv("size", J.num(s))]) <>
         atts_json(r)
 
-def text_or_html.if(no_text: Bool, text: String, html: String) -> String:
-  match no_text:
-    case True{}:
-      M.html_text(html)
-    case False{}:
-      text
-
-# A message's text: its text/plain part, else its HTML as text.
-def text_or_html(+text: String, html: String) -> String:
-  text_or_html.if(String.is_empty(text), text, html)
-
 def get_json(
   m: I.Msg,
   folder: String,
   uidv: Maybe<&2, U32>,
   max: U32,
   +hs: List<&2, M.Hdr>,
-  p: M.Parts
+  +p: M.Parts
 ) -> Out:
   I.Msg{uid, +flags, date, +size, headers, body} = m
-  M.Parts{text, +html, atts} = p
+  M.Parts{_, html, atts} = p
   ok_obj([
     J.kv("folder", J.str(folder)),
     J.kv("uid", J.num(uid)),
@@ -1137,7 +1126,7 @@ def get_json(
     J.kv("message_id", J.str(M.header(hs, "message-id"))),
     J.kv("in_reply_to", J.str(M.header(hs, "in-reply-to"))),
     J.kv("references", J.str(M.header(hs, "references"))),
-    J.kv("text", J.str(text_or_html(text, html))),
+    J.kv("text", J.str(M.readable_text(p))),
     J.kv("html_available", J.bool(Bool.not(String.is_empty(html)))),
     J.kv("attachments", J.arr(atts_json(atts)))
   ])
@@ -3161,10 +3150,6 @@ def addr_split(
 def addr_list(+s: String) -> List<&2, String>:
   addr_split(s, "", False{}, 0, False{}, False{}, [])
 
-def body_text(p: M.Parts) -> String:
-  M.Parts{text, html, a} = p
-  text_or_html(text, html)
-
 def decoded(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
@@ -3219,7 +3204,7 @@ def reply_cc(all: Bool, +hs: List<&2, M.Hdr>, me: String, replied: List<&2, Stri
 # The reply's text above the quoted original.
 def reply_body(args: J.Json, +hs: List<&2, M.Hdr>, p: M.Parts, cut: Bool) -> String:
   str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_text(hs, "date") ++ ", " ++
-    hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(body_text(p))) ++
+    hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(M.readable_text(p))) ++
     cut_note(cut)
 
 def reply_want(
