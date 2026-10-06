@@ -1355,15 +1355,6 @@ def has_attr.lowered(attrs: List<&2, String>, +want: String) -> Bool:
 def has_attr(attrs: List<&2, String>, a: String) -> Bool:
   has_attr.lowered(attrs, String.to_lower(a))
 
-# The first mailbox carrying a special-use attribute such as "\\Trash".
-def special(fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
-  match fs:
-    case Nil{}:
-      None{}
-    case Folder{name, d, attrs} <> t:
-      Bool.pick(Maybe<&2, String>, has_attr(attrs, attr), Some{name},
-        special(t, attr))
-
 # Whether two mailbox names are the same mailbox: only INBOX is matched in
 # any case, as IMAP requires (other names may differ only in case, e.g.
 # trash and Trash).
@@ -1426,17 +1417,6 @@ def ok_code_text(lines: List<&2, RLine>, name: String) -> Maybe<&2, String>:
 # The number of a "* OK [NAME n]" response code, e.g. UIDVALIDITY.
 def ok_code(lines: List<&2, RLine>, name: String) -> Maybe<&2, U32>:
   Maybe.bind(&2, String, U32, ok_code_text(lines, name), U32.read)
-
-# Whether a line is a "* <n> EXISTS" reply.
-def is_exists(+text: String) -> Bool:
-  String.ends_with(String.to_upper(text), " EXISTS") &&
-    String.starts_with(text, "* ")
-
-# The count of the first "* <n> EXISTS" line.
-def exists(lines: List<&2, RLine>) -> Maybe<&2, U32>:
-  Maybe.bind(&2, String, U32,
-    first_line(~(text => key => is_exists(text)), lines, ""),
-    text => U32.read(before_space(String.drop(text, 2n))))
 
 # Fetched messages
 # ----------------

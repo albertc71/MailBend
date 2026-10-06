@@ -131,9 +131,8 @@ def check_transcript(+lines: List<&2, I.RLine>) -> IO(Unit):
     IO.print(String.join(I.caps(lines), " "))
     IO.print(Bool.show(I.has_cap(I.caps(lines), "IDLE")))
     IO.print(show_folders(I.folders(lines)))
-    IO.print(Maybe.default(&2, String, I.special(I.folders(lines), "\\Trash"), "-"))
     IO.print(Maybe.default(&2, String, I.named(I.folders(lines), "inbox"), "-") ++ " " ++ Maybe.default(&2, String, I.named(I.folders(lines), "deleted messages"), "-") ++ " " ++ Maybe.default(&2, String, I.named(I.folders(lines), "Work"), "-"))
-    IO.print(U32.show(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0)) ++ " " ++ U32.show(Maybe.default(&2, U32, I.exists(lines), 0)))
+    IO.print(U32.show(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0)))
     IO.print(show_uids(I.search_uids(lines)))
     IO.print(show_messages(I.fetched(lines)))
     IO.print(I.status(lines, 5) ++ " " ++ I.status(lines, 6) ++ " [" ++ I.status(lines, 7) ++ "]")
@@ -334,9 +333,7 @@ def check_responses(+lines: List<&2, I.RLine>) -> IO(Unit):
       Bool.show(I.has_cap(I.caps(lines), "MOVE")) ++ " " ++
       Bool.show(I.has_cap(I.caps(lines), "move")))
     IO.print(show_folders(I.folders(lines)) ++ " " ++ show_folders(I.subscribed(lines)))
-    IO.print(Maybe.default(&2, String, I.special(I.folders(lines), "\\junk"), "-") ++
-      " " ++ Maybe.default(&2, String, I.special(I.folders(lines), "\\Trash"), "-") ++
-      " " ++ Maybe.default(&2, String, I.named(I.folders(lines), "INBOX"), "-") ++
+    IO.print(Maybe.default(&2, String, I.named(I.folders(lines), "INBOX"), "-") ++
       " " ++ Maybe.default(&2, String, I.named(I.folders(lines), "work"), "-") ++
       " " ++ Bool.show(I.has_attr(["\\Trash"], "\\TRASH")) ++
       " " ++ Bool.show(I.same_name("inbox", "INBOX")) ++
@@ -344,7 +341,6 @@ def check_responses(+lines: List<&2, I.RLine>) -> IO(Unit):
     IO.print(U32.show(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0)) ++
       " " ++ U32.show(Maybe.default(&2, U32, I.ok_code(lines, "UIDNEXT"), 0)) ++
       " " ++ U32.show(Maybe.default(&2, U32, I.ok_code(lines, "HIGHESTMODSEQ"), 0)) ++
-      " " ++ U32.show(Maybe.default(&2, U32, I.exists(lines), 0)) ++
       " " ++ show_uids(I.search_uids(lines)) ++ ".")
     IO.print(show_full_messages(I.fetched(lines)))
     IO.print(show_full_messages(I.flag_fetches(lines)))
@@ -405,9 +401,8 @@ def main() -> IO(Unit):
 #|IMAP4REV1 MOVE UIDPLUS IDLE
 #|True
 #|INBOX|/|\HasNoChildren;Deleted Messages|/|\HasNoChildren,\Trash;Work|/|\HasChildren;日本|/|\HasNoChildren;
-#|Deleted Messages
 #|INBOX - Work
-#|1700000001 3
+#|1700000001
 #|2 5 7 
 #|5 \Seen,\Flagged 26-Sep-2026 10:00:00 +0000 42 [a5 OK spoof\r\n* BYE x\r\n];
 #|OK NO []
@@ -430,8 +425,8 @@ def main() -> IO(Unit):
 #|* G <L>{0:};|
 #|IMAP4REV1 MOVE True False
 #|Top||\Noselect;Work|/|;Inbox|.|\Junk; Sub "q"|/|;
-#|Inbox - Inbox - True True False
-#|0 12 0 4 1 3 .
+#|Inbox - True True False
+#|0 12 0 1 3 .
 #|9|||0|From: "q"|;4|\Seen,[x],a[b c]d||7|h:v|hi;6|\Seen||0||;
 #|9|||0|From: "q"|;4|\Seen,[x],a[b c]d||7|h:v|hi;6|\Seen||0||;
 #|OK BAD NO [[PARSE] what] [] [] False True True False
