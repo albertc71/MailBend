@@ -1,6 +1,6 @@
 [package]
 name = "mailbend-io"
-description = "Local helpers shared by MailBend's native programs: the transcript byte encoding and no-symlink file opening (no network)"
+description = "Local helpers shared by MailBend's native programs: environment settings, no-symlink file opening, stderr reports and the transcript byte encoding (no network)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

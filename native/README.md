@@ -21,13 +21,15 @@ The Rust workspace (`native/Cargo.toml`) pins Rust 1.99, its MSRV, in
 up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
 native-tls and other TLS stacks from the dependency tree.
 `mailbend-attach` depends only on `nix` and the local, network-free
-`mailbend-io` crate (the shared output encoding and `openat2` helpers).
+`mailbend-io` crate (environment settings, `openat2` helpers, stderr reports
+and the shared output encoding).
 Tests run with `cargo test --locked`.
 
 ## Layout
 
-- `mailbend-io/`: the stdout byte encoding and `openat2` helpers (no
-  network), shared by both programs.
+- `mailbend-io/`: `env` (environment settings), `fs` (`openat2` helpers),
+  `report` (stderr reports) and `transcript` (the stdout byte encoding); no
+  network, shared by both programs.
 - `mailbend-net/`: `connect` (deadline, system DNS, address fallback),
   `tls` (the one verified client configuration), and the DoH client:
   `doh` built on `dns`, `http`, `url` and `proxy`.

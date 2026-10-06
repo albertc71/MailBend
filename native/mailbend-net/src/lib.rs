@@ -1,4 +1,4 @@
-//! What MailBend's network helpers share: the one verified TLS
+//! The network code used by `mailbend-tls`: the one verified TLS
 //! configuration, TCP connections under a single deadline, and the
 //! DNS-over-HTTPS client with its parsers.
 
