@@ -8,7 +8,7 @@ Usage:
         [--cert-name server] [--silent-port] [--delim /] [--nil-delim INBOX]
         [--drop-after COPY] [--drop-unanswered COPY] [--reject SUBSCRIBE]
         [--permanent-flags '\\Seen,\\Flagged' [--session-flags] | --no-permanent-flags]
-        [--noisy-store] [--fetch-no-flags UID[,UID]]
+        [--noisy-store] [--fetch-no-flags UID[,UID]] [--file-sent MAILBOX]
 
 Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
 127.0.0.1 with OS-assigned ports, prints one line
@@ -34,7 +34,9 @@ server that keeps them for the session only may (RFC 3501 7.1).
 FETCH updates (one by sequence number only, one with the UID twice) and
 follows each FETCH answer with a duplicate, an update without FLAGS and an
 update by sequence number only, with no flags. --fetch-no-flags UID[,UID]
-leaves FLAGS out of the FETCH answers for those UIDs.
+leaves FLAGS out of the FETCH answers for those UIDs. --file-sent MAILBOX
+appends every message accepted over SMTP to MAILBOX, seen, as a provider
+that files sent mail itself does.
 
 This file speaks just enough of IMAP4rev1 and ESMTP to drive the MailBend
 transport and Bend parser; it is not a general-purpose mail server.
@@ -202,6 +204,7 @@ class State:
         self.noisy_store = False
         self.fetch_no_flags = set()
         self.cut_goodbye = False
+        self.file_sent = None
         self.seen = {}
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
@@ -1462,6 +1465,11 @@ class SMTPSession:
         with self.state.lock:
             self.state.data['sent'].append({'mail_from': self.mail_from, 'rcpt_to': list(self.rcpt_to), 'data': data})
             n = len(self.state.data['sent'])
+            filed = self.state.data['mailboxes'].get(self.state.file_sent)
+            if filed is not None:
+                filed['messages'].append({'uid': filed['uidnext'], 'flags': ['\\Seen'], 'raw': data,
+                                          'internaldate': datetime.now(timezone.utc).strftime('%d-%b-%Y %H:%M:%S +0000')})
+                filed['uidnext'] += 1
             self.state.save()
         self.mail_from, self.rcpt_to = None, []
         self.send(f'250 2.0.0 OK queued as FAKE{n}\r\n')
@@ -1520,6 +1528,7 @@ def main():
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     ap.add_argument('--cut-goodbye', action='store_true',
                     help='cut the LOGOUT and QUIT replies off mid-line, then close')
+    ap.add_argument('--file-sent', help='append every message accepted over SMTP to this mailbox, seen')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1541,6 +1550,7 @@ def main():
     state.noisy_store = args.noisy_store
     state.fetch_no_flags = args.fetch_no_flags
     state.cut_goodbye = args.cut_goodbye
+    state.file_sent = args.file_sent
     logger = Logger(args.log)
     caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)

@@ -1,12 +1,15 @@
 # MailBend: the safety laws. Each is a claim about the pure command plans
-# in src/ops.bend, which are the only way the tools build IMAP commands.
-# PROOF.bend proves every law; `bend PROOF.bend` is the gate. The laws cover
-# these plans and their rendering only, not the native helpers, TLS, MIME
-# parsing, agent behaviour or the runtime configuration.
+# in src/ops.bend, which are the only way the tools build IMAP commands, or
+# about the SMTP envelope in src/smtp.bend, which is built only by
+# S.outbound. PROOF.bend proves every law; `bend PROOF.bend` is the gate.
+# The laws cover these plans, the envelope and their rendering only, not
+# the native helpers, TLS, MIME parsing, agent behaviour or the runtime
+# configuration.
 
 import Base
 import ./src/imap.bend as I
 import ./src/ops.bend as Ops
+import ./src/smtp.bend as S
 
 # Tool classes
 # ------------
@@ -496,6 +499,45 @@ law draft_never_removes:
   {Bool.or(
     I.any_expunges(Ops.plan_draft(drafts, msg)),
     I.any_marks_deleted(Ops.plan_draft(drafts, msg))) == False{} : Bool}
+
+# Sending
+# -------
+
+# The SMTP envelope is built only by S.outbound. With an allowlist, it is
+# refused whenever any recipient is not allowed, wherever that recipient
+# stands in the list; without one, it is the plain envelope. A Sent copy is
+# one APPEND of the sent message, seen, to the Sent folder, and nothing else.
+
+# LAW: for every allowlist, recipient list and position, an unlisted
+# recipient means no envelope at all
+law allowlist_refuses_unlisted:
+  for allow: List<&2, String>
+  for before: List<&2, String>
+  for rcpt: String
+  for after: List<&2, String>
+  for from: String
+  for msg: String
+  for unlisted: {S.allowed(allow, rcpt) == False{} : Bool}
+  {S.outbound(allow, List.append(&2, String, before, Con{rcpt, after}), from, msg) ==
+    None{} : Maybe<&2, String>}
+
+# LAW: without an allowlist, the envelope is the plain one for every
+# recipient list
+law no_allowlist_is_unchanged:
+  for rcpts: List<&2, String>
+  for from: String
+  for msg: String
+  {S.outbound([], rcpts, from, msg) == Some{S.envelope(from, rcpts, msg)}
+    : Maybe<&2, String>}
+
+# LAW: a Sent copy changes mail only by one APPEND of the message to Sent,
+# marked seen, and changes no folder
+law sent_copy_only_appends:
+  for sent: String
+  for msg: String
+  ({Ops.mail_changes(Ops.plan_sent_copy(sent, msg)) ==
+      [I.CAppend{sent, [I.FSeen{}], msg}] : List<&2, I.Cmd>} &
+   {Ops.mailbox_changes(Ops.plan_sent_copy(sent, msg)) == [] : List<&2, I.Cmd>})
 
 # Folders
 # -------

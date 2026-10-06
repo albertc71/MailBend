@@ -1,6 +1,8 @@
-//! The pure parts of `mailbend-attach`: argument checks, path relativisation
-//! and error messages. Everything that touches the file system is in
-//! `main.rs`.
+//! The pure parts of `mailbend-attach`: argument checks, path relativisation,
+//! send counting and error messages. Everything that touches the file system
+//! is in `main.rs`.
+
+use std::fmt;
 
 use nix::errno::Errno;
 
@@ -11,17 +13,75 @@ pub const MAX_ATTACHMENT: u64 = 25 << 20;
 /// attachment directory: every file inside it could be mailed.
 pub const SENSITIVE: [&str; 5] = [".ssh", ".gnupg", ".aws", ".config", ".git"];
 
+/// A positive decimal number, digits only.
+fn parse_positive(arg: &[u8]) -> Option<u64> {
+    let digits = std::str::from_utf8(arg).ok()?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse::<u64>().ok().filter(|&v| v > 0)
+}
+
 /// The byte limit argument: a positive decimal number, capped at
 /// `MAX_ATTACHMENT`.
 pub fn parse_max(arg: &[u8]) -> Result<u64, String> {
-    let bad = || format!("bad byte limit {}", show(arg));
-    let digits = std::str::from_utf8(arg).map_err(|_| bad())?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(bad());
+    parse_positive(arg)
+        .map(|v| v.min(MAX_ATTACHMENT))
+        .ok_or_else(|| format!("bad byte limit {}", show(arg)))
+}
+
+/// The daily send limit argument: a positive decimal number.
+pub fn parse_limit(arg: &[u8]) -> Result<u64, String> {
+    parse_positive(arg).ok_or_else(|| format!("bad send limit {}", show(arg)))
+}
+
+/// The UTC day argument, `YYYY-MM-DD`, which is also the counter's line for
+/// one send that day.
+pub fn parse_day(arg: &[u8]) -> Result<&[u8], String> {
+    let shaped = arg.len() == 10
+        && arg.iter().enumerate().all(|(i, &b)| match i {
+            4 | 7 => b == b'-',
+            _ => b.is_ascii_digit(),
+        });
+    if shaped {
+        Ok(arg)
+    } else {
+        Err(format!("bad day {}", show(arg)))
     }
-    match digits.parse::<u64>() {
-        Ok(0) | Err(_) => Err(bad()),
-        Ok(v) => Ok(v.min(MAX_ATTACHMENT)),
+}
+
+/// How many sends the counter's contents (one day per line) hold for `day`.
+pub fn sends_on(counter: &[u8], day: &[u8]) -> u64 {
+    let lines = counter.split(|&b| b == b'\n');
+    lines.filter(|&line| line == day).count() as u64
+}
+
+/// The answer to a reservation, printed as `ok <n>` or `full <n>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reservation {
+    /// One more send was counted; `n` counts it too.
+    Reserved(u64),
+    /// The limit was already reached with `n` sends; nothing was counted.
+    Full(u64),
+}
+
+impl Reservation {
+    /// The reservation when `counted` sends are already counted today.
+    pub fn new(counted: u64, limit: u64) -> Self {
+        if counted < limit {
+            Self::Reserved(counted + 1)
+        } else {
+            Self::Full(counted)
+        }
+    }
+}
+
+impl fmt::Display for Reservation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Reserved(n) => write!(f, "ok {n}"),
+            Self::Full(n) => write!(f, "full {n}"),
+        }
     }
 }
 
@@ -133,6 +193,51 @@ mod tests {
                 Err(format!("bad byte limit {bad}"))
             );
         }
+    }
+
+    #[test]
+    fn send_limit_is_positive_decimal_and_uncapped() {
+        assert_eq!(parse_limit(b"3"), Ok(3));
+        assert_eq!(parse_limit(b"999999999999"), Ok(999_999_999_999));
+        for bad in ["", "0", "-1", "+5", " 5", "1e3"] {
+            assert_eq!(
+                parse_limit(bad.as_bytes()),
+                Err(format!("bad send limit {bad}"))
+            );
+        }
+    }
+
+    #[test]
+    fn days_are_yyyy_mm_dd() {
+        assert_eq!(parse_day(b"2026-10-06"), Ok(&b"2026-10-06"[..]));
+        for bad in [
+            "",
+            "2026-1-06",
+            "2026/10/06",
+            "2026-10-06\n",
+            "2026-10-0x",
+            "12026-10-06",
+        ] {
+            assert_eq!(parse_day(bad.as_bytes()), Err(format!("bad day {bad}")));
+        }
+    }
+
+    #[test]
+    fn only_lines_of_the_day_count() {
+        let counter = b"2026-10-05\n2026-10-06\n2026-10-06\n2026-10-0\nx\n2026-10-06";
+        assert_eq!(sends_on(counter, b"2026-10-06"), 3);
+        assert_eq!(sends_on(counter, b"2026-10-05"), 1);
+        assert_eq!(sends_on(b"", b"2026-10-06"), 0);
+    }
+
+    #[test]
+    fn a_reservation_fits_only_below_the_limit() {
+        assert_eq!(Reservation::new(0, 1), Reservation::Reserved(1));
+        assert_eq!(Reservation::new(2, 3), Reservation::Reserved(3));
+        assert_eq!(Reservation::new(3, 3), Reservation::Full(3));
+        assert_eq!(Reservation::new(5, 3), Reservation::Full(5));
+        assert_eq!(Reservation::Reserved(3).to_string(), "ok 3");
+        assert_eq!(Reservation::Full(3).to_string(), "full 3");
     }
 
     #[test]

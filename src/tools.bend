@@ -64,6 +64,17 @@ def ok_obj(kvs: List<&2, J.Json>) -> Out:
 def pure_out(o: Out) -> IO(Out):
   IO.pure(Out, o)
 
+def pure_str(s: String) -> IO(String):
+  IO.pure(String, s)
+
+# Adds fields to a successful result object.
+def with_fields(o: Out, extra: List<&2, J.Json>) -> Out:
+  match o:
+    case Ok{J.JObj{items}}:
+      Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
+    case _:
+      o
+
 # A check's problem ("" for none) as a Result, so checks chain in `do`.
 def checked(problem: String) -> Result<&2, &2, String, Unit>:
   match problem:
@@ -157,6 +168,133 @@ def mode() -> IO(Mode):
     r : Flag <- flag("MAILBEND_READ_ONLY")
     d : Flag <- flag("MAILBEND_DRAFTS_ONLY")
     return mode_of(r, d)
+
+# Send settings
+# -------------
+
+# What sending must also do: keep a Sent copy; refuse recipients outside
+# the allowlist (empty for none); and stay within the daily limit (0 for
+# none), counted in a file in `state_dir`. Only sending reads them, so a bad
+# value refuses every send and leaves drafts and reads alone.
+type Sending is Data:
+  Sending{save_sent: Bool, allow: List<&2, String>, limit: U32, state_dir: String}
+
+def Sends() -> Data:
+  Result<&2, &2, String, Sending>
+
+def flag_on(f: Flag) -> Result<&2, &2, String, Bool>:
+  match f:
+    case FlagOn{}:
+      Done{True{}}
+    case FlagOff{}:
+      Done{False{}}
+    case FlagBad{m}:
+      Fail{m}
+
+# A bare address, or "@" and a domain (written as the domain of an address).
+def allow_entry_ok(+entry: String) -> Bool:
+  match entry:
+    case SCon{'@', domain}:
+      M.addr_ok("x" ++ entry) && String.eq(M.addr_spec("x" ++ entry), "x" ++ entry)
+    case _:
+      M.addr_ok(entry) && String.eq(M.addr_spec(entry), entry)
+
+def allow_entry.if(ok: Bool, entry: String) -> Result<&2, &2, String, String>:
+  match ok:
+    case True{}:
+      Done{entry}
+    case False{}:
+      Fail{"MAILBEND_ALLOWED_RECIPIENTS: \"" ++ entry ++ "\" is neither an address like " ++
+        "name@example.com nor a domain like @example.com"}
+
+def allow_entry(+entry: String) -> Result<&2, &2, String, String>:
+  allow_entry.if(allow_entry_ok(entry), entry)
+
+def allow_entries(es: List<&2, String>) -> Result<&2, &2, String, List<&2, String>>:
+  match es:
+    case Nil{}:
+      Done{[]}
+    case e <> rest:
+      do Result<&2, &2, String, List<&2, String>>:
+        entry : String <- allow_entry(String.to_lower(String.trim(e)))
+        entries : List<&2, String> <- allow_entries(rest)
+        return entry <> entries
+
+# MAILBEND_ALLOWED_RECIPIENTS: comma-separated entries, lower-cased; empty
+# for no allowlist. One malformed entry (an empty one too) refuses it all.
+def allowlist(+v: String) -> Result<&2, &2, String, List<&2, String>>:
+  match v:
+    case SNil{}:
+      Done{[]}
+    case _:
+      allow_entries(String.split(v, ','))
+
+def bad_limit() -> String:
+  "MAILBEND_MAX_SENDS_PER_DAY must be a positive whole number"
+
+def send_limit.put(n: Maybe<&2, U32>) -> Result<&2, &2, String, U32>:
+  match n:
+    case Some{+k}:
+      Bool.pick(Result<&2, &2, String, U32>, U32.is_zero(k), Fail{bad_limit()}, Done{k})
+    case None{}:
+      Fail{bad_limit()}
+
+# MAILBEND_MAX_SENDS_PER_DAY: a positive number; empty for no limit (0).
+def send_limit(+v: String) -> Result<&2, &2, String, U32>:
+  match v:
+    case SNil{}:
+      Done{0}
+    case _:
+      send_limit.put(U32.read(v))
+
+# $XDG_STATE_HOME/mailbend, else ~/.local/state/mailbend; a relative
+# XDG_STATE_HOME or HOME is ignored, as the XDG base directory spec says.
+# "" when neither is usable.
+def state_home(+xdg: String, +home: String) -> String:
+  match xdg:
+    case SCon{'/', t}:
+      xdg ++ "/mailbend"
+    case _:
+      match home:
+        case SCon{'/', t}:
+          home ++ "/.local/state/mailbend"
+        case _:
+          ""
+
+# The directory of the send counter: MAILBEND_STATE_DIR, else state_home.
+def state_dir(+dir: String, xdg: String, home: String) -> Result<&2, &2, String, String>:
+  match dir:
+    case SNil{}:
+      Done{state_home(xdg, home)}
+    case SCon{'/', t}:
+      Done{dir}
+    case _:
+      Fail{"MAILBEND_STATE_DIR must be an absolute path"}
+
+def sending_of(
+  save: String,
+  allow: String,
+  max: String,
+  dir: String,
+  xdg: String,
+  home: String
+) -> Sends():
+  do Result<&2, &2, String, Sending>:
+    save_sent : Bool <- flag_on(flag_value("MAILBEND_SAVE_SENT", save))
+    entries : List<&2, String> <- allowlist(allow)
+    limit : U32 <- send_limit(max)
+    state : String <- state_dir(dir, xdg, home)
+    return Sending{save_sent, entries, limit, state}
+
+def sending() -> IO(Sends()):
+  do IO<Sends()>:
+    save : String <- env_or("MAILBEND_SAVE_SENT", "")
+    allow : String <- env_or("MAILBEND_ALLOWED_RECIPIENTS", "")
+    max : String <- env_or("MAILBEND_MAX_SENDS_PER_DAY", "")
+    dir : String <- env_or("MAILBEND_STATE_DIR", "")
+    xdg : String <- env_or("XDG_STATE_HOME", "")
+    home : String <- env_or("HOME", "")
+    return sending_of(save, allow, max, dir, xdg, home)
 
 # Running the helper
 # ------------------
@@ -1724,13 +1862,13 @@ def mark_result(
     case _:
       flag_out(p, plan, uids, folder, mark)
 
-def mark_checked.run(+uids: List<&2, U32>, +folder: String, +mark: Mark, uidv: U32) -> IO(Out):
+def mark_uids.run(+uids: List<&2, U32>, +folder: String, +mark: Mark, uidv: U32) -> IO(Out):
   +plan = mark_plan(uids, folder, mark, uidv)
   do IO<Out>:
     p : Proc <- imap_proc(plan)
     return mark_result(p, plan, uids, folder, mark)
 
-def mark_checked(
+def mark_uids.if(
   missing: Bool,
   uids: List<&2, U32>,
   folder: String,
@@ -1741,14 +1879,14 @@ def mark_checked(
     case True{}:
       pure_out(Err{uidv_missing()})
     case False{}:
-      mark_checked.run(uids, folder, mark, uidv)
+      mark_uids.run(uids, folder, mark, uidv)
 
 def mark_uids(u: Uids(), folder: String, mark: Mark, +uidv: U32) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      mark_checked(U32.is_zero(uidv), uids, folder, mark, uidv)
+      mark_uids.if(U32.is_zero(uidv), uids, folder, mark, uidv)
 
 def t_mark(+args: J.Json, mark: Mark) -> IO(Out):
   mark_uids(uids_arg(args), folder_arg(args), mark, uidv_arg(args))
@@ -1988,7 +2126,7 @@ def trash_found(r: Run(), folder: String, uids: List<&2, U32>, +uidv: U32) -> IO
     case Done{+lines}:
       trash_found.if(uidv_problem(lines, uidv), lines, folder, uids, uidv)
 
-def trash_checked(missing: Bool, +folder: String, uids: List<&2, U32>, uidv: U32) -> IO(Out):
+def trash_uids.if(missing: Bool, +folder: String, uids: List<&2, U32>, uidv: U32) -> IO(Out):
   match missing:
     case True{}:
       pure_out(Err{uidv_missing()})
@@ -2002,7 +2140,7 @@ def trash_uids(u: Uids(), folder: String, +uidv: U32) -> IO(Out):
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      trash_checked(U32.is_zero(uidv), folder, uids, uidv)
+      trash_uids.if(U32.is_zero(uidv), folder, uids, uidv)
 
 def t_trash(+args: J.Json) -> IO(Out):
   trash_uids(uids_arg(args), folder_arg(args), uidv_arg(args))
@@ -2680,6 +2818,15 @@ def max_attachment() -> U32:
 def pure_att(a: Attachment()) -> IO(Attachment()):
   IO.pure(Attachment(), a)
 
+# mailbend-attach's own message.
+def attach_msg(err: String) -> String:
+  strip_prefix(helper_msg(err), "mailbend-attach: ")
+
+# Like the TLS helper, mailbend-attach is only started from an absolute path.
+def attach_helper_refusal() -> String:
+  "MAILBEND_ATTACH_HELPER must be the absolute path of mailbend-attach " ++
+    "(scripts/mailbend sets it)"
+
 def att_proc(p: Proc, name: String, ctype: String) -> Attachment():
   match p:
     case ProcOk{code, out, err}:
@@ -2687,7 +2834,7 @@ def att_proc(p: Proc, name: String, ctype: String) -> Attachment():
         case 0:
           Done{M.Attach{name, ctype, out}}
         case _:
-          Fail{strip_prefix(helper_msg(err), "mailbend-attach: ")}
+          Fail{attach_msg(err)}
     case _:
       Fail{"cannot run mailbend-attach: " ++ proc_failure(p)}
 
@@ -2718,9 +2865,7 @@ def att_at(
     case SCon{'/', t}:
       att_read(helper, dir, path, name, ctype, budget)
     case _:
-      pure_att(Fail{
-        "MAILBEND_ATTACH_HELPER must be the absolute path of mailbend-attach " ++
-          "(scripts/mailbend sets it)"})
+      pure_att(Fail{attach_helper_refusal()})
 
 # Attachments come only from MAILBEND_ATTACH_DIR and are off without it: an
 # agent tricked by a message must not mail out files such as
@@ -2841,9 +2986,10 @@ def atts_collect(rs: List<&2, Attachment()>) -> Attachments():
 # Stamps and drafts
 # -----------------
 
-# A date, a unique token (for Message-ID and the MIME boundary).
+# A date, a unique token (for Message-ID and the MIME boundary), and the
+# UTC day (YYYY-MM-DD) a send counts against.
 type Stamp is Data:
-  Stamp{date: String, token: String}
+  Stamp{date: String, token: String, day: String}
 
 # What the tools want composed; Bcc goes only into the SMTP envelope.
 type Want is Data:
@@ -2874,7 +3020,7 @@ def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
       0
 
 def stamp_of(+secs: U32, a: U32, b: U32) -> Stamp:
-  Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b)}
+  Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b), M.iso_date(secs)}
 
 def stamp() -> IO(Stamp):
   do IO<Stamp>:
@@ -2893,7 +3039,7 @@ def domain_of(addr: String) -> String:
 # SMTP envelope.
 def draft_of(w: Want, +from: String, st: Stamp, keep_bcc: Bool) -> M.Draft:
   Want{to, cc, bcc, subject, text, irt, refs, atts, draft} = w
-  Stamp{date, token} = st
+  Stamp{date, token, day} = st
   msgid = "<" ++ token ++ "@" ++ domain_of(from) ++ ">"
   M.Draft{from, to, cc, Bool.pick(List<&2, String>, keep_bcc, bcc, []), subject, text, date,
     msgid, irt, refs, atts}
@@ -2903,8 +3049,12 @@ def msgid_of(d: M.Draft) -> String:
   msgid
 
 def boundary_of(st: Stamp) -> String:
-  Stamp{date, token} = st
+  Stamp{date, token, day} = st
   "mailbend-" ++ token
+
+def day_of(st: Stamp) -> String:
+  Stamp{date, token, day} = st
+  day
 
 def all_rcpts(w: Want) -> List<&2, String>:
   Want{to, cc, bcc, s, x, i, r, a, d} = w
@@ -2921,8 +3071,8 @@ def specs(xs: List<&2, String>) -> List<&2, String>:
     case x <> t:
       M.addr_spec(x) <> specs(t)
 
-# Send or save as draft
-# ---------------------
+# Saving drafts
+# -------------
 
 # "[APPENDUID <uidvalidity> <uid>]" in the APPEND's tagged OK.
 def appenduid(ws: List<&2, String>) -> J.Json:
@@ -2939,7 +3089,7 @@ def appended_uid(lines: List<&2, I.RLine>) -> J.Json:
 def draft_saved(r: Run(), drafts: String, msgid: String) -> Out:
   match r:
     case Fail{m}:
-      Err{m}
+      Err{"failed or unconfirmed (check " ++ drafts ++ " before saving again): " ++ m}
     case Done{lines}:
       ok_obj([
         J.kv("ok", J.bool(True{})),
@@ -2988,6 +3138,235 @@ def sent_out(o: Out, msgid: String, n: U32) -> Out:
         J.kv("server_reply", reply)
       ])
 
+# The Sent copy
+# -------------
+
+# With MAILBEND_SAVE_SENT=1, a sent message is appended to the Sent folder,
+# unless the server already filed it there: a read-only search for its
+# Message-ID, then an exact comparison of the fetched Message-ID headers
+# (SEARCH HEADER matches substrings). What happened is reported beside the
+# successful send as `sent_copy`; a failed copy does not make the send fail.
+
+def sent_copy.fin(r: Run(), sent: String) -> String:
+  match r:
+    case Fail{m}:
+      "failed or unconfirmed (check " ++ sent ++ " before saving again): " ++ m
+    case Done{lines}:
+      "saved to " ++ sent
+
+def sent_copy.run(+sent: String, msg: String) -> IO(String):
+  do IO<String>:
+    r : Run() <- imap_run(Ops.plan_sent_copy(sent, msg))
+    return sent_copy.fin(r, sent)
+
+def msg_id(m: I.Msg) -> String:
+  I.Msg{uid, flags, date, size, headers, body} = m
+  String.trim(M.header(M.headers(headers), "message-id"))
+
+def has_msg_id(ms: List<&2, I.Msg>, +msgid: String) -> Bool:
+  match ms:
+    case Nil{}:
+      False{}
+    case m <> t:
+      String.eq(msg_id(m), msgid) || has_msg_id(t, msgid)
+
+def sent_copy.if(filed: Bool, sent: String, msg: String) -> IO(String):
+  match filed:
+    case True{}:
+      pure_str("already in " ++ sent)
+    case False{}:
+      sent_copy.run(sent, msg)
+
+def sent_copy.headers(r: Run(), sent: String, msgid: String, msg: String) -> IO(String):
+  match r:
+    case Fail{m}:
+      pure_str("failed: " ++ m)
+    case Done{lines}:
+      sent_copy.if(has_msg_id(I.fetched(lines), msgid), sent, msg)
+
+def sent_copy.matches(
+  +uids: List<&2, U32>,
+  +sent: String,
+  msgid: String,
+  msg: String
+) -> IO(String):
+  match uids:
+    case Nil{}:
+      sent_copy.run(sent, msg)
+    case h <> t:
+      do IO<String>:
+        r : Run() <- imap_run(Ops.plan_headers(sent, uids))
+        sent_copy.headers(r, sent, msgid, msg)
+
+def sent_copy.search(r: Run(), sent: String, msgid: String, msg: String) -> IO(String):
+  match r:
+    case Fail{m}:
+      pure_str("failed: " ++ m)
+    case Done{lines}:
+      sent_copy.matches(I.search_uids(lines), sent, msgid, msg)
+
+def sent_copy.folder(f: Fs(), +msgid: String, msg: String) -> IO(String):
+  match f:
+    case Fail{m}:
+      pure_str("failed: " ++ m)
+    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+      match sent:
+        case None{}:
+          pure_str(
+            "not saved: no unique selectable Sent folder: configure MAILBEND_SENT_FOLDER")
+        case Some{+s}:
+          do IO<String>:
+            r : Run() <- imap_run(Ops.plan_search(s, [I.KHeader{"Message-ID", msgid}]))
+            sent_copy.search(r, s, msgid, msg)
+
+def sent_copy.folders(r: Run(), msgid: String, msg: String) -> IO(String):
+  match r:
+    case Fail{m}:
+      pure_str("failed: " ++ m)
+    case Done{lines}:
+      do IO<String>:
+        f : Fs() <- folders_io(lines)
+        sent_copy.folder(f, msgid, msg)
+
+# What became of the Sent copy of the message `msgid`, as `sent_copy` says it.
+def sent_copy(msgid: String, msg: String) -> IO(String):
+  do IO<String>:
+    r : Run() <- imap_run(Ops.plan_probe())
+    sent_copy.folders(r, msgid, msg)
+
+# The daily limit
+# ---------------
+
+# With MAILBEND_MAX_SENDS_PER_DAY, each send first reserves one place in
+# the day's count (UTC), kept by mailbend-attach in `<state dir>/sends`,
+# which no tool reads or writes. The reservation comes before SMTP, so a
+# send that then fails or times out still counts, and a count that cannot
+# be read refuses the send.
+
+def limit_reached(limit: U32) -> String:
+  "the daily send limit is reached: MAILBEND_MAX_SENDS_PER_DAY allows " ++ U32.show(limit) ++
+    " per day (UTC)"
+
+# The helper's answer, "ok <n>" or "full <n>", as a problem.
+def reservation.answer(+out: String, limit: U32) -> String:
+  Bool.pick(String, String.starts_with(out, "ok "), "",
+    Bool.pick(String, String.starts_with(out, "full "), limit_reached(limit),
+      "mailbend-attach gave an unexpected count"))
+
+# Why the reservation refuses the send ("" when it may go).
+def reservation(p: Proc, limit: U32) -> String:
+  match p:
+    case ProcOk{code, out, err}:
+      match code:
+        case 0:
+          reservation.answer(String.trim(out), limit)
+        case _:
+          "cannot count this send for MAILBEND_MAX_SENDS_PER_DAY: " ++ attach_msg(err)
+    case _:
+      "cannot run mailbend-attach: " ++ proc_failure(p)
+
+def reserve.run(helper: String, dir: String, +limit: U32, day: String) -> IO(String):
+  match helper:
+    case SCon{'/', t}:
+      do IO<String>:
+        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+          Process.run(helper, ["count", dir, U32.show(limit), day], "", 4096, 60000)
+        return reservation(proc_of(r), limit)
+    case _:
+      pure_str(attach_helper_refusal())
+
+def reserve.dir(+dir: String, limit: U32, day: String) -> IO(String):
+  match dir:
+    case SNil{}:
+      pure_str("MAILBEND_MAX_SENDS_PER_DAY needs a state directory: set MAILBEND_STATE_DIR " ++
+        "(or HOME)")
+    case _:
+      do IO<String>:
+        helper : String <- env_or("MAILBEND_ATTACH_HELPER", "")
+        reserve.run(helper, dir, limit, day)
+
+# Why the daily limit refuses this send ("" when it may go, or there is no
+# limit).
+def reserve(+limit: U32, dir: String, day: String) -> IO(String):
+  match limit:
+    case 0:
+      pure_str("")
+    case _:
+      reserve.dir(dir, limit, day)
+
+# Sending
+# -------
+
+# What a sent message reports: its Message-ID and recipient count; and, with
+# `save`, the copy to keep in Sent, which keeps the Bcc header as a saved
+# draft does. The copy is composed only once the send has succeeded.
+type Sent is Data:
+  Sent{msgid: String, rcpts: U32, save: Bool, copy: M.Draft, boundary: String}
+
+def send_allowed.copy(o: Out, save: Bool, msgid: String, copy: M.Draft, boundary: String) ->
+  IO(Out):
+  match o save:
+    case Ok{j} True{}:
+      do IO<Out>:
+        c : String <- sent_copy(msgid, M.compose(copy, boundary))
+        return with_fields(Ok{j}, [J.kv("sent_copy", J.str(c))])
+    case Ok{j} False{}:
+      pure_out(Ok{j})
+    case Err{m} _:
+      pure_out(Err{m})
+    case Partial{j} _:
+      pure_out(Partial{j})
+
+# A delivered message's result, with what became of its Sent copy.
+def send_allowed.fin(o: Out, s: Sent) -> IO(Out):
+  Sent{+msgid, n, save, copy, boundary} = s
+  send_allowed.copy(sent_out(o, msgid, n), save, msgid, copy, boundary)
+
+def send_allowed.if(problem: String, envelope: String, s: Sent) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t} ++ "; nothing was sent"})
+    case SNil{}:
+      do IO<Out>:
+        o : Out <- smtp_run(envelope)
+        send_allowed.fin(o, s)
+
+def unlisted_msg(refused: List<&2, String>) -> String:
+  "MAILBEND_ALLOWED_RECIPIENTS does not allow sending to " ++ String.join(refused, ", ") ++
+    "; nothing was sent"
+
+# The send itself: S.outbound gives the envelope only when the allowlist
+# allows every recipient; only then is a place in the daily count reserved.
+def send_allowed(
+  envelope: Maybe<&2, String>,
+  allow: List<&2, String>,
+  rcpts: List<&2, String>,
+  limit: U32,
+  dir: String,
+  day: String,
+  s: Sent
+) -> IO(Out):
+  match envelope:
+    case None{}:
+      pure_out(Err{unlisted_msg(S.refused(allow, rcpts))})
+    case Some{e}:
+      do IO<Out>:
+        problem : String <- reserve(limit, dir, day)
+        send_allowed.if(problem, e, s)
+
+def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Out):
+  match cfg:
+    case Fail{m}:
+      pure_out(Err{"configuration error: " ++ m})
+    case Done{Sending{save, +allow, limit, dir}}:
+      +d = draft_of(w, from, st, False{})
+      +rcpts = specs(all_rcpts(w))
+      send_allowed(
+        S.outbound(allow, rcpts, M.addr_spec(from), M.compose(d, boundary_of(st))),
+        allow, rcpts, limit, dir, day_of(st),
+        Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
+          draft_of(w, from, st, True{}), boundary_of(st)})
+
 def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
   match draft:
     case True{}:
@@ -2996,12 +3375,9 @@ def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
         r : Run() <- imap_run(Ops.plan_probe())
         draft_folder(r, M.compose(d, boundary_of(st)), msgid_of(d))
     case False{}:
-      +d = draft_of(w, from, st, False{})
-      +rcpts = all_rcpts(w)
       do IO<Out>:
-        o : Out <- smtp_run(S.envelope(M.addr_spec(from), specs(rcpts),
-          M.compose(d, boundary_of(st))))
-        return sent_out(o, msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)))
+        cfg : Sends() <- sending()
+        send_with(cfg, w, from, st)
 
 def deliver(+w: Want, from: String, st: Stamp) -> IO(Out):
   deliver_as(is_draft(w), w, from, st)
@@ -3117,14 +3493,6 @@ def cut_note(cut: Bool) -> String:
       "be incomplete]\n",
     "")
 
-# Adds fields to a successful result object.
-def with_fields(o: Out, extra: List<&2, J.Json>) -> Out:
-  match o:
-    case Ok{J.JObj{items}}:
-      Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
-    case _:
-      o
-
 # A reply also says whether its quote covers the whole original: how many
 # bytes of the original were read and quoted, and how large it is.
 def quote_fields(cut: Bool, quoted: U32, size: U32) -> List<&2, J.Json>:
@@ -3218,7 +3586,7 @@ def orig_msg(ms: List<&2, I.Msg>, +args: J.Json, mode: U32, max: U32, me: String
     case I.Msg{uid, flags, date, +size, headers, body} <> t:
       respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), size, body, args, me)
 
-def orig_checked(
+def orig_found.if(
   stale: Bool,
   lines: List<&2, I.RLine>,
   +args: J.Json,
@@ -3239,7 +3607,7 @@ def orig_found(r: Run(), +args: J.Json, mode: U32, max: U32, me: String) -> IO(O
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      orig_checked(Bool.not(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv_arg(args))), lines,
+      orig_found.if(Bool.not(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv_arg(args))), lines,
         args, mode, max, me)
 
 def respond_request(+args: J.Json) -> String:

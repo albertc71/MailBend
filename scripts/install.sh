@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Builds MailBend in place:
 #   bin/mailbend-tls     the TLS helper (Rust, rustls)
-#   bin/mailbend-attach  the attachment reader (Rust, no credentials)
+#   bin/mailbend-attach  the attachment reader and send counter (Rust, no credentials)
 #   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install the pinned,
 # checksum-verified Bend release (scripts/install-bend.sh) when it is missing,

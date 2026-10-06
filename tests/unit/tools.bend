@@ -692,7 +692,7 @@ def want(to: List<&2, String>, bcc: List<&2, String>, draft: Bool) -> T.Want:
   T.Want{to, ["c@y.com"], bcc, "Subject", "Body", "<irt@x>", "<r@x>", [], draft}
 
 def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
-  T.Stamp{date, token} = st
+  T.Stamp{date, token, day} = st
   do IO<Unit>:
     IO.print(date ++ " " ++ token ++ " " ++ T.boundary_of(st))
     IO.print(T.msgid_of(T.draft_of(w, "me@my.org", st, True{})) ++ " " ++
@@ -882,6 +882,52 @@ def check_schema() -> IO(Unit):
       "{\"to\":\"a@x\",\"subject\":\"s\",\"body\":\"b\",",
       "\"attachments\":[\"a\",{\"path\":3}]}"])))
 
+# Sending
+# -------
+
+def show_sends(s: T.Sends()) -> String:
+  match s:
+    case Done{T.Sending{save, allow, limit, dir}}:
+      Bool.show(save) ++ " [" ++ String.join(allow, ",") ++ "] " ++ U32.show(limit) ++ " [" ++
+        dir ++ "]"
+    case Fail{m}:
+      "error " ++ m
+
+def sends(save: String, allow: String, max: String, dir: String) -> String:
+  show_sends(T.sending_of(save, allow, max, dir, "", "/home/u"))
+
+def header_msg(headers: String) -> I.Msg:
+  I.Msg{1, [], "", 0, headers, ""}
+
+def check_sending() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(show_sends(T.sending_of("", "", "", "", "", "")))
+    IO.print(sends("1", " Bob@X.com , @Example.ORG", "5", ""))
+    IO.print(show_sends(T.sending_of("true", "", "", "/st", "/xdg", "/home/u")) ++ " " ++
+      show_sends(T.sending_of("", "", "", "", "/xdg", "/home/u")) ++ " " ++
+      show_sends(T.sending_of("", "", "", "", "rel", "rel")))
+    IO.print(sends("yes", "", "", ""))
+    IO.print(sends("", "a@x.com,", "", ""))
+    IO.print(sends("", "Bob <b@x.com>", "", ""))
+    IO.print(sends("", "@", "", "") ++ " | " ++ sends("", "x.com", "", "") ++ " | " ++
+      sends("", "@a@b", "", ""))
+    IO.print(sends("", "", "0", "") ++ " | " ++ sends("", "", "-1", "") ++ " | " ++
+      sends("", "", "ten", "") ++ " | " ++ sends("", "", "99999999999", ""))
+    IO.print(sends("", "", "", "state"))
+    IO.print(sends("on", "bad", "0", "state"))
+    IO.print("[" ++ T.reservation(T.ProcOk{0, "ok 3\n", ""}, 5) ++ "]")
+    IO.print(T.reservation(T.ProcOk{0, "full 5\n", ""}, 5))
+    IO.print(T.reservation(T.ProcOk{0, "ok", ""}, 5))
+    IO.print(T.reservation(T.ProcOk{2, "", "mailbend-attach: cannot lock the send counter\n"}, 5))
+    IO.print(T.reservation(T.ProcFail{110, "timed out"}, 5))
+    IO.print(T.unlisted_msg(["a@x.com", "b%c@y.com"]))
+    IO.print(String.join([
+      show_bool(T.has_msg_id([header_msg("Message-ID:  <a@x>  \r\n\r\n")], "<a@x>")),
+      show_bool(T.has_msg_id([header_msg("Message-ID: <a@x.y>\r\n\r\n")], "<a@x>")),
+      show_bool(T.has_msg_id([header_msg(""), header_msg("message-id: <a@x>\r\n\r\n")], "<a@x>")),
+      show_bool(T.has_msg_id([], "<a@x>"))], " "))
+    IO.print(T.sent_copy.fin(Done{[]}, "Sent") ++ " | " ++ T.sent_copy.fin(Fail{"no"}, "Sent"))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     check_switches()
@@ -901,6 +947,7 @@ def main() -> IO(Unit):
     check_reply()
     check_dispatch()
     check_schema()
+    check_sending()
 
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
@@ -1112,3 +1159,21 @@ def main() -> IO(Unit):
 #|["to" must be a string or an array of strings]
 #|[unknown argument "bogus" for mail_send attachments]
 #|["attachments" must be an array of objects]
+#|False [] 0 []
+#|True [bob@x.com,@example.org] 5 [/home/u/.local/state/mailbend]
+#|True [] 0 [/st] False [] 0 [/xdg/mailbend] False [] 0 []
+#|error MAILBEND_SAVE_SENT must be 1, true, 0, false or empty
+#|error MAILBEND_ALLOWED_RECIPIENTS: "" is neither an address like name@example.com nor a domain like @example.com
+#|error MAILBEND_ALLOWED_RECIPIENTS: "bob <b@x.com>" is neither an address like name@example.com nor a domain like @example.com
+#|error MAILBEND_ALLOWED_RECIPIENTS: "@" is neither an address like name@example.com nor a domain like @example.com | error MAILBEND_ALLOWED_RECIPIENTS: "x.com" is neither an address like name@example.com nor a domain like @example.com | error MAILBEND_ALLOWED_RECIPIENTS: "@a@b" is neither an address like name@example.com nor a domain like @example.com
+#|error MAILBEND_MAX_SENDS_PER_DAY must be a positive whole number | error MAILBEND_MAX_SENDS_PER_DAY must be a positive whole number | error MAILBEND_MAX_SENDS_PER_DAY must be a positive whole number | error MAILBEND_MAX_SENDS_PER_DAY must be a positive whole number
+#|error MAILBEND_STATE_DIR must be an absolute path
+#|error MAILBEND_SAVE_SENT must be 1, true, 0, false or empty
+#|[]
+#|the daily send limit is reached: MAILBEND_MAX_SENDS_PER_DAY allows 5 per day (UTC)
+#|mailbend-attach gave an unexpected count
+#|cannot count this send for MAILBEND_MAX_SENDS_PER_DAY: cannot lock the send counter
+#|cannot run mailbend-attach: timed out
+#|MAILBEND_ALLOWED_RECIPIENTS does not allow sending to a@x.com, b%c@y.com; nothing was sent
+#|True False True False
+#|saved to Sent | failed or unconfirmed (check Sent before saving again): no

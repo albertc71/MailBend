@@ -1,4 +1,5 @@
-# SMTP envelope: CRLF ending, dot-stuffing, RCPT lines and reply scanning.
+# SMTP envelope: CRLF ending, dot-stuffing, RCPT lines, the recipient
+# allowlist and reply scanning.
 
 import Base
 import ../../src/smtp.bend as S
@@ -14,6 +15,20 @@ def vis(s: String) -> String:
       "\\n" ++ vis(t)
     case SCon{c, t}:
       SCon{c, vis(t)}
+
+def show_maybe(m: Maybe<&2, String>) -> String:
+  match m:
+    case Some{x}:
+      vis(x)
+    case None{}:
+      "none"
+
+def allows(+allow: List<&2, String>, rcpts: List<&2, String>) -> String:
+  match rcpts:
+    case Nil{}:
+      ""
+    case r <> t:
+      Bool.show(S.allowed(allow, r)) ++ " " ++ allows(allow, t)
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -33,6 +48,13 @@ def main() -> IO(Unit):
     IO.print(S.last_ok(String.lines("220 hi\n250-PIPELINING\n250 OK queued as 12 \r\n354 go\n 250 indented"), "none"))
     IO.print(S.last_ok(String.lines("220 hi\n250\n250-x\n550 no"), "none"))
     IO.print("[" ++ S.last_ok([], "") ++ "] [" ++ S.last_ok(["250 "], "x") ++ "]")
+    IO.print(allows([], ["a@x.com", "a%b@x.com", ""]))
+    IO.print(allows(["@x.com"], ["a@x.com", "A@X.COM", "a@sub.x.com", "a@x.com.evil", "a@xx.com", "x.com@y.org", "a%b@x.com", "a!b@x.com", "a:b@x.com"]))
+    IO.print(allows(["bob@x.com", "@y.org"], ["bob@x.com", "Bob@X.com", "xbob@x.com", "bob@x.co", "c@y.org", "bob%c@x.com"]))
+    IO.print(show_maybe(S.outbound([], ["a@y.com"], "me@x.com", "m")))
+    IO.print(show_maybe(S.outbound(["@y.com"], ["a@y.com"], "me@x.com", "m")))
+    IO.print(show_maybe(S.outbound(["@y.com"], ["a@y.com", "b@z.com"], "me@x.com", "m")) ++ " " ++ show_maybe(S.outbound(["@y.com"], ["b@z.com", "a@y.com"], "me@x.com", "m")))
+    IO.print("[" ++ String.join(S.refused(["@y.com"], ["a@y.com", "b@z.com", "c%d@y.com", "e@y.com"]), ",") ++ "] [" ++ String.join(S.refused([], ["b@z.com"]), ",") ++ "]")
 
 #|[\r\n] [a\r\n]
 #|a\r\n a\n\r\n a\r\r\n
@@ -50,3 +72,10 @@ def main() -> IO(Unit):
 #|250 OK queued as 12
 #|none
 #|[] [250]
+#|True True True 
+#|True True False False False False False False False 
+#|True True False False True False 
+#|MAIL FROM:<me@x.com>\r\nRCPT TO:<a@y.com>\r\nDATA\r\nm\r\n.\r\n
+#|MAIL FROM:<me@x.com>\r\nRCPT TO:<a@y.com>\r\nDATA\r\nm\r\n.\r\n
+#|none none
+#|[b@z.com,c%d@y.com] []

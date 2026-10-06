@@ -1,41 +1,47 @@
-//! mailbend-attach: reads one attachment for MailBend, safely.
+//! mailbend-attach: MailBend's local file access, safely.
 //!
-//!   mailbend-attach <dir> <path> <max-bytes>   > file bytes
+//!   mailbend-attach <dir> <path> <max-bytes>                 > file bytes
+//!   mailbend-attach count <state-dir> <limit> <utc-day>      > ok <n> | full <n>
 //!
-//! Kept apart from mailbend-tls so the credential-bearing helper never reads
-//! files: this program opens no connection, and before anything else it
-//! re-executes itself with an empty environment. How the file is opened, and
-//! which directories and files are refused, is specified in
-//! native/README.md ("Attachments"); each step is documented where it is
-//! done below.
+//! The first form reads one attachment; the second reserves one send in the
+//! daily send counter. Kept apart from mailbend-tls so the credential-bearing
+//! helper never touches files: this program opens no connection, and before
+//! anything else it re-executes itself with an empty environment. How files
+//! are opened, and which are refused, is specified in native/README.md
+//! ("Attachments", "Send counter"); each step is documented where it is done
+//! below.
 //!
-//! Exit status: 0 ok, 2 refused or unreadable (the reason is on stderr).
+//! Exit status: 0 ok (for `count`, also when the limit is reached), 2 refused
+//! or unreadable (the reason is on stderr).
 
 use std::ffi::{OsStr, OsString};
-use std::fs::{File, OpenOptions};
+use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use mailbend_attach::{
-    SENSITIVE, attachment_open_error, contains_path, directory_open_error, not_regular, parse_max,
-    relative_attachment_path, show, too_large,
+    Reservation, SENSITIVE, attachment_open_error, contains_path, directory_open_error,
+    not_regular, parse_day, parse_limit, parse_max, relative_attachment_path, sends_on, show,
+    too_large,
 };
-use mailbend_io::fs::{is_regular, open_at};
+use mailbend_io::fs::{create_at, is_regular, open_at};
 use mailbend_io::report::report;
 use mailbend_io::transcript::encode_bytes;
 use nix::errno::Errno;
-use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, ResolveFlag};
-use nix::sys::stat::{FileStat, fstat, fstatat};
+use nix::fcntl::{AT_FDCWD, AtFlags, Flock, FlockArg, OFlag, ResolveFlag};
+use nix::sys::stat::{FileStat, Mode, fstat, fstatat};
 use nix::sys::statfs::{PROC_SUPER_MAGIC, SYSFS_MAGIC, fstatfs};
 use nix::unistd::{Uid, User};
 
 const PROGRAM: &str = "mailbend-attach";
 const EX_REFUSED: u8 = 2;
+const USAGE: &str = "usage: mailbend-attach <dir> <path> <max-bytes> | \
+                     mailbend-attach count <state-dir> <limit> <utc-day>";
 
 type Refusal = String;
 
@@ -58,8 +64,11 @@ fn main() -> ExitCode {
 fn run(args: &[OsString]) -> Result<(), Refusal> {
     drop_inherited_environment(args)?;
     match args {
+        [_, mode, dir, limit, day] if mode == "count" => {
+            count_send(dir.as_bytes(), limit.as_bytes(), day.as_bytes())
+        }
         [_, dir, path, max] => read_attachment(dir.as_bytes(), path.as_bytes(), max.as_bytes()),
-        _ => Err("usage: mailbend-attach <dir> <path> <max-bytes>".to_string()),
+        _ => Err(USAGE.to_string()),
     }
 }
 
@@ -85,7 +94,7 @@ fn read_attachment(dir: &[u8], path: &[u8], max: &[u8]) -> Result<(), Refusal> {
         .map_err(|_| "MAILBEND_ATTACH_DIR does not exist".to_string())?;
     let root = root.as_os_str().as_bytes();
     let relative = relative_attachment_path(dir, root, path)?;
-    let directory = open_attachment_directory(root)?;
+    let directory = open_canonical_directory(root).map_err(directory_open_error)?;
     refuse_broad_directory(root, &directory)?;
     let (file, st) = open_attachment(&directory, relative, path)?;
     validate_attachment(&file, &st, path, max)?;
@@ -95,14 +104,13 @@ fn read_attachment(dir: &[u8], path: &[u8], max: &[u8]) -> Result<(), Refusal> {
 /// `root` is canonical, so it holds no symlink; opening it with
 /// RESOLVE_NO_SYMLINKS fails if a component was swapped for one since
 /// realpath() read it.
-fn open_attachment_directory(root: &[u8]) -> Result<OwnedFd, Refusal> {
+fn open_canonical_directory(root: &[u8]) -> nix::Result<OwnedFd> {
     open_at(
         AT_FDCWD,
         root,
         OFlag::O_RDONLY | OFlag::O_DIRECTORY,
         ResolveFlag::RESOLVE_NO_SYMLINKS | ResolveFlag::RESOLVE_NO_MAGICLINKS,
     )
-    .map_err(directory_open_error)
 }
 
 /// Every file beneath the directory can be mailed, so it must not be one that
@@ -233,4 +241,78 @@ fn emit_attachment(mut file: File, path: &[u8], max: u64) -> Result<(), Refusal>
         out.write_all(&encoded).map_err(cannot_write)?;
     }
     out.flush().map_err(cannot_write)
+}
+
+/// Reserves one send for `day` in `<dir>/sends`, which holds one line per
+/// send counted: under an exclusive lock, it counts the lines for `day` and,
+/// below `limit`, appends one more and prints `ok <n>`; at the limit it
+/// appends nothing and prints `full <n>`. The core decides what to do with
+/// the answer.
+fn count_send(dir: &[u8], limit: &[u8], day: &[u8]) -> Result<(), Refusal> {
+    let limit = parse_limit(limit)?;
+    let day = parse_day(day)?;
+    let directory = open_state_directory(dir)?;
+    let counter = open_counter(&directory, dir)?;
+    let mut counter = Flock::lock(counter, FlockArg::LockExclusive)
+        .map_err(|(_, errno)| counter_error("lock", dir, errno.desc()))?;
+    let mut text = Vec::new();
+    counter
+        .read_to_end(&mut text)
+        .map_err(|e| counter_error("read", dir, &os_error_text(&e)))?;
+    let reservation = Reservation::new(sends_on(&text, day), limit);
+    if let Reservation::Reserved(_) = reservation {
+        counter
+            .write_all(&[day, b"\n"].concat())
+            .and_then(|()| counter.sync_data())
+            .map_err(|e| counter_error("write", dir, &os_error_text(&e)))?;
+    }
+    writeln!(std::io::stdout(), "{reservation}").map_err(|_| "cannot write the count".to_string())
+}
+
+fn counter_error(what: &str, dir: &[u8], why: &str) -> Refusal {
+    format!("cannot {what} the send counter in {}: {why}", show(dir))
+}
+
+fn state_error(what: &str, dir: &[u8], why: &str) -> Refusal {
+    format!("cannot {what} the state directory {}: {why}", show(dir))
+}
+
+/// The state directory, created with mode 0700 when it is missing. Like
+/// MAILBEND_ATTACH_DIR, it is resolved once with realpath() and opened with
+/// RESOLVE_NO_SYMLINKS.
+fn open_state_directory(dir: &[u8]) -> Result<OwnedFd, Refusal> {
+    let path = Path::new(OsStr::from_bytes(dir));
+    if !path.is_absolute() {
+        return Err(state_error("use", dir, "not an absolute path"));
+    }
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+        .map_err(|e| state_error("create", dir, &os_error_text(&e)))?;
+    let root =
+        std::fs::canonicalize(path).map_err(|e| state_error("resolve", dir, &os_error_text(&e)))?;
+    open_canonical_directory(root.as_os_str().as_bytes())
+        .map_err(|errno| state_error("open", dir, errno.desc()))
+}
+
+/// `sends` beneath the state directory, created with mode 0600 when it is
+/// missing; as for an attachment, no symlink or `..` may lead elsewhere,
+/// and it must be a regular file.
+fn open_counter(directory: &OwnedFd, dir: &[u8]) -> Result<File, Refusal> {
+    let counter = create_at(
+        directory,
+        b"sends",
+        OFlag::O_RDWR | OFlag::O_APPEND | OFlag::O_NOCTTY,
+        ResolveFlag::RESOLVE_BENEATH
+            | ResolveFlag::RESOLVE_NO_SYMLINKS
+            | ResolveFlag::RESOLVE_NO_MAGICLINKS,
+        Mode::from_bits_truncate(0o600),
+    )
+    .map_err(|errno| counter_error("open", dir, errno.desc()))?;
+    let st = fstat(&counter).map_err(|errno| counter_error("open", dir, errno.desc()))?;
+    if !is_regular(&st) {
+        return Err(counter_error("use", dir, "not a regular file"));
+    }
+    Ok(File::from(counter))
 }

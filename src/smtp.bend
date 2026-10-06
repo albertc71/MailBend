@@ -43,6 +43,77 @@ def envelope(from: String, rcpts: List<&2, String>, msg: String) -> String:
   body = dot_stuff(ensure_crlf(msg), True{})
   commands ++ body ++ ".\r\n"
 
+# The recipient allowlist
+# -----------------------
+
+# An allowlist holds lower-case entries: exact addresses, and "@domain" for
+# every address at exactly that domain (not its subdomains). An empty one
+# allows every recipient.
+
+# Whether the lower-case `rcpt` is the address `entry`, or at its "@domain".
+def entry_allows(entry: String, rcpt: String) -> Bool:
+  match entry:
+    case SCon{'@', domain}:
+      String.ends_with(rcpt, SCon{'@', domain})
+    case _:
+      String.eq(entry, rcpt)
+
+def listed(allow: List<&2, String>, +rcpt: String) -> Bool:
+  match allow:
+    case Nil{}:
+      False{}
+    case entry <> rest:
+      entry_allows(entry, rcpt) || listed(rest, rcpt)
+
+# Whether `rcpt` has a source-route character (as in a%b@allowed.com),
+# which some servers would relay on to another domain.
+def source_routed(+rcpt: String) -> Bool:
+  String.contains(rcpt, "%") || String.contains(rcpt, "!") || String.contains(rcpt, ":")
+
+# Whether the bare address `rcpt` may receive mail under `allow`. With an
+# allowlist, a source-routed address is refused even when it is listed.
+def allowed(allow: List<&2, String>, rcpt: String) -> Bool:
+  match allow:
+    case Nil{}:
+      True{}
+    case entry <> rest:
+      +low = String.to_lower(rcpt)
+      Bool.not(source_routed(low)) && listed(entry <> rest, low)
+
+def all_allowed(+allow: List<&2, String>, rcpts: List<&2, String>) -> Bool:
+  match rcpts:
+    case Nil{}:
+      True{}
+    case rcpt <> rest:
+      allowed(allow, rcpt) && all_allowed(allow, rest)
+
+# The recipients `allow` refuses, in order.
+def refused(+allow: List<&2, String>, rcpts: List<&2, String>) -> List<&2, String>:
+  match rcpts:
+    case Nil{}:
+      []
+    case +rcpt <> rest:
+      List.filter.put(String, rcpt, refused(allow, rest), Bool.not(allowed(allow, rcpt)))
+
+def outbound.if(ok: Bool, rcpts: List<&2, String>, from: String, msg: String) ->
+  Maybe<&2, String>:
+  match ok:
+    case True{}:
+      Some{envelope(from, rcpts, msg)}
+    case False{}:
+      None{}
+
+# The envelope for the bare addresses `rcpts`, or None when `allow` refuses
+# any of them. Sending builds its envelope only here, so every RCPT TO is a
+# recipient the allowlist was asked about.
+def outbound(
+  allow: List<&2, String>,
+  +rcpts: List<&2, String>,
+  from: String,
+  msg: String
+) -> Maybe<&2, String>:
+  outbound.if(all_allowed(allow, rcpts), rcpts, from, msg)
+
 # The trimmed `line` on a hit, else the reply `found` so far. A def, not a
 # Bool.pick, so only a hit is trimmed.
 def last_reply.if(line: String, found: String, hit: Bool) -> String:

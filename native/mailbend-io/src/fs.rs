@@ -6,7 +6,7 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 
 use nix::fcntl::{OFlag, OpenHow, ResolveFlag, openat2};
-use nix::sys::stat::{FileStat, SFlag};
+use nix::sys::stat::{FileStat, Mode, SFlag};
 
 /// openat2(2) of `path` relative to `dir`, always with O_CLOEXEC.
 pub fn open_at(
@@ -17,6 +17,22 @@ pub fn open_at(
 ) -> nix::Result<OwnedFd> {
     let how = OpenHow::new()
         .flags(flags | OFlag::O_CLOEXEC)
+        .resolve(resolve);
+    openat2(dir, OsStr::from_bytes(path), how)
+}
+
+/// openat2(2) of `path` relative to `dir`, creating it with `mode` when it
+/// is missing; always with O_CREAT and O_CLOEXEC.
+pub fn create_at(
+    dir: impl AsFd,
+    path: &[u8],
+    flags: OFlag,
+    resolve: ResolveFlag,
+    mode: Mode,
+) -> nix::Result<OwnedFd> {
+    let how = OpenHow::new()
+        .flags(flags | OFlag::O_CREAT | OFlag::O_CLOEXEC)
+        .mode(mode)
         .resolve(resolve);
     openat2(dir, OsStr::from_bytes(path), how)
 }

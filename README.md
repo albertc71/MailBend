@@ -94,6 +94,22 @@ directory attachments may come from; attachments are off without it),
 The two switches take `1`/`true` or `0`/`false`/empty; any other value is a
 configuration error that fails every tool, rather than silently meaning off.
 
+Sending (`mail_send`, and replies and forwards that are not drafts) has its
+own optional settings. A malformed value refuses every send, never reads as
+off, and leaves drafts and reads alone:
+
+| Setting | Effect |
+| --- | --- |
+| `MAILBEND_ALLOWED_RECIPIENTS` | Comma-separated exact addresses and `@domain` entries (that domain only, not its subdomains), compared case-insensitively. A message with any other recipient (To, Cc, Bcc, or the original's To and Cc in a reply-all) is refused whole, and with an allowlist an address containing `%`, `!` or `:` is refused too. Unset or empty: no allowlist. |
+| `MAILBEND_MAX_SENDS_PER_DAY` | A positive number of sends per UTC day. Each send is counted before it is handed to SMTP, so one that then fails or times out still counts, and a count that cannot be read or written refuses the send. Unset: no limit. |
+| `MAILBEND_STATE_DIR` | An absolute path for the send count. Default: `$XDG_STATE_HOME/mailbend`, else `~/.local/state/mailbend`. |
+| `MAILBEND_SAVE_SENT` | `1`/`true` appends each sent message (with its Bcc header, as a draft keeps it) to the resolved Sent folder, marked seen, unless the server already filed it there; the result reports `sent_copy`, and a failed copy does not fail the send. Default off. |
+
+The count is `sends` in the state directory: one line per send, created
+by `mailbend-attach` (directory mode 0700). No tool reads or changes it;
+deleting it resets the count, which is a local user action, not one the
+agent can take through MailBend.
+
 Other providers require compatible password-authenticated IMAP over implicit
 TLS and SMTP with STARTTLS. Set `MAILBEND_IMAP_HOST`, `MAILBEND_IMAP_PORT`,
 `MAILBEND_SMTP_HOST` and `MAILBEND_SMTP_PORT` for that provider, and supply its
@@ -177,6 +193,14 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   `MAILBEND_READ_ONLY=1` when writes are not needed and
   `MAILBEND_DRAFTS_ONLY=1` to keep a person in front of every send, and
   have your MCP client ask before it runs a tool that changes mail.
+- **Sending can be fenced.** With `MAILBEND_ALLOWED_RECIPIENTS`, a message
+  goes only when every envelope recipient is allowed: `LAWS.bend` states, and
+  `PROOF.bend` proves, that the envelope is refused whenever any one
+  recipient is not, wherever it stands in the list, and that without an
+  allowlist the envelope is unchanged; the envelope has no other source.
+  `MAILBEND_MAX_SENDS_PER_DAY` caps sends per UTC day in a local counter no
+  tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
+  `APPEND` to the Sent folder and nothing else (proven).
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
   every read plan (probe, folders, search, get, new mail) contains no command
   that can change a mailbox, for every argument, and that what is rendered on
@@ -253,8 +277,8 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
 - Commands run one at a time and stop at the first rejection; message
   contents are framed as IMAP literals, so a message cannot spoof a server
   reply.
-- **What the proofs cover.** The laws are about the pure IMAP command plans
-  and their rendering. The native helpers, TLS, MIME parsing, the agent's
+- **What the proofs cover.** The laws are about the pure IMAP command plans,
+  the SMTP envelope and their rendering. The native helpers, TLS, MIME parsing, the agent's
   choices and the runtime configuration are covered by tests and review,
   not by proofs.
 
@@ -276,6 +300,8 @@ flowchart LR
   core -- "dir, path, byte budget" --> reader["mailbend-attach (Rust)<br/>no credentials, openat2"]
   reader -- "file bytes" --> core
   reader --> files[("MAILBEND_ATTACH_DIR")]
+  core -- "count: state dir, limit, day" --> reader
+  reader --> sends[("MAILBEND_STATE_DIR/sends")]
 ```
 
 Each tool call runs one or two short IMAP sessions (login, a few commands,
@@ -303,13 +329,8 @@ to report a vulnerability privately.
 
 ## Not yet
 
-- A recipient allowlist for sending. Until then, `MAILBEND_DRAFTS_ONLY=1`
-  keeps a person in front of every outgoing message.
 - Monitoring: a watcher with IDLE/polling, filters and a delivery ledger.
   `mail_get_new` already provides the checkpoint semantics it needs.
-- Copying sent mail into Sent (check first whether the provider already files
-  SMTP-sent mail there). SMTP delivery may succeed without a Sent copy;
-  resolving the Sent role does not append one.
 
 Known limits: each character of a fetched message is a separate value in
 memory, so very large messages (the 16 MiB `mail_get` / 25 MiB forward caps)

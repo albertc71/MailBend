@@ -1186,9 +1186,9 @@ def day_name(n: U32) -> String:
 def wday(days: U32) -> String:
   day_name(((days + 4) % 7 : U32))
 
-# Days since 1970-01-01 to "D Mon YYYY" (civil-from-days, H. Hinnant),
+# Days since 1970-01-01 to (year, month, day) (civil-from-days, H. Hinnant),
 # shifted by 719468 days so all arithmetic stays unsigned.
-def civil(days: U32) -> String:
+def civil(days: U32) -> U32 & (U32 & U32):
   +z = (days + 719468 : U32)
   +era = (z / 146097 : U32)
   +doe = (z - era * 146097 : U32)
@@ -1198,7 +1198,17 @@ def civil(days: U32) -> String:
   d = (doy - (153 * mp + 2) / 5 + 1 : U32)
   +m = Bool.pick(U32, U32.is_lt(mp, 10), (mp + 3 : U32), (mp - 9 : U32))
   y = (yoe + era * 400 + Bool.to_u32(U32.is_le(m, 2)) : U32)
+  (y, (m, d))
+
+# A civil date as "D Mon YYYY".
+def civil_text(date: U32 & (U32 & U32)) -> String:
+  (y, (m, d)) = date
   U32.show(d) ++ " " ++ C.month_name(m) ++ " " ++ U32.show(y)
+
+# A civil date as "YYYY-MM-DD".
+def iso_text(date: U32 & (U32 & U32)) -> String:
+  (y, (m, d)) = date
+  U32.show(y) ++ "-" ++ pad2(m) ++ "-" ++ pad2(d)
 
 # Seconds since the epoch to an RFC 5322 date in UTC.
 def rfc5322_date(+secs: U32) -> String:
@@ -1206,4 +1216,8 @@ def rfc5322_date(+secs: U32) -> String:
   +rem = (secs % 86400 : U32)
   time = pad2((rem / 3600 : U32)) ++ ":" ++ pad2(((rem % 3600) / 60 : U32))
     ++ ":" ++ pad2((rem % 60 : U32))
-  wday(days) ++ ", " ++ civil(days) ++ " " ++ time ++ " +0000"
+  wday(days) ++ ", " ++ civil_text(civil(days)) ++ " " ++ time ++ " +0000"
+
+# Seconds since the epoch to the UTC date, as YYYY-MM-DD.
+def iso_date(secs: U32) -> String:
+  iso_text(civil((secs / 86400 : U32)))

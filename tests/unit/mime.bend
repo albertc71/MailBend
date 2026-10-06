@@ -239,6 +239,7 @@ def main() -> IO(Unit):
     IO.print(Bool.show(M.no_ctl("abc")) ++ " " ++ Bool.show(M.no_ctl("")) ++ " " ++ Bool.show(M.no_ctl("a\tb")) ++ " " ++ Bool.show(M.no_ctl("a\u{7F}")) ++ " " ++ Bool.show(M.no_ctl("é")) ++ " " ++ Bool.show(M.no_ctl("a\u{0}")))
     IO.print(M.encode_addr("a@b") ++ " | " ++ M.encode_addr("<a@b>") ++ " | " ++ M.encode_addr("José <j@x.com>") ++ " | " ++ M.encode_addr("\"Q \\\"x\\\"\" <q@x>") ++ " | " ++ M.encode_addr("Back\\slash <b@x>") ++ " | " ++ M.encode_addr("Name <a@b> (c)"))
     IO.print(visible(M.encode_addr(String.repeat("n", 201n) ++ " <a@b>")) ++ " | " ++ Nat.show(String.length(M.encode_addr(String.repeat("n", 200n) ++ " <a@b>"))))
+    IO.print(M.iso_date(0) ++ " " ++ M.iso_date(951782400) ++ " " ++ M.iso_date(1790480370) ++ " " ++ M.iso_date(4102444799))
 
 #|José <jose@example.com>
 #|Café menu today
@@ -306,3 +307,4 @@ def main() -> IO(Unit):
 #|True True False False True False
 #|a@b | a@b | =?UTF-8?B?Sm9zw6k=?= <j@x.com> | "Q \"x\"" <q@x> | "Back\\slash" <b@x> | "Name" <a@b>
 #|=?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5u?= <a@b> | 208
+#|1970-01-01 2000-02-29 2026-09-27 2099-12-31

@@ -11,6 +11,7 @@ import Base
 import ./LAWS.bend as Laws
 import ./src/imap.bend as I
 import ./src/ops.bend as Ops
+import ./src/smtp.bend as S
 
 # Tool classes
 # ------------
@@ -397,6 +398,69 @@ def Laws.delete_pins_callers_uidvalidity(mbox, uids, confirm, uidplus, uidv):
 
 def Laws.draft_never_removes(drafts, msg):
   {==}
+
+# Sending
+# -------
+
+# outbound branches on S.all_allowed, which walks the recipients: a lemma
+# shows by induction over the recipients before the unlisted one that it is
+# False there (and True for every recipient without an allowlist), and the
+# law rewrites the verdict to that.
+
+def and_false(b: Bool) -> {Bool.and(b, False{}) == False{} : Bool}:
+  match b:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def all_allowed_refuses(
+  +allow: List<&2, String>, before: List<&2, String>, -rcpt: String,
+  -after: List<&2, String>, unlisted: {S.allowed(allow, rcpt) == False{} : Bool})
+  -> {S.all_allowed(allow, List.append(&2, String, before, Con{rcpt, after})) ==
+       False{} : Bool}:
+  match before:
+    case Nil{}:
+      %Equal.sym(Bool, S.allowed(allow, rcpt), False{}, unlisted) :
+        {Bool.and(_, S.all_allowed(allow, after)) == False{} : Bool}
+      {==}
+    case b <> bs:
+      %Equal.sym(Bool,
+        S.all_allowed(allow, List.append(&2, String, bs, Con{rcpt, after})), False{},
+        all_allowed_refuses(allow, bs, rcpt, after, unlisted)) :
+        {Bool.and(S.allowed(allow, b), _) == False{} : Bool}
+      and_false(S.allowed(allow, b))
+
+def all_allowed_without_allowlist(rcpts: List<&2, String>)
+  -> {S.all_allowed([], rcpts) == True{} : Bool}:
+  match rcpts:
+    case Nil{}:
+      {==}
+    case rcpt <> rest:
+      %Equal.sym(Bool, S.all_allowed([], rest), True{}, all_allowed_without_allowlist(rest)) :
+        {_ == True{} : Bool}
+      {==}
+
+def Laws.allowlist_refuses_unlisted(allow, before, rcpt, after, from, msg, unlisted):
+  +a = allow
+  +bs = before
+  +r = rcpt
+  +rs = after
+  %Equal.sym(Bool, S.all_allowed(a, List.append(&2, String, bs, Con{r, rs})), False{},
+    all_allowed_refuses(a, bs, r, rs, unlisted)) :
+    {S.outbound.if(_, List.append(&2, String, bs, Con{r, rs}), from, msg) ==
+      None{} : Maybe<&2, String>}
+  {==}
+
+def Laws.no_allowlist_is_unchanged(rcpts, from, msg):
+  +rs = rcpts
+  %Equal.sym(Bool, S.all_allowed([], rs), True{}, all_allowed_without_allowlist(rs)) :
+    {S.outbound.if(_, rs, from, msg) == Some{S.envelope(from, rs, msg)}
+      : Maybe<&2, String>}
+  {==}
+
+def Laws.sent_copy_only_appends(sent, msg):
+  ({==}, {==})
 
 # Folders
 # -------

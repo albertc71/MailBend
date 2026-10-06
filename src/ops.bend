@@ -368,6 +368,11 @@ def plan_label(
 def plan_draft(drafts: String, msg: String) -> List<&2, I.Cmd>:
   [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]
 
+# The copy of a sent message appends `msg` to `sent`, marked seen. The tool
+# appends it only after the read-only search plans found no copy there.
+def plan_sent_copy(sent: String, msg: String) -> List<&2, I.Cmd>:
+  [I.CAppend{sent, [I.FSeen{}], msg}]
+
 # Folder plans
 # ------------
 

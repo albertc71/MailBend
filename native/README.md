@@ -8,7 +8,8 @@ MailBend has two small native programs:
   is the system resolver or the helper's own DNS-over-HTTPS client
   (`mailbend-net/`). It links only libc and libgcc_s.
 - `mailbend-attach/` (Rust): reads one attachment file safely (Bend cannot open a
-  file without following symlinks). It holds no credentials: it first
+  file without following symlinks), and keeps the daily send counter. It
+  holds no credentials: it first
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
 
@@ -38,7 +39,7 @@ Tests run with `cargo test --locked`.
   `connection` owns the socket and the transcript; `imap/` and `smtp/` each
   hold the input validator (`script`, `envelope`), the response parser
   (`response`, `reply`) and the `session` that drives them.
-- `mailbend-attach/`: the attachment reader.
+- `mailbend-attach/`: the attachment reader and the send counter.
 - `fuzz/`: one cargo-fuzz target per parser (its own workspace, nightly).
 
 ## Contract
@@ -48,6 +49,7 @@ mailbend-tls imap   < tagged IMAP commands   > server transcript
 mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
 mailbend-tls --check  # credential-free local runtime check; no network
 mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
+mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
 ```
 
 - **TLS**: rustls (ring provider), TLS 1.2+, peer certificate required,
@@ -131,6 +133,17 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
   before reading it, and enforces that limit while reading if the file grows.
   Exit 2 with the reason on stderr when refused. Needs
   Linux 5.6+.
+- **Send counter** (`mailbend-attach count <state-dir> <limit> <utc-day>`):
+  creates `<state-dir>` with mode 0700 if it is missing, resolves it once
+  with `realpath` and opens it with `RESOLVE_NO_SYMLINKS`, then opens or
+  creates `sends` (mode 0600) beneath it with `openat2(RESOLVE_BENEATH |
+  RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)` and refuses anything but a
+  regular file. Under an exclusive `flock` it counts the lines equal to
+  `<utc-day>` (`YYYY-MM-DD`); below `<limit>` it appends one, syncs it and
+  prints `ok <n>` (counting this send), else it appends nothing and prints
+  `full <n>`. It only compares the number the core supplies; the core
+  decides to refuse. Exit 2 with the reason on stderr when the directory or
+  file cannot be used.
 - **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
   message, `.`. EHLO, HELO, STARTTLS, AUTH and QUIT are refused in the
   envelope. The helper owns greeting, STARTTLS, authentication and QUIT.

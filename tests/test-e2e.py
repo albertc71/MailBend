@@ -23,6 +23,8 @@ FIXTURE = ROOT / "tests" / "fixtures" / "mailbox.json"
 FIX = json.loads(FIXTURE.read_text(encoding="utf-8"))
 PASSWORD = FIX["password"]
 FOLDER_ROLES = ("drafts", "trash", "sent", "junk", "archive")
+SEND_SETTINGS = ("MAILBEND_SAVE_SENT", "MAILBEND_ALLOWED_RECIPIENTS", "MAILBEND_MAX_SENDS_PER_DAY",
+                 "MAILBEND_STATE_DIR")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
 TOOL_COUNT = 19
@@ -72,6 +74,8 @@ class Server:
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
         e.pop("MAILBEND_ATTACH_HELPER", None)
+        for name in SEND_SETTINGS:
+            e.pop(name, None)
         for k, v in over.items():
             if v is None:
                 e.pop(k, None)
@@ -151,6 +155,7 @@ def run_all(work):
     generic_folders(work)
     folder_tools(work)
     flag_tools(work)
+    send_safety(work)
 
 
 def reads(srv):
@@ -1475,6 +1480,213 @@ def flag_helper_failures(work):
     flag_stopped(work, "a helper killed by a signal", [], "mail_flag", {"colour": "blue"}, [],
                  ["+\\Flagged", "-$MailFlagBit0", "-$MailFlagBit1", "+$MailFlagBit2"], MAILBEND_TLS_HELPER=killed)
 
+
+# --------------------------------------------------------------------------
+# Send safety: the recipient allowlist, the Sent copy and the daily limit
+# --------------------------------------------------------------------------
+
+SEND = {"to": "friend@example.com", "subject": "safety", "body": "x"}
+
+
+def sent_count(srv):
+    return len(srv.st().get("sent", []))
+
+
+def send_safety(work):
+    srv = Server(work)
+    try:
+        send_settings(srv)
+        allowlist(srv)
+        daily_limit(srv, work)
+    finally:
+        srv.stop()
+    sent_copies(work)
+    allowlist_reply_all(work)
+
+
+def send_settings(srv):
+    bad = []
+    for name, value in [("MAILBEND_SAVE_SENT", "yes"), ("MAILBEND_ALLOWED_RECIPIENTS", "example.com"),
+                        ("MAILBEND_ALLOWED_RECIPIENTS", "a@example.com,"),
+                        ("MAILBEND_ALLOWED_RECIPIENTS", "@example.com (work)"), ("MAILBEND_MAX_SENDS_PER_DAY", "0"),
+                        ("MAILBEND_MAX_SENDS_PER_DAY", "ten"), ("MAILBEND_STATE_DIR", "relative/state")]:
+        c, r = tool(srv, "mail_send", SEND, **{name: value})
+        if not (c != 0 and "configuration error" in r.get("error", "") and name in r.get("error", "")):
+            bad.append((name, value, r))
+    check("a malformed send setting refuses the send instead of reading as off", not bad and sent_count(srv) == 0, bad)
+    c, r = tool(srv, "mail_save_draft", SEND, MAILBEND_SAVE_SENT="yes", MAILBEND_ALLOWED_RECIPIENTS="example.com")
+    check("send settings never apply to drafts", c == 0 and r.get("saved_to") == "Drafts", r)
+    c, r = tool(srv, "mail_search", {}, MAILBEND_MAX_SENDS_PER_DAY="ten")
+    check("send settings leave reads alone", c == 0 and "messages" in r, r)
+    on = {"MAILBEND_SAVE_SENT": "1", "MAILBEND_ALLOWED_RECIPIENTS": "@example.com", "MAILBEND_MAX_SENDS_PER_DAY": "5"}
+    names = listed_tools(srv, MAILBEND_DRAFTS_ONLY="1", **on)
+    c, r = tool(srv, "mail_send", SEND, MAILBEND_DRAFTS_ONLY="1", **on)
+    check("drafts-only mode still hides and refuses mail_send with the send settings on",
+          "mail_send" not in names and c != 0 and "MAILBEND_DRAFTS_ONLY" in r.get("error", ""), (names, r))
+    check("read-only mode still lists only the read tools with the send settings on",
+          len(listed_tools(srv, MAILBEND_READ_ONLY="1", **on)) == 5)
+
+
+def allowlist(srv):
+    allow = {"MAILBEND_ALLOWED_RECIPIENTS": "@example.com, Boss@Partner.org"}
+    c, r = tool(srv, "mail_send", {**SEND, "cc": ["Boss <boss@partner.ORG>"], "bcc": ["Team@EXAMPLE.com"]}, **allow)
+    sent = srv.st().get("sent", [])
+    check("allowlist: listed addresses and domains are sent to, in any case", c == 0 and len(sent) == 1
+          and set(sent[-1]["rcpt_to"]) == {"friend@example.com", "boss@partner.ORG", "Team@EXAMPLE.com"}, r)
+    refused = []
+    for name, args, who in [
+            ("mail_send", {**SEND, "bcc": ["spy@other.org"]}, "spy@other.org"),
+            ("mail_send", {**SEND, "to": "x@partner.org"}, "x@partner.org"),
+            ("mail_send", {**SEND, "to": "a@sub.example.com"}, "a@sub.example.com"),
+            ("mail_send", {**SEND, "to": "a%evil.org@example.com"}, "a%evil.org@example.com"),
+            ("mail_send", {**SEND, "to": "a!b@example.com"}, "a!b@example.com"),
+            ("mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["out@other.org"]}, "out@other.org")]:
+        c, r = tool(srv, name, args, **allow)
+        if not (c != 0 and "MAILBEND_ALLOWED_RECIPIENTS" in r.get("error", "") and who in r.get("error", "")):
+            refused.append((name, who, r))
+    check("allowlist: any unlisted or source-routed recipient refuses the whole message", not refused
+          and sent_count(srv) == 1, refused)
+    c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "x"},
+                MAILBEND_ALLOWED_RECIPIENTS="alice@example.com")
+    check("allowlist: a reply to an unlisted sender is refused", c != 0 and "jose@example.com" in r.get("error", "")
+          and sent_count(srv) == 1, r)
+    c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["out@other.org"], "as_draft": True},
+                **allow)
+    check("allowlist: a forward saved as a draft is not checked", c == 0 and r.get("saved_to") == "Drafts", r)
+
+
+def allowlist_reply_all(work):
+    fixture = copy.deepcopy(FIX)
+    original = fixture["mailboxes"]["INBOX"]["messages"][1]
+    original["raw"] = original["raw"].replace("To: tester@example.com\r\n",
+                                              "To: tester@example.com\r\nCc: outsider@other.org\r\n", 1)
+    srv = Server(work, fixture=fixture)
+    try:
+        allow = {"MAILBEND_ALLOWED_RECIPIENTS": "@example.com"}
+        reply = {"uid": 2, "uidvalidity": 1700000001, "body": "x"}
+        c, r = tool(srv, "mail_reply", {**reply, "reply_all": True}, **allow)
+        check("allowlist: reply-all checks the original's Cc too", c != 0 and "outsider@other.org" in r.get("error", "")
+              and sent_count(srv) == 0, r)
+        c, r = tool(srv, "mail_reply", reply, **allow)
+        check("allowlist: a reply to a listed sender is sent", c == 0 and sent_count(srv) == 1
+              and srv.st()["sent"][-1]["rcpt_to"] == ["jose@example.com"], r)
+    finally:
+        srv.stop()
+
+
+def daily_limit(srv, work):
+    state = os.path.join(os.path.realpath(work), "send-state", "mailbend")
+    limit = {"MAILBEND_MAX_SENDS_PER_DAY": "2", "MAILBEND_STATE_DIR": state}
+    n = sent_count(srv)
+    answers = [tool(srv, "mail_send", SEND, **limit) for _ in range(3)]
+    check("daily limit: sends below and at the limit go", [c for c, _ in answers[:2]] == [0, 0]
+          and sent_count(srv) == n + 2, answers[:2])
+    c, r = answers[2]
+    check("daily limit: a send over the limit is refused before SMTP", c != 0 and "daily send limit" in r.get("error", "")
+          and sent_count(srv) == n + 2, r)
+    counter = pathlib.Path(state, "sends")
+    check("daily limit: the counter lives in the state directory, created private",
+          counter.is_file() and len(counter.read_text().splitlines()) == 2
+          and (os.stat(state).st_mode & 0o777) == 0o700, state)
+    c, r = tool(srv, "mail_save_draft", SEND, **limit)
+    check("daily limit: drafts are not counted", c == 0 and r.get("saved_to") == "Drafts"
+          and len(counter.read_text().splitlines()) == 2, r)
+    c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="3", MAILBEND_STATE_DIR=state)
+    check("daily limit: a higher limit allows the next send", c == 0 and sent_count(srv) == n + 3, r)
+
+    other = os.path.join(os.path.realpath(work), "send-state-failed")
+    c, r = tool(srv, "mail_send", {**SEND, "to": "reject@example.com"}, MAILBEND_MAX_SENDS_PER_DAY="1",
+                MAILBEND_STATE_DIR=other)
+    c2, r2 = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="1", MAILBEND_STATE_DIR=other)
+    check("daily limit: a send the server refused still counts", c != 0 and "550" in r.get("error", "")
+          and c2 != 0 and "daily send limit" in r2.get("error", "") and sent_count(srv) == n + 3, (r, r2))
+
+    blocked = os.path.join(os.path.realpath(work), "not-a-directory")
+    pathlib.Path(blocked).write_text("")
+    unusable = os.path.join(os.path.realpath(work), "counter-is-a-directory")
+    os.makedirs(os.path.join(unusable, "sends"))
+    refused = []
+    for directory in (blocked, unusable):
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", MAILBEND_STATE_DIR=directory)
+        if not (c != 0 and "MAILBEND_MAX_SENDS_PER_DAY" in r.get("error", "")):
+            refused.append((directory, r))
+    check("daily limit: a state directory or counter that cannot be used refuses the send", not refused
+          and sent_count(srv) == n + 3, refused)
+
+    xdg = os.path.join(os.path.realpath(work), "xdg-state")
+    c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", XDG_STATE_HOME=xdg)
+    check("daily limit: the counter defaults to $XDG_STATE_HOME/mailbend", c == 0
+          and pathlib.Path(xdg, "mailbend", "sends").is_file(), r)
+
+
+def sent_message(srv, box, message_id):
+    return [m for m in srv.st()["mailboxes"].get(box, {}).get("messages", []) if message_id in m["raw"]]
+
+
+def sent_copies(work):
+    srv = Server(work)
+    try:
+        c, r = tool(srv, "mail_send", SEND)
+        check("without MAILBEND_SAVE_SENT nothing is copied to Sent", c == 0 and "sent_copy" not in r
+              and not srv.st()["mailboxes"]["Sent Messages"]["messages"], r)
+        log_start = len(srv.log_lines())
+        c, r = tool(srv, "mail_send", {**SEND, "bcc": ["hidden@example.com"]}, MAILBEND_SAVE_SENT="1")
+        copies = sent_message(srv, "Sent Messages", r.get("message_id", "?"))
+        commands = srv.log_lines()[log_start:]
+        check("a sent message is copied to the advertised Sent folder", c == 0
+              and r.get("sent_copy") == "saved to Sent Messages" and len(copies) == 1
+              and copies[0]["flags"] == ["\\Seen"], r)
+        check("the Sent copy keeps its Bcc, as a draft does", copies and "\r\nBcc: hidden@example.com\r\n" in copies[0]["raw"]
+              and "hidden@example.com" not in srv.st()["sent"][-1]["data"], copies[:1])
+        check("the Sent copy is looked for read-only first", any(" EXAMINE " in l and "Sent Messages" in l for l in commands)
+              and any("SEARCH" in l and "HEADER" in l for l in commands) and not any(" SELECT " in l for l in commands),
+              commands)
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_SAVE_SENT="1", MAILBEND_SENT_FOLDER="Nowhere")
+        check("a Sent copy that cannot be made is reported beside the successful send", c == 0 and r.get("sent")
+              and r.get("sent_copy", "").startswith("failed: ") and "MAILBEND_SENT_FOLDER" in r.get("sent_copy", ""), r)
+    finally:
+        srv.stop()
+
+    srv = Server(work, extra=["--file-sent", "Sent Messages"])
+    try:
+        log_start = len(srv.log_lines())
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_SAVE_SENT="1")
+        copies = sent_message(srv, "Sent Messages", r.get("message_id", "?"))
+        check("mail the server already filed is not copied again", c == 0
+              and r.get("sent_copy") == "already in Sent Messages" and len(copies) == 1
+              and not any(" APPEND " in l for l in srv.log_lines()[log_start:]), r)
+    finally:
+        srv.stop()
+
+    srv = Server(work, extra=["--reject", "APPEND"])
+    try:
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_SAVE_SENT="1")
+        check("a refused Sent copy fails only the copy", c == 0 and r.get("sent") and sent_count(srv) == 1
+              and r.get("sent_copy", "").startswith("failed or unconfirmed (check Sent Messages before saving again): "), r)
+    finally:
+        srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Sent"] = fixture["mailboxes"].pop("Sent Messages")
+    fixture["mailboxes"]["Sent"]["special"] = []
+    srv = Server(work, fixture=fixture)
+    try:
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_SAVE_SENT="1")
+        check("a Sent folder found by its conventional name Sent takes the copy", c == 0
+              and r.get("sent_copy") == "saved to Sent" and len(sent_message(srv, "Sent", r.get("message_id", "?"))) == 1, r)
+    finally:
+        srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    del fixture["mailboxes"]["Sent Messages"]
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()["mailboxes"]
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_SAVE_SENT="1")
+        check("without a Sent folder the send goes and says no copy was kept", c == 0 and r.get("sent")
+              and r.get("sent_copy", "").startswith("not saved: ") and srv.st()["mailboxes"] == before, r)
+    finally:
+        srv.stop()
 
 if __name__ == "__main__":
     main()

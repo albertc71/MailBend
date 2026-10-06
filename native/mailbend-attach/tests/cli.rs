@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::ops::Deref;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -50,6 +50,16 @@ fn attach(cwd: &Path, args: &[&str]) -> Output {
 
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Reserves one send in `state` as the Bend core does.
+fn count(state: &Path, limit: &str, day: &str) -> Output {
+    let state = state.to_str().expect("utf-8");
+    attach(&std::env::temp_dir(), &["count", state, limit, day])
 }
 
 #[test]
@@ -158,6 +168,109 @@ fn broad_directories_are_refused() {
 }
 
 #[test]
+fn sends_are_counted_per_day_up_to_the_limit() {
+    let work = scratch();
+    let state = work.join("state").join("mailbend");
+    for expected in ["ok 1", "ok 2", "full 2", "full 2"] {
+        let out = count(&state, "2", "2026-10-06");
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(stdout(&out), format!("{expected}\n"));
+    }
+    let out = count(&state, "2", "2026-10-07");
+    assert_eq!(stdout(&out), "ok 1\n", "{}", stderr(&out));
+    let out = count(&state, "3", "2026-10-06");
+    assert_eq!(stdout(&out), "ok 3\n", "{}", stderr(&out));
+    let counter = fs::read_to_string(state.join("sends")).expect("read counter");
+    assert_eq!(counter, "2026-10-06\n2026-10-06\n2026-10-07\n2026-10-06\n");
+}
+
+#[test]
+fn the_state_directory_is_created_private() {
+    let work = scratch();
+    let state = work.join("new").join("mailbend");
+    let out = count(&state, "1", "2026-10-06");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mode = fs::metadata(&state)
+        .expect("stat state")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+    let mode = fs::metadata(state.join("sends"))
+        .expect("stat counter")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o077, 0);
+}
+
+#[test]
+fn concurrent_reservations_never_exceed_the_limit() {
+    let work = scratch();
+    let state = work.join("state");
+    let racers: Vec<_> = (0..2)
+        .map(|_| {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                (0..10)
+                    .map(|_| stdout(&count(&state, "7", "2026-10-06")))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let mut answers: Vec<String> = racers
+        .into_iter()
+        .flat_map(|racer| racer.join().expect("racer"))
+        .collect();
+    answers.sort();
+    let mut expected: Vec<String> = (1..=7).map(|n| format!("ok {n}\n")).collect();
+    expected.extend(std::iter::repeat_n("full 7\n".to_string(), 13));
+    expected.sort();
+    assert_eq!(answers, expected);
+    let counter = fs::read_to_string(state.join("sends")).expect("read counter");
+    assert_eq!(counter.lines().count(), 7);
+}
+
+#[test]
+fn a_counter_that_cannot_be_used_refuses() {
+    let work = scratch();
+    let linked = work.join("linked");
+    fs::create_dir(&linked).expect("mkdir");
+    fs::write(work.join("elsewhere"), b"").expect("write");
+    symlink(work.join("elsewhere"), linked.join("sends")).expect("symlink");
+    let not_file = work.join("not-file");
+    fs::create_dir_all(not_file.join("sends")).expect("mkdir");
+    let blocked = work.join("blocked");
+    fs::write(&blocked, b"").expect("write");
+    let cases: [(&Path, &str, &str, &str); 6] = [
+        (&linked, "1", "2026-10-06", "cannot open the send counter"),
+        (&not_file, "1", "2026-10-06", "cannot open the send counter"),
+        (
+            &blocked,
+            "1",
+            "2026-10-06",
+            "cannot create the state directory",
+        ),
+        (&work, "0", "2026-10-06", "bad send limit"),
+        (&work, "1", "06/10/2026", "bad day"),
+        (
+            Path::new("relative"),
+            "1",
+            "2026-10-06",
+            "not an absolute path",
+        ),
+    ];
+    for (state, limit, day, reason) in cases {
+        let out = attach(
+            &work,
+            &["count", state.to_str().expect("utf-8"), limit, day],
+        );
+        assert_eq!(out.status.code(), Some(2), "{reason}");
+        assert!(out.stdout.is_empty(), "{reason}");
+        assert!(stderr(&out).contains(reason), "{reason}: {}", stderr(&out));
+    }
+    assert_eq!(fs::read(work.join("elsewhere")).expect("read"), b"");
+}
+
+#[test]
 fn other_argument_counts_are_usage_errors() {
     let work = scratch();
     for args in [
@@ -165,6 +278,7 @@ fn other_argument_counts_are_usage_errors() {
         &["a"][..],
         &["a", "b"][..],
         &["a", "b", "c", "d"][..],
+        &["a", "b", "c", "d", "e"][..],
     ] {
         let out = attach(&work, args);
         assert_eq!(out.status.code(), Some(2));

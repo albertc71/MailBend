@@ -50,6 +50,15 @@ jobs:
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
 
+      # The allowlist law is about S.outbound, so no other code may make an
+      # SMTP envelope.
+      - name: The SMTP envelope comes only from the allowlist
+        run: |
+          if grep -rnE '[A-Za-z_]\.envelope\(' --include='*.bend' src main.bend; then
+            echo "envelope is called outside src/smtp.bend" >&2
+            exit 1
+          fi
+
       - name: Install Lean (scripts/install-lean.sh, for --verdict)
         run: sh scripts/install-lean.sh
 

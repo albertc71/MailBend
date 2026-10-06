@@ -133,6 +133,12 @@ FLAG_PARTIAL = (
     "unanswered; a retry is idempotent but may fail again on a server that "
     "refuses the colour keywords. A change that stopped before any store "
     "could run, or whose UIDs none exist, is a plain error.")
+SEND_RULES = (
+    " A send is refused, and nothing is sent, when a recipient is not in "
+    "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is "
+    "reached. With MAILBEND_SAVE_SENT the result's sent_copy says whether a "
+    "copy was saved to the Sent folder; a failed copy does not fail the "
+    "send.")
 MOVE_CUT_OFF = (
     "If the move is cut off after the copy may have run, the call fails with "
     "partial: true and the messages may be in both folders, so check the "
@@ -295,14 +301,14 @@ TOOLS = [
          CHANGES, COMPOSE),
     tool("mail_send",
          "Compose and send a message over SMTP (STARTTLS, verified). From is "
-         "MAILBEND_EMAIL.",
+         "MAILBEND_EMAIL." + SEND_RULES,
          SENDS, COMPOSE),
     tool("mail_reply",
          "Reply to a message (sets In-Reply-To/References, quotes the "
          "original). Sends unless as_draft is true. Only the first 256 KB of "
          "the original is read: the result reports quoted_original_truncated, "
          "quoted_bytes and original_bytes, and a truncated quote also says so "
-         "in the text.",
+         "in the text." + SEND_RULES,
          SENDS,
          {"folder": FOLDER,
           "uid": UID,
@@ -316,7 +322,7 @@ TOOLS = [
          ["uid", "uidvalidity", "body"]),
     tool("mail_forward",
          "Forward a message, attached whole as a .eml file. Sends unless "
-         "as_draft is true.",
+         "as_draft is true." + SEND_RULES,
          SENDS,
          {"folder": FOLDER,
           "uid": UID,

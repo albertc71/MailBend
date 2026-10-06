@@ -318,5 +318,7 @@ Drafts mailbox without sending it.
 
 A small `max_bytes` can truncate a fetched message before its body and return
 an empty body; increase the budget when needed. SMTP delivery does not
-guarantee a Sent copy, and MailBend does not append one automatically. Those
-limits are unchanged by folder-role resolution.
+guarantee a Sent copy: MailBend appends one only with `MAILBEND_SAVE_SENT=1`,
+after checking that the server did not file the message itself. Whether
+iCloud files SMTP-sent mail on its own is not yet verified for this account,
+so the setting stays off by default.
