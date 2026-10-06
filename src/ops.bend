@@ -14,6 +14,7 @@ type Op is Data:
   OSearch{}
   OGet{}
   OGetNew{}
+  OGetAttachment{}
   OMarkRead{}
   OMarkUnread{}
   OFlag{}
@@ -29,7 +30,9 @@ type Op is Data:
   OReply{}
   OForward{}
 
-# Read-only operations never change the mailbox or send mail.
+# Read-only operations never change the mailbox or send mail, and write
+# nothing anywhere: mail_get_attachment reads like mail_get but saves a file,
+# so it is not one.
 def is_read_only(op: Op) -> Bool:
   match op:
     case OProbe{}:
@@ -66,6 +69,8 @@ def name(op: Op) -> String:
       "mail_get"
     case OGetNew{}:
       "mail_get_new"
+    case OGetAttachment{}:
+      "mail_get_attachment"
     case OMarkRead{}:
       "mail_mark_read"
     case OMarkUnread{}:
@@ -103,6 +108,7 @@ def all_ops() -> List<&2, Op>:
     OSearch{},
     OGet{},
     OGetNew{},
+    OGetAttachment{},
     OMarkRead{},
     OMarkUnread{},
     OFlag{},

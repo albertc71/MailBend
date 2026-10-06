@@ -1,6 +1,6 @@
 [package]
 name = "mailbend-attach"
-description = "Reads one attachment file for MailBend, sandboxed and without credentials"
+description = "Reads attachments, saves downloads and counts sends for MailBend, sandboxed and without credentials"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

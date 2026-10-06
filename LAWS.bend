@@ -16,7 +16,7 @@ import ./src/smtp.bend as S
 
 # Reading is read-only, and permanent deletion is not. Exactly five tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
-# tool can change mail or send it.
+# tool can change mail, send it, or (mail_get_attachment) write a file.
 
 # LAW: mail_get is read-only
 law read_is_read_only:
@@ -29,6 +29,10 @@ law search_is_read_only:
 # LAW: mail_delete is not read-only
 law delete_is_not_read_only:
   {Ops.is_read_only(Ops.ODelete{}) == False{} : Bool}
+
+# LAW: mail_get_attachment is not read-only: it saves a file
+law download_is_not_read_only:
+  {Ops.is_read_only(Ops.OGetAttachment{}) == False{} : Bool}
 
 # LAW: mail_trash is not destructive
 law trash_is_not_destructive:

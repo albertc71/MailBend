@@ -933,7 +933,9 @@ class IMAPSession:
                 elif word == 'INTERNALDATE':
                     parts.append(f'INTERNALDATE "{m["internaldate"]}"')
                 elif word == 'RFC822.SIZE':
-                    parts.append(f'RFC822.SIZE {len(m["raw"])}')
+                    # A fixture may claim a larger size, as for a message
+                    # too big to fetch whole.
+                    parts.append(f'RFC822.SIZE {m.get("reported_size", len(m["raw"]))}')
             else:
                 name, content, sets_seen = render_section(spec, m)
                 if sets_seen and not self.readonly and '\\Seen' not in m['flags']:

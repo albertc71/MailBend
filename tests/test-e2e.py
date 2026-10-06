@@ -7,15 +7,18 @@ never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 """
+import base64
 import copy
 import json
 import os
 import pwd
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
@@ -27,7 +30,7 @@ SEND_SETTINGS = ("MAILBEND_SAVE_SENT", "MAILBEND_ALLOWED_RECIPIENTS", "MAILBEND_
                  "MAILBEND_STATE_DIR")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 19
+TOOL_COUNT = 20
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -72,6 +75,7 @@ class Server:
         e.pop("MAILBEND_DRAFTS_ONLY", None)
         e.pop("MAILBEND_PASSWORD_FILE", None)
         e.pop("MAILBEND_ATTACH_DIR", None)
+        e.pop("MAILBEND_DOWNLOAD_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
         e.pop("MAILBEND_ATTACH_HELPER", None)
         for name in SEND_SETTINGS:
@@ -156,6 +160,7 @@ def run_all(work):
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
+    downloads(work)
 
 
 def reads(srv):
@@ -616,6 +621,7 @@ MUTATING_CALLS = {
     "mail_send": {"to": "a@example.com", "subject": "x", "body": "x"},
     "mail_reply": {"uid": 5, "uidvalidity": 1700000001, "body": "x"},
     "mail_forward": {"uid": 5, "uidvalidity": 1700000001, "to": "a@example.com"},
+    "mail_get_attachment": {"uid": 4, "index": 0},
 }
 
 
@@ -1687,6 +1693,192 @@ def sent_copies(work):
               and r.get("sent_copy", "").startswith("not saved: ") and srv.st()["mailboxes"] == before, r)
     finally:
         srv.stop()
+
+
+# --------------------------------------------------------------------------
+# Attachment downloads: mail_get_attachment and mailbend-attach save
+# --------------------------------------------------------------------------
+
+ALL_BYTES = bytes(range(256))
+FILES_UID, HUGE_UID, CUT_UID = 7, 8, 9
+
+
+def file_part(header_name, body):
+    return ("--files\r\nContent-Type: text/plain\r\n"
+            f"Content-Disposition: attachment; {header_name}\r\n\r\n{body}\r\n")
+
+
+def download_fixture():
+    """INBOX gains a message whose attachments are every byte, then names to
+    sanitise; a copy the server claims is larger than 25 MB; and a copy
+    padded past the 25 MB fetch whose size the server under-reports."""
+    fixture = copy.deepcopy(FIX)
+    files = ("Message-ID: <msg7@example.com>\r\nDate: Sun, 27 Sep 2026 09:00:00 +0000\r\n"
+             "From: carol@example.com\r\nTo: tester@example.com\r\nSubject: Files\r\nMIME-Version: 1.0\r\n"
+             "Content-Type: multipart/mixed; boundary=\"files\"\r\n\r\n"
+             "--files\r\nContent-Type: text/plain\r\n\r\nThe files.\r\n"
+             "--files\r\nContent-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n"
+             "Content-Disposition: attachment; filename=\"all.bin\"\r\n\r\n"
+             + base64.b64encode(ALL_BYTES).decode() + "\r\n"
+             + file_part('filename="../../evil.sh"', "echo hi")
+             + file_part("filename*=UTF-8''%E2%80%AEgpj.exe", "x")
+             + file_part('filename="...hidden"', "y"))
+    line = "x" * 76 + "\r\n"
+    padding = "--files\r\nContent-Type: text/plain\r\n\r\n" + line * ((25 << 20) // len(line) + 1)
+    message = {"uid": FILES_UID, "flags": [], "internaldate": "27-Sep-2026 09:00:00 +0000",
+               "raw": files + "--files--\r\n"}
+    huge = {**message, "uid": HUGE_UID, "reported_size": 26 << 20}
+    cut = {**message, "uid": CUT_UID, "raw": files + padding + "--files--\r\n", "reported_size": 1000}
+    fixture["mailboxes"]["INBOX"]["messages"] += [message, huge, cut]
+    return fixture
+
+
+def downloads(work):
+    root = os.path.join(os.path.realpath(work), "download-tests")
+    dl = os.path.join(root, "downloads")
+    os.makedirs(dl)
+    srv = Server(work, fixture=download_fixture())
+    try:
+        download_settings(srv, dl)
+        download_round_trip(srv, dl)
+        download_names(srv, dl)
+        download_directories(srv, root)
+    finally:
+        srv.stop()
+    killed_download(root)
+
+
+def get_attachment(srv, index, uid=FILES_UID, **env):
+    return tool(srv, "mail_get_attachment", {"uid": uid, "index": index}, **env)
+
+
+def download_settings(srv, dl):
+    c, r = get_attachment(srv, 0)
+    check("downloads are off without MAILBEND_DOWNLOAD_DIR", c != 0 and "downloads are disabled" in r.get("error", ""), r)
+    c, r = get_attachment(srv, 0, MAILBEND_DOWNLOAD_DIR="downloads")
+    check("a relative MAILBEND_DOWNLOAD_DIR is a configuration error", c != 0
+          and "configuration error: MAILBEND_DOWNLOAD_DIR" in r.get("error", ""), r)
+    c, r = get_attachment(srv, 0, MAILBEND_DOWNLOAD_DIR=dl, MAILBEND_READ_ONLY="1")
+    check("read-only mode refuses mail_get_attachment", c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "")
+          and not os.listdir(dl), r)
+    c, r = get_attachment(srv, 0, uid=HUGE_UID, MAILBEND_DOWNLOAD_DIR=dl)
+    check("a message too large to fetch whole is refused", c != 0 and "larger than 25 MB" in r.get("error", "")
+          and not os.listdir(dl), r)
+    c, r = get_attachment(srv, 0, uid=CUT_UID, MAILBEND_DOWNLOAD_DIR=dl)
+    check("a fetch cut at 25 MB is refused even when the server under-reports the size", c != 0
+          and "larger than 25 MB" in r.get("error", "") and not os.listdir(dl), r)
+    c, r = get_attachment(srv, 9, MAILBEND_DOWNLOAD_DIR=dl)
+    check("a missing attachment index is refused", c != 0 and "no attachment 9" in r.get("error", ""), r)
+
+
+def download_round_trip(srv, dl):
+    log_start = len(srv.log_lines())
+    c, r = get_attachment(srv, 0, MAILBEND_DOWNLOAD_DIR=dl)
+    saved = os.path.join(dl, "all.bin")
+    check("mail_get_attachment saves every byte 0x00-0xFF unchanged", c == 0 and r.get("path") == saved
+          and r.get("size") == 256 and pathlib.Path(saved).read_bytes() == ALL_BYTES, r)
+    check("a saved attachment is private (mode 0600)", (os.stat(saved).st_mode & 0o777) == 0o600)
+    commands = srv.log_lines()[log_start:]
+    check("a download reads with EXAMINE and BODY.PEEK and leaves the message unread",
+          any(" EXAMINE " in l for l in commands) and any("BODY.PEEK[]" in l for l in commands)
+          and not any(" SELECT " in l for l in commands) and flags(srv.st(), "INBOX", FILES_UID) == set(), commands)
+    pathlib.Path(saved).write_bytes(b"kept")
+    c, r = get_attachment(srv, 0, MAILBEND_DOWNLOAD_DIR=dl)
+    check("an existing file is never replaced", c != 0 and "already exists" in r.get("error", "")
+          and pathlib.Path(saved).read_bytes() == b"kept", r)
+
+
+def download_names(srv, dl):
+    named = []
+    for index, filename, expected in [(1, "", "evil.sh"), (0, "/etc/passwd", "passwd"), (2, "", "gpj.exe"),
+                                      (3, "", "hidden"), (0, "..\\..\\.profile", "profile")]:
+        args = {"uid": FILES_UID, "index": index, "filename": filename} if filename else {"uid": FILES_UID, "index": index}
+        c, r = tool(srv, "mail_get_attachment", args, MAILBEND_DOWNLOAD_DIR=dl)
+        if not (c == 0 and r.get("filename") == expected and os.path.isfile(os.path.join(dl, expected))):
+            named.append((index, filename, r))
+    check("file names keep only their last component, without format characters or leading dots", not named
+          and sorted(os.listdir(dl)) == ["all.bin", "evil.sh", "gpj.exe", "hidden", "passwd", "profile"], named)
+
+
+def download_directories(srv, root):
+    attach = os.path.join(root, "attach")
+    os.makedirs(os.path.join(attach, "inside"))
+    os.symlink(attach, os.path.join(root, "attach-alias"))
+    overlapping = []
+    for directory in (attach, os.path.join(attach, "inside"), os.path.join(root, "attach-alias")):
+        c, r = get_attachment(srv, 0, MAILBEND_DOWNLOAD_DIR=directory, MAILBEND_ATTACH_DIR=attach)
+        if not (c != 0 and "separate directories" in r.get("error", "")):
+            overlapping.append((directory, r))
+    check("a download directory equal to, inside, or an alias of MAILBEND_ATTACH_DIR is refused", not overlapping
+          and os.listdir(attach) == ["inside"] and not os.listdir(os.path.join(attach, "inside")), overlapping)
+
+    config = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".config")
+    made_config = not os.path.isdir(config)
+    in_config = None
+    autostart = os.path.join(root, "x", "autostart")
+    os.makedirs(autostart)
+    in_ssh = os.path.join(root, "y", ".ssh")
+    os.makedirs(in_ssh)
+    bindir = os.path.join(root, "bin-dir")
+    os.makedirs(bindir)
+    os.symlink(bindir, os.path.join(root, "bin-alias"))
+    path = os.environ.get("PATH", "")
+    try:
+        os.makedirs(config, exist_ok=True)
+        in_config = tempfile.mkdtemp(prefix="mailbend-e2e-", dir=config)
+        runnable = []
+        for directory, reason, env in [
+                (in_config, ".config", {}), (autostart, "autostart", {}), (in_ssh, ".ssh", {}),
+                (bindir, "PATH", {"PATH": f"{bindir}:{path}"}),
+                (bindir, "PATH", {"PATH": f"{os.path.join(root, 'bin-alias')}:{path}"}),
+                (os.path.join(root, "bin-alias"), "PATH", {"PATH": f"{bindir}:{path}"})]:
+            c, r = get_attachment(srv, 0, MAILBEND_DOWNLOAD_DIR=directory, **env)
+            if not (c != 0 and reason in r.get("error", "") and not os.listdir(directory)):
+                runnable.append((directory, reason, r))
+        check("directories whose files may be run, or inside .ssh, are refused "
+              "(~/.config, autostart, .ssh, PATH and its aliases)", not runnable, runnable)
+    finally:
+        if in_config:
+            shutil.rmtree(in_config, ignore_errors=True)
+        if made_config and os.path.isdir(config):
+            os.rmdir(config)
+
+
+def helper_fds(pid):
+    fd_dir = f"/proc/{pid}/fd"
+    links = []
+    for fd in os.listdir(fd_dir):
+        try:
+            links.append(os.readlink(os.path.join(fd_dir, fd)))
+        except OSError:
+            pass
+    return links
+
+
+def killed_download(root):
+    dl = os.path.join(root, "killed")
+    os.makedirs(dl)
+    helper = subprocess.Popen([str(ROOT / "bin" / "mailbend-attach"), "save", "", dl, "partial.bin", "1000",
+                               os.environ.get("PATH", "")], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, env={**os.environ, "MAILBEND_APP_PASSWORD": PASSWORD})
+    try:
+        helper.stdin.write(b"partial data")
+        helper.stdin.flush()
+        deadline = time.monotonic() + 10
+        writing = False
+        while not writing and time.monotonic() < deadline and helper.poll() is None:
+            writing = any(link.startswith(dl + "/") for link in helper_fds(helper.pid))
+            if not writing:
+                time.sleep(0.05)
+        environ = pathlib.Path(f"/proc/{helper.pid}/environ").read_bytes() if writing else b"?"
+        check("the save helper holds an unnamed file while it writes, with no MAILBEND_APP_PASSWORD in its environment",
+              writing and b"MAILBEND_APP_PASSWORD" not in environ and PASSWORD.encode() not in environ, environ[:200])
+    finally:
+        helper.send_signal(signal.SIGKILL)
+        helper.wait()
+        helper.stdin.close()
+    check("a helper killed mid-write leaves no file behind", os.listdir(dl) == [], os.listdir(dl))
+
 
 if __name__ == "__main__":
     main()

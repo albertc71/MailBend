@@ -5,11 +5,14 @@
 #![allow(clippy::expect_used)]
 
 use std::fs;
+use std::io::Write;
 use std::ops::Deref;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use mailbend_io::transcript::encode_bytes;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -54,6 +57,48 @@ fn stderr(out: &Output) -> String {
 
 fn stdout(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Saves `data`, sent in the core's byte encoding, as `name` in `download`
+/// as the Bend core does.
+fn save(attach: &str, download: &Path, name: &str, paths: &str, data: &[u8]) -> Output {
+    let mut encoded = Vec::new();
+    encode_bytes(data, &mut encoded);
+    save_raw(attach, download, name, paths, &encoded)
+}
+
+fn save_raw(attach: &str, download: &Path, name: &str, paths: &str, input: &[u8]) -> Output {
+    let download = download.to_str().expect("utf-8");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mailbend-attach"))
+        .args(["save", attach, download, name, "1000", paths])
+        .current_dir(std::env::temp_dir())
+        .env("MAILBEND_APP_PASSWORD", "must-not-leak")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run mailbend-attach");
+    let mut stdin = child.stdin.take().expect("stdin");
+    // A refused save stops before reading, so the pipe may be closed.
+    let _ = stdin.write_all(input);
+    drop(stdin);
+    child.wait_with_output().expect("wait for mailbend-attach")
+}
+
+/// The names in `dir`, sorted.
+fn names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .expect("list directory")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 /// Reserves one send in `state` as the Bend core does.
@@ -164,6 +209,27 @@ fn broad_directories_are_refused() {
         let out = attach(&work, &[dir.to_str().expect("utf-8"), "a.txt", "10"]);
         assert_eq!(out.status.code(), Some(2));
         assert!(stderr(&out).contains(name), "{}", stderr(&out));
+    }
+}
+
+#[test]
+fn a_directory_that_is_or_lies_inside_a_sensitive_one_is_refused() {
+    let work = scratch();
+    let ssh = work.join("u").join(".ssh");
+    let gnupg_sub = work.join("u").join(".gnupg").join("sub");
+    for (dir, name) in [(&ssh, ".ssh"), (&gnupg_sub, ".gnupg")] {
+        fs::create_dir_all(dir).expect("mkdir");
+        fs::write(dir.join("a.txt"), b"x").expect("write");
+        let out = attach(&work, &[dir.to_str().expect("utf-8"), "a.txt", "10"]);
+        assert_eq!(out.status.code(), Some(2), "{}", dir.display());
+        assert!(out.stdout.is_empty());
+        let inside = format!("MAILBEND_ATTACH_DIR is or lies inside {name}");
+        assert!(stderr(&out).contains(&inside), "{}", stderr(&out));
+        let out = save("", dir, "rc", "", b"x");
+        assert_eq!(out.status.code(), Some(2), "{}", dir.display());
+        let inside = format!("MAILBEND_DOWNLOAD_DIR is or lies inside {name}");
+        assert!(stderr(&out).contains(&inside), "{}", stderr(&out));
+        assert_eq!(names(dir), ["a.txt"]);
     }
 }
 
@@ -279,9 +345,110 @@ fn other_argument_counts_are_usage_errors() {
         &["a", "b"][..],
         &["a", "b", "c", "d"][..],
         &["a", "b", "c", "d", "e"][..],
+        &["read", "b", "c", "d", "e", "f"][..],
     ] {
         let out = attach(&work, args);
         assert_eq!(out.status.code(), Some(2));
         assert!(stderr(&out).contains("usage"), "{}", stderr(&out));
     }
+}
+
+#[test]
+fn a_save_writes_every_byte_to_a_private_new_file() {
+    let work = scratch();
+    let all: Vec<u8> = (0..=255).collect();
+    let out = save("", &work, "all.bin", "/usr/bin:/bin", &all);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(out.stdout.is_empty());
+    assert_eq!(fs::read(work.join("all.bin")).expect("read"), all);
+    let mode = fs::metadata(work.join("all.bin"))
+        .expect("stat")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let out = save("", &work, "empty", "", b"");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(fs::read(work.join("empty")).expect("read"), b"");
+    assert_eq!(names(&work), ["all.bin", "empty"]);
+}
+
+#[test]
+fn a_save_never_replaces_a_file() {
+    let work = scratch();
+    fs::write(work.join("a.txt"), b"mine").expect("write");
+    let out = save("", &work, "a.txt", "", b"theirs");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("already exists"), "{}", stderr(&out));
+    assert_eq!(fs::read(work.join("a.txt")).expect("read"), b"mine");
+    assert_eq!(names(&work), ["a.txt"]);
+}
+
+#[test]
+fn a_download_directory_overlapping_the_attachments_is_refused() {
+    let work = scratch();
+    let attach = work.join("attach");
+    fs::create_dir_all(attach.join("inside")).expect("mkdir");
+    symlink(&attach, work.join("alias")).expect("symlink");
+    let inside = attach.join("inside");
+    let alias = work.join("alias");
+    let attach_arg = attach.to_str().expect("utf-8");
+    for download in [&attach, &inside, &alias, &*work] {
+        let out = save(attach_arg, download, "a.txt", "", b"x");
+        assert_eq!(out.status.code(), Some(2), "{}", download.display());
+        assert!(stderr(&out).contains("separate"), "{}", stderr(&out));
+    }
+    let missing = work.join("missing");
+    let out = save(missing.to_str().expect("utf-8"), &inside, "a", "", b"x");
+    assert!(
+        stderr(&out).contains("cannot open MAILBEND_ATTACH_DIR"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(names(&inside).is_empty());
+    assert_eq!(names(&attach), ["inside"]);
+}
+
+#[test]
+fn a_download_directory_whose_files_may_be_run_is_refused() {
+    let work = scratch();
+    let bin = work.join("bin");
+    let alias = work.join("bin-alias");
+    let autostart = work.join("x").join("autostart");
+    fs::create_dir(&bin).expect("mkdir");
+    fs::create_dir_all(&autostart).expect("mkdir");
+    symlink(&bin, &alias).expect("symlink");
+    let paths = format!("/usr/bin:{}", alias.display());
+    for (download, reason) in [(&bin, "PATH"), (&alias, "PATH"), (&autostart, "autostart")] {
+        let out = save("", download, "run.sh", &paths, b"#!/bin/sh\n");
+        assert_eq!(out.status.code(), Some(2), "{}", download.display());
+        assert!(stderr(&out).contains(reason), "{}", stderr(&out));
+    }
+    assert!(names(&bin).is_empty());
+    assert!(names(&autostart).is_empty());
+}
+
+#[test]
+fn a_bad_save_writes_nothing() {
+    let work = scratch();
+    let download = work.join("download");
+    fs::create_dir(&download).expect("mkdir");
+    let cases: [(&str, &[u8], &str); 5] = [
+        ("../a", b"x", "bad file name"),
+        ("..", b"x", "bad file name"),
+        ("a", "\u{202E}".as_bytes(), "byte encoding"),
+        ("a", b"x\xC3", "byte encoding"),
+        ("a", &[b'x'; 1001], "larger than 1000 bytes"),
+    ];
+    for (name, input, reason) in cases {
+        let out = save_raw("", &download, name, "", input);
+        assert_eq!(out.status.code(), Some(2), "{reason}");
+        assert!(stderr(&out).contains(reason), "{reason}: {}", stderr(&out));
+    }
+    let out = save("", &work.join("missing"), "a", "", b"x");
+    let missing = "MAILBEND_DOWNLOAD_DIR does not exist";
+    assert!(stderr(&out).contains(missing), "{}", stderr(&out));
+    fs::create_dir(download.join(".ssh")).expect("mkdir");
+    let out = save("", &download, "a", "", b"x");
+    assert!(stderr(&out).contains("holds .ssh"), "{}", stderr(&out));
+    assert_eq!(names(&download), [".ssh"]);
 }

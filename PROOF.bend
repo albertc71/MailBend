@@ -25,6 +25,9 @@ def Laws.search_is_read_only():
 def Laws.delete_is_not_read_only():
   {==}
 
+def Laws.download_is_not_read_only():
+  {==}
+
 def Laws.trash_is_not_destructive():
   {==}
 

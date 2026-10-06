@@ -206,6 +206,64 @@ def oks(xs: List<&2, String>) -> String:
     case x <> t:
       Bool.show(M.addr_ok(x)) ++ " " ++ oks(t)
 
+# A message with attachments: base64 and quoted-printable ones in a nested
+# multipart (the second with an RFC 2231 name), then a 7bit one without a
+# name after the text.
+def attachments_message() -> String:
+  String.concat([
+    "Content-Type: multipart/mixed; boundary=\"A\"\r\n",
+    "\r\n",
+    "--A\r\n",
+    "Content-Type: text/plain\r\n\r\nbody text\r\n",
+    "--A\r\n",
+    "Content-Type: multipart/mixed; boundary=B\r\n\r\n",
+    "--B\r\n",
+    "Content-Type: application/octet-stream; name=\"b64.bin\"\r\n",
+    "Content-Transfer-Encoding: base64\r\n\r\nAP+ACg==\r\n",
+    "--B\r\n",
+    "Content-Type: text/plain\r\n",
+    "Content-Disposition: attachment; filename*=utf-8''r%C3%A9sum%C3%A9.txt\r\n",
+    "Content-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9 =\r\nsoft\r\n",
+    "--B--\r\n",
+    "--A\r\n",
+    "Content-Type: image/png\r\nContent-Transfer-Encoding: 7bit\r\n\r\nraw bytes\r\n",
+    "--A--\r\n"])
+
+def byte_values.go(s: String) -> List<&2, String>:
+  match s:
+    case SNil{}:
+      []
+    case SCon{c, t}:
+      U32.show(Char.to_u32(c)) <> byte_values.go(t)
+
+# A byte string as its byte values.
+def byte_values(s: String) -> String:
+  String.join(byte_values.go(s), ",")
+
+def show_attachment(m: Maybe<&2, M.Attach>) -> String:
+  match m:
+    case None{}:
+      "none"
+    case Some{M.Attach{name, ctype, data}}:
+      name ++ "|" ++ ctype ++ "|" ++ byte_values(data)
+
+def attachment_cases() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(show_parts(M.parts(attachments_message())))
+    IO.print(show_attachment(M.attachment_at(attachments_message(), 0)))
+    IO.print(show_attachment(M.attachment_at(attachments_message(), 1)))
+    IO.print(show_attachment(M.attachment_at(attachments_message(), 2)))
+    IO.print(show_attachment(M.attachment_at(attachments_message(), 3)))
+    IO.print(show_attachment(M.attachment_at("Subject: x\r\n\r\nno parts", 0)))
+    IO.print(show_attachment(M.attachment_at(multipart_message(), 0)))
+
+def local_name_cases() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(M.local_name("../../evil.sh") ++ " | " ++ M.local_name("/etc/passwd") ++ " | " ++ M.local_name("C:\\Users\\x\\report.pdf") ++ " | [" ++ M.local_name("dir/") ++ "]")
+    IO.print(M.local_name("\u{202E}gnp.exe") ++ " | " ++ M.local_name("...hidden") ++ " | " ++ M.local_name("a\u{0}b\tc\u{7F}d\u{9F}e\u{AD}f\u{FEFF}g\u{E0041}h") ++ " | " ++ M.local_name(". .x"))
+    IO.print("[" ++ M.local_name("..") ++ "] [" ++ M.local_name(".") ++ "] [" ++ M.local_name("") ++ "] [" ++ M.local_name("\u{202E}") ++ "]")
+    IO.print(Nat.show(String.length(M.local_name(String.repeat("a", 300n)))) ++ " " ++ Nat.show(String.length(M.local_name(String.repeat("\u{E9}", 200n)))) ++ " " ++ Nat.show(String.length(M.local_name("a" ++ String.repeat("\u{1F600}", 64n)))) ++ " " ++ M.local_name("caf\u{E9}.txt"))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     show_headers(M.headers(M.head_of(M.split(multipart_message()))))
@@ -240,6 +298,8 @@ def main() -> IO(Unit):
     IO.print(M.encode_addr("a@b") ++ " | " ++ M.encode_addr("<a@b>") ++ " | " ++ M.encode_addr("José <j@x.com>") ++ " | " ++ M.encode_addr("\"Q \\\"x\\\"\" <q@x>") ++ " | " ++ M.encode_addr("Back\\slash <b@x>") ++ " | " ++ M.encode_addr("Name <a@b> (c)"))
     IO.print(visible(M.encode_addr(String.repeat("n", 201n) ++ " <a@b>")) ++ " | " ++ Nat.show(String.length(M.encode_addr(String.repeat("n", 200n) ++ " <a@b>"))))
     IO.print(M.iso_date(0) ++ " " ++ M.iso_date(951782400) ++ " " ++ M.iso_date(1790480370) ++ " " ++ M.iso_date(4102444799))
+    attachment_cases()
+    local_name_cases()
 
 #|José <jose@example.com>
 #|Café menu today
@@ -308,3 +368,14 @@ def main() -> IO(Unit):
 #|a@b | a@b | =?UTF-8?B?Sm9zw6k=?= <j@x.com> | "Q \"x\"" <q@x> | "Back\\slash" <b@x> | "Name" <a@b>
 #|=?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5u?= <a@b> | 208
 #|1970-01-01 2000-02-29 2026-09-27 2099-12-31
+#|text=body text html= atts=b64.bin|application/octet-stream|4;résumé.txt|text/plain|9;|image/png|9;
+#|b64.bin|application/octet-stream|0,255,128,10
+#|résumé.txt|text/plain|99,97,102,233,32,115,111,102,116
+#||image/png|114,97,119,32,98,121,116,101,115
+#|none
+#|none
+#|résumé.pdf|application/pdf|37,80,68,70,45,49,46,52,10
+#|evil.sh | passwd | report.pdf | []
+#|gnp.exe | hidden | abcdefgh |  .x
+#|[] [] [] []
+#|255 127 64 café.txt

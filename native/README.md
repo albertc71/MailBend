@@ -8,8 +8,8 @@ MailBend has two small native programs:
   is the system resolver or the helper's own DNS-over-HTTPS client
   (`mailbend-net/`). It links only libc and libgcc_s.
 - `mailbend-attach/` (Rust): reads one attachment file safely (Bend cannot open a
-  file without following symlinks), and keeps the daily send counter. It
-  holds no credentials: it first
+  file without following symlinks), saves downloaded attachments as new
+  files, and keeps the daily send counter. It holds no credentials: it first
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
 
@@ -23,14 +23,14 @@ up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
 native-tls and other TLS stacks from the dependency tree.
 `mailbend-attach` depends only on `nix` and the local, network-free
 `mailbend-io` crate (environment settings, `openat2` helpers, stderr reports
-and the shared output encoding).
+and the byte encoding shared with the core).
 Tests run with `cargo test --locked`.
 
 ## Layout
 
 - `mailbend-io/`: `env` (environment settings), `fs` (`openat2` helpers),
-  `report` (stderr reports) and `transcript` (the stdout byte encoding); no
-  network, shared by both programs.
+  `report` (stderr reports) and `transcript` (the byte encoding of what the
+  helpers and the core pass each other); no network, shared by both programs.
 - `mailbend-net/`: `connect` (deadline, system DNS, address fallback),
   `tls` (the one verified client configuration), and the DoH client:
   `doh` built on `dns`, `http`, `url` and `proxy`.
@@ -39,7 +39,8 @@ Tests run with `cargo test --locked`.
   `connection` owns the socket and the transcript; `imap/` and `smtp/` each
   hold the input validator (`script`, `envelope`), the response parser
   (`response`, `reply`) and the `session` that drives them.
-- `mailbend-attach/`: the attachment reader and the send counter.
+- `mailbend-attach/`: the attachment reader, the download writer (`save`)
+  and the send counter.
 - `fuzz/`: one cargo-fuzz target per parser (its own workspace, nightly).
 
 ## Contract
@@ -50,6 +51,8 @@ mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
 mailbend-tls --check  # credential-free local runtime check; no network
 mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
+mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
+                                            < the file's bytes
 ```
 
 - **TLS**: rustls (ring provider), TLS 1.2+, peer certificate required,
@@ -120,7 +123,8 @@ mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
   RESOLVE_NO_MAGICLINKS)`, so no symlink or `..` leads outside `<dir>`. It
   refuses a `<dir>` that is `/`, the user's home directory (from the
   password database) or a directory containing it, or one holding `.ssh`,
-  `.gnupg`, `.aws`, `.config` or `.git`. It checks the file's type through
+  `.gnupg`, `.aws`, `.config` or `.git`, or one that is or lies inside a
+  directory so named. It checks the file's type through
   an `O_PATH` descriptor first, so a device or FIFO found there is not
   opened; it then reopens that same inode for reading through
   `/proc/self/fd/<descriptor>` (not by walking the path again) and confirms
@@ -144,6 +148,28 @@ mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
   `full <n>`. It only compares the number the core supplies; the core
   decides to refuse. Exit 2 with the reason on stderr when the directory or
   file cannot be used.
+- **Downloads** (`mailbend-attach save <attach-dir> <download-dir> <name>
+  <max-bytes> <path-list>`): `<attach-dir>` is `MAILBEND_ATTACH_DIR` (empty
+  when unset) and `<path-list>` the caller's `PATH`, passed as arguments
+  because the helper drops its environment; nothing else from the
+  environment is passed. `<name>` must be one path component of at most
+  255 bytes, not `.` or `..`. `<download-dir>` is resolved and opened as
+  `<dir>` is for attachments and refused on the same grounds; it is also
+  refused when it is, contains or lies inside `<attach-dir>` (a set
+  `<attach-dir>` that cannot be opened is refused too), when it is or lies
+  inside `~/.config`, `~/.local/bin` or `~/.local/share/applications` (home
+  from the password database; refused when it has none), when any of its components is named
+  `autostart` or `systemd`, or when it is a directory in `<path-list>`.
+  Directories are compared by device and inode, walking `..` up from the
+  opened descriptors, so a symlink alias or another spelling of the same
+  directory is refused too. Only then does it read stdin, in the byte
+  encoding above (stdin is decoded from it; any other character is
+  refused), into an unnamed file (`O_TMPFILE`, mode 0600) in
+  `<download-dir>`, refuses more than `<max-bytes>` (capped at 25 MiB),
+  syncs it and names it `<name>` with `linkat`, which fails rather than
+  replace an existing file. A helper stopped before that, even by SIGKILL,
+  leaves no file. Prints nothing; exit 2 with the reason on stderr when
+  refused. Needs a file system with `O_TMPFILE` support.
 - **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
   message, `.`. EHLO, HELO, STARTTLS, AUTH and QUIT are refused in the
   envelope. The helper owns greeting, STARTTLS, authentication and QUIT.
@@ -155,7 +181,8 @@ mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
   literal lengths stay exact. IMAP literals are consumed by byte count and
   emitted with the same encoding, so message content can never be mistaken
   for a tagged reply. IMAP `+` continuation requests are consumed, not
-  copied. Attachment output uses this encoding too.
+  copied. Attachment output uses this encoding too, and a download's
+  bytes arrive on stdin in it.
 - **Limits**: DNS plus TCP connect budget and per-read timeout
   `MAILBEND_TIMEOUT_MS` (default 30 s), which also bounds system DNS (run on
   its own thread), the DoH exchange and any proxy reply. Size limits are 32 MiB per line, 64 MiB per literal and per script,

@@ -2,14 +2,16 @@
 //!
 //!   mailbend-attach <dir> <path> <max-bytes>                 > file bytes
 //!   mailbend-attach count <state-dir> <limit> <utc-day>      > ok <n> | full <n>
+//!   mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
+//!                                                            < file bytes
 //!
 //! The first form reads one attachment; the second reserves one send in the
-//! daily send counter. Kept apart from mailbend-tls so the credential-bearing
-//! helper never touches files: this program opens no connection, and before
-//! anything else it re-executes itself with an empty environment. How files
-//! are opened, and which are refused, is specified in native/README.md
-//! ("Attachments", "Send counter"); each step is documented where it is done
-//! below.
+//! daily send counter; the third saves one downloaded attachment (`save.rs`).
+//! Kept apart from mailbend-tls so the credential-bearing helper never
+//! touches files: this program opens no connection, and before anything else
+//! it re-executes itself with an empty environment. How files are opened,
+//! and which are refused, is specified in native/README.md ("Attachments",
+//! "Send counter", "Downloads"); each step is documented where it is done.
 //!
 //! Exit status: 0 ok (for `count`, also when the limit is reached), 2 refused
 //! or unreadable (the reason is on stderr).
@@ -25,9 +27,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use mailbend_attach::{
-    Reservation, SENSITIVE, attachment_open_error, contains_path, directory_open_error,
-    not_regular, parse_day, parse_limit, parse_max, relative_attachment_path, sends_on, show,
-    too_large,
+    ATTACHMENTS, Reservation, SENSITIVE, Setting, attachment_open_error, contains_path,
+    directory_open_error, named_component, not_regular, parse_day, parse_limit, parse_max,
+    relative_attachment_path, sends_on, show, too_large,
 };
 use mailbend_io::fs::{create_at, is_regular, open_at};
 use mailbend_io::report::report;
@@ -38,10 +40,14 @@ use nix::sys::stat::{FileStat, Mode, fstat, fstatat};
 use nix::sys::statfs::{PROC_SUPER_MAGIC, SYSFS_MAGIC, fstatfs};
 use nix::unistd::{Uid, User};
 
+mod save;
+
 const PROGRAM: &str = "mailbend-attach";
 const EX_REFUSED: u8 = 2;
 const USAGE: &str = "usage: mailbend-attach <dir> <path> <max-bytes> | \
-                     mailbend-attach count <state-dir> <limit> <utc-day>";
+                     mailbend-attach count <state-dir> <limit> <utc-day> | \
+                     mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> \
+                     <path-list>";
 
 type Refusal = String;
 
@@ -67,6 +73,13 @@ fn run(args: &[OsString]) -> Result<(), Refusal> {
         [_, mode, dir, limit, day] if mode == "count" => {
             count_send(dir.as_bytes(), limit.as_bytes(), day.as_bytes())
         }
+        [_, mode, attach, download, name, max, paths] if mode == "save" => save::save_download(
+            attach.as_bytes(),
+            download.as_bytes(),
+            name.as_bytes(),
+            max.as_bytes(),
+            paths.as_bytes(),
+        ),
         [_, dir, path, max] => read_attachment(dir.as_bytes(), path.as_bytes(), max.as_bytes()),
         _ => Err(USAGE.to_string()),
     }
@@ -90,15 +103,23 @@ fn drop_inherited_environment(args: &[OsString]) -> Result<(), Refusal> {
 
 fn read_attachment(dir: &[u8], path: &[u8], max: &[u8]) -> Result<(), Refusal> {
     let max = parse_max(max)?;
-    let root = std::fs::canonicalize(Path::new(OsStr::from_bytes(dir)))
-        .map_err(|_| "MAILBEND_ATTACH_DIR does not exist".to_string())?;
-    let root = root.as_os_str().as_bytes();
-    let relative = relative_attachment_path(dir, root, path)?;
-    let directory = open_canonical_directory(root).map_err(directory_open_error)?;
-    refuse_broad_directory(root, &directory)?;
+    let (root, directory) = open_dedicated_directory(dir, &ATTACHMENTS)?;
+    let relative = relative_attachment_path(dir, root.as_os_str().as_bytes(), path)?;
     let (file, st) = open_attachment(&directory, relative, path)?;
     validate_attachment(&file, &st, path, max)?;
     emit_attachment(file, path, max)
+}
+
+/// The directory of `setting`, resolved once with realpath(), opened, and
+/// refused unless it is dedicated (`refuse_broad_directory`).
+fn open_dedicated_directory(dir: &[u8], setting: &Setting) -> Result<(PathBuf, OwnedFd), Refusal> {
+    let root = std::fs::canonicalize(Path::new(OsStr::from_bytes(dir)))
+        .map_err(|_| format!("{} does not exist", setting.name))?;
+    let bytes = root.as_os_str().as_bytes();
+    let directory =
+        open_canonical_directory(bytes).map_err(|errno| directory_open_error(errno, setting))?;
+    refuse_broad_directory(bytes, &directory, setting)?;
+    Ok((root, directory))
 }
 
 /// `root` is canonical, so it holds no symlink; opening it with
@@ -113,24 +134,41 @@ fn open_canonical_directory(root: &[u8]) -> nix::Result<OwnedFd> {
     )
 }
 
-/// Every file beneath the directory can be mailed, so it must not be one that
-/// holds the user's keys or configuration. The home directory comes from the
-/// password database: the environment is already gone.
-fn refuse_broad_directory(root: &[u8], directory: &OwnedFd) -> Result<(), Refusal> {
-    if root == b"/" {
-        return Err("MAILBEND_ATTACH_DIR must not be /: use a dedicated directory".to_string());
-    }
-    let home: Option<PathBuf> = User::from_uid(Uid::current())
+/// The canonical home directory, from the password database: the
+/// environment is already gone.
+fn home_directory() -> Option<PathBuf> {
+    User::from_uid(Uid::current())
         .ok()
         .flatten()
-        .and_then(|user| std::fs::canonicalize(user.dir).ok());
-    if home.is_some_and(|home| contains_path(root, home.as_os_str().as_bytes())) {
-        return Err("MAILBEND_ATTACH_DIR must not be your home directory or contain it: use a dedicated directory".to_string());
+        .and_then(|user| std::fs::canonicalize(user.dir).ok())
+}
+
+/// Every file beneath an attachment directory can be mailed, and a download
+/// directory is written to, so neither may be one that holds the user's
+/// keys or configuration, nor be or lie inside such a directory.
+fn refuse_broad_directory(
+    root: &[u8],
+    directory: &OwnedFd,
+    setting: &Setting,
+) -> Result<(), Refusal> {
+    let Setting { name, holds } = setting;
+    if root == b"/" {
+        return Err(format!("{name} must not be /: use a dedicated directory"));
     }
-    for name in SENSITIVE {
-        if fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW).is_ok() {
+    if home_directory().is_some_and(|home| contains_path(root, home.as_os_str().as_bytes())) {
+        return Err(format!(
+            "{name} must not be your home directory or contain it: use a dedicated directory"
+        ));
+    }
+    if let Some(sensitive) = named_component(root, &SENSITIVE) {
+        return Err(format!(
+            "{name} is or lies inside {sensitive}, so it is not a dedicated {holds} directory"
+        ));
+    }
+    for sensitive in SENSITIVE {
+        if fstatat(directory, sensitive, AtFlags::AT_SYMLINK_NOFOLLOW).is_ok() {
             return Err(format!(
-                "MAILBEND_ATTACH_DIR holds {name}, so it is not a dedicated attachment directory"
+                "{name} holds {sensitive}, so it is not a dedicated {holds} directory"
             ));
         }
     }
@@ -185,10 +223,15 @@ fn open_attachment(
         })?;
     let changed = || format!("attachment {} changed while it was opened", show(path));
     let after = fstat(&file).map_err(|_| changed())?;
-    if after.st_dev != before.st_dev || after.st_ino != before.st_ino {
+    if !same_file(&after, &before) {
         return Err(changed());
     }
     Ok((file, after))
+}
+
+/// Whether two status records are of the same file.
+fn same_file(a: &FileStat, b: &FileStat) -> bool {
+    a.st_dev == b.st_dev && a.st_ino == b.st_ino
 }
 
 /// The C library's text for an I/O error, without Rust's "(os error N)".

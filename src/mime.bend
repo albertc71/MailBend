@@ -40,7 +40,21 @@ type Cut is Data:
 type Strip is Data:
   Strip{out: String, tag: Bool}
 
-# An attachment to send: file name, content type and the raw bytes.
+# A single (non-multipart) part of a message: its header fields and body.
+type Leaf is Data:
+  Leaf{hs: List<&2, Hdr>, body: String}
+
+# What a single part's header says: its Content-Type, its main type, its
+# file name, and whether it reads as an attachment rather than as text.
+type PartKind is Data:
+  PartKind{ct: String, typ: String, name: String, file: Bool}
+
+# A range of code points, both ends included.
+type Range is Data:
+  Range{lo: U32, hi: U32}
+
+# An attachment: file name, content type and the raw bytes, to send or as
+# saved from a message.
 type Attach is Data:
   Attach{name: String, ctype: String, data: String}
 
@@ -502,18 +516,6 @@ def lf_lines(s: String) -> String:
 def leaf.text(ct: String, bytes: String) -> String:
   lf_lines(C.charset_decode(default_cs(param(ct, "charset")), bytes))
 
-def leaf.if(
-  ct: String, typ: String, name: String, bytes: String,
-  attached: Bool, plain: Bool, html: Bool
-) -> Parts:
-  match attached plain html:
-    case False{} True{} _:
-      Parts{leaf.text(ct, bytes), "", []}
-    case False{} False{} True{}:
-      Parts{"", leaf.text(ct, bytes), []}
-    case _ _ _:
-      Parts{"", "", [Att{name, typ, U32.from_nat(String.length(bytes))}]}
-
 def file_name.if(ct: String, from_cd: String, none: Bool) -> String:
   match none:
     case True{}:
@@ -527,26 +529,50 @@ def file_name(ct: String, cd: String) -> String:
   +from_cd = param(cd, "filename")
   file_name.if(ct, from_cd, String.is_empty(from_cd))
 
-# One non-multipart entity (its header fields and body). Unless attached,
-# text/plain and text/html are read as text; anything else is an attachment.
-def leaf(+hs: List<&2, Hdr>, body: String) -> Parts:
+# A single part is an attachment when it says so or has a file name; else
+# text/plain and text/html read as text, and any other type is an
+# attachment.
+def part_kind(+hs: List<&2, Hdr>) -> PartKind:
   +ct = header(hs, "content-type")
   +cd = header(hs, "content-disposition")
   +typ = Bool.pick(String, String.is_empty(ct), "text/plain", main_value(ct))
   +name = file_name(ct, cd)
-  attached = String.eq(main_value(cd), "attachment")
-    || Bool.not(String.is_empty(name))
-  bytes = transfer_decode(header(hs, "content-transfer-encoding"), body)
-  leaf.if(ct, typ, name, bytes, attached,
-    String.eq(typ, "text/plain"), String.eq(typ, "text/html"))
+  file = String.eq(main_value(cd), "attachment") || Bool.not(String.is_empty(name))
+    || Bool.not(String.eq(typ, "text/plain") || String.eq(typ, "text/html"))
+  PartKind{ct, typ, name, file}
 
-# A single part's content; a multipart has none of its own.
-def walk.if(hs: List<&2, Hdr>, body: String, single: Bool) -> Parts:
+# A single part's bytes, its Content-Transfer-Encoding undone.
+def leaf_bytes(hs: List<&2, Hdr>, body: String) -> String:
+  transfer_decode(header(hs, "content-transfer-encoding"), body)
+
+def leaf.if(
+  ct: String, typ: String, name: String, bytes: String, file: Bool, plain: Bool
+) -> Parts:
+  match file plain:
+    case True{} _:
+      Parts{"", "", [Att{name, typ, U32.from_nat(String.length(bytes))}]}
+    case False{} True{}:
+      Parts{leaf.text(ct, bytes), "", []}
+    case False{} False{}:
+      Parts{"", leaf.text(ct, bytes), []}
+
+def leaf.content(k: PartKind, bytes: String) -> Parts:
+  PartKind{ct, +typ, name, file} = k
+  leaf.if(ct, typ, name, bytes, file, String.eq(typ, "text/plain"))
+
+# What one single part holds for the reader: its text, its HTML, or an
+# attachment.
+def leaf(l: Leaf) -> Parts:
+  Leaf{+hs, body} = l
+  leaf.content(part_kind(hs), leaf_bytes(hs, body))
+
+# A single part as a leaf; a multipart is no leaf itself.
+def leaves.one(hs: List<&2, Hdr>, body: String, single: Bool) -> List<&2, Leaf>:
   match single:
     case True{}:
-      leaf(hs, body)
+      [Leaf{hs, body}]
     case False{}:
-      no_parts()
+      []
 
 # Multipart
 # ---------
@@ -614,30 +640,149 @@ def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
       lines = String.split(body, '\n')
       subparts.fin(subparts.go(lines, b, Cut{[], [], False{}, False{}}))
 
-# Walks nested multiparts up to `depth` levels. A single part reads as a
-# leaf and a multipart as its subparts; the side not taken is empty, which
-# merge ignores, so each part is parsed once and nothing is built twice.
-def walk(+depth: Nat, parts: List<&2, String>) -> Parts:
+# The single parts of `parts`, in order, walking nested multiparts up to
+# `depth` levels. A single part is a leaf and a multipart gives its
+# subparts; the side not taken is empty, so each part is parsed once.
+def leaves(+depth: Nat, parts: List<&2, String>) -> List<&2, Leaf>:
   match depth:
     case 0n:
-      no_parts()
+      []
     case 1n+p:
       match parts:
         case Nil{}:
-          no_parts()
+          []
         case part <> rest:
           +entity = split(part)
           +hs = headers(head_of(entity))
           +body = body_of(entity)
           +b = boundary(hs)
           +single = String.is_empty(b)
-          here = merge(walk.if(hs, body, single),
-            walk(p, subparts(body, b, single)))
-          merge(here, walk(1n+p, rest))
+          inner = List.append(&2, Leaf, leaves.one(hs, body, single),
+            leaves(p, subparts(body, b, single)))
+          List.append(&2, Leaf, inner, leaves(1n+p, rest))
+
+def message_leaves(msg: String) -> List<&2, Leaf>:
+  leaves(8n, [msg])
+
+def parts_of(ls: List<&2, Leaf>) -> Parts:
+  match ls:
+    case Nil{}:
+      no_parts()
+    case l <> t:
+      merge(leaf(l), parts_of(t))
 
 # The readable content of a whole message.
 def parts(msg: String) -> Parts:
-  walk(8n, [msg])
+  parts_of(message_leaves(msg))
+
+# Saving attachments
+# ------------------
+
+def is_file.kind(k: PartKind) -> Bool:
+  PartKind{ct, typ, name, file} = k
+  file
+
+def is_file(l: Leaf) -> Bool:
+  Leaf{hs, body} = l
+  is_file.kind(part_kind(hs))
+
+def attachment_of.attach(k: PartKind, bytes: String) -> Attach:
+  PartKind{ct, typ, name, file} = k
+  Attach{name, typ, bytes}
+
+def attachment_of(m: Maybe<&2, Leaf>) -> Maybe<&2, Attach>:
+  match m:
+    case None{}:
+      None{}
+    case Some{Leaf{+hs, body}}:
+      Some{attachment_of.attach(part_kind(hs), leaf_bytes(hs, body))}
+
+# Attachment `n` (from 0) of a message, in the order `parts` lists them,
+# with its bytes decoded (base64, quoted-printable, or 7bit/8bit as is).
+def attachment_at(msg: String, n: U32) -> Maybe<&2, Attach>:
+  files = List.filter(~Leaf, ~is_file, message_leaves(msg))
+  attachment_of(List.get(&2, Leaf, files, U32.to_nat(n)))
+
+# The text after the last "/" or "\" (a name from a Windows client may
+# carry a "\" path), `acc` holding the current component reversed.
+def last_component(s: String, acc: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(acc)
+    case SCon{'/', t}:
+      last_component(t, "")
+    case SCon{'\\', t}:
+      last_component(t, "")
+    case SCon{c, t}:
+      last_component(t, SCon{c, acc})
+
+# The Unicode format characters (general category Cf), as ranges of code
+# points: invisible, and some, such as U+202E, reorder the text around
+# them, so a name can show an extension it does not have.
+def format_ranges() -> List<&2, Range>:
+  [
+    Range{173, 173}, Range{1536, 1541}, Range{1564, 1564}, Range{1757, 1757},
+    Range{1807, 1807}, Range{2192, 2193}, Range{2274, 2274}, Range{6158, 6158},
+    Range{8203, 8207}, Range{8234, 8238}, Range{8288, 8292}, Range{8294, 8303},
+    Range{65279, 65279}, Range{65529, 65531}, Range{69821, 69821},
+    Range{69837, 69837}, Range{78896, 78911}, Range{113824, 113827},
+    Range{119155, 119162}, Range{917505, 917505}, Range{917536, 917631}
+  ]
+
+def in_ranges(rs: List<&2, Range>, +n: U32) -> Bool:
+  match rs:
+    case Nil{}:
+      False{}
+    case Range{lo, hi} <> t:
+      C.between(n, lo, hi) || in_ranges(t, n)
+
+# Whether a character is a control character (Cc, NUL included) or a
+# Unicode format character (Cf).
+def is_hidden(c: Char) -> Bool:
+  +n = C.u(c)
+  U32.is_lt(n, 32) || C.between(n, 127, 159) || in_ranges(format_ranges(), n)
+
+def drop_hidden(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{+c, t}:
+      +rest = drop_hidden(t)
+      Bool.pick(String, is_hidden(c), rest, SCon{c, rest})
+
+def drop_leading_dots(s: String) -> String:
+  match s:
+    case SCon{'.', t}:
+      drop_leading_dots(t)
+    case _:
+      s
+
+# `c` and then the longest start of `t` that fits in the rest of `room`
+# UTF-8 bytes, when `fits` says `c` fits in `room`; else "".
+def utf8_prefix.if(t: String, +c: Char, room: U32, fits: Bool) -> String:
+  match t fits:
+    case SNil{} True{}:
+      SCon{c, ""}
+    case SCon{+d, u} True{}:
+      +left = (room - C.utf8_width(C.u(c)) : U32)
+      SCon{c, utf8_prefix.if(u, d, left, U32.is_le(C.utf8_width(C.u(d)), left))}
+    case _ _:
+      ""
+
+# The longest start of `s` that fits in `room` UTF-8 bytes.
+def utf8_prefix(s: String, +room: U32) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{+c, t}:
+      utf8_prefix.if(t, c, room, U32.is_le(C.utf8_width(C.u(c)), room))
+
+# A file name from a message, made safe to create in a directory: its last
+# path component, without control or format characters, without leading
+# dots (so neither hidden, "." nor ".."), and at most 255 UTF-8 bytes. ""
+# when nothing is left.
+def local_name(name: String) -> String:
+  utf8_prefix(drop_leading_dots(drop_hidden(last_component(name, ""))), 255)
 
 # HTML to text (when there is no text/plain part)
 # -----------------------------------------------

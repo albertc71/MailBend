@@ -202,6 +202,7 @@ def main() -> IO(Unit):
 #|mail_search ro=True destructive=False back=mail_search
 #|mail_get ro=True destructive=False back=mail_get
 #|mail_get_new ro=True destructive=False back=mail_get_new
+#|mail_get_attachment ro=False destructive=False back=mail_get_attachment
 #|mail_mark_read ro=False destructive=False back=mail_mark_read
 #|mail_mark_unread ro=False destructive=False back=mail_mark_unread
 #|mail_flag ro=False destructive=False back=mail_flag

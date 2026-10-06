@@ -14,6 +14,7 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no |
 | `mail_get` | Read one message: headers, text, attachment list | no |
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
+| `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file |
 | `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
 | `mail_flag` / `mail_unflag` | Add / remove `\Flagged`; `mail_flag` sets an Apple Mail `colour` (red, orange, yellow, green, blue, purple, grey) or, without one, keeps the current colour; `mail_unflag` clears the colour. The result lists the flags the server reported and, for a colour, `colour_kept` (`true`, `false` or `"unverified"`) | flags |
 | `mail_move` | Move to another folder | yes |
@@ -90,7 +91,9 @@ list only the read tools), `MAILBEND_DRAFTS_ONLY=1` (allow changes but never
 send: `mail_send` is refused and hidden, replies and forwards only as drafts,
 so a person sends each message from Drafts), `MAILBEND_ATTACH_DIR` (the only
 directory attachments may come from; attachments are off without it),
-`MAILBEND_TIMEOUT_MS`, and `MAILBEND_TLS_HELPER` / `MAILBEND_ATTACH_HELPER`.
+`MAILBEND_DOWNLOAD_DIR` (the only directory `mail_get_attachment` saves
+in; downloads are off without it), `MAILBEND_TIMEOUT_MS`, and
+`MAILBEND_TLS_HELPER` / `MAILBEND_ATTACH_HELPER`.
 The two switches take `1`/`true` or `0`/`false`/empty; any other value is a
 configuration error that fails every tool, rather than silently meaning off.
 
@@ -264,13 +267,30 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   `/proc/self/environ`), even by racing a path swap. Any file inside it can
   be sent, so use an empty, dedicated directory holding only files you are
   willing to mail. The reader refuses `/`, your home directory or any
-  directory containing it, and a directory holding `.ssh`, `.gnupg`, `.aws`,
-  `.config` or `.git`; it checks the file's type on an `O_PATH` descriptor
+  directory containing it, and a directory holding, or that is or lies
+  inside, `.ssh`, `.gnupg`, `.aws`, `.config` or `.git`; it checks the file's type on an `O_PATH` descriptor
   first, so a device or FIFO is not opened, then reopens that probed inode
   for reading through `/proc/self/fd/<probe>` (not by walking the path
   again), so a file a concurrent local writer substitutes under the name is
   never opened. It refuses a file with a second hard link (whose other name
   may be elsewhere).
+- **Downloads land only in one directory, as new files.**
+  `mail_get_attachment` saves only in `MAILBEND_DOWNLOAD_DIR` (off without
+  it, and refused in read-only mode), through the same credential-free
+  `mailbend-attach`. The file name is the attachment's last path component
+  without control or format characters (such as U+202E) and leading dots,
+  so a message cannot name a path elsewhere or a hidden file. The file is
+  written unnamed (`O_TMPFILE`) and named only once complete (`linkat`),
+  which never replaces an existing file, so an interrupted save leaves
+  nothing behind; it has mode 0600. Besides everything refused for
+  `MAILBEND_ATTACH_DIR`, the helper refuses a download directory that is,
+  contains or lies inside `MAILBEND_ATTACH_DIR` (so a saved file never
+  becomes attachable), and one whose files may be run: anything under
+  `~/.config`, `~/.local/bin` or `~/.local/share/applications`, any
+  `autostart` or `systemd` directory, and any directory in `PATH`, compared
+  by device and inode so a symlink alias is refused too. It also refuses
+  when it cannot find your home directory to check. A saved file is
+  still untrusted content: open it with care.
 - **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
   test server; whoever sets it decides which servers are trusted, so never
   set it in production. `scripts/mailbend` prints a warning when it is set.
@@ -289,7 +309,7 @@ flowchart LR
   agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["19 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["20 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]
@@ -302,6 +322,8 @@ flowchart LR
   reader --> files[("MAILBEND_ATTACH_DIR")]
   core -- "count: state dir, limit, day" --> reader
   reader --> sends[("MAILBEND_STATE_DIR/sends")]
+  core -- "save: name, file bytes" --> reader
+  reader --> downloads[("MAILBEND_DOWNLOAD_DIR")]
 ```
 
 Each tool call runs one or two short IMAP sessions (login, a few commands,

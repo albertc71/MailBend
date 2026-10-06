@@ -15,7 +15,8 @@ Bend runtime cannot safely provide the required OS/protocol boundary.
   It may enforce expectations supplied by Bend and stop on protocol failure,
   but must never choose, reorder, synthesize, or alter mail operations.
 - `mailbend-attach`: credential-free, sandboxed local file access:
-  attachment reads and the daily send counter. It must not implement mail policy or network access.
+  attachment reads, attachment downloads and the daily send counter.
+  It must not implement mail policy or network access.
 
 Bend remains authoritative for which operations run, command plans,
 rendering, response interpretation, MIME behavior, and agent-visible results.

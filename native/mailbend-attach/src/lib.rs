@@ -1,6 +1,6 @@
 //! The pure parts of `mailbend-attach`: argument checks, path relativisation,
-//! send counting and error messages. Everything that touches the file system
-//! is in `main.rs`.
+//! send counting, the download refusal rules and error messages. Everything
+//! that touches the file system is in `main.rs` and `save.rs`.
 
 use std::fmt;
 
@@ -10,8 +10,39 @@ use nix::errno::Errno;
 pub const MAX_ATTACHMENT: u64 = 25 << 20;
 
 /// Directories whose presence marks a directory as not a dedicated
-/// attachment directory: every file inside it could be mailed.
+/// attachment or download directory, and inside which neither may lie.
 pub const SENSITIVE: [&str; 5] = [".ssh", ".gnupg", ".aws", ".config", ".git"];
+
+/// The longest file name Linux allows (NAME_MAX).
+const MAX_NAME: usize = 255;
+
+/// Directories under the home directory whose files can start programs: a
+/// download must not be saved in them or below them.
+pub const STARTUP_HOME: [&str; 3] = [".config", ".local/bin", ".local/share/applications"];
+
+/// Directory names whose files a desktop session or init system may run,
+/// wherever they are.
+pub const STARTUP_NAMES: [&str; 2] = ["autostart", "systemd"];
+
+/// A directory setting, as the refusals about it name it.
+pub struct Setting {
+    /// The environment variable.
+    pub name: &'static str,
+    /// What the directory holds, as in "a dedicated attachment directory".
+    pub holds: &'static str,
+}
+
+/// MAILBEND_ATTACH_DIR, the files that may be attached.
+pub const ATTACHMENTS: Setting = Setting {
+    name: "MAILBEND_ATTACH_DIR",
+    holds: "attachment",
+};
+
+/// MAILBEND_DOWNLOAD_DIR, where attachments are saved.
+pub const DOWNLOADS: Setting = Setting {
+    name: "MAILBEND_DOWNLOAD_DIR",
+    holds: "download",
+};
 
 /// A positive decimal number, digits only.
 fn parse_positive(arg: &[u8]) -> Option<u64> {
@@ -33,6 +64,24 @@ pub fn parse_max(arg: &[u8]) -> Result<u64, String> {
 /// The daily send limit argument: a positive decimal number.
 pub fn parse_limit(arg: &[u8]) -> Result<u64, String> {
     parse_positive(arg).ok_or_else(|| format!("bad send limit {}", show(arg)))
+}
+
+/// The file name argument of a save: one path component (not `.` or `..`)
+/// of at most `MAX_NAME` bytes.
+pub fn parse_file_name(arg: &[u8]) -> Result<&[u8], String> {
+    let one_component = !arg.is_empty()
+        && arg != b"."
+        && arg != b".."
+        && !arg.contains(&b'/')
+        && arg.len() <= MAX_NAME;
+    if one_component {
+        Ok(arg)
+    } else {
+        Err(format!(
+            "bad file name {}: it must be one path component",
+            show(arg)
+        ))
+    }
 }
 
 /// The UTC day argument, `YYYY-MM-DD`, which is also the counter's line for
@@ -122,6 +171,29 @@ fn strip_directory<'a>(path: &'a [u8], directory: &[u8]) -> Option<&'a [u8]> {
     path.strip_prefix(directory)?.strip_prefix(b"/")
 }
 
+/// The first component of the canonical `root` that is one of `names`, if
+/// any.
+pub fn named_component(root: &[u8], names: &[&'static str]) -> Option<&'static str> {
+    root.split(|&b| b == b'/').find_map(|component| {
+        names
+            .iter()
+            .copied()
+            .find(|name| name.as_bytes() == component)
+    })
+}
+
+/// The directories of a PATH value, in order; an empty entry means the
+/// working directory, as it does to a shell.
+pub fn path_entries(list: &[u8]) -> Vec<&[u8]> {
+    if list.is_empty() {
+        return Vec::new();
+    }
+    let entries = list.split(|&b| b == b':');
+    entries
+        .map(|entry| if entry.is_empty() { &b"."[..] } else { entry })
+        .collect()
+}
+
 /// Whether `outer` is `inner` or one of its parent directories (both
 /// canonical).
 pub fn contains_path(outer: &[u8], inner: &[u8]) -> bool {
@@ -134,12 +206,13 @@ pub fn contains_path(outer: &[u8], inner: &[u8]) -> bool {
     }
 }
 
-/// The reason opening the attachment directory failed.
-pub fn directory_open_error(errno: Errno) -> String {
+/// The reason opening the directory of `setting` failed.
+pub fn directory_open_error(errno: Errno, setting: &Setting) -> String {
+    let Setting { name, holds } = setting;
     match errno {
-        Errno::ENOSYS => "attachments need Linux 5.6+ (openat2)".to_string(),
-        Errno::ELOOP => "MAILBEND_ATTACH_DIR changed while it was opened".to_string(),
-        _ => "cannot open MAILBEND_ATTACH_DIR".to_string(),
+        Errno::ENOSYS => format!("{holds}s need Linux 5.6+ (openat2)"),
+        Errno::ELOOP => format!("{name} changed while it was opened"),
+        _ => format!("cannot open {name}"),
     }
 }
 
@@ -241,6 +314,46 @@ mod tests {
     }
 
     #[test]
+    fn a_file_name_is_one_component() {
+        assert_eq!(parse_file_name(b"a.pdf"), Ok(&b"a.pdf"[..]));
+        assert_eq!(parse_file_name(b".x"), Ok(&b".x"[..]));
+        assert!(parse_file_name(&[b'a'; MAX_NAME]).is_ok());
+        for bad in [
+            &b""[..],
+            b".",
+            b"..",
+            b"a/b",
+            b"/a",
+            b"a/",
+            &[b'a'; MAX_NAME + 1],
+        ] {
+            assert!(parse_file_name(bad).is_err(), "{}", show(bad));
+        }
+    }
+
+    #[test]
+    fn directories_are_found_by_component() {
+        let startup = |root: &[u8]| named_component(root, &STARTUP_NAMES);
+        assert_eq!(startup(b"/etc/xdg/autostart"), Some("autostart"));
+        assert_eq!(startup(b"/home/u/.config/systemd/user"), Some("systemd"));
+        assert_eq!(startup(b"/home/u/autostart-notes"), None);
+        assert_eq!(startup(b"/home/u/Downloads"), None);
+        let sensitive = |root: &[u8]| named_component(root, &SENSITIVE);
+        assert_eq!(sensitive(b"/home/u/.ssh"), Some(".ssh"));
+        assert_eq!(sensitive(b"/home/u/.gnupg/sub"), Some(".gnupg"));
+        assert_eq!(sensitive(b"/w/repo/.git/hooks"), Some(".git"));
+        assert_eq!(sensitive(b"/home/u/.ssh-notes"), None);
+        assert_eq!(sensitive(b"/home/u/Downloads"), None);
+    }
+
+    #[test]
+    fn path_entries_split_at_colons() {
+        assert_eq!(path_entries(b"/usr/bin:/bin"), [&b"/usr/bin"[..], b"/bin"]);
+        assert_eq!(path_entries(b"/a::/b:"), [&b"/a"[..], b".", b"/b", b"."]);
+        assert!(path_entries(b"").is_empty());
+    }
+
+    #[test]
     fn relative_paths_pass_through() {
         assert_eq!(
             relative_attachment_path(b"att", b"/w/att", b"a/b.txt"),
@@ -290,16 +403,20 @@ mod tests {
     #[test]
     fn open_errors_keep_the_helper_messages() {
         assert_eq!(
-            directory_open_error(Errno::ENOSYS),
+            directory_open_error(Errno::ENOSYS, &ATTACHMENTS),
             "attachments need Linux 5.6+ (openat2)"
         );
         assert_eq!(
-            directory_open_error(Errno::ELOOP),
+            directory_open_error(Errno::ELOOP, &ATTACHMENTS),
             "MAILBEND_ATTACH_DIR changed while it was opened"
         );
         assert_eq!(
-            directory_open_error(Errno::EACCES),
+            directory_open_error(Errno::EACCES, &ATTACHMENTS),
             "cannot open MAILBEND_ATTACH_DIR"
+        );
+        assert_eq!(
+            directory_open_error(Errno::ENOSYS, &DOWNLOADS),
+            "downloads need Linux 5.6+ (openat2)"
         );
         assert_eq!(
             attachment_open_error(Errno::ENOENT, b"a.txt"),

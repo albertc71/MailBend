@@ -200,6 +200,27 @@ TOOLS = [
               "set. If it changed, the checkpoint restarts at 0.",
               minimum=0),
           "limit": param("integer", "Default 50.", minimum=1, maximum=500)}),
+    tool("mail_get_attachment",
+         "Save one attachment of a message as a new file in "
+         "MAILBEND_DOWNLOAD_DIR (downloads are off without it) and return its "
+         "path. The message is read as mail_get reads it, so it stays "
+         "unread; it must be at most 25 MB. The file name is the "
+         "attachment's (or filename) without any directory, control or "
+         "invisible format characters or leading dots. An existing file is "
+         "never replaced: the call fails, so pass another filename. Not "
+         "available in read-only mode.",
+         CHANGES,
+         {"folder": FOLDER,
+          "uid": UID,
+          "index": param(
+              "integer",
+              "The attachment's position in mail_get's attachments, from 0.",
+              minimum=0),
+          "filename": param(
+              "string",
+              "Name to save the file as. Default: the attachment's file "
+              "name.")},
+         ["uid", "index"]),
     tool("mail_mark_read",
          "Mark messages as read (add the \\Seen flag).",
          SETS_FLAGS, MESSAGES, MESSAGES_REQUIRED),

@@ -1303,6 +1303,9 @@ def with_uid(ms: List<&2, I.Msg>, +uid: U32) -> List<&2, I.Msg>:
     case +m <> t:
       Bool.pick(List<&2, I.Msg>, U32.is_eq(msg_uid(m), uid), [m], with_uid(t, uid))
 
+def no_message(uid: U32, folder: String) -> String:
+  "no message with UID " ++ U32.show(uid) ++ " in " ++ folder
+
 def get_msg(
   ms: List<&2, I.Msg>,
   folder: String,
@@ -1312,7 +1315,7 @@ def get_msg(
 ) -> Out:
   match ms:
     case Nil{}:
-      Err{"no message with UID " ++ U32.show(uid) ++ " in " ++ folder}
+      Err{no_message(uid, folder)}
     case +m <> t:
       +body = msg_body(m)
       get_json(m, folder, uidv, max, body_headers(body), M.parts(body))
@@ -1324,19 +1327,27 @@ def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Out:
     case Done{+lines}:
       get_msg(with_uid(I.fetched(lines), uid), folder, uid, I.ok_code(lines, "UIDVALIDITY"), max)
 
-def get_uid(u: Uids(), +folder: String, +max: U32) -> IO(Out):
+# The one UID a tool that reads a single message is given.
+def single_uid(u: Uids(), tool: String) -> Result<&2, &2, String, U32>:
   match u:
-    case Done{+uid <> Nil{}}:
+    case Done{uid <> Nil{}}:
+      Done{uid}
+    case Done{xs}:
+      Fail{tool ++ " reads one message: pass a single \"uid\""}
+    case Fail{m}:
+      Fail{m}
+
+def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32) -> IO(Out):
+  match u:
+    case Done{+uid}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_get(folder, uid, max))
         return get_out(r, folder, uid, max)
-    case Done{xs}:
-      pure_out(Err{"mail_get reads one message: pass a single \"uid\""})
     case Fail{m}:
       pure_out(Err{m})
 
 def t_get(+args: J.Json) -> IO(Out):
-  get_uid(uids_arg(args), folder_arg(args),
+  get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args),
     clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
 
 # mail_get_new
@@ -3629,6 +3640,202 @@ def t_respond(+args: J.Json, +mode: U32) -> IO(Out):
   t_respond.if(respond_request(args), args, mode,
     Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()))
 
+# Downloading attachments
+# =======================
+
+# Download settings
+# -----------------
+
+# Where mail_get_attachment saves files (MAILBEND_DOWNLOAD_DIR), what
+# mailbend-attach keeps them apart from (MAILBEND_ATTACH_DIR, "" when unset,
+# and the directories of PATH, which the helper no longer sees once it has
+# dropped its environment), and the helper. Only downloads read them.
+type Downloads is Data:
+  Downloads{dir: String, attach_dir: String, path: String, helper: String}
+
+# MAILBEND_DOWNLOAD_DIR: an absolute path; downloads are off without it.
+def download_dir(+dir: String) -> Result<&2, &2, String, String>:
+  match dir:
+    case SNil{}:
+      Fail{"downloads are disabled: set MAILBEND_DOWNLOAD_DIR to the directory attachments " ++
+        "may be saved in"}
+    case SCon{'/', t}:
+      Done{dir}
+    case _:
+      Fail{"configuration error: MAILBEND_DOWNLOAD_DIR must be an absolute path"}
+
+def attach_helper(+path: String) -> Result<&2, &2, String, String>:
+  match path:
+    case SCon{'/', t}:
+      Done{path}
+    case _:
+      Fail{attach_helper_refusal()}
+
+def downloads_of(
+  dir: String,
+  attach_dir: String,
+  path: String,
+  helper: String
+) -> Result<&2, &2, String, Downloads>:
+  do Result<&2, &2, String, Downloads>:
+    d : String <- download_dir(dir)
+    h : String <- attach_helper(helper)
+    return Downloads{d, attach_dir, path, h}
+
+def downloads() -> IO(Result<&2, &2, String, Downloads>):
+  do IO<Result<&2, &2, String, Downloads>>:
+    dir : String <- env_or("MAILBEND_DOWNLOAD_DIR", "")
+    attach_dir : String <- env_or("MAILBEND_ATTACH_DIR", "")
+    path : String <- env_or("PATH", "")
+    helper : String <- env_or("MAILBEND_ATTACH_HELPER", "")
+    return downloads_of(dir, attach_dir, path, helper)
+
+# mail_get_attachment
+# -------------------
+
+# Saves one attachment of a message as a new file in MAILBEND_DOWNLOAD_DIR.
+# The message is read as mail_get reads it (EXAMINE, BODY.PEEK), whole and
+# within the 25 MB that attachments may take. mailbend-attach, which holds
+# no credentials, writes the file unnamed and names it only once it is
+# complete, never replacing an existing file.
+
+# What mail_get_attachment is asked: where to save, the message, which of
+# its attachments (from 0, in mail_get's order) and the file name to save
+# it as ("" for the attachment's own).
+type Download is Data:
+  Download{to: Downloads, folder: String, uid: U32, index: U32, filename: String}
+
+def index_arg(m: Maybe<&2, U32>) -> Result<&2, &2, String, U32>:
+  match m:
+    case Some{n}:
+      Done{n}
+    case None{}:
+      Fail{"\"index\" must be a whole number from 0: the attachment's position in mail_get"}
+
+def download_request(
+  s: Result<&2, &2, String, Downloads>,
+  +args: J.Json
+) -> Result<&2, &2, String, Download>:
+  do Result<&2, &2, String, Download>:
+    d : Downloads <- s
+    uid : U32 <- single_uid(uids_arg(args), "mail_get_attachment")
+    index : U32 <- index_arg(J.as_u32(J.get(args, "index")))
+    return Download{d, folder_arg(args), uid, index, str_arg(args, "filename", "")}
+
+def whole_body.if(cut: Bool, body: String) -> Result<&2, &2, String, String>:
+  match cut:
+    case True{}:
+      Fail{"the message is larger than 25 MB, so its attachments cannot be saved"}
+    case False{}:
+      Done{body}
+
+# The fetched message's body, if it was read whole. A body that fills the
+# whole fetch window may have been cut, whatever size the server reported.
+def whole_body(ms: List<&2, I.Msg>, uid: U32, folder: String) -> Result<&2, &2, String, String>:
+  match ms:
+    case Nil{}:
+      Fail{no_message(uid, folder)}
+    case m <> t:
+      I.Msg{id, flags, date, size, headers, +body} = m
+      +max = max_attachment()
+      whole_body.if(U32.is_gt(size, max) || U32.is_ge(C.byte_len(body), max), body)
+
+def attachment_found(m: Maybe<&2, M.Attach>, index: U32) -> Result<&2, &2, String, M.Attach>:
+  match m:
+    case Some{a}:
+      Done{a}
+    case None{}:
+      Fail{"the message has no attachment " ++ U32.show(index) ++
+        " (mail_get lists them, counting from 0)"}
+
+def save_as.put(+name: String, ctype: String, data: String) -> Result<&2, &2, String, M.Attach>:
+  match name:
+    case SNil{}:
+      Fail{"the attachment's file name has no usable characters: pass \"filename\""}
+    case _:
+      Done{M.Attach{name, ctype, data}}
+
+# The attachment under the name to save it as: `filename`, else its own
+# name, made safe by M.local_name.
+def save_as(a: M.Attach, +filename: String) -> Result<&2, &2, String, M.Attach>:
+  M.Attach{name, ctype, data} = a
+  wanted = Bool.pick(String, String.is_empty(filename), name, filename)
+  save_as.put(M.local_name(wanted), ctype, data)
+
+def file_to_save(
+  r: Run(),
+  +uid: U32,
+  folder: String,
+  +index: U32,
+  filename: String
+) -> Result<&2, &2, String, M.Attach>:
+  do Result<&2, &2, String, M.Attach>:
+    lines : List<&2, I.RLine> <- r
+    body : String <- whole_body(with_uid(I.fetched(lines), uid), uid, folder)
+    a : M.Attach <- attachment_found(M.attachment_at(body, index), index)
+    save_as(a, filename)
+
+def file_path(+dir: String, +name: String) -> String:
+  Bool.pick(String, String.ends_with(dir, "/"), dir ++ name, dir ++ "/" ++ name)
+
+# mailbend-attach's answer to a save, as the tool's result.
+def saved_out(p: Proc, kvs: List<&2, J.Json>) -> Out:
+  match p:
+    case ProcOk{code, out, err}:
+      match code:
+        case 0:
+          ok_obj(kvs)
+        case _:
+          Err{"cannot save the attachment: " ++ attach_msg(err)}
+    case _:
+      Err{"cannot run mailbend-attach: " ++ proc_failure(p)}
+
+def download.run(d: Downloads, a: M.Attach, folder: String, uid: U32) -> IO(Out):
+  Downloads{+dir, attach_dir, path, helper} = d
+  M.Attach{+name, ctype, +data} = a
+  do IO<Out>:
+    r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+      Process.run(helper, ["save", attach_dir, dir, name, U32.show(max_attachment()), path],
+        data, 4096, 60000)
+    return saved_out(proc_of(r), [
+      J.kv("folder", J.str(folder)),
+      J.kv("uid", J.num(uid)),
+      J.kv("filename", J.str(name)),
+      J.kv("content_type", J.str(ctype)),
+      J.kv("size", J.num(C.byte_len(data))),
+      J.kv("path", J.str(file_path(dir, name)))
+    ])
+
+def download.put(
+  r: Result<&2, &2, String, M.Attach>,
+  d: Downloads,
+  folder: String,
+  uid: U32
+) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{a}:
+      download.run(d, a, folder, uid)
+
+def download.fetch(q: Download) -> IO(Out):
+  Download{d, +folder, +uid, index, filename} = q
+  do IO<Out>:
+    r : Run() <- imap_run(Ops.plan_get(folder, uid, max_attachment()))
+    download.put(file_to_save(r, uid, folder, index, filename), d, folder, uid)
+
+def download(r: Result<&2, &2, String, Download>) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{q}:
+      download.fetch(q)
+
+def t_get_attachment(+args: J.Json) -> IO(Out):
+  do IO<Out>:
+    s : Result<&2, &2, String, Downloads> <- downloads()
+    download(download_request(s, args))
+
 # Dispatch
 # ========
 
@@ -3647,6 +3854,8 @@ def run_op(op: Ops.Op, args: J.Json) -> IO(Out):
       t_get(args)
     case Ops.OGetNew{}:
       t_get_new(args)
+    case Ops.OGetAttachment{}:
+      t_get_attachment(args)
     case Ops.OMarkRead{}:
       t_mark(args, MarkSeen{True{}})
     case Ops.OMarkUnread{}:

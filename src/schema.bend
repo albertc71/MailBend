@@ -81,6 +81,26 @@ def tool_defs.mail_get_new() -> String:
     "\"destructiveHint\":false,\"idempotentHint\":true,",
     "\"openWorldHint\":false}}"])
 
+def tool_defs.mail_get_attachment() -> String:
+  String.concat([
+    "{\"name\":\"mail_get_attachment\",\"description\":\"Save one attachment ",
+    "of a message as a new file in MAILBEND_DOWNLOAD_DIR (downloads are off ",
+    "without it) and return its path. The message is read as mail_get reads ",
+    "it, so it stays unread; it must be at most 25 MB. The file name is the ",
+    "attachment's (or filename) without any directory, control or invisible ",
+    "format characters or leading dots. An existing file is never replaced: ",
+    "the call fails, so pass another filename. Not available in read-only ",
+    "mode.\",\"inputSchema\":{\"type\":\"object\",",
+    "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
+    "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
+    "\"minimum\":1},\"index\":{\"type\":\"integer\",\"minimum\":0,",
+    "\"description\":\"The attachment's position in mail_get's attachments, ",
+    "from 0.\"},\"filename\":{\"type\":\"string\",\"description\":\"Name to ",
+    "save the file as. Default: the attachment's file name.\"}},",
+    "\"required\":[\"uid\",\"index\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
+    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
+
 def tool_defs.mail_mark_read() -> String:
   String.concat([
     "{\"name\":\"mail_mark_read\",\"description\":\"Mark messages as read ",
@@ -455,6 +475,7 @@ def tool_defs() -> String:
     tool_defs.mail_search(),
     tool_defs.mail_get(),
     tool_defs.mail_get_new(),
+    tool_defs.mail_get_attachment(),
     tool_defs.mail_mark_read(),
     tool_defs.mail_mark_unread(),
     tool_defs.mail_flag(),
