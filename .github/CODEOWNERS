@@ -6,6 +6,8 @@
 /LAWS.bend @albertc71
 /PROOF.bend @albertc71
 /src/ops.bend @albertc71
+/src/jev.bend @albertc71
+/src/secrets.bend @albertc71
 /tools/gen-schema.py @albertc71
 /scripts/ @albertc71
 /.github/ @albertc71

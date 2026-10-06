@@ -58,8 +58,8 @@ fn roots_from_file(path: &Path) -> Result<RootCertStore, NetError> {
     Ok(roots)
 }
 
-/// The system trust store. Like OpenSSL's default paths, unusable entries
-/// are skipped.
+/// The system trust store. As system TLS libraries do with their default
+/// paths, unusable entries are skipped.
 fn system_roots() -> RootCertStore {
     let mut roots = RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().certs {

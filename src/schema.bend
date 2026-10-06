@@ -30,7 +30,11 @@ def tool_defs.mail_search() -> String:
   String.concat([
     "{\"name\":\"mail_search\",\"description\":\"Search a folder, newest ",
     "first. Opens the folder read-only, so nothing is marked read. All ",
-    "criteria are combined with AND.\",\"inputSchema\":{\"type\":\"object\",",
+    "criteria are combined with AND. With MAILBEND_TYPESAFE on, each message ",
+    "also has a jev object with Jev's notes (reply_needed, action_required, ",
+    "priority, category, suggested_action, and suspected_injection when ",
+    "suspected), drawn from untrusted mail content; its status is unchecked ",
+    "when TypeSafe failed.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"from\":{\"type\":\"string\"},",
     "\"to\":{\"type\":\"string\"},\"cc\":{\"type\":\"string\"},",
@@ -51,7 +55,11 @@ def tool_defs.mail_get() -> String:
   String.concat([
     "{\"name\":\"mail_get\",\"description\":\"Read one message: headers, ",
     "plain text (or text from HTML) and the attachment list. Uses BODY.PEEK ",
-    "on a read-only folder, so the message stays unread.\",",
+    "on a read-only folder, so the message stays unread. With ",
+    "MAILBEND_TYPESAFE on, each message also has a jev object with Jev's ",
+    "notes (reply_needed, action_required, priority, category, ",
+    "suggested_action, and suspected_injection when suspected), drawn from ",
+    "untrusted mail content; its status is unchecked when TypeSafe failed.\",",
     "\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
@@ -67,7 +75,11 @@ def tool_defs.mail_get_new() -> String:
     "{\"name\":\"mail_get_new\",\"description\":\"List messages that arrived ",
     "after a checkpoint (UIDVALIDITY + UID), oldest first. Pass back ",
     "next_since_uid and uidvalidity on the next call. Does not use or change ",
-    "read/unread state.\",\"inputSchema\":{\"type\":\"object\",",
+    "read/unread state. With MAILBEND_TYPESAFE on, each message also has a ",
+    "jev object with Jev's notes (reply_needed, action_required, priority, ",
+    "category, suggested_action, and suspected_injection when suspected), ",
+    "drawn from untrusted mail content; its status is unchecked when TypeSafe ",
+    "failed.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},",
     "\"since_uid\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Last ",
@@ -91,7 +103,11 @@ def tool_defs.mail_get_thread() -> String:
     "in the thread, or null). Messages are never grouped by subject. Two ",
     "rounds of linked IDs are searched, at most 50 IDs each, so a long thread ",
     "can be cut short; searched lists the folders. Changes nothing: messages ",
-    "stay unread.\",\"inputSchema\":{\"type\":\"object\",",
+    "stay unread. With MAILBEND_TYPESAFE on, each message also has a jev ",
+    "object with Jev's notes (reply_needed, action_required, priority, ",
+    "category, suggested_action, and suspected_injection when suspected), ",
+    "drawn from untrusted mail content; its status is unchecked when TypeSafe ",
+    "failed.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
     "\"minimum\":1}},\"required\":[\"uid\"],\"additionalProperties\":false},",
@@ -100,16 +116,17 @@ def tool_defs.mail_get_thread() -> String:
 
 def tool_defs.mail_classify() -> String:
   String.concat([
-    "{\"name\":\"mail_classify\",\"description\":\"Ask TypeSafe's Jev about ",
-    "messages, changing nothing (they stay unread): for each UID, the ",
+    "{\"name\":\"mail_classify\",\"description\":\"Ask Jev (TypeSafe's model) ",
+    "about messages, changing nothing (they stay unread): for each UID, the ",
     "existing folder it belongs in (category), whether it needs a reply or an ",
     "action, a deadline, priority, a suggested action, whether to keep it, ",
     "and suspected prompt injection. Offered only when MAILBEND_TYPESAFE is ",
     "on. Sends header facts and attachment names to TypeSafe, or also up to ",
-    "16 KB of plain text with MAILBEND_TYPESAFE_CONTENT=body. When no folder ",
-    "fits, needs_new_category is true: call again with candidates (new folder ",
-    "names); a chosen one is returned as new_category and is never created, ",
-    "so create it with mail_create_folder first. The answers come from ",
+    "16 KB of plain text with MAILBEND_TYPESAFE_CONTENT=body. When Jev picks ",
+    "no folder with high confidence, needs_new_category is true: call again ",
+    "with candidates (new folder names); a chosen one is returned as ",
+    "new_category and is never created, so create it with mail_create_folder ",
+    "first. Each message has a jev object with the answers, which come from ",
     "untrusted mail content.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uids\":{\"type\":\"array\",",
@@ -124,27 +141,18 @@ def tool_defs.mail_classify() -> String:
 
 def tool_defs.mail_triage() -> String:
   String.concat([
-    "{\"name\":\"mail_triage\",\"description\":\"File messages with ",
-    "TypeSafe's Jev: every message is asked about before anything moves (they ",
-    "stay unread), and if any request fails, nothing moves. Each message then ",
-    "moves at most once: into the review folder \\\"To Delete\\\" when the ",
-    "delete review finds it safe to delete, otherwise into the existing ",
-    "folder Jev chose for it with high confidence; any other message stays, ",
-    "and a needs_new_category one can be filed after mail_classify with ",
-    "candidates and mail_create_folder. Safe to delete needs ",
-    "MAILBEND_TYPESAFE_CONTENT=body and the whole text, no flag, reply, ",
-    "attachment or age under 30 days (the flags are read again just before ",
-    "the move), a sender the user has never written to in To or Cc (a ",
-    "read-only search of Sent; Bcc is not searched), every keep answer low ",
-    "and a high disposability score. It is a suggestion for the user to ",
-    "review in \\\"To Delete\\\", never a deletion. \\\"To Delete\\\" must ",
-    "already exist (create it with mail_create_folder); no folder is ever ",
-    "created. When it cannot take a message, nothing moves and the error ",
-    "still lists every message's verdict. Offered only when MAILBEND_TYPESAFE ",
-    "is on. If a move is cut off, the call fails with partial: true and the ",
-    "moves after it are not made; check its destination before running it ",
-    "again. The answers come from untrusted mail content.\",",
-    "\"inputSchema\":{\"type\":\"object\",",
+    "{\"name\":\"mail_triage\",\"description\":\"File messages with Jev ",
+    "(offered only when MAILBEND_TYPESAFE is on). Every message is asked ",
+    "about first and stays unread; if any request fails, nothing moves. Each ",
+    "message moves at most once: into \\\"To Delete\\\" when Jev's delete ",
+    "review finds it safe (needs MAILBEND_TYPESAFE_CONTENT=body), else into ",
+    "the existing folder Jev chose with high confidence, else it stays. Never ",
+    "deletes and never creates a folder: \\\"To Delete\\\" must already exist ",
+    "(mail_create_folder); if it is needed and missing, nothing moves and the ",
+    "error lists every verdict. Each result has verdict, vetoes, destination ",
+    "and jev; the answers come from untrusted mail. A move cut off fails with ",
+    "partial: true and later moves are not made; check the destination before ",
+    "retrying.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uids\":{\"type\":\"array\",",
     "\"items\":{\"type\":\"integer\",\"minimum\":1},\"minItems\":1,",
@@ -159,8 +167,10 @@ def tool_defs.mail_triage() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\"],\"additionalProperties\":false},",
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"uidvalidity\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
     "\"idempotentHint\":false,\"openWorldHint\":true}}"])
 
@@ -186,10 +196,12 @@ def tool_defs.mail_get_attachment() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uid\",\"index\"],\"additionalProperties\":false},",
-    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
-    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uid\",\"index\"],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
+    "\"destructiveHint\":false,\"idempotentHint\":false,",
+    "\"openWorldHint\":false}}"])
 
 def tool_defs.mail_mark_read() -> String:
   String.concat([
@@ -209,8 +221,10 @@ def tool_defs.mail_mark_read() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\"],\"additionalProperties\":false},",
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"uidvalidity\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
     "\"idempotentHint\":true,\"openWorldHint\":false}}"])
 
@@ -232,8 +246,10 @@ def tool_defs.mail_mark_unread() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\"],\"additionalProperties\":false},",
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"uidvalidity\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
     "\"idempotentHint\":true,\"openWorldHint\":false}}"])
 
@@ -272,10 +288,12 @@ def tool_defs.mail_flag() -> String:
     "with message and file contents as <N bytes>. Nothing is changed, sent or ",
     "saved. It is not a full pre-check: marking and flagging make no ",
     "connection, so a stale uidvalidity fails only the real call, and a send ",
-    "does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\"],\"additionalProperties\":false},",
-    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
-    "\"idempotentHint\":true,\"openWorldHint\":false}}"])
+    "does not check the daily limit. With MAILBEND_TYPESAFE on, a send or ",
+    "delete still passes Jev's checks and shows their verdict. Default ",
+    "false.\"}},\"required\":[\"uids\",\"uidvalidity\"],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
+    "\"destructiveHint\":false,\"idempotentHint\":true,",
+    "\"openWorldHint\":false}}"])
 
 def tool_defs.mail_unflag() -> String:
   String.concat([
@@ -303,8 +321,10 @@ def tool_defs.mail_unflag() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\"],\"additionalProperties\":false},",
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"uidvalidity\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
     "\"idempotentHint\":true,\"openWorldHint\":false}}"])
 
@@ -312,9 +332,10 @@ def tool_defs.mail_move() -> String:
   String.concat([
     "{\"name\":\"mail_move\",\"description\":\"Move messages to another IMAP ",
     "folder. Uses UID MOVE, or copy + expunge of exactly these UIDs with ",
-    "UIDPLUS. If the move is cut off after the copy may have run, the call ",
-    "fails with partial: true and the messages may be in both folders, so ",
-    "check the destination before retrying.\",",
+    "UIDPLUS. It can take mail out of \\\"To Delete\\\", but only mail_triage ",
+    "moves mail into it. If the move is cut off after the copy may have run, ",
+    "the call fails with partial: true and the messages may be in both ",
+    "folders, so check the destination before retrying.\",",
     "\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uids\":{\"type\":\"array\",",
@@ -332,11 +353,12 @@ def tool_defs.mail_move() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"destination\",\"uidvalidity\"],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
-    "\"destructiveHint\":false,\"idempotentHint\":false,",
-    "\"openWorldHint\":false}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"destination\",\"uidvalidity\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
+    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
 
 def tool_defs.mail_label() -> String:
   String.concat([
@@ -364,18 +386,20 @@ def tool_defs.mail_label() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"label\",\"uidvalidity\"],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
-    "\"destructiveHint\":false,\"idempotentHint\":false,",
-    "\"openWorldHint\":false}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",\"label\",",
+    "\"uidvalidity\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
+    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
 
 def tool_defs.mail_trash() -> String:
   String.concat([
     "{\"name\":\"mail_trash\",\"description\":\"Move messages to the resolved ",
     "trash folder (configured override, advertised special use, or unique ",
-    "conventional name). Recoverable; does not delete permanently. If the ",
-    "move is cut off after the copy may have run, the call fails with ",
+    "conventional name). Recoverable; does not delete permanently. Refused ",
+    "for mail in \\\"To Delete\\\" (use mail_move or mail_delete there). If ",
+    "the move is cut off after the copy may have run, the call fails with ",
     "partial: true and the messages may be in both folders, so check the ",
     "destination before retrying.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
@@ -392,8 +416,10 @@ def tool_defs.mail_trash() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\"],\"additionalProperties\":false},",
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"uidvalidity\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
     "\"idempotentHint\":false,\"openWorldHint\":false}}"])
 
@@ -401,9 +427,14 @@ def tool_defs.mail_delete() -> String:
   String.concat([
     "{\"name\":\"mail_delete\",\"description\":\"PERMANENTLY delete messages ",
     "(\\\\Deleted + UID EXPUNGE of exactly these UIDs). Cannot be undone; ",
-    "prefer mail_trash. Requires confirm = \\\"permanently-delete\\\" and the ",
-    "folder's uidvalidity. The confirm word guards against mistakes; it is ",
-    "not the user's approval, so ask the user first.\",",
+    "prefer mail_trash. Requires confirm = \\\"permanently-delete\\\", the ",
+    "folder's uidvalidity and UIDPLUS on the server. The confirm word guards ",
+    "against mistakes; it is not the user's approval, so ask the user first. ",
+    "With MAILBEND_TYPESAFE on, it takes at most 50 UIDs, and Jev is first ",
+    "asked whether each message should be kept: any high answer, or TypeSafe ",
+    "failing, blocks the whole delete (the result has jev). A UID that did ",
+    "not exist when Jev was asked is reported in missing, not deleted. Jev ",
+    "can only block; it never approves a delete.\",",
     "\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uids\":{\"type\":\"array\",",
@@ -420,11 +451,12 @@ def tool_defs.mail_delete() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uids\",\"uidvalidity\",\"confirm\"],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
-    "\"destructiveHint\":true,\"idempotentHint\":false,",
-    "\"openWorldHint\":false}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uids\",",
+    "\"uidvalidity\",\"confirm\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,",
+    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
 
 def tool_defs.mail_create_folder() -> String:
   String.concat([
@@ -446,8 +478,9 @@ def tool_defs.mail_create_folder() -> String:
     "with message and file contents as <N bytes>. Nothing is changed, sent or ",
     "saved. It is not a full pre-check: marking and flagging make no ",
     "connection, so a stale uidvalidity fails only the real call, and a send ",
-    "does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"name\"],\"additionalProperties\":false},",
+    "does not check the daily limit. With MAILBEND_TYPESAFE on, a send or ",
+    "delete still passes Jev's checks and shows their verdict. Default ",
+    "false.\"}},\"required\":[\"name\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
     "\"idempotentHint\":false,\"openWorldHint\":false}}"])
 
@@ -472,10 +505,12 @@ def tool_defs.mail_rename_folder() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"from\",\"to\"],\"additionalProperties\":false},",
-    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
-    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"from\",\"to\"],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
+    "\"destructiveHint\":false,\"idempotentHint\":false,",
+    "\"openWorldHint\":false}}"])
 
 def tool_defs.mail_save_draft() -> String:
   String.concat([
@@ -512,10 +547,12 @@ def tool_defs.mail_save_draft() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[],\"additionalProperties\":false},",
-    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
-    "\"idempotentHint\":false,\"openWorldHint\":false}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
+    "\"destructiveHint\":false,\"idempotentHint\":false,",
+    "\"openWorldHint\":false}}"])
 
 def tool_defs.mail_send() -> String:
   String.concat([
@@ -524,8 +561,12 @@ def tool_defs.mail_send() -> String:
     "refused, and nothing is sent, when a recipient is not in ",
     "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is ",
     "reached. With MAILBEND_SAVE_SENT the result's sent_copy says whether a ",
-    "copy was saved to the Sent folder; a failed copy does not fail the ",
-    "send.\",\"inputSchema\":{\"type\":\"object\",",
+    "copy was saved to the Sent folder; a failed copy does not fail the send. ",
+    "With MAILBEND_TYPESAFE on, the message is first scanned locally for ",
+    "secrets, then checked by Jev; a secret, unreadable text, a Jev block or ",
+    "a TypeSafe failure stops the send (the result has secret_scan and jev). ",
+    "Saving a draft (mail_save_draft) is never checked.\",",
+    "\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"to\":{\"type\":\"array\",",
     "\"items\":{\"type\":\"string\"},\"description\":\"Addresses like ",
     "name@example.com or \\\"Name <name@example.com>\\\".\"},",
@@ -555,10 +596,12 @@ def tool_defs.mail_send() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[],\"additionalProperties\":false},",
-    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
-    "\"idempotentHint\":false,\"openWorldHint\":true}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
+    "\"destructiveHint\":false,\"idempotentHint\":false,",
+    "\"openWorldHint\":true}}"])
 
 def tool_defs.mail_reply() -> String:
   String.concat([
@@ -570,7 +613,11 @@ def tool_defs.mail_reply() -> String:
     "is sent, when a recipient is not in MAILBEND_ALLOWED_RECIPIENTS or the ",
     "MAILBEND_MAX_SENDS_PER_DAY limit is reached. With MAILBEND_SAVE_SENT the ",
     "result's sent_copy says whether a copy was saved to the Sent folder; a ",
-    "failed copy does not fail the send.\",",
+    "failed copy does not fail the send. With MAILBEND_TYPESAFE on, the ",
+    "message is first scanned locally for secrets, then checked by Jev; a ",
+    "secret, unreadable text, a Jev block or a TypeSafe failure stops the ",
+    "send (the result has secret_scan and jev). Saving a draft ",
+    "(mail_save_draft) is never checked.\",",
     "\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
@@ -601,11 +648,12 @@ def tool_defs.mail_reply() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uid\",\"uidvalidity\",\"body\"],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
-    "\"destructiveHint\":false,\"idempotentHint\":false,",
-    "\"openWorldHint\":true}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uid\",",
+    "\"uidvalidity\",\"body\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
+    "\"idempotentHint\":false,\"openWorldHint\":true}}"])
 
 def tool_defs.mail_forward() -> String:
   String.concat([
@@ -614,8 +662,12 @@ def tool_defs.mail_forward() -> String:
     "and nothing is sent, when a recipient is not in ",
     "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is ",
     "reached. With MAILBEND_SAVE_SENT the result's sent_copy says whether a ",
-    "copy was saved to the Sent folder; a failed copy does not fail the ",
-    "send.\",\"inputSchema\":{\"type\":\"object\",",
+    "copy was saved to the Sent folder; a failed copy does not fail the send. ",
+    "With MAILBEND_TYPESAFE on, the message is first scanned locally for ",
+    "secrets, then checked by Jev; a secret, unreadable text, a Jev block or ",
+    "a TypeSafe failure stops the send (the result has secret_scan and jev). ",
+    "Saving a draft (mail_save_draft) is never checked.\",",
+    "\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
     "\"minimum\":1},\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1,",
@@ -649,11 +701,12 @@ def tool_defs.mail_forward() -> String:
     "the file it would use, with message and file contents as <N bytes>. ",
     "Nothing is changed, sent or saved. It is not a full pre-check: marking ",
     "and flagging make no connection, so a stale uidvalidity fails only the ",
-    "real call, and a send does not check the daily limit. Default false.\"}},",
-    "\"required\":[\"uid\",\"uidvalidity\",\"to\"],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":false,",
-    "\"destructiveHint\":false,\"idempotentHint\":false,",
-    "\"openWorldHint\":true}}"])
+    "real call, and a send does not check the daily limit. With ",
+    "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and ",
+    "shows their verdict. Default false.\"}},\"required\":[\"uid\",",
+    "\"uidvalidity\",\"to\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,",
+    "\"idempotentHint\":false,\"openWorldHint\":true}}"])
 
 # The tool list as one JSON array.
 def tool_defs() -> String:

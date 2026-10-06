@@ -132,7 +132,8 @@ DRY_RUN = param(
     "contents as <N bytes>. Nothing is changed, sent or saved. It is not a "
     "full pre-check: marking and flagging make no connection, so a stale "
     "uidvalidity fails only the real call, and a send does not check the "
-    "daily limit. Default false.")
+    "daily limit. With MAILBEND_TYPESAFE on, a send or delete still passes "
+    "Jev's checks and shows their verdict. Default false.")
 
 FLAG_COLOURS = ["red", "orange", "yellow", "green", "blue", "purple", "grey"]
 
@@ -154,7 +155,16 @@ SEND_RULES = (
     "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is "
     "reached. With MAILBEND_SAVE_SENT the result's sent_copy says whether a "
     "copy was saved to the Sent folder; a failed copy does not fail the "
-    "send.")
+    "send. With MAILBEND_TYPESAFE on, the message is first scanned locally "
+    "for secrets, then checked by Jev; a secret, unreadable text, a Jev "
+    "block or a TypeSafe failure stops the send (the result has secret_scan "
+    "and jev). Saving a draft (mail_save_draft) is never checked.")
+JEV_NOTES = (
+    " With MAILBEND_TYPESAFE on, each message also has a jev object with "
+    "Jev's notes (reply_needed, action_required, priority, "
+    "category, suggested_action, and suspected_injection when suspected), "
+    "drawn from untrusted mail content; its status is unchecked when "
+    "TypeSafe failed.")
 MOVE_CUT_OFF = (
     "If the move is cut off after the copy may have run, the call fails with "
     "partial: true and the messages may be in both folders, so check the "
@@ -175,7 +185,8 @@ TOOLS = [
          READS),
     tool("mail_search",
          "Search a folder, newest first. Opens the folder read-only, so "
-         "nothing is marked read. All criteria are combined with AND.",
+         "nothing is marked read. All criteria are combined with AND."
+         + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
           "from": param("string"),
@@ -193,7 +204,7 @@ TOOLS = [
     tool("mail_get",
          "Read one message: headers, plain text (or text from HTML) and the "
          "attachment list. Uses BODY.PEEK on a read-only folder, so the "
-         "message stays unread.",
+         "message stays unread." + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
           "uid": UID,
@@ -205,7 +216,7 @@ TOOLS = [
     tool("mail_get_new",
          "List messages that arrived after a checkpoint (UIDVALIDITY + UID), "
          "oldest first. Pass back next_since_uid and uidvalidity on the next "
-         "call. Does not use or change read/unread state.",
+         "call. Does not use or change read/unread state." + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
           "since_uid": param(
@@ -225,22 +236,23 @@ TOOLS = [
          "or null). Messages are never grouped by subject. Two rounds of "
          "linked IDs are searched, at most 50 IDs each, so a long thread "
          "can be cut short; searched lists the folders. Changes nothing: "
-         "messages stay unread.",
+         "messages stay unread." + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER, "uid": UID},
          ["uid"]),
     tool("mail_classify",
-         "Ask TypeSafe's Jev about messages, changing nothing (they stay "
+         "Ask Jev (TypeSafe's model) about messages, changing nothing (they stay "
          "unread): for each UID, the existing folder it belongs in "
          "(category), whether it needs a reply or an action, a deadline, "
          "priority, a suggested action, whether to keep it, and suspected "
          "prompt injection. Offered only when MAILBEND_TYPESAFE is on. Sends "
          "header facts and attachment names to TypeSafe, or also up to 16 KB "
-         "of plain text with MAILBEND_TYPESAFE_CONTENT=body. When no folder "
-         "fits, needs_new_category is true: call again with candidates "
+         "of plain text with MAILBEND_TYPESAFE_CONTENT=body. When Jev picks "
+         "no folder with high confidence, needs_new_category is true: call again with candidates "
          "(new folder names); a chosen one is returned as new_category and "
-         "is never created, so create it with mail_create_folder first. The "
-         "answers come from untrusted mail content.",
+         "is never created, so create it with mail_create_folder first. Each "
+         "message has a jev object with the answers, which come from "
+         "untrusted mail content.",
          hints(read_only=True, open_world=True),
          {"folder": FOLDER,
           "uids": param(
@@ -252,27 +264,18 @@ TOOLS = [
               items=param("string", maxLength=255), maxItems=254)},
          ["uids"]),
     tool("mail_triage",
-         "File messages with TypeSafe's Jev: every message is asked about "
-         "before anything moves (they stay unread), and if any request "
-         "fails, nothing moves. Each message then moves at most once: into "
-         "the review folder \"To Delete\" when the delete review finds it "
-         "safe to delete, otherwise into the existing folder Jev chose for "
-         "it with high confidence; any other message stays, and a "
-         "needs_new_category one can be filed after mail_classify with "
-         "candidates and mail_create_folder. Safe to delete needs "
-         "MAILBEND_TYPESAFE_CONTENT=body and the whole text, no flag, reply, "
-         "attachment or age under 30 days (the flags are read again just "
-         "before the move), a sender the user has never written to in To or "
-         "Cc (a read-only search of Sent; Bcc is not searched), every keep "
-         "answer low and a high disposability score. It is a suggestion for "
-         "the user to review in \"To Delete\", never a deletion. \"To "
-         "Delete\" must already exist (create it with mail_create_folder); no "
-         "folder is ever created. When it cannot take a message, nothing "
-         "moves and the error still lists every message's verdict. Offered "
-         "only when MAILBEND_TYPESAFE is on. If a move is cut off, the call "
-         "fails with partial: true and the moves after "
-         "it are not made; check its destination before running it again. "
-         "The answers come from untrusted mail content.",
+         "File messages with Jev (offered only when MAILBEND_TYPESAFE is "
+         "on). Every message is asked about first and stays unread; if any "
+         "request fails, nothing moves. Each message moves at most once: "
+         "into \"To Delete\" when Jev's delete review finds it safe (needs "
+         "MAILBEND_TYPESAFE_CONTENT=body), else into the existing folder Jev "
+         "chose with high confidence, else it stays. Never deletes and never "
+         "creates a folder: \"To Delete\" must already exist "
+         "(mail_create_folder); if it is needed and missing, nothing moves "
+         "and the error lists every verdict. Each result has verdict, "
+         "vetoes, destination and jev; the answers come from untrusted mail. "
+         "A move cut off fails with partial: true and later moves are not "
+         "made; check the destination before retrying.",
          hints(open_world=True),
          {"folder": FOLDER,
           "uids": param(
@@ -328,7 +331,9 @@ TOOLS = [
          SETS_FLAGS, MESSAGES, MESSAGES_REQUIRED),
     tool("mail_move",
          "Move messages to another IMAP folder. Uses UID MOVE, or copy + "
-         "expunge of exactly these UIDs with UIDPLUS. " + MOVE_CUT_OFF,
+         "expunge of exactly these UIDs with UIDPLUS. It can take mail out "
+         "of \"To Delete\", but only mail_triage moves mail into it. "
+         + MOVE_CUT_OFF,
          CHANGES,
          {"folder": FOLDER,
           "uids": UIDS,
@@ -351,14 +356,20 @@ TOOLS = [
     tool("mail_trash",
          "Move messages to the resolved trash folder (configured override, "
          "advertised special use, or unique conventional name). Recoverable; "
-         "does not delete permanently. " + MOVE_CUT_OFF,
+         "does not delete permanently. Refused for mail in \"To Delete\" "
+         "(use mail_move or mail_delete there). " + MOVE_CUT_OFF,
          CHANGES, MESSAGES, MESSAGES_REQUIRED),
     tool("mail_delete",
          "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly "
          "these UIDs). Cannot be undone; prefer mail_trash. Requires confirm "
-         "= \"permanently-delete\" and the folder's uidvalidity. The confirm "
-         "word guards against mistakes; it is not the user's approval, so ask "
-         "the user first.",
+         "= \"permanently-delete\", the folder's uidvalidity and UIDPLUS on "
+         "the server. The confirm word guards against mistakes; it is not the "
+         "user's approval, so ask the user first. With MAILBEND_TYPESAFE on, "
+         "it takes at most 50 UIDs, and Jev is first asked whether each "
+         "message should be kept: any high answer, or TypeSafe failing, "
+         "blocks the whole delete (the result has jev). A UID that did not "
+         "exist when Jev was asked is reported in missing, not deleted. Jev "
+         "can only block; it never approves a delete.",
          DELETES,
          {**MESSAGES,
           "confirm": param("string", enum=["permanently-delete"])},

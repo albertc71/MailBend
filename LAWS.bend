@@ -1,14 +1,15 @@
 # MailBend: the safety laws. Each is a claim about the pure command plans
-# in src/ops.bend, which are the only way the tools build IMAP commands;
+# in src/ops.bend, which are the only way the tools build IMAP commands
+# (reads, moves, labels, flags, folders, deletes, Sent copies and triage);
 # about the SMTP envelope in src/smtp.bend, which is built only by
-# S.outbound; about the tools each configuration lists; about what
-# src/jev.bend sends to TypeSafe and how it reads a missing answer; or
-# about Jev's gates, the pure functions through which alone the tools reach
-# an SMTP envelope or a delete plan. PROOF.bend proves every law; `bend
-# PROOF.bend` is the gate. The laws cover these values and their rendering
-# only, not the native helpers, TLS, MIME parsing, agent behaviour, how the
-# configuration is read, or the IO that calls the gates (the end-to-end
-# tests and a CI check cover that).
+# S.outbound, which with an allowlist refuses any recipient it lacks; about
+# the tools each configuration lists; or about Jev's policy in
+# src/jev.bend: what it sends to TypeSafe, how it reads a missing answer,
+# the triage filing table, and the gates, the pure functions through which
+# alone the tools reach an SMTP envelope or a delete plan. PROOF.bend proves
+# every law; `bend PROOF.bend` is the gate. The laws cover these values and
+# their rendering only; "What the proofs cover" in README.md says what is
+# left to tests.
 
 import Base
 import ./src/codec.bend as C

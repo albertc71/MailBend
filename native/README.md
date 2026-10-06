@@ -13,8 +13,8 @@ MailBend has three small native programs:
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
 - `mailbend-typesafe/` (Rust): carries one request from the Bend core to
-  TypeSafe's Jev and its answer back, and is the only code that reads the
-  TypeSafe key. It never holds the mail password: it re-executes itself
+  Jev, TypeSafe's model, and its answer back, and is the only code that
+  reads the TypeSafe key. It never holds the mail password: it re-executes itself
   with an allow-listed environment first. What to ask, and what the answer
   means, is decided by the core.
 
@@ -22,16 +22,19 @@ MailBend has three small native programs:
 (cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe)
 ```
 
-The Rust workspace (`native/Cargo.toml`) pins Rust 1.99, its MSRV, in
+The Rust workspace (`native/Cargo.toml`) pins its Rust release, the MSRV, in
 `native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
-up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
-native-tls and other TLS stacks from the dependency tree.
+up. Our crates forbid `unsafe` code. `native/deny.toml` bans the
+`openssl`, `openssl-sys`, `native-tls`, `aws-lc-sys`, `aws-lc-rs`,
+`webpki-roots`, `rustls-pemfile` and `curl-sys` crates, and rustls's aws-lc
+and FIPS features.
+
 `mailbend-attach` depends only on `nix` and the local, network-free
 `mailbend-io` crate (environment settings, `openat2` helpers, stderr reports
 and the byte encoding shared with the core). `mailbend-typesafe` reuses
 `mailbend-net` for TLS, DoH and the proxy, and `mailbend-io` for its
-settings and the key file.
-Tests run with `cargo test --locked`.
+settings and the key file. The checks, including the cargo ones, are in
+[CONTRIBUTING.md](../CONTRIBUTING.md#checks).
 
 ## Layout
 
@@ -67,7 +70,7 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
 mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
                                             < the file's bytes
-mailbend-typesafe ask   < Jev request JSON   > TypeSafe's answer JSON
+mailbend-typesafe ask [--once]   < Jev request JSON   > TypeSafe's answer JSON
 mailbend-typesafe --check  # credential-free local runtime check; no network
 ```
 
@@ -151,8 +154,8 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   checks the opened descriptor is a regular file of at most `<max-bytes>`
   (capped at 25 MiB; the core passes what remains of the 25 MiB total budget)
   before reading it, and enforces that limit while reading if the file grows.
-  Exit 2 with the reason on stderr when refused. Needs
-  Linux 5.6+.
+  Exit 2 with the reason on stderr when refused (the only failure status of
+  every `mailbend-attach` form). Needs Linux 5.6+.
 - **Send counter** (`mailbend-attach count <state-dir> <limit> <utc-day>`):
   creates `<state-dir>` with mode 0700 if it is missing, resolves it once
   with `realpath` and opens it with `RESOLVE_NO_SYMLINKS`, then opens or
@@ -234,7 +237,8 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   has `MAILBEND_TIMEOUT_MS` from connecting to the end of the answer, whose
   size is capped at 4 MiB.
 - **Retries**: HTTP 429 and 5xx answers, and timeouts, are tried again after
-  1 s and 2 s (three attempts at most); nothing else is retried.
+  1 s and 2 s (three attempts at most); nothing else is retried. With
+  `--once`, which the core passes for reads, there is a single attempt.
 - **Output**: a 2xx answer on stdout, exit 0. A refusal's answer (TypeSafe's
   reason) is written to stdout too, redacted, with the exit status; the
   reason for any failure is on stderr.

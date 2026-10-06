@@ -7,7 +7,7 @@ without editing `/etc/hosts`. After a computer rebuild, rerun setup from that
 clone. The ordinary `scripts/mailbend` launcher still uses system DNS unless
 you explicitly set `MAILBEND_DOH_URL`.
 
-MailBend is Linux-first. These commands run **inside the cloud computer**,
+MailBend runs on Linux. These commands run **inside the cloud computer**,
 including when your desktop app runs on Windows. Installing in the desktop,
 IDE, a Cursor Cloud Agent VM, and a Grok Bot computer are separate operations.
 
@@ -30,9 +30,11 @@ sh scripts/setup-cloud.sh
 MAILBEND_READ_ONLY=1 scripts/mailbend-cloud call mail_probe
 ```
 
-Setup installs Debian/Ubuntu build and runtime dependencies, installs Bend if
-missing, builds both native helpers, checks the safety proofs, and compiles
-the Bend core. Run it as the computer user; it uses noninteractive `sudo`
+Setup installs Debian/Ubuntu build and runtime dependencies, installs the
+pinned Bend and Rust (Rust with a checksum-verified rustup, into `~/.cargo`)
+if missing,
+builds the three native helpers, checks the safety proofs, and compiles the
+Bend core. Run it as the computer user; it uses noninteractive `sudo`
 only for apt (or apt directly when already root). It needs working package
 repositories and HTTPS downloads. It does not read mail credentials, modify
 DNS, register services, or send mail. Repeated runs are safe; they rebuild
@@ -40,7 +42,7 @@ the current checkout. Do not run the whole script with `sudo`, which would
 put Bend in root's home. If noninteractive sudo is unavailable, have the
 environment owner install the packages listed in
 [setup-cloud.sh](../scripts/setup-cloud.sh), then run
-`sh scripts/install.sh --install-bend` as your user.
+`sh scripts/install.sh --install-bend --install-rust` as your user.
 
 Setup reuses Bend when it is already installed; otherwise it installs the
 release tested in CI, pinned with its sha256 in
@@ -66,7 +68,7 @@ Keep credentials in the platform's secret environment; never print them.
 ```
 
 `--check` performs a local, credential-free readiness check, including running
-the TLS helper and core to detect missing shared libraries. On failure it
+the TLS and TypeSafe helpers and the core to detect missing shared libraries. On failure it
 names the component that needs rebuilding, without exposing process output.
 It neither installs packages nor checks DNS, connectivity, authentication,
 or source freshness. After updating MailBend source, run full setup again. This routine
@@ -130,10 +132,31 @@ environment interpolation, Cursor supports entries such as:
 }
 ```
 
-Never substitute the actual values into that file. Reload tools, then run
-`mail_probe` through the agent as well as the CLI. Expect `"ok": true`,
-`"tls_verified": true`, authenticated capabilities and discovered folders.
-Authentication errors and missing-secret errors are separate from DNS errors.
+Never substitute the actual values into that file.
+
+Reload tools, then run `mail_probe` through the agent as well as the CLI.
+Expect `"ok": true`, `"tls_verified": true`, authenticated capabilities and
+discovered folders. Authentication errors and missing-secret errors are
+separate from DNS errors.
+
+### Optional: Jev
+
+To use [Jev](JEV.md), keep the TypeSafe key in a file, not in a secret
+variable: a variable would be in the environment of every MailBend process,
+including the one that holds the mail password, and
+`MAILBEND_TYPESAFE_API_KEY` fails every tool. Write the key once into
+durable storage such as your home folder, without echoing it or putting it
+on a command line. The snippet removes any old file first, so the new one is
+created private:
+
+```sh
+(umask 077; rm -f "$HOME/.mailbend-typesafe-key"; stty -echo; head -n 1 > "$HOME/.mailbend-typesafe-key"; stty echo)   # paste the key, then Enter
+```
+
+Then set `MAILBEND_TYPESAFE=1` and `MAILBEND_TYPESAFE_KEY_FILE` to that
+file's absolute path in the MCP server's environment, and restart it. The
+other [Jev settings](JEV.md#settings) are optional; start with the default
+`headers` content mode.
 
 ## Why DoH instead of hosts pins
 
@@ -244,7 +267,7 @@ describe web traffic. A [Cursor staff explanation dated 2026-09-18](https://foru
 specifically says browser traffic is routed while terminal commands still
 egress from the cloud, and the route requires the desktop app to remain open
 and connected. Do not rely on this setting to repair MailBend's native TCP
-sockets. Test actual IMAP and SMTP reachability if platform behavior changes.
+sockets. Test actual IMAP and SMTP reachability if platform behaviour changes.
 
 ## Enterprise Team Setup and Cursor Cloud Agents
 
@@ -284,21 +307,30 @@ launcher for runtime DoH, since exported shell variables are not captured in
 a Build. See [Cloud Environment Setup](https://cursor.com/docs/cloud-agent/setup).
 That file is not a documented personal Grok Bot post-rebuild hook.
 
-## Live compatibility and draft retest
+## Live iCloud record
 
-The user-reported iCloud run on Grok Bot used `MAILBEND_READ_ONLY=0`.
-TLS verification and IDLE were available, MOVE was absent, and UIDPLUS was
-available. The discovered folders were `INBOX`, `Archive`, `Junk`, `Drafts`,
-`Sent` and `Deleted`. Trash and Sent advertised special-use
-roles; the existing Drafts mailbox did not advertise its role.
+These results describe the reported account and computer, not every
+provider or cloud network.
 
+**Earlier helpers.** A user-reported run on Grok Bot, with
+`MAILBEND_READ_ONLY=0` and the helpers that preceded the current Rust ones,
+found TLS verification, IDLE and UIDPLUS available and MOVE absent. The
+discovered folders were `INBOX`, `Archive`, `Junk`, `Drafts`, `Sent` and
+`Deleted`; Trash and Sent advertised special-use roles, Drafts did not.
 Probe, folder listing, search, get, new mail, flag changes, move, trash,
 permanent deletion of a disposable message, sending to self with an
-attachment, reply-send and forward-send passed. Compose-draft, reply-as-draft
-and forward-as-draft also passed after the per-role repair. These results describe
-that reported account and computer, rather than every provider or cloud network.
+attachment, reply-send and forward-send passed. `mail_save_draft`, and
+`mail_reply` and `mail_forward` with `as_draft: true`, each created a draft
+in the intended Drafts mailbox without sending it.
 
-For another provider or localized/nested folders, follow the
+**Current Rust helpers.** On 2026-10-05, `mail_probe` passed with system
+DNS, with DoH and with `MAILBEND_IMAP_CONNECT_IP`, and an SMTP send to self
+passed. On 2026-10-06, `mail_classify` asked the real Jev in headers mode
+about INBOX messages; it changed nothing and the messages stayed unread.
+Everything else is unverified with these helpers until the
+[checklist](#live-icloud-checklist) below is run.
+
+For another provider or localised/nested folders, follow the
 [server and folder configuration](../README.md#configure). Inspect
 `mail_probe` for resolved roles and `mail_list_folders` for actual advertised
 metadata; a folder resolved by name or override can still have
@@ -309,16 +341,56 @@ With read-only mode enabled, run `mail_probe`, `mail_list_folders`,
 Confirm in Mail.app that it remains unread and record MOVE, UIDPLUS,
 SPECIAL-USE, IDLE and discovered folder roles. Only then use a disposable
 test message for intentional move/trash/delete, draft and send checks. A
-successful probe alone does not establish every iCloud operation's behavior.
-
-The folder-role repair was live-tested on iCloud after the merge. `mail_probe`
-resolved Drafts, and `mail_save_draft`, `mail_reply` with `as_draft: true`, and
-`mail_forward` with `as_draft: true` each created a draft in the intended
-Drafts mailbox without sending it.
+successful probe alone does not establish every iCloud operation's behaviour.
 
 A small `max_bytes` can truncate a fetched message before its body and return
 an empty body; increase the budget when needed. SMTP delivery does not
 guarantee a Sent copy: MailBend appends one only with `MAILBEND_SAVE_SENT=1`,
 after checking that the server did not file the message itself. Whether
-iCloud files SMTP-sent mail on its own is not yet verified for this account,
-so the setting stays off by default.
+iCloud files SMTP-sent mail on its own is unverified (item 8 below), so the
+setting stays off by default.
+
+## Live iCloud checklist
+
+The features below pass the local tests against the fake servers but are
+unverified on iCloud with the current helpers until this list is run on a
+real account; what has passed so far is in the [record](#live-icloud-record)
+above. Use disposable messages and folders, start with
+`MAILBEND_READ_ONLY=1` where an item only reads, and record pass or fail
+with the value observed.
+
+1. **TLS helper**: `mail_probe` (IMAP on `imap.mail.me.com:993`), a send to
+   yourself (SMTP STARTTLS on 587), the same with `MAILBEND_DOH_URL` set and
+   with `MAILBEND_IMAP_CONNECT_IP`; IPv6 if the network has it.
+2. **Delimiter**: the hierarchy delimiter `mail_list_folders` reports.
+3. **Create**: `mail_create_folder` at top level and nested; the folders
+   show on iCloud.com and in Apple Mail; whether a folder under INBOX is
+   accepted or refused.
+4. **Rename**: `mail_rename_folder` of a folder with a subfolder; renaming
+   the parent of a role folder is refused.
+5. **Thread search**: `UID SEARCH HEADER Message-ID` finds a known message;
+   whether searches return messages marked `\Deleted` but not expunged.
+6. **Labels**: `mail_label` moves a message into a label folder (iCloud has
+   no MOVE, so through the copy fallback): it appears there once, is gone
+   from INBOX, and no duplicate remains; `mail_move` back to INBOX removes
+   the label.
+7. **Flag colours**: `mail_flag` with each colour shows that colour in Apple
+   Mail; whether iCloud keeps `$MailFlagBit*` (PERMANENTFLAGS `\*`).
+8. **Sent copies**: after a send to yourself, whether iCloud filed the
+   message in Sent by itself; this decides the recommended
+   `MAILBEND_SAVE_SENT` value.
+9. **Downloads**: `mail_get_attachment` saves a binary attachment
+   byte for byte.
+10. **Threads**: `mail_get_thread` across INBOX and Sent.
+11. **Jev**:
+    - headers mode: `mail_classify` on 20 messages; a send to an obviously
+      wrong recipient is blocked; a delete of junk proceeds; `mail_triage`
+      files messages into confident existing folders and never into
+      `To Delete`;
+    - TypeSafe unreachable: a send is blocked, and a search continues with
+      each message `unchecked`;
+    - body mode: a disposable message goes to `To Delete`, and a large batch
+      is not refused by TypeSafe (a sign the size estimate fits, not a
+      proof).
+12. **Send limit**: with `MAILBEND_MAX_SENDS_PER_DAY=2` the third send is
+    refused, and trashing the Sent copies does not reset the count.
