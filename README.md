@@ -23,7 +23,7 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_move` | Move to another folder | yes |
 | `mail_label` | Move into an existing label folder (a label is a folder; one copy, `uidvalidity` required) | yes |
 | `mail_trash` | Move to the resolved Trash folder (recoverable) | yes |
-| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity` | yes |
+| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; with Jev on, at most 50 UIDs, each checked by Jev first | yes |
 | `mail_create_folder` | Create and subscribe to a folder: the only tool that creates a mailbox | yes |
 | `mail_rename_folder` | Rename a folder with its subfolders; the subscriptions of the moved folders follow | yes |
 | `mail_save_draft` | Compose into Drafts (with attachments) | yes |
@@ -51,7 +51,10 @@ run is not a full pre-check:
   no connection on a dry run, so a stale UIDVALIDITY is caught only by the
   real run's check (the `=EXPECT` line in their preview);
 - a dry-run send checks `MAILBEND_ALLOWED_RECIPIENTS` but not the daily send
-  limit, and reserves no place in it.
+  limit, and reserves no place in it;
+- with Jev on, a dry-run send or delete passes the same gates (see
+  [Jev's gates](#jevs-gates-on-sends-deletes-and-reads)) and shows their
+  verdict.
 
 Read-only mode refuses a dry run as it refuses the tool.
 
@@ -214,6 +217,76 @@ may move a message you keep out of it; `mail_trash` does not, and triage
 never files mail out of it. No folder tool renames it or creates a folder
 inside it, and no `MAILBEND_*_FOLDER` override may name it or a folder
 inside it.
+
+#### Jev's gates on sends, deletes and reads
+
+With `MAILBEND_TYPESAFE` on, Jev can stop a send or a permanent delete, and
+annotates what the agent reads. With it off, nothing below happens and no
+tool's result changes. A gate can only take an action away, never change
+it: a send that passes keeps exactly the envelope the allowlist gives, and
+a delete exactly its plan.
+
+- **Sends** (`mail_send`, `mail_reply`, `mail_forward`) first pass a local
+  secret scan, in either content mode and without TypeSafe. It looks for a
+  private-key block (PEM or PGP armour), a token with a well-known prefix
+  (AWS, Google, GitHub, GitLab, Slack, Stripe, Anthropic, OpenAI, npm) and a
+  line giving a password (`Password: ...`, with a digit in it, also when
+  quoted with `>`). It reads, decoded from any transfer encoding:
+  - the header fields (from, to and cc with their display names, bcc,
+    subject, in-reply-to, references), the body and each attachment's name;
+  - every text part of the attachments and of a forwarded original, and
+    the header section of each attached or forwarded message
+    (`message/rfc822` or `message/global`), opening them up to 3 levels
+    deep and multipart nesting up to 8 levels;
+  - last, every other part's bytes, whatever its type: a key file or a
+    config file is caught, but this is best effort. Compressed formats (PDF
+    streams, images, archives, office files) are not inspected, and these
+    bytes share what is left of the text's 1 MB budget.
+
+  A secret found blocks the send, and so does a scan that cannot read all
+  the text: more than 1 MB of it, deeper nesting, more than 10,000 parts,
+  or a text part it cannot decode, including one holding a NUL character
+  (UTF-16 or UTF-32 text). Running out of budget on the other bytes does
+  not. A block names the part by position (`attachment 1 > text/plain`),
+  never by file name, and TypeSafe is not asked. The scan catches mistakes;
+  it is not a boundary against an agent set on leaking.
+
+  A clean message then goes to Jev, which is asked whether a recipient does
+  not belong and whether it shares confidential information, plus, for
+  reply-all, whether it should go only to the sender, and for a forward,
+  whether the original asks not to be shared. Jev sees the header fields
+  (from, to, cc, bcc, subject),
+  attachment names and the original's header facts, and the body only in
+  `body` mode. The result holds `secret_scan` (`clean`, `found` or
+  `incomplete`) and a `jev` object whose `decision` is `proceeded` or
+  `blocked`, with its `reasons`. A blocked send says so and suggests
+  `mail_save_draft`, which is never gated.
+- **`mail_delete`** asks Jev the delete review's keep questions (record,
+  account security, personally written, open action, needed again) about
+  every message first; any high answer blocks the whole delete. With Jev on
+  it takes at most 50 UIDs and needs UIDPLUS, and it deletes only the
+  messages Jev was asked about: a UID that did not exist then is reported
+  in `missing`, even if a message took it meanwhile.
+- **TypeSafe failing** (or an answer missing) blocks the send or delete,
+  after two retries of an overloaded or timed-out TypeSafe.
+- **Reads** (`mail_search`, `mail_get`, `mail_get_new` and
+  `mail_get_thread`, marked `openWorldHint` for this reason) add a `jev`
+  object to each message shown: `reply_needed`, `action_required`,
+  `priority`, `category`, `suggested_action`, and `suspected_injection`
+  only when Jev suspects one. The categories come from the folder list:
+  `mail_get_thread` reuses the one it already read, and the others list the
+  folders in one more read-only session (two when the server has
+  SPECIAL-USE). A read asks TypeSafe once, without retries, so it waits at
+  most one `MAILBEND_TIMEOUT_MS`. When TypeSafe fails, the read still
+  returns its messages, each `jev` with `status: "unchecked"` and the
+  reason.
+
+The laws cover the pure gate functions (`Jev.outbound_checked` and
+`Jev.delete_checked`, the only way the tools reach an SMTP envelope or a
+delete plan) and the headers-mode request; the IO that calls them is
+covered by the end-to-end tests and a CI check that no other code reaches
+`S.outbound` or `smtp_run`, uses `plan_delete` without `delete_checked`, or
+makes an expunge outside `src/ops.bend` and `src/imap.bend`.
 
 Other providers require compatible password-authenticated IMAP over implicit
 TLS and SMTP with STARTTLS. Set `MAILBEND_IMAP_HOST`, `MAILBEND_IMAP_PORT`,
@@ -403,7 +476,9 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   unread (proven: its plan contains no command that can change a mailbox).
   It sends header facts and attachment names, and message text only with
   `MAILBEND_TYPESAFE_CONTENT=body` and `MAILBEND_TYPESAFE_ZERO_RETENTION=1`
-  (proven: a headers-mode request holds no text). Requests go only to
+  (proven: a headers-mode request holds no text, and one about an outgoing
+  message is the same whatever its body). Jev's gates can only block a
+  send or delete, never change it (proven). Requests go only to
   `https://api.typesafe.ai/v1/systemone`, fixed in `mailbend-typesafe`,
   over verified TLS. That helper reads the key from
   `MAILBEND_TYPESAFE_KEY_FILE` and first re-executes itself with only its
@@ -417,9 +492,11 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   contents are framed as IMAP literals, so a message cannot spoof a server
   reply.
 - **What the proofs cover.** The laws are about the pure IMAP command plans,
-  the SMTP envelope and their rendering. The native helpers, TLS, MIME parsing, the agent's
-  choices and the runtime configuration are covered by tests and review,
-  not by proofs.
+  the SMTP envelope, Jev's requests and gates, and their rendering. Jev's
+  gate laws cover the pure wrappers only; the IO that calls them is covered
+  by the end-to-end tests and a CI check. The native helpers, TLS, MIME
+  parsing, the agent's choices and the runtime configuration are covered by
+  tests and review, not by proofs.
 
 ## How it works
 

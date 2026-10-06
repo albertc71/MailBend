@@ -39,11 +39,12 @@ flowchart TB
     json["src/json.bend<br/>strict JSON parser"]
     tools["src/tools.bend<br/>23 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>77 laws proven over the plans, the envelope and Jev requests"]
+    laws["LAWS.bend + PROOF.bend<br/>82 laws proven over the plans, the envelope, Jev requests and gates"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
-    jevb["src/jev.bend<br/>Jev facts, questions, requests, answers"]
+    jevb["src/jev.bend<br/>Jev facts, questions, requests, answers, gates"]
+    secrets["src/secrets.bend<br/>local secret scan of outgoing mail"]
   end
 
   subgraph helper["mailbend-tls (Rust, rustls): the only reader of the password"]
@@ -94,6 +95,7 @@ flowchart TB
   tools -- "save: name, file bytes on stdin" --> save
   save --> downloads
   tools --> jevb
+  tools --> secrets
   tools -- "request JSON (built by jev.bend) on stdin" --> ask
   ask -- "answer JSON on stdout" --> tools
   ask <--> tsapi
@@ -196,6 +198,8 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Jev gets header facts and attachment names, and message text only with `MAILBEND_TYPESAFE_CONTENT=body` and `MAILBEND_TYPESAFE_ZERO_RETENTION=1`; `mail_classify` changes nothing and creates no folder | `src/jev.bend` (`state_of`), `plan_classify` (`EXAMINE`, `BODY.PEEK`, `BODYSTRUCTURE`) | laws `headers_state_has_no_body`, `classify_writes_nothing`, `fetch_items_never_set_seen`; unit tests; e2e recorded requests, server log and state |
 | Triage moves each message at most once, only into `To Delete` or an existing category folder it was given (never INBOX, a role folder or the source folder), creates no folder, and expunges only what it copied; it moves nothing unless every Jev request succeeded; `To Delete` needs a body-mode message with its whole text, no code veto (flagged or answered, read again just before the moves; attachments; under 30 days old; a sender with one From field whom the user never wrote to in To or Cc) and Jev's low keep answers and high disposability, asked in a request of its own | `Jev.verdict`, `Jev.filing`, `Ops.plan_triage` (guards its own destinations and repeats; the laws restate both independently), `t_triage` | laws `triage_moves_only_to_known_folders`, `triage_creates_no_mailbox`, `triage_one_move_per_message`, `triage_expunges_only_moved`, `filing_matches_table`, `uncertain_changes_nothing`, `sent_search_writes_nothing`, `reread_flags_writes_nothing`; unit tests over every band, verdict and category; e2e per table row with and without MOVE, a Cc-only correspondent, two From fields, a message flagged during the call |
 | A missing or malformed Jev answer reads as the cautious one; a refused request is split once, any other failure stops the call | `src/jev.bend` (bands, picks), `ask_batch` in `src/tools.bend` | law `missing_answer_is_cautious`, unit tests, e2e against `tests/fake_typesafe.py` (401, 422, 429, 529, timeout, malformed, split, later-batch failure) |
+| With Jev on, a send passes a local secret scan (private-key blocks, well-known token prefixes, password lines, also when quoted; header fields, text parts and the header sections of attached or forwarded messages, decoded, then every other part's bytes best effort; at most 1 MB of text, 3 levels of forwarded messages, 8 of multipart nesting and 10,000 parts, any text it cannot read, a NUL included, blocking) and then Jev's veto questions; a delete needs UIDPLUS, passes the keep questions and plans only the UIDs Jev was asked about; a gate only takes the action away (the allowlist's envelope or the delete plan unchanged, or none), and TypeSafe failing blocks it; drafts are never gated | `Secrets.secret_scan` in `src/secrets.bend`; `Jev.outbound_checked`, `Jev.delete_checked` in `src/jev.bend`; `send_gated`, `delete_gated` in `src/tools.bend` | laws `send_veto_only_subtracts`, `delete_veto_only_subtracts`, `failure_blocks_outbound`, `secret_scan_blocks`, `outgoing_headers_state_has_no_body` (the pure wrappers only); CI check, on the code flattened to one line, that `S.outbound` is called only in `src/jev.bend`, `smtp_run` only once, `plan_delete` only through `delete_checked`, and no expunge is made outside `src/ops.bend` and `src/imap.bend`; unit tests (true and false positives, encodings, nesting, binary parts, the 1 MB bound); e2e (scan cases, recorded headers-mode requests, vetoes, TypeSafe down, dry runs, a UID taken during a delete) |
+| With Jev on, the four reads add a `jev` object to each message (`suspected_injection` only when suspected), asking TypeSafe once without retries; TypeSafe failing leaves the read working, each message `unchecked` | `annotated` in `src/tools.bend`, `Jev.annotation_jsons` | unit tests, e2e (every read, headers-mode requests, TypeSafe down) |
 | With an allowlist, a message goes only when every envelope recipient is allowed; the envelope has no other source | `S.outbound` in `src/smtp.bend`, `send_with` in `src/tools.bend` | laws `allowlist_refuses_unlisted`, `no_allowlist_is_unchanged`, CI grep for other envelope callers, unit and e2e allowlist cases |
 | The daily send limit is reserved before SMTP and fails closed; no tool reads or changes the count | `mailbend-attach count` (`flock`, openat2), `reserve` in `src/tools.bend` | Rust tests (two concurrent processes), e2e at, below and over the limit |
 | A Sent copy is one `APPEND` to the resolved Sent folder, made only when a read-only search finds no copy; a failed copy does not fail the send | `plan_sent_copy`, `sent_copy` in `src/tools.bend` | law `sent_copy_only_appends`, e2e with and without server filing |
@@ -205,7 +209,7 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
 | Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
 | A thread holds only messages whose Message-ID, In-Reply-To or References name one of the IDs searched for, compared exactly after the substring `SEARCH HEADER`; never grouped by subject; at most two rounds | `src/thread.bend` (`is_linked`, `next_ids`, `thread_order`), `plan_thread_search`, `plan_thread_headers` | law `thread_plans_write_nothing`, unit tests (order, missing parents, cycles, shared IDs, long References), e2e case-only match, deleted reply, two-round bound, long References |
-| A dry run (`dry_run: true`) runs only the read-only checks the tool makes (the flag tools make none), then shows the IMAP lines, the SMTP sender, recipients and `sent_copy` intent, or file it would use, with messages and files as `<N bytes>`; it reserves no send and does not check the daily limit, saves no file and is refused in read-only mode | `preview_or_run` in `src/tools.bend` (every tool that is not read-only), `I.preview` | law `append_preview_hides_message`, unit tests, e2e (every such tool: server state and log, download directory, send counter, `mailbend-attach` calls) |
+| A dry run (`dry_run: true`) runs only the read-only checks the tool makes (the flag tools make none), then shows the IMAP lines, the SMTP sender, recipients and `sent_copy` intent, or file it would use, with messages and files as `<N bytes>`; it reserves no send and does not check the daily limit, saves no file and is refused in read-only mode | `preview_or_run` in `src/tools.bend` (every tool that is not read-only), `I.preview` | law `append_preview_hides_message`, unit tests, e2e (every such tool: server state and log, download directory, send counter, `mailbend-attach` calls; every tool listed as not read-only has a `dry_run` argument, with Jev off and on) |
 | Folder roles resolve independently; uncertain targets never trigger guessed writes | `src/tools.bend` discovery and resolution, `src/ops.bend` discovery plans | local e2e partial-role, override, ambiguity and failed-discovery cases |
 
 ## Layers
@@ -214,7 +218,8 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
 src/tools.bend       the 23 tools: arguments, sessions, results
 src/jev.bend         TypeSafe's Jev: message facts, questions, requests, typed answers,
-                     the triage verdict and the filing table
+                     the triage verdict, the filing table and the gates
+src/secrets.bend     the local secret scan of an outgoing message
 src/thread.bend      which messages form a thread, and their order and parents
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
@@ -443,11 +448,19 @@ SMTP envelope in `src/smtp.bend`; `PROOF.bend` proves them, and
   set produces no plan;
 - a headers-mode Jev request holds the UID, header fields and attachment
   names only, never message text;
+- Jev's gates only take an action away: a send whose secret scan is clean
+  keeps the allowlist's envelope when Jev is off or vetoed nothing and gets
+  none when it vetoed; a delete keeps its plan or gets none; a scan that
+  found a secret or could not read everything, and a check Jev could not
+  decide, give no envelope and no plan; a headers-mode request about an
+  outgoing message is the same whatever its body;
 - a missing Jev answer is the cautious one: an unknown band that never
   clears a message for review and counts as suspected injection, no
   suggested action, and no folder chosen.
 
-The laws are about these pure plans, the envelope and their rendering. The native helpers,
+The laws are about these pure plans, the envelope, Jev's gates and their
+rendering. The gate laws cover the pure wrappers only; the IO that calls
+them is covered by the e2e tests and the CI grep. The native helpers,
 TLS, MIME parsing, the agent's choices and the runtime configuration are
 outside them and covered by the transport, unit and e2e tests. The
 confirmation word is supplied by the agent, so it guards against mistakes,

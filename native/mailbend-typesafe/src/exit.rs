@@ -1,7 +1,7 @@
 //! The helper's exit statuses, part of its contract with the Bend core:
 //! 0 answered (2xx), 2 key file, input or setting problem, 3 cannot reach
 //! TypeSafe (connect, proxy or TLS), 6 unexpected answer, 7 key rejected,
-//! 8 request refused, 9 overloaded or timed out after the retries.
+//! 8 request refused, 9 overloaded or timed out (after any retries).
 
 /// Why the helper stopped without an answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

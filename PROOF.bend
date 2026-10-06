@@ -12,6 +12,7 @@ import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/imap.bend as I
 import ./src/jev.bend as Jev
+import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 
@@ -1245,3 +1246,31 @@ def Laws.headers_state_has_no_body(uid, fields, flags, date, size, atts, body, t
 
 def Laws.missing_answer_is_cautious(key, candidates, none):
   ({==}, {==}, {==}, {==}, {==}, {==})
+
+# Gates
+# -----
+
+# The gates branch only on their own parameters, so each law computes;
+# failure_blocks_outbound matches the scan, which outbound_checked reads
+# first.
+
+def Laws.send_veto_only_subtracts(allow, rcpts, from, msg, reasons):
+  ({==}, {==}, {==})
+
+def Laws.delete_veto_only_subtracts(plan, reasons):
+  ({==}, {==}, {==})
+
+def Laws.failure_blocks_outbound(scan, allow, rcpts, from, msg, reason, plan):
+  match scan:
+    case Secrets.Found{part}:
+      ({==}, {==})
+    case Secrets.Incomplete{why}:
+      ({==}, {==})
+    case Secrets.Clean{}:
+      ({==}, {==})
+
+def Laws.secret_scan_blocks(part, reason, gate, allow, rcpts, from, msg):
+  ({==}, {==})
+
+def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, text):
+  {==}

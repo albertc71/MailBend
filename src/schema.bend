@@ -45,7 +45,7 @@ def tool_defs.mail_search() -> String:
     "\"description\":\"Default 20.\"}},\"required\":[],",
     "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
     "\"destructiveHint\":false,\"idempotentHint\":true,",
-    "\"openWorldHint\":false}}"])
+    "\"openWorldHint\":true}}"])
 
 def tool_defs.mail_get() -> String:
   String.concat([
@@ -60,7 +60,7 @@ def tool_defs.mail_get() -> String:
     "the message. Default 262144.\"}},\"required\":[\"uid\"],",
     "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
     "\"destructiveHint\":false,\"idempotentHint\":true,",
-    "\"openWorldHint\":false}}"])
+    "\"openWorldHint\":true}}"])
 
 def tool_defs.mail_get_new() -> String:
   String.concat([
@@ -79,7 +79,7 @@ def tool_defs.mail_get_new() -> String:
     "\"description\":\"Default 50.\"}},\"required\":[],",
     "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
     "\"destructiveHint\":false,\"idempotentHint\":true,",
-    "\"openWorldHint\":false}}"])
+    "\"openWorldHint\":true}}"])
 
 def tool_defs.mail_get_thread() -> String:
   String.concat([
@@ -96,7 +96,7 @@ def tool_defs.mail_get_thread() -> String:
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
     "\"minimum\":1}},\"required\":[\"uid\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
-    "\"idempotentHint\":true,\"openWorldHint\":false}}"])
+    "\"idempotentHint\":true,\"openWorldHint\":true}}"])
 
 def tool_defs.mail_classify() -> String:
   String.concat([

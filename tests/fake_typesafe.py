@@ -32,7 +32,9 @@ question. An email whose subject carries the marker "[disposable]" is
 scripted as safe to throw away: every keep question answers no and the
 disposability score is its top level with high confidence, unless the text
 mentions a deadline, which keeps it open (keep_open_action answers yes).
-Everything else is a middling answer.
+A request about an outgoing message (a state with "outgoing") answers every
+veto question yes when its subject or text carries the marker "[veto]",
+else no. Everything else is a middling answer.
 
 Every request is appended to --log as JSONL: the CONNECT target, the names
 (never the values) of the environment variables of each running
@@ -152,6 +154,13 @@ def answer(qid, q, emails):
     return {"type": "noul", "noul": yes}
 
 
+def outgoing_answer(outgoing):
+    """Every veto question about an outgoing message: yes when it carries
+    the marker "[veto]" in its subject or text, else no."""
+    seen = (str(outgoing.get("subject", "")) + " " + str(outgoing.get("text", ""))).lower()
+    return {"type": "noul", "noul": 0.95 if "[veto]" in seen else 0.05}
+
+
 def environ_names():
     """The names of the environment variables of each running helper."""
     found = []
@@ -212,8 +221,12 @@ class Fake:
             return 422, {"detail": problem}
         if kind == "malformed":
             return 200, ["not", "an", "answer"]
-        emails = emails_by_uid(body["state"])
-        answers = {qid: answer(qid, q, emails) for qid, q in body["questions"].items()}
+        state = body["state"]
+        if isinstance(state, dict) and isinstance(state.get("outgoing"), dict):
+            answers = {qid: outgoing_answer(state["outgoing"]) for qid in body["questions"]}
+        else:
+            emails = emails_by_uid(state)
+            answers = {qid: answer(qid, q, emails) for qid, q in body["questions"].items()}
         return 200, {"answers": answers, "usage": {"input_tokens": len(raw) // 4, "output_tokens": 0}}
 
     def serve(self, conn):

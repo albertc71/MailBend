@@ -1,11 +1,14 @@
 # MailBend: the safety laws. Each is a claim about the pure command plans
 # in src/ops.bend, which are the only way the tools build IMAP commands;
 # about the SMTP envelope in src/smtp.bend, which is built only by
-# S.outbound; about the tools each configuration lists; or about what
-# src/jev.bend sends to TypeSafe and how it reads a missing answer.
-# PROOF.bend proves every law; `bend PROOF.bend` is the gate. The laws
-# cover these values and their rendering only, not the native helpers, TLS,
-# MIME parsing, agent behaviour or how the configuration is read.
+# S.outbound; about the tools each configuration lists; about what
+# src/jev.bend sends to TypeSafe and how it reads a missing answer; or
+# about Jev's gates, the pure functions through which alone the tools reach
+# an SMTP envelope or a delete plan. PROOF.bend proves every law; `bend
+# PROOF.bend` is the gate. The laws cover these values and their rendering
+# only, not the native helpers, TLS, MIME parsing, agent behaviour, how the
+# configuration is read, or the IO that calls the gates (the end-to-end
+# tests and a CI check cover that).
 
 import Base
 import ./src/codec.bend as C
@@ -13,6 +16,7 @@ import ./src/json.bend as J
 import ./src/imap.bend as I
 import ./src/mime.bend as M
 import ./src/jev.bend as Jev
+import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 
@@ -907,3 +911,83 @@ law missing_answer_is_cautious:
    {Jev.category_of(Jev.NoPick{}, candidates, none) == Jev.Uncategorised{} : Jev.Category} &
    {Jev.category_of(Jev.Picked{key, Jev.Missing{}}, candidates, none) == Jev.NeedsNew{}
      : Jev.Category})
+
+# Gates
+# -----
+
+# With Jev on, a send passes a local secret scan and Jev's veto questions,
+# and a permanent delete passes the delete vetoes. A gate can only take
+# the action away: the send keeps exactly the allowlist's envelope and the
+# delete exactly its plan, or gets none. A scan that found a secret or
+# could not read the whole message, and a check Jev could not decide
+# (TypeSafe failed, or an answer is missing), block it.
+
+# LAW: for every allowlist, recipient list, sender and message, a send the
+# secret scan found clean gets the allowlist's envelope unchanged when Jev
+# is off or vetoed nothing, and no envelope when Jev vetoed it
+law send_veto_only_subtracts:
+  for allow: List<&2, String>
+  for rcpts: List<&2, String>
+  for from: String
+  for msg: String
+  for reasons: List<&2, String>
+  ({Jev.outbound_checked(Secrets.Clean{}, allow, Jev.JevOff{}, rcpts, from, msg) ==
+     S.outbound(allow, rcpts, from, msg) : Maybe<&2, String>} &
+   {Jev.outbound_checked(Secrets.Clean{}, allow, Jev.Cleared{}, rcpts, from, msg) ==
+     S.outbound(allow, rcpts, from, msg) : Maybe<&2, String>} &
+   {Jev.outbound_checked(Secrets.Clean{}, allow, Jev.Vetoed{reasons}, rcpts, from, msg) ==
+     None{} : Maybe<&2, String>})
+
+# LAW: for every plan, a delete keeps its plan unchanged when Jev is off or
+# vetoed nothing, and runs no command when Jev vetoed it
+law delete_veto_only_subtracts:
+  for plan: List<&2, I.Cmd>
+  for reasons: List<&2, String>
+  ({Jev.delete_checked(Jev.JevOff{}, plan) == plan : List<&2, I.Cmd>} &
+   {Jev.delete_checked(Jev.Cleared{}, plan) == plan : List<&2, I.Cmd>} &
+   {Jev.delete_checked(Jev.Vetoed{reasons}, plan) == [] : List<&2, I.Cmd>})
+
+# LAW: when Jev could not decide, for every scan result, allowlist,
+# recipient list, sender, message and plan, a send gets no envelope and a
+# delete runs no command
+law failure_blocks_outbound:
+  for scan: Secrets.Scan
+  for allow: List<&2, String>
+  for rcpts: List<&2, String>
+  for from: String
+  for msg: String
+  for reason: String
+  for plan: List<&2, I.Cmd>
+  ({Jev.outbound_checked(scan, allow, Jev.Failed{reason}, rcpts, from, msg) ==
+     None{} : Maybe<&2, String>} &
+   {Jev.delete_checked(Jev.Failed{reason}, plan) == [] : List<&2, I.Cmd>})
+
+# LAW: a send in which the secret scan found a secret, or which it could
+# not read in full, gets no envelope, whatever Jev decided and for every
+# allowlist, recipient list, sender and message: only a clean scan can
+# give one
+law secret_scan_blocks:
+  for part: String
+  for reason: String
+  for gate: Jev.Gate
+  for allow: List<&2, String>
+  for rcpts: List<&2, String>
+  for from: String
+  for msg: String
+  ({Jev.outbound_checked(Secrets.Found{part}, allow, gate, rcpts, from, msg) ==
+     None{} : Maybe<&2, String>} &
+   {Jev.outbound_checked(Secrets.Incomplete{reason}, allow, gate, rcpts, from, msg) ==
+     None{} : Maybe<&2, String>})
+
+# LAW: in headers mode, the request about an outgoing message is the same
+# whatever its text, for every header field, attachment name, original and
+# list of veto questions: TypeSafe never sees the body
+law outgoing_headers_state_has_no_body:
+  for fields: List<&2, M.Hdr>
+  for attachments: List<&2, String>
+  for about: Jev.Context
+  for vetoes: List<&2, Jev.Veto>
+  for text: String
+  {Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, text) ==
+    Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, "")
+    : String}

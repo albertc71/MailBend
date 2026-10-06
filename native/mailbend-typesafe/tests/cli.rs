@@ -75,9 +75,25 @@ fn check_needs_no_key() {
 
 #[test]
 fn unknown_modes_are_input_errors() {
-    for args in [&[][..], &["ask", "more"][..], &["classify"][..]] {
+    for args in [
+        &[][..],
+        &["ask", "more"][..],
+        &["ask", "--once", "more"][..],
+        &["--once", "ask"][..],
+        &["classify"][..],
+    ] {
         assert_exit(&run(args, &[], b"{}"), 2, "usage: mailbend-typesafe");
     }
+}
+
+#[test]
+fn a_single_attempt_is_a_mode_of_ask() {
+    // Accepted as ask, so it stops at the first missing input, not at usage.
+    assert_exit(
+        &run(&["ask", "--once"], &[], b"{}"),
+        2,
+        "MAILBEND_TYPESAFE_KEY_FILE is not set",
+    );
 }
 
 #[test]

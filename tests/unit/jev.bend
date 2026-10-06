@@ -1,14 +1,17 @@
 # Jev: the facts and text of a message, the questions and request budget,
 # the strict reading of answers (numbers, bands, choices), the triage
 # verdict and filing table, and the results, with missing and malformed
-# answers read as the cautious choice.
+# answers read as the cautious choice; the local secret scan, read
+# annotations, and the gates before a send or a permanent delete.
 
 import Base
 import ../../src/codec.bend as C
 import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/mime.bend as M
+import ../../src/smtp.bend as S
 import ../../src/jev.bend as Jev
+import ../../src/secrets.bend as Secrets
 
 def str(s: String) -> I.Value:
   I.VStr{s}
@@ -70,7 +73,7 @@ def check_facts() -> IO(Unit):
 
 def opts(+names: List<&2, String>) -> Jev.Options:
   +none = Jev.none_key(names)
-  Jev.Options{Jev.category_options(names, none), none}
+  Jev.Options{Jev.Classifying{}, Jev.category_options(names, none), none}
 
 def fetched(uid: U32, text: String) -> Jev.Fetched:
   Jev.Fetched{facts(uid), Jev.Text{text, Jev.Complete{}}}
@@ -115,14 +118,14 @@ def many(n: Nat, +uid: U32, +text: String) -> List<&2, Jev.Fetched>:
   match n:
     case Zero{}:
       []
-    case Succ{k}:
+    case Succ{+k}:
       fetched(uid, text) <> many(k, (uid + 1 : U32), text)
 
 def long_names(n: Nat) -> List<&2, String>:
   match n:
     case Zero{}:
       []
-    case Succ{k}:
+    case Succ{+k}:
       String.repeat("x", 120n) <> long_names(k)
 
 def entries(ss: List<&2, Jev.Step>) -> List<&2, Jev.Entry>:
@@ -393,12 +396,150 @@ def check_triage() -> IO(Unit):
     IO.print(filing_line(Jev.Review{}))
     IO.print(filing_line(Jev.Unanswered{}))
 
+# Outgoing mail and the gates
+# ---------------------------
+
+def show_gate(g: Jev.Gate) -> String:
+  match g:
+    case Jev.JevOff{}:
+      "off"
+    case Jev.Cleared{}:
+      "cleared"
+    case Jev.Vetoed{reasons}:
+      "vetoed[" ++ String.join(reasons, "; ") ++ "]"
+    case Jev.Failed{reason}:
+      "failed[" ++ reason ++ "]"
+
+def show_decision(d: Jev.Decision) -> String:
+  Jev.Decision{g, report} = d
+  show_gate(g) ++ " " ++ J.show(J.obj(report))
+
+def show_envelope(m: Maybe<&2, String>) -> String:
+  match m:
+    case Some{e}:
+      "envelope " ++ U32.show(C.byte_len(e))
+    case None{}:
+      "none"
+
+def show_plan(cs: List<&2, I.Cmd>) -> String:
+  "plan " ++ Nat.show(List.length(&2, I.Cmd, cs))
+
+def outgoing(about: Jev.Context) -> Jev.Outgoing:
+  Jev.Outgoing{[M.Hdr{"from", "me@x.com"}, M.Hdr{"to", "Ann <a@x.com>"}, M.Hdr{"cc", ""},
+    M.Hdr{"bcc", ""}, M.Hdr{"subject", "Lunch"}], ["menu.pdf"], about}
+
+# Each name answered with the next probability.
+def answer_kvs(probs: List<&2, String>, names: List<&2, String>) -> List<&2, String>:
+  match probs:
+    case Nil{}:
+      []
+    case p <> t:
+      match names:
+        case Nil{}:
+          []
+        case n <> u:
+          ("\"" ++ n ++ "\":" ++ noul(p)) <> answer_kvs(t, u)
+
+def outgoing_answers(probs: List<&2, String>, names: List<&2, String>) -> String:
+  "{\"answers\":{" ++ String.join(answer_kvs(probs, names), ",") ++ "}}"
+
+def text_whole(t: Jev.Text) -> String:
+  Jev.Text{text, whole} = t
+  show_whole(whole)
+
+def gates() -> List<&2, Jev.Gate>:
+  [Jev.JevOff{}, Jev.Cleared{}, Jev.Vetoed{["no"]}, Jev.Failed{"down"}]
+
+def envelopes(+scan: Secrets.Scan, gs: List<&2, Jev.Gate>) -> List<&2, String>:
+  match gs:
+    case Nil{}:
+      []
+    case g <> t:
+      show_envelope(Jev.outbound_checked(scan, [], g, ["a@x.com"], "me@x.com", "Hi\r\n")) <>
+        envelopes(scan, t)
+
+def plans(gs: List<&2, Jev.Gate>) -> List<&2, String>:
+  match gs:
+    case Nil{}:
+      []
+    case g <> t:
+      show_plan(Jev.delete_checked(g, [I.CCapability{}, I.CExamine{"INBOX"}])) <> plans(t)
+
+def reasons(+scan: Secrets.Scan, gs: List<&2, Jev.Gate>) -> List<&2, String>:
+  match gs:
+    case Nil{}:
+      []
+    case g <> t:
+      ("[" ++ Jev.blocked_reason(scan, g) ++ "]") <> reasons(scan, t)
+
+def keep_answers(+k: Jev.Band) -> Jev.Answers:
+  Jev.Answers{Jev.NoPick{}, Jev.Low{}, Jev.Low{}, Jev.Low{}, Jev.Scored{Jev.Low{}, Jev.Low{}},
+    Jev.NoPick{}, Jev.Vetoes{Jev.Low{}, k, Jev.Mid{}, Jev.Low{}, Jev.Low{}},
+    Jev.Scored{Jev.Low{}, Jev.Low{}}, k}
+
+def check_gates() -> IO(Unit):
+  +fresh = Jev.outgoing_vetoes(Jev.Fresh{})
+  +names : List<&2, String> = ["recipients", "disclosure"]
+  do IO<Unit>:
+    IO.print(String.join(envelopes(Secrets.Clean{}, gates()), " | ") ++ " = " ++
+      show_envelope(S.outbound([], ["a@x.com"], "me@x.com", "Hi\r\n")))
+    IO.print(String.join(envelopes(Secrets.Found{"the body"}, gates()), " | "))
+    IO.print(String.join(envelopes(Secrets.Incomplete{"too long"}, gates()), " | "))
+    IO.print(show_envelope(Jev.outbound_checked(Secrets.Clean{}, ["b@x.com"], Jev.Cleared{},
+      ["a@x.com"], "me@x.com", "Hi\r\n")))
+    IO.print(String.join(plans(gates()), " | "))
+    IO.print(String.join(reasons(Secrets.Clean{}, gates()), " "))
+    IO.print(String.join(reasons(Secrets.Found{"the body"}, [Jev.Cleared{}]), " ") ++ " " ++
+      String.join(reasons(Secrets.Incomplete{"it is too long"}, [Jev.Cleared{}]), " "))
+    IO.print(String.join([
+      show_gate(Jev.gate_of([])),
+      show_gate(Jev.gate_of([Jev.Concern{"a", "A", Jev.Low{}}, Jev.Concern{"b", "B", Jev.Mid{}}])),
+      show_gate(Jev.gate_of([Jev.Concern{"a", "A", Jev.High{}}, Jev.Concern{"b", "B",
+        Jev.Missing{}}, Jev.Concern{"c", "C", Jev.High{}}])),
+      show_gate(Jev.gate_of([Jev.Concern{"a", "A", Jev.Low{}}, Jev.Concern{"b", "B",
+        Jev.Missing{}}]))], " "))
+    IO.print(Jev.outgoing_request(Jev.Headers{}, outgoing(Jev.Fresh{}), fresh, "the secret body"))
+    IO.print(String.join([
+      Bool.show(String.eq(Jev.outgoing_request(Jev.Headers{}, outgoing(Jev.Fresh{}), fresh, "x"),
+        Jev.outgoing_request(Jev.Headers{}, outgoing(Jev.Fresh{}), fresh, ""))),
+      Bool.show(String.contains(Jev.outgoing_request(Jev.Body{}, outgoing(Jev.Fresh{}), fresh,
+        "the body text"), "the body text"))], " "))
+    IO.print(J.show(J.obj(Jev.veto_questions(Jev.outgoing_vetoes(Jev.Replying{True{},
+      facts(4)})))))
+    IO.print(J.show(Jev.outgoing_state(Jev.Headers{}, outgoing(Jev.Forwarding{facts(4)}), "")))
+    IO.print(String.join([
+      show_text(Jev.outgoing_text(Jev.Headers{}, "body")),
+      show_text(Jev.outgoing_text(Jev.Body{}, "body")),
+      text_whole(Jev.outgoing_text(Jev.Body{}, String.repeat("x", 20000n)))],
+      " "))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      outgoing_answers(["0.05", "0.5"], names))))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Body{}, fresh, Jev.Partial{},
+      outgoing_answers(["0.95", "0.1"], names))))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      outgoing_answers(["0.05"], names))))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      outgoing_answers(["0.05", "0.05", "0.05"], ["recipients", "disclosure", "extra"]))))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      "not json")))
+    IO.print(show_decision(Jev.undecided(Jev.Body{}, "TypeSafe is down")))
+    IO.print(show_decision(Jev.decided(Jev.Headers{}, Jev.delete_concerns([
+      Jev.Answered{facts(4), keep_answers(Jev.Low{})},
+      Jev.Answered{facts(5), keep_answers(Jev.High{})}]), [])))
+    IO.print(show_gate(Jev.gate_of(Jev.delete_concerns([Jev.Skipped{facts(6)}]))))
+    IO.print(J.show(J.arr(Jev.annotation_jsons([Jev.Answered{facts(4), keep_answers(Jev.Low{})},
+      Jev.Answered{facts(5), keep_answers(Jev.High{})}, Jev.Skipped{facts(6)}], Jev.Headers{},
+      "none"))))
+    IO.print(U32.show(Jev.facts_uid(Jev.numbered(facts(9), 2))) ++ " " ++
+      J.show(Jev.header_state(Jev.whole_facts(msg(3, 10, headers() ++ "text", I.VNil{})))))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     check_facts()
     check_requests()
     check_answers()
     check_triage()
+    check_gates()
 
 #|{"uid":4,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":["Récu.pdf"]}
 #|{"uid":5,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":"unknown"}
@@ -464,3 +605,26 @@ def main() -> IO(Unit):
 #|keep: folder:Receipts stay stay stay stay stay stay
 #|review: folder:Receipts stay stay stay stay stay stay
 #|unanswered: folder:Receipts stay stay stay stay stay stay
+#|envelope 54 | envelope 54 | none | none = envelope 54
+#|none | none | none | none
+#|none | none | none | none
+#|none
+#|plan 2 | plan 2 | plan 0 | plan 0
+#|[] [] [Jev vetoed it: no] [it could not be checked with Jev: down]
+#|[the local secret scan found what looks like a secret in the body] [the local secret scan could not read the whole message (it is too long), so it cannot tell that it holds no secret]
+#|cleared cleared vetoed[A; C] failed[TypeSafe gave no usable answer to b]
+#|{"state":{"outgoing":{"from":"me@x.com","to":"Ann <a@x.com>","cc":"","bcc":"","subject":"Lunch","attachments":["menu.pdf"]}},"model":"jev-1.13.0","questions":{"recipients":{"type":"noul","instructions":"About the outgoing email in the state: Does any recipient look like someone who should not get the outgoing email, given its subject and the original email it answers, if any?"},"disclosure":{"type":"noul","instructions":"About the outgoing email in the state: Does the outgoing email share a password, a verification code, a private key or other confidential information?"}}}
+#|True True
+#|{"recipients":{"type":"noul","instructions":"About the outgoing email in the state: Does any recipient look like someone who should not get the outgoing email, given its subject and the original email it answers, if any?"},"disclosure":{"type":"noul","instructions":"About the outgoing email in the state: Does the outgoing email share a password, a verification code, a private key or other confidential information?"},"reply_all":{"type":"noul","instructions":"About the outgoing email in the state: The outgoing email replies to everyone on the original email. Should it go only to the original's sender?"}}
+#|{"outgoing":{"from":"me@x.com","to":"Ann <a@x.com>","cc":"","bcc":"","subject":"Lunch","attachments":["menu.pdf"]},"original":{"uid":4,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":"unknown"}}
+#|[] complete [body] complete partial
+#|cleared {"jev":{"status":"checked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"recipients":"low","disclosure":"mid"}}}
+#|vetoed[a recipient may not belong in this conversation] {"jev":{"status":"checked","model":"jev-1.13.0","content":"body","derived_from_untrusted_content":true,"decision":"blocked","reasons":["a recipient may not belong in this conversation"],"signals":{"recipients":"high","disclosure":"low"}},"body_truncated":true}
+#|failed[TypeSafe gave no usable answer to disclosure] {"jev":{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe gave no usable answer to disclosure"],"signals":{}}}
+#|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
+#|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
+#|failed[TypeSafe is down] {"jev":{"status":"unchecked","model":"jev-1.13.0","content":"body","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe is down"],"signals":{}}}
+#|vetoed[UID 5 is about the security of an account] {"jev":{"status":"checked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["UID 5 is about the security of an account"],"signals":{"u4_keep_record":"low","u4_keep_security":"low","u4_keep_personal":"mid","u4_keep_open_action":"low","u4_keep_needed_again":"low","u5_keep_record":"low","u5_keep_security":"high","u5_keep_personal":"mid","u5_keep_open_action":"low","u5_keep_needed_again":"low"}}}
+#|failed[TypeSafe gave no usable answer to u6_keep_record]
+#|[{"status":"checked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"reply_needed":"low","action_required":"low","priority":"low","category":null,"suggested_action":"none"}},{"status":"checked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"reply_needed":"low","action_required":"low","priority":"low","category":null,"suggested_action":"none","suspected_injection":true}},{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}]
+#|2 {"uid":3,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":"unknown"}

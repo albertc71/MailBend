@@ -1,7 +1,8 @@
 //! The one request this helper makes: the core's JSON, POSTed to TypeSafe's
 //! fixed endpoint over verified TLS. Host and path are constants; the route
 //! (proxy, DNS-over-HTTPS or system DNS) never changes the TLS identity.
-//! Overload and timeouts are retried a bounded number of times.
+//! Overload and timeouts are retried a bounded number of times, unless the
+//! core asks for a single attempt.
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -26,6 +27,35 @@ const REDACTED: &[u8] = b"[redacted]";
 
 type ApiStream = StreamOwned<ClientConnection, BoundedStream>;
 
+/// How many attempts the core allows: the Bend core chooses, and the
+/// helper only follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attempts {
+    /// One attempt: the core would rather go on unchecked than wait.
+    Once,
+    /// Up to two retries after an overload or a timeout, with `BACKOFF`.
+    Retried,
+}
+
+impl Attempts {
+    /// The waits before each further attempt.
+    fn waits(self) -> &'static [Duration] {
+        match self {
+            Attempts::Once => &[],
+            Attempts::Retried => &BACKOFF,
+        }
+    }
+
+    /// How a failure that may be passing is described: after the retries,
+    /// or after the one attempt.
+    fn after(self) -> &'static str {
+        match self {
+            Attempts::Once => "after one attempt",
+            Attempts::Retried => "after retries",
+        }
+    }
+}
+
 /// What an attempt's answer means.
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
@@ -45,15 +75,20 @@ fn verdict(status: u16) -> Verdict {
     }
 }
 
-/// Sends `request` with `key`, retrying overload and timeouts, and returns
-/// the answer's body with any copy of the key redacted. A refusal's body is
-/// returned too (in the error's place on stdout), as it holds TypeSafe's
-/// reason.
-pub fn ask(settings: &Settings, key: &[u8], request: &[u8]) -> Result<Vec<u8>, (Exit, Vec<u8>)> {
+/// Sends `request` with `key`, retrying overload and timeouts as `attempts`
+/// allows, and returns the answer's body with any copy of the key redacted.
+/// A refusal's body is returned too (in the error's place on stdout), as it
+/// holds TypeSafe's reason.
+pub fn ask(
+    settings: &Settings,
+    key: &[u8],
+    request: &[u8],
+    attempts: Attempts,
+) -> Result<Vec<u8>, (Exit, Vec<u8>)> {
     let no_body = |exit| (exit, Vec::new());
     let config = tls::client_config(settings.ca_file.as_deref())
         .map_err(|e| no_body(Exit::new(Failure::Connect, e.to_string())))?;
-    let mut waits = BACKOFF.iter();
+    let mut waits = attempts.waits().iter();
     loop {
         let result = attempt(settings, &config, key, request);
         let retry = match &result {
@@ -64,7 +99,7 @@ pub fn ask(settings: &Settings, key: &[u8], request: &[u8]) -> Result<Vec<u8>, (
             std::thread::sleep(*wait);
             continue;
         }
-        let response = result.map_err(|e| no_body(network_failure(settings, &e)))?;
+        let response = result.map_err(|e| no_body(network_failure(settings, &e, attempts)))?;
         let mut body = redact_key(&response.body, key);
         let failure = match verdict(response.status) {
             Verdict::Answered if std::str::from_utf8(&body).is_ok() => return Ok(body),
@@ -83,20 +118,24 @@ pub fn ask(settings: &Settings, key: &[u8], request: &[u8]) -> Result<Vec<u8>, (
         let message = match failure {
             Failure::KeyRejected => format!("TypeSafe rejected the key (HTTP {status})"),
             Failure::Refused => format!("TypeSafe refused the request (HTTP {status})"),
-            Failure::Unavailable => {
-                format!("TypeSafe is overloaded or unavailable (HTTP {status}), after retries")
-            }
+            Failure::Unavailable => format!(
+                "TypeSafe is overloaded or unavailable (HTTP {status}), {}",
+                attempts.after()
+            ),
             _ => format!("unexpected answer from TypeSafe (HTTP {status})"),
         };
         return Err((Exit::new(failure, message), body));
     }
 }
 
-/// Why no answer arrived, as an exit: a timeout (after the retries), a
-/// malformed answer, or no connection.
-fn network_failure(settings: &Settings, error: &NetError) -> Exit {
+/// Why no answer arrived, as an exit: a timeout (after the attempts
+/// allowed), a malformed answer, or no connection.
+fn network_failure(settings: &Settings, error: &NetError, attempts: Attempts) -> Exit {
     match error {
-        NetError::TimedOut => Exit::new(Failure::Unavailable, "TypeSafe timed out, after retries"),
+        NetError::TimedOut => Exit::new(
+            Failure::Unavailable,
+            format!("TypeSafe timed out, {}", attempts.after()),
+        ),
         NetError::Http(message) => {
             Exit::new(Failure::Unexpected, format!("{message} from TypeSafe"))
         }
@@ -247,6 +286,14 @@ mod tests {
         assert_eq!(verdict(503), Verdict::Retry);
         assert_eq!(verdict(404), Verdict::Failed(Failure::Unexpected));
         assert_eq!(verdict(301), Verdict::Failed(Failure::Unexpected));
+    }
+
+    #[test]
+    fn a_single_attempt_never_waits_to_retry() {
+        assert!(Attempts::Once.waits().is_empty());
+        assert_eq!(Attempts::Retried.waits(), &BACKOFF);
+        assert_eq!(Attempts::Once.after(), "after one attempt");
+        assert_eq!(Attempts::Retried.after(), "after retries");
     }
 
     #[test]

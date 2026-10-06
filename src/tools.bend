@@ -12,6 +12,7 @@ import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
 import ./jev.bend as Jev
+import ./secrets.bend as Secrets
 
 # Results
 # =======
@@ -1361,6 +1362,22 @@ def t_folders(args: J.Json) -> IO(Out):
     r : Run() <- imap_run(Ops.plan_folders())
     folders_out(r)
 
+# What reads show
+# ---------------
+
+# What a read shows: its result, and the messages it shows, in order (none
+# when it failed): those of its "messages" list, with the folders a thread
+# read has resolved, or the one message mail_get read whole, up to `max`
+# bytes. With Jev on, each message gets a jev object (see Read
+# annotations).
+type Shown is Data:
+  Listed{out: Out, msgs: List<&2, I.Msg>}
+  Threaded{out: Out, msgs: List<&2, I.Msg>, folders: Folders}
+  Whole{out: Out, msg: I.Msg, max: U32}
+
+def pure_shown(o: Out) -> IO(Shown):
+  IO.pure(Shown, Listed{o, []})
+
 # mail_search
 # -----------
 
@@ -1434,12 +1451,13 @@ def search_headers.if(
   uidv: Maybe<&2, U32>,
   total: U32,
   uids: List<&2, U32>
-) -> Out:
+) -> Shown:
   match same:
     case True{}:
-      list_out(folder, uidv, total, summaries(newest_first(requested(I.fetched(lines), uids))))
+      +ms = newest_first(requested(I.fetched(lines), uids))
+      Listed{list_out(folder, uidv, total, summaries(ms)), ms}
     case False{}:
-      Err{moved_msg()}
+      Listed{Err{moved_msg()}, []}
 
 # The fetch runs in a second session: its EXAMINE must report the same
 # UIDVALIDITY as the search, or the UIDs may name other messages.
@@ -1449,10 +1467,10 @@ def search_headers(
   +uidv: Maybe<&2, U32>,
   total: U32,
   uids: List<&2, U32>
-) -> Out:
+) -> Shown:
   match r:
     case Fail{m}:
-      Err{m}
+      Listed{Err{m}, []}
     case Done{+lines}:
       search_headers.if(same_uidv(uidv, I.ok_code(lines, "UIDVALIDITY")), lines, folder, uidv,
         total, uids)
@@ -1462,34 +1480,34 @@ def search_fetch(
   +folder: String,
   uidv: Maybe<&2, U32>,
   total: U32
-) -> IO(Out):
+) -> IO(Shown):
   match uids:
     case Nil{}:
-      pure_out(list_out(folder, uidv, total, []))
+      pure_shown(list_out(folder, uidv, total, []))
     case h <> t:
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_headers(folder, uids))
         return search_headers(r, folder, uidv, total, uids)
 
-def search_found(r: Run(), folder: String, limit: U32) -> IO(Out):
+def search_found(r: Run(), folder: String, limit: U32) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
     case Done{+lines}:
       +uids = I.search_uids(lines)
       search_fetch(List.take(&2, U32, desc(uids), U32.to_nat(limit)), folder,
         I.ok_code(lines, "UIDVALIDITY"), U32.from_nat(List.length(&2, U32, uids)))
 
-def search_keys(ks: Keys(), +folder: String, limit: U32) -> IO(Out):
+def search_keys(ks: Keys(), +folder: String, limit: U32) -> IO(Shown):
   match ks:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
     case Done{keys}:
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_search(folder, keys))
         search_found(r, folder, limit)
 
-def t_search(+args: J.Json) -> IO(Out):
+def t_search(+args: J.Json) -> IO(Shown):
   search_keys(keys_of(args), folder_arg(args), clamp(u32_arg(args, "limit", 20), 1, 200))
 
 # mail_get
@@ -1560,19 +1578,19 @@ def get_msg(
   folder: String,
   uid: U32,
   uidv: Maybe<&2, U32>,
-  max: U32
-) -> Out:
+  +max: U32
+) -> Shown:
   match ms:
     case Nil{}:
-      Err{no_message(uid, folder)}
+      Listed{Err{no_message(uid, folder)}, []}
     case +m <> t:
       +body = msg_body(m)
-      get_json(m, folder, uidv, max, body_headers(body), M.parts(body))
+      Whole{get_json(m, folder, uidv, max, body_headers(body), M.parts(body)), m, max}
 
-def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Out:
+def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Shown:
   match r:
     case Fail{m}:
-      Err{m}
+      Listed{Err{m}, []}
     case Done{+lines}:
       get_msg(with_uid(I.fetched(lines), uid), folder, uid, I.ok_code(lines, "UIDVALIDITY"), max)
 
@@ -1586,16 +1604,16 @@ def single_uid(u: Uids(), tool: String) -> Result<&2, &2, String, U32>:
     case Fail{m}:
       Fail{m}
 
-def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32) -> IO(Out):
+def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32) -> IO(Shown):
   match u:
     case Done{+uid}:
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_get(folder, uid, max))
         return get_out(r, folder, uid, max)
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
 
-def t_get(+args: J.Json) -> IO(Out):
+def t_get(+args: J.Json) -> IO(Shown):
   get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args),
     clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
 
@@ -1638,13 +1656,13 @@ def new_headers.if(
   next: U32,
   more: Bool,
   uids: List<&2, U32>
-) -> Out:
+) -> Shown:
   match same:
     case True{}:
-      new_out(folder, uidv, False{}, next, more,
-        summaries(oldest_first(requested(I.fetched(lines), uids))))
+      +ms = oldest_first(requested(I.fetched(lines), uids))
+      Listed{new_out(folder, uidv, False{}, next, more, summaries(ms)), ms}
     case False{}:
-      new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, [])
+      Listed{new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, []), []}
 
 # As for search: a UIDVALIDITY change between the two sessions resets the
 # checkpoint instead of returning messages under stale UIDs.
@@ -1655,10 +1673,10 @@ def new_headers(
   next: U32,
   more: Bool,
   uids: List<&2, U32>
-) -> Out:
+) -> Shown:
   match r:
     case Fail{m}:
-      Err{m}
+      Listed{Err{m}, []}
     case Done{+lines}:
       +now = I.ok_code(lines, "UIDVALIDITY")
       new_headers.if(uidv_is(now, uidv), lines, now, folder, uidv, next, more, uids)
@@ -1669,12 +1687,12 @@ def new_fetch(
   uidv: U32,
   since: U32,
   more: Bool
-) -> IO(Out):
+) -> IO(Shown):
   match uids:
     case Nil{}:
-      pure_out(new_out(folder, uidv, False{}, since, False{}, []))
+      pure_shown(new_out(folder, uidv, False{}, since, False{}, []))
     case h <> t:
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_headers(folder, uids))
         return new_headers(r, folder, uidv, last_or(uids, since), more, uids)
 
@@ -1685,10 +1703,10 @@ def new_reset(
   folder: String,
   since: U32,
   +limit: U32
-) -> IO(Out):
+) -> IO(Shown):
   match changed:
     case True{}:
-      pure_out(new_out(folder, uidv, True{}, 0, True{}, []))
+      pure_shown(new_out(folder, uidv, True{}, 0, True{}, []))
     case False{}:
       new_fetch(List.take(&2, U32, uids, U32.to_nat(limit)), folder, uidv, since,
         Nat.is_gt(List.length(&2, U32, uids), U32.to_nat(limit)))
@@ -1700,16 +1718,16 @@ def new_check(
   since: U32,
   +known: U32,
   limit: U32
-) -> IO(Out):
+) -> IO(Shown):
   new_reset(Bool.not(U32.is_zero(known)) && Bool.not(U32.is_eq(known, uidv)), uidv, uids,
     folder, since, limit)
 
 # When UIDVALIDITY changed, every stored UID is void: report it and restart
 # the checkpoint at 0 instead of guessing which messages are new.
-def new_found(r: Run(), folder: String, +since: U32, known: U32, limit: U32) -> IO(Out):
+def new_found(r: Run(), folder: String, +since: U32, known: U32, limit: U32) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
     case Done{+lines}:
       new_check(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0),
         asc(above(I.search_uids(lines), since)), folder, since, known, limit)
@@ -1722,18 +1740,18 @@ def new_request(since: U32, known: U32) -> String:
       "that checkpoint",
     "")
 
-def t_get_new.if(problem: String, +args: J.Json) -> IO(Out):
+def t_get_new.if(problem: String, +args: J.Json) -> IO(Shown):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_shown(Err{SCon{h, t}})
     case SNil{}:
       +folder = folder_arg(args)
       +since = u32_arg(args, "since_uid", 0)
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_new(folder, since))
         new_found(r, folder, since, uidv_arg(args), clamp(u32_arg(args, "limit", 50), 1, 500))
 
-def t_get_new(+args: J.Json) -> IO(Out):
+def t_get_new(+args: J.Json) -> IO(Shown):
   t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
 
 # mail_get_thread
@@ -1957,17 +1975,33 @@ def placed_jsons(ps: List<&2, T.Placed>) -> List<&2, J.Json>:
     case p <> t:
       placed_json(p) <> placed_jsons(t)
 
-def thread_out(g: Thread(), folders: List<&2, String>, mbox: String, uid: U32) -> Out:
+def placed_msgs(ps: List<&2, T.Placed>) -> List<&2, I.Msg>:
+  match ps:
+    case Nil{}:
+      []
+    case T.Placed{T.Node{folder, uidv, msg, time, id, replies_to, refs}, parent} <> t:
+      msg <> placed_msgs(t)
+
+# A thread read's result; `fs` are the folders it resolved, and `folders`
+# those it searched.
+def thread_out(
+  g: Thread(),
+  fs: Folders,
+  folders: List<&2, String>,
+  mbox: String,
+  uid: U32
+) -> Shown:
   match g:
     case Fail{m}:
-      Err{m}
+      Listed{Err{m}, []}
     case Done{Threading{ids, searched, nodes, opened}}:
-      ok_obj([
+      +placed = T.thread_order(nodes)
+      Threaded{ok_obj([
         J.kv("folder", J.str(mbox)),
         J.kv("uid", J.num(uid)),
         J.kv("searched", J.strs(folders)),
-        J.kv("messages", J.arr(placed_jsons(T.thread_order(nodes))))
-      ])
+        J.kv("messages", J.arr(placed_jsons(placed)))
+      ]), placed_msgs(placed), fs}
 
 # Whether the folder names `fs` include `f`.
 def lists_folder(fs: List<&2, String>, +f: String) -> Bool:
@@ -1993,23 +2027,24 @@ def thread_folders.put(fs: List<&2, String>, sent: Maybe<&2, String>) -> List<&2
 def thread_folders(mbox: String, sent: Maybe<&2, String>) -> List<&2, String>:
   thread_folders.put(folder_added([mbox], "INBOX"), sent)
 
-def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32) -> IO(Out):
+def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32) -> IO(Shown):
   match f:
     case Fail{m}:
-      pure_out(Err{m})
-    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+      pure_shown(Err{m})
+    case Done{+fs}:
+      Folders{all, drafts, trash, sent, junk, archive} = fs
       +folders = thread_folders(mbox, sent)
-      do IO<Out>:
+      do IO<Shown>:
         one : Thread() <- thread_round(Done{st}, folders)
         two : Thread() <- thread_round(one, folders)
-        return thread_out(two, folders, mbox, uid)
+        return thread_out(two, fs, folders, mbox, uid)
 
-def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32) -> IO(Out):
+def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
     case Done{lines}:
-      do IO<Out>:
+      do IO<Shown>:
         f : Fs() <- folders_io(lines)
         thread_rounds(f, st, mbox, uid)
 
@@ -2020,37 +2055,378 @@ def first_threading(+start: T.Node, mbox: String, uidv: Maybe<&2, U32>) -> Threa
 
 def thread_start.put(
   ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32
-) -> IO(Out):
+) -> IO(Shown):
   match ms:
     case Nil{}:
-      pure_out(Err{no_message(uid, mbox)})
+      pure_shown(Err{no_message(uid, mbox)})
     case m <> t:
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_probe())
         thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid)
 
-def thread_start(r: Run(), mbox: String, +uid: U32) -> IO(Out):
+def thread_start(r: Run(), mbox: String, +uid: U32) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
     case Done{+lines}:
       thread_start.put(with_uid(I.fetched(lines), uid), I.ok_code(lines, "UIDVALIDITY"), mbox,
         uid)
 
-def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String) -> IO(Out):
+def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String) -> IO(Shown):
   match u:
     case Done{+uid}:
-      do IO<Out>:
+      do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_headers(mbox, [uid]))
         thread_start(r, mbox, uid)
     case Fail{m}:
-      pure_out(Err{m})
+      pure_shown(Err{m})
 
-def t_get_thread(+args: J.Json) -> IO(Out):
+def t_get_thread(+args: J.Json) -> IO(Shown):
   thread_uid(single_uid(uids_arg(args), "mail_get_thread"), folder_arg(args))
+
+# Asking Jev
+# ==========
+
+# With MAILBEND_TYPESAFE on, tools ask TypeSafe's Jev through these:
+# mail_classify and mail_triage, the gates before a send or a permanent
+# delete, and the annotations of reads.
+
+# One request
+# -----------
+
+def jev_off(name: String) -> String:
+  name ++ " is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off"
+
+# How one TypeSafe request ended: its answer; TypeSafe refused it (the
+# helper exits with 8), which a smaller request may cure; or any other
+# failure.
+type Asked is Data:
+  AskAnswered{body: String}
+  AskRefused{msg: String}
+  AskFailed{msg: String}
+
+def refusal_detail.put(m: Maybe<&2, J.Json>, out: String) -> String:
+  match m:
+    case Some{J.JStr{s}}:
+      s
+    case Some{d}:
+      J.show(d)
+    case None{}:
+      out
+
+# TypeSafe's reason for a refusal: the "detail" of its answer (as JSON
+# unless it is text), else the answer itself, cut to 1000 characters.
+def refusal_detail(+out: String) -> String:
+  detail = Maybe.bind(&2, J.Json, J.Json, J.parse(out), j => J.get(j, "detail"))
+  String.take(String.trim(refusal_detail.put(detail, out)), 1000n)
+
+# What the exit status of mailbend-typesafe means, as the start of its
+# error.
+def typesafe_cause(code: U32) -> String:
+  match code:
+    case 2:
+      "configuration error: "
+    case 3:
+      "cannot reach TypeSafe: "
+    case 7:
+      "check MAILBEND_TYPESAFE_KEY_FILE: "
+    case 9:
+      "try again later: "
+    case _:
+      Bool.pick(String, signalled(code), "the TypeSafe helper was killed by a signal: ",
+        "TypeSafe error: ")
+
+def typesafe_msg(err: String) -> String:
+  stderr_msg(err, "mailbend-typesafe: ")
+
+def asked_code(code: U32, out: String, err: String) -> Asked:
+  match code:
+    case 0:
+      AskAnswered{out}
+    case 8:
+      AskRefused{typesafe_msg(err) ++ ": " ++ refusal_detail(out)}
+    case _:
+      AskFailed{typesafe_cause(code) ++ typesafe_msg(err)}
+
+def asked(p: Proc) -> Asked:
+  match p:
+    case ProcOk{code, out, err}:
+      asked_code(code, out, err)
+    case _:
+      AskFailed{"cannot run the TypeSafe helper: " ++ proc_failure(p)}
+
+# How often a request is tried: once, or again after an overload or a
+# timeout; the helper only follows this choice. Read annotations try once,
+# so a hung TypeSafe delays a read by one MAILBEND_TIMEOUT_MS at most; the
+# gates, mail_classify and mail_triage retry, since a failure there stops
+# the work.
+type Tries is Data:
+  Once{}
+  Retried{}
+
+def tries_args(t: Tries) -> List<String>:
+  match t:
+    case Once{}:
+      ["ask", "--once"]
+    case Retried{}:
+      ["ask"]
+
+# The helper may print up to 8 MiB (it caps TypeSafe's answer at 4 MiB) and
+# take up to five minutes (it may retry an overloaded service twice). It is
+# not run_helper, whose 128 MiB cap is for mail: this cap is a second guard.
+def typesafe_run(path: Result<&2, &2, String, String>, t: Tries, body: String) -> IO(Proc):
+  match path:
+    case Done{p}:
+      do IO<Proc>:
+        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+          Process.run(p, tries_args(t), body, 8388608, 300000)
+        return proc_of(r)
+    case Fail{m}:
+      IO.pure(Proc, ProcRefused{m})
+
+# Sends one request through mailbend-typesafe, the only program that reads
+# the TypeSafe key.
+def ask_jev(t: Tries, body: String) -> IO(Asked):
+  do IO<Asked>:
+    path : String <- env_or("MAILBEND_TYPESAFE_HELPER", "")
+    p : Proc <- typesafe_run(
+      helper_path(path, "MAILBEND_TYPESAFE_HELPER", "mailbend-typesafe"), t, body)
+    return asked(p)
+
+# Requests in turn
+# ----------------
+
+# What the requests have given so far: what Jev answered about each
+# message, and a report of each request, newest first.
+type Progress is Data:
+  Progress{answered: List<&2, Jev.Answered>, requests: List<&2, J.Json>}
+
+# The progress, or why the call stopped.
+def Tally() -> Data:
+  Result<&2, &2, String, Progress>
+
+def progress_add(
+  p: Progress,
+  xs: List<&2, Jev.Answered>,
+  requests: List<&2, J.Json>
+) -> Progress:
+  Progress{done, reqs} = p
+  Progress{List.append(&2, Jev.Answered, List.reverse(&2, Jev.Answered, xs), done),
+    List.append(&2, J.Json, requests, reqs)}
+
+# A request's report: its messages, its size in bytes (MailBend's token
+# estimate) and the input tokens TypeSafe counted, when it says.
+def request_json(n: Nat, bytes: U32, tokens: Maybe<&2, U32>) -> J.Json:
+  J.obj([
+    J.kv("messages", J.num(U32.from_nat(n))),
+    J.kv("bytes", J.num(bytes)),
+    J.kv("input_tokens", maybe_num(tokens))
+  ])
+
+def answered.put(r: Maybe<&2, Jev.Reply>, n: Nat, bytes: U32, p: Progress) -> Tally():
+  match r:
+    case None{}:
+      Fail{"TypeSafe's answer is not the JSON MailBend asked for"}
+    case Some{Jev.Reply{xs, tokens}}:
+      Done{progress_add(p, xs, [request_json(n, bytes, tokens)])}
+
+# One request's outcome added to the progress; any failure stops the call.
+# Reading an answer needs `keys`, every category option key Jev may choose.
+def answered(
+  r: Asked,
+  +es: List<&2, Jev.Entry>,
+  bytes: U32,
+  keys: List<&2, String>,
+  p: Progress
+) -> Tally():
+  match r:
+    case AskAnswered{body}:
+      answered.put(Jev.reply(body, es, keys), List.length(&2, Jev.Entry, es), bytes, p)
+    case AskRefused{m}:
+      Fail{m}
+    case AskFailed{m}:
+      Fail{m}
+
+# Sends the request for `es`, unless the call has already stopped.
+def ask_once(
+  tries: Tries,
+  +es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  t: Tally()
+) -> IO(Tally()):
+  match t:
+    case Fail{m}:
+      IO.pure(Tally(), Fail{m})
+    case Done{p}:
+      +body = Jev.request_body(es)
+      do IO<Tally()>:
+        r : Asked <- ask_jev(tries, body)
+        return answered(r, es, C.utf8_len(body), keys, p)
+
+# A refused request split once into halves, each asked on its own; a
+# refusal of either stops the call.
+def ask_halves(
+  +tries: Tries,
+  +es: List<&2, Jev.Entry>,
+  +keys: List<&2, String>,
+  p: Progress
+) -> IO(Tally()):
+  +half = Nat.div(List.length(&2, Jev.Entry, es), 2n)
+  start : Tally() = Done{p}
+  do IO<Tally()>:
+    first : Tally() <- ask_once(tries, List.take(&2, Jev.Entry, es, half), keys, start)
+    ask_once(tries, List.drop(&2, Jev.Entry, es, half), keys, first)
+
+def ask_batch.if(
+  split: Bool,
+  m: String,
+  tries: Tries,
+  es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress
+) -> IO(Tally()):
+  match split:
+    case True{}:
+      ask_halves(tries, es, keys, p)
+    case False{}:
+      IO.pure(Tally(), Fail{m})
+
+def ask_batch.put(
+  r: Asked,
+  tries: Tries,
+  +es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  bytes: U32,
+  p: Progress
+) -> IO(Tally()):
+  match r:
+    case AskRefused{m}:
+      ask_batch.if(Nat.is_gt(List.length(&2, Jev.Entry, es), 1n), m, tries, es, keys, p)
+    case _:
+      IO.pure(Tally(), answered(r, es, bytes, keys, p))
+
+# TypeSafe's 422 is a general validation error, so a refused request of two
+# or more messages is split once, in case it was too large; a refusal of a
+# half, or of a single message, stops the call with TypeSafe's reason.
+def ask_batch(
+  +tries: Tries,
+  +es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress
+) -> IO(Tally()):
+  +body = Jev.request_body(es)
+  do IO<Tally()>:
+    r : Asked <- ask_jev(tries, body)
+    ask_batch.put(r, tries, es, keys, C.utf8_len(body), p)
+
+def ask_step.put(tries: Tries, s: Jev.Step, keys: List<&2, String>, p: Progress) -> IO(Tally()):
+  match s:
+    case Jev.Skip{f}:
+      IO.pure(Tally(), Done{progress_add(p, [Jev.Skipped{f}], [])})
+    case Jev.Ask{es}:
+      ask_batch(tries, es, keys, p)
+
+def ask_step(tries: Tries, s: Jev.Step, keys: List<&2, String>, t: Tally()) -> IO(Tally()):
+  match t:
+    case Fail{m}:
+      IO.pure(Tally(), Fail{m})
+    case Done{p}:
+      ask_step.put(tries, s, keys, p)
+
+# Takes the steps in order; once the call has stopped, no further request
+# is sent.
+def ask_steps(
+  ss: List<&2, Jev.Step>,
+  +tries: Tries,
+  +keys: List<&2, String>,
+  t: Tally()
+) -> IO(Tally()):
+  match ss:
+    case Nil{}:
+      IO.pure(Tally(), t)
+    case s <> rest:
+      do IO<Tally()>:
+        next : Tally() <- ask_step(tries, s, keys, t)
+        ask_steps(rest, tries, keys, next)
+
+# Every request of `steps`, from no progress; `keys` are the category
+# option keys Jev may choose.
+def ask_all(tries: Tries, steps: List<&2, Jev.Step>, keys: List<&2, String>) -> IO(Tally()):
+  ask_steps(steps, tries, keys, Done{Progress{[], []}})
+
+# Asks about the messages `ms` with the options `opts`, whose categories
+# are `names`.
+def ask_options(
+  tries: Tries,
+  c: Jev.Content,
+  ms: List<&2, Jev.Fetched>,
+  names: List<&2, String>,
+  +opts: Jev.Options
+) -> IO(Tally()):
+  ask_all(tries, Jev.requests(c, ms, opts),
+    List.append(&2, String, names, [Jev.options_none(opts)]))
+
+# Messages to ask about
+# ---------------------
+
+# The most UIDs one call of a Jev tool asks about.
+def jev_limit() -> U32:
+  50
+
+# In body mode each message is fetched up to this many bytes, of which Jev
+# sees at most Jev.max_text bytes of plain text.
+def jev_max() -> U32:
+  262144
+
+def jev_uids.if(over: Bool, tool: String, us: List<&2, U32>) -> Uids():
+  match over:
+    case True{}:
+      Fail{tool ++ " takes at most " ++ U32.show(jev_limit()) ++ " UIDs per call"}
+    case False{}:
+      Done{asc(unseen(us, []))}
+
+# The UIDs of a call of the Jev tool `tool`: each once, ascending.
+def jev_uids(tool: String, u: Uids()) -> Uids():
+  match u:
+    case Fail{m}:
+      Fail{m}
+    case Done{+us}:
+      jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
+
+# `ms` in UID order, each UID once (a server may answer twice).
+def first_uids(ms: List<&2, I.Msg>, prev: U32) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      +u = msg_uid(m)
+      List.filter.put(I.Msg, m, first_uids(t, u), Bool.not(U32.is_eq(u, prev)))
+
+# The messages of `uids` a session fetched, in UID order, each once: those
+# Jev is asked about.
+def jev_msgs(lines: List<&2, I.RLine>, uids: List<&2, U32>) -> List<&2, I.Msg>:
+  first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
+
+def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      msg_uid(m) <> msg_uids(t)
+
+def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max)} <> fetched_list(t, max)
 
 # Changing mail
 # =============
+
+# A change or send the gates blocked: why, and what they found.
+def gate_blocked(reason: String, report: List<&2, J.Json>) -> Out:
+  Partial{J.obj(J.kv("ok", J.bool(False{})) <> J.kv("error", J.str(reason)) <> report)}
 
 # Change results
 # --------------
@@ -2062,6 +2438,9 @@ def minus(xs: List<&2, U32>, +ys: List<&2, U32>) -> List<&2, U32>:
     case +x <> t:
       List.filter.put(U32, x, minus(t, ys), Bool.not(uid_in(x, ys)))
 
+def none_exist(folder: String) -> String:
+  "none of these UIDs exist in " ++ folder ++ "; nothing was changed"
+
 def changed_found.if(
   none: Bool,
   +found: List<&2, U32>,
@@ -2071,7 +2450,7 @@ def changed_found.if(
 ) -> Out:
   match none:
     case True{}:
-      Err{"none of these UIDs exist in " ++ folder ++ "; nothing was changed"}
+      Err{none_exist(folder)}
     case False{}:
       ok_obj(List.append(&2, J.Json, kvs, [
         J.kv("changed", uids_json(found)),
@@ -2784,24 +3163,111 @@ def delete_plan.run(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>)
       J.kv("permanently_deleted", J.bool(True{}))
     ])
 
+def delete_refused(blocked: String, report: List<&2, J.Json>) -> Out:
+  match blocked:
+    case SNil{}:
+      Err{"the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"}
+    case SCon{h, t}:
+      gate_blocked(SCon{h, t} ++ "; nothing was deleted", report)
+
+# No plan means the gate blocked the delete (`blocked` says why) or the
+# server lacks UIDPLUS. `report` is what the gate found, with Jev on.
 def delete_plan(
   +plan: List<&2, I.Cmd>,
+  blocked: String,
+  report: List<&2, J.Json>,
   folder: String,
   uids: List<&2, U32>,
   dry: Bool
 ) -> IO(Out):
   match plan:
     case Nil{}:
-      pure_out(Err{
-        "the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"})
+      pure_out(delete_refused(blocked, report))
     case h <> t:
-      preview_or_run(dry, ImapPreview{plan}, delete_plan.run(plan, folder, uids))
+      do IO<Out>:
+        o : Out <- preview_or_run(dry, ImapPreview{plan}, delete_plan.run(plan, folder, uids))
+        return with_fields(o, report)
+
+# The delete once the gate has decided: its plan, over the UIDs `planned`,
+# comes only through Jev.delete_checked, so a veto or a failed check leaves
+# it none. Of the requested `uids`, those it did not delete are reported
+# missing.
+def delete_decided(
+  d: Jev.Decision,
+  uidplus: Bool,
+  +folder: String,
+  planned: List<&2, U32>,
+  uids: List<&2, U32>,
+  confirm: String,
+  uidv: U32,
+  dry: Bool
+) -> IO(Out):
+  Jev.Decision{+g, report} = d
+  delete_plan(Jev.delete_checked(g, Ops.plan_delete(folder, planned, confirm, uidplus, uidv)),
+    Jev.gate_reason(g), report, folder, uids, dry)
+
+# What Jev's answers to the keep questions decide; TypeSafe failing blocks.
+def delete_answered(t: Tally(), c: Jev.Content) -> Jev.Decision:
+  match t:
+    case Fail{m}:
+      Jev.undecided(c, m)
+    case Done{Progress{xs, reqs}}:
+      Jev.decided(c, Jev.delete_concerns(List.reverse(&2, Jev.Answered, xs)), [])
+
+# With Jev on, the keep questions are asked about each message the
+# preflight fetched (`ms`) before anything is deleted; one that would keep
+# a message vetoes the delete. Only those messages are deleted: a requested
+# UID the preflight did not find is reported missing, so a message that
+# takes it meanwhile is never deleted unseen.
+def delete_ask(
+  ms: List<&2, I.Msg>,
+  +c: Jev.Content,
+  folder: String,
+  uids: List<&2, U32>,
+  confirm: String,
+  uidv: U32,
+  dry: Bool
+) -> IO(Out):
+  match ms:
+    case Nil{}:
+      pure_out(Err{none_exist(folder)})
+    case m <> t:
+      +asked : List<&2, I.Msg> = m <> t
+      steps = Jev.requests(c, fetched_list(asked, jev_max()), Jev.options_for(Jev.Deleting{}, []))
+      do IO<Out>:
+        tally : Tally() <- ask_all(Retried{}, steps, [])
+        delete_decided(delete_answered(tally, c), True{}, folder, msg_uids(asked), uids, confirm,
+          uidv, dry)
+
+# Jev is asked only when the server has UIDPLUS: without it there is no
+# plan, whatever a gate decides, so nothing about the messages leaves the
+# machine for a delete that cannot run.
+def delete_gated(
+  jev: Jev.Switch,
+  lines: List<&2, I.RLine>,
+  uidplus: Bool,
+  folder: String,
+  +uids: List<&2, U32>,
+  confirm: String,
+  uidv: U32,
+  dry: Bool
+) -> IO(Out):
+  match jev uidplus:
+    case Jev.On{c} True{}:
+      delete_ask(jev_msgs(lines, uids), c, folder, uids, confirm, uidv, dry)
+    case Jev.On{c} False{}:
+      delete_decided(Jev.Decision{Jev.JevOff{}, []}, False{}, folder, uids, uids, confirm, uidv,
+        dry)
+    case Jev.Off{} _:
+      delete_decided(Jev.Decision{Jev.JevOff{}, []}, uidplus, folder, uids, uids, confirm, uidv,
+        dry)
 
 def delete_caps.if(
   problem: String,
-  caps: List<&2, String>,
-  +folder: String,
-  +uids: List<&2, U32>,
+  jev: Jev.Switch,
+  +lines: List<&2, I.RLine>,
+  folder: String,
+  uids: List<&2, U32>,
   confirm: String,
   uidv: U32,
   dry: Bool
@@ -2810,11 +3276,12 @@ def delete_caps.if(
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
-      delete_plan(Ops.plan_delete(folder, uids, confirm, I.has_cap(caps, "UIDPLUS"), uidv),
-        folder, uids, dry)
+      delete_gated(jev, lines, I.has_cap(I.caps(lines), "UIDPLUS"), folder, uids, confirm, uidv,
+        dry)
 
 def delete_caps(
   r: Run(),
+  jev: Jev.Switch,
   folder: String,
   uids: List<&2, U32>,
   confirm: String,
@@ -2825,12 +3292,22 @@ def delete_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      delete_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, confirm, uidv, dry)
+      delete_caps.if(uidv_problem(lines, uidv), jev, lines, folder, uids, confirm, uidv, dry)
+
+# The session before a delete; with Jev on it also fetches what Jev may see
+# of each message.
+def delete_preflight(jev: Jev.Switch, folder: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
+  match jev:
+    case Jev.Off{}:
+      Ops.plan_preflight(folder)
+    case Jev.On{c}:
+      Ops.plan_classify(folder, uids, Jev.is_body(c), jev_max())
 
 def delete_uids.if(
   problem: String,
+  +jev: Jev.Switch,
   +folder: String,
-  uids: List<&2, U32>,
+  +uids: List<&2, U32>,
   confirm: String,
   uidv: U32,
   dry: Bool
@@ -2840,8 +3317,8 @@ def delete_uids.if(
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       do IO<Out>:
-        r : Run() <- imap_run(Ops.plan_preflight(folder))
-        delete_caps(r, folder, uids, confirm, uidv, dry)
+        r : Run() <- imap_run(delete_preflight(jev, folder, uids))
+        delete_caps(r, jev, folder, uids, confirm, uidv, dry)
 
 # The plan itself refuses without the confirmation word (a proven law);
 # these checks only explain why before connecting.
@@ -2851,16 +3328,32 @@ def delete_request(confirm: String, uidv: U32) -> String:
       "\"permanently-delete\" to proceed (use mail_trash to move them to Trash instead)",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
-def delete_uids(u: Uids(), folder: String, +confirm: String, +uidv: U32, dry: Bool) -> IO(Out):
+def delete_uids(
+  u: Uids(),
+  jev: Jev.Switch,
+  folder: String,
+  +confirm: String,
+  +uidv: U32,
+  dry: Bool
+) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      delete_uids.if(delete_request(confirm, uidv), folder, uids, confirm, uidv, dry)
+      delete_uids.if(delete_request(confirm, uidv), jev, folder, uids, confirm, uidv, dry)
 
-def t_delete(+args: J.Json) -> IO(Out):
-  delete_uids(uids_arg(args), folder_arg(args), str_arg(args, "confirm", ""), uidv_arg(args),
-    dry_arg(args))
+# With Jev on, a delete asks Jev about each message, so it takes no more
+# UIDs than a Jev tool does.
+def delete_uids_of(jev: Jev.Switch, u: Uids()) -> Uids():
+  match jev:
+    case Jev.Off{}:
+      u
+    case Jev.On{c}:
+      jev_uids("mail_delete", u)
+
+def t_delete(+args: J.Json, +jev: Jev.Switch) -> IO(Out):
+  delete_uids(delete_uids_of(jev, uids_arg(args)), jev, folder_arg(args),
+    str_arg(args, "confirm", ""), uidv_arg(args), dry_arg(args))
 
 # Folders: create, rename, label
 # ------------------------------
@@ -3621,6 +4114,8 @@ type Stamp is Data:
 
 # What the tools want composed; Bcc goes only into the SMTP envelope. With
 # `draft` the message is saved instead of sent; with `dry` that is only shown.
+# `about` is what the message answers, and `jev` whether the gates check a
+# send.
 type Want is Data:
   Want{
     to: List<&2, String>,
@@ -3632,7 +4127,9 @@ type Want is Data:
     refs: String,
     atts: List<&2, M.Attach>,
     draft: Bool,
-    dry: Bool
+    dry: Bool,
+    about: Jev.Context,
+    jev: Jev.Switch
   }
 
 def secs_of(p: Proc) -> U32:
@@ -3674,7 +4171,7 @@ def domain_of(addr: String) -> String:
 # the header); a sent message never carries one, Bcc goes only into the
 # SMTP envelope.
 def draft_of(w: Want, +from: String, st: Stamp, keep_bcc: Bool) -> M.Draft:
-  Want{to, cc, bcc, subject, text, irt, refs, atts, draft, dry} = w
+  Want{to, cc, bcc, subject, text, irt, refs, atts, draft, dry, about, jev} = w
   Stamp{date, token, day} = st
   msgid = "<" ++ token ++ "@" ++ domain_of(from) ++ ">"
   M.Draft{from, to, cc, Bool.pick(List<&2, String>, keep_bcc, bcc, []), subject, text, date,
@@ -3693,15 +4190,19 @@ def day_of(st: Stamp) -> String:
   day
 
 def all_rcpts(w: Want) -> List<&2, String>:
-  Want{to, cc, bcc, s, x, i, r, a, d, y} = w
+  Want{to, cc, bcc, s, x, i, r, a, d, y, o, j} = w
   List.concat(&2, String, [to, cc, bcc])
 
 def is_draft(w: Want) -> Bool:
-  Want{t, c, b, s, x, i, r, a, draft, y} = w
+  Want{t, c, b, s, x, i, r, a, draft, y, o, j} = w
   draft
 
+def want_jev(w: Want) -> Jev.Switch:
+  Want{t, c, b, s, x, i, r, a, d, y, o, jev} = w
+  jev
+
 def is_dry(w: Want) -> Bool:
-  Want{t, c, b, s, x, i, r, a, d, dry} = w
+  Want{t, c, b, s, x, i, r, a, d, dry, o, j} = w
   dry
 
 def specs(xs: List<&2, String>) -> List<&2, String>:
@@ -3984,39 +4485,188 @@ def send_allowed.run(envelope: String, limit: U32, dir: String, day: String, s: 
     problem : String <- reserve(limit, dir, day)
     send_allowed.if(problem, envelope, s)
 
-# The send itself: S.outbound gives the envelope only when the allowlist
-# allows every recipient; only then is a place in the daily count reserved.
-# A dry run reserves none and shows `p`, what the envelope is built from.
-def send_allowed(
-  envelope: Maybe<&2, String>,
+# A message ready to send once the gates pass it: the bare sender and
+# recipients, the message, the allowlist and daily limit it goes under,
+# what its result reports, and its dry run.
+type Ready is Data:
+  Ready{
+    from: String,
+    rcpts: List<&2, String>,
+    msg: String,
+    allow: List<&2, String>,
+    limit: U32,
+    dir: String,
+    day: String,
+    sent: Sent,
+    dry: Bool,
+    preview: Preview
+  }
+
+# Why a send got no envelope: the gates blocked it (`blocked` says why), or
+# else the allowlist refused a recipient.
+def send_refused(
+  blocked: String,
   allow: List<&2, String>,
   rcpts: List<&2, String>,
-  limit: U32,
-  dir: String,
-  day: String,
-  s: Sent,
-  dry: Bool,
-  p: Preview
+  report: List<&2, J.Json>
+) -> Out:
+  match blocked:
+    case SNil{}:
+      Err{unlisted_msg(S.refused(allow, rcpts))}
+    case SCon{h, t}:
+      gate_blocked(SCon{h, t} ++ "; nothing was sent (mail_save_draft can still save it as a " ++
+        "draft)", report)
+
+# The send itself: only an envelope lets it go, and only then is a place in
+# the daily count reserved. A dry run reserves none and shows what the
+# envelope is built from. `report` is what the gates found, with Jev on.
+def send_allowed(
+  envelope: Maybe<&2, String>,
+  blocked: String,
+  report: List<&2, J.Json>,
+  r: Ready
 ) -> IO(Out):
   match envelope:
     case None{}:
-      pure_out(Err{unlisted_msg(S.refused(allow, rcpts))})
+      Ready{from, rcpts, msg, allow, limit, dir, day, s, dry, p} = r
+      pure_out(send_refused(blocked, allow, rcpts, report))
     case Some{e}:
-      preview_or_run(dry, p, send_allowed.run(e, limit, dir, day, s))
+      Ready{from, rcpts, msg, allow, limit, dir, day, s, dry, p} = r
+      do IO<Out>:
+        o : Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, day, s))
+        return with_fields(o, report)
+
+# The send once the gates have decided: the envelope comes only from
+# Jev.outbound_checked, which gives S.outbound's only when the secret scan
+# is Clean and Jev is off or vetoed nothing.
+def send_checked(
+  +scan: Secrets.Scan,
+  +g: Jev.Gate,
+  report: List<&2, J.Json>,
+  +r: Ready
+) -> IO(Out):
+  Ready{from, rcpts, msg, allow, l, dr, dy, s, y, p} = r
+  send_allowed(Jev.outbound_checked(scan, allow, g, rcpts, from, msg),
+    Jev.blocked_reason(scan, g), report, r)
+
+# With Jev on, a send reports the secret scan's result and Jev's decision.
+def send_decided(+scan: Secrets.Scan, d: Jev.Decision, r: Ready) -> IO(Out):
+  Jev.Decision{g, report} = d
+  send_checked(scan, g, List.append(&2, J.Json, Secrets.scan_kvs(scan), report), r)
+
+def outgoing_answered(
+  a: Asked,
+  c: Jev.Content,
+  vs: List<&2, Jev.Veto>,
+  whole: Jev.Completeness
+) -> Jev.Decision:
+  match a:
+    case AskAnswered{body}:
+      Jev.outgoing_decision(c, vs, whole, body)
+    case AskRefused{m}:
+      Jev.undecided(c, m)
+    case AskFailed{m}:
+      Jev.undecided(c, m)
+
+# Asks Jev the veto questions `vs` about a message the secret scan passed,
+# with the text `t` it may see of it.
+def send_ask(
+  t: Jev.Text,
+  +c: Jev.Content,
+  o: Jev.Outgoing,
+  +vs: List<&2, Jev.Veto>,
+  r: Ready
+) -> IO(Out):
+  Jev.Text{shown, whole} = t
+  do IO<Out>:
+    a : Asked <- ask_jev(Retried{}, Jev.outgoing_request(c, o, vs, shown))
+    send_decided(Secrets.Clean{}, outgoing_answered(a, c, vs, whole), r)
+
+# Jev is asked only about a message the local secret scan passed.
+def send_scanned(
+  scan: Secrets.Scan,
+  +c: Jev.Content,
+  o: Jev.Outgoing,
+  vs: List<&2, Jev.Veto>,
+  text: String,
+  r: Ready
+) -> IO(Out):
+  match scan:
+    case Secrets.Clean{}:
+      send_ask(Jev.outgoing_text(c, text), c, o, vs, r)
+    case _:
+      send_decided(scan, Jev.undecided(c, "Jev was not asked: the local secret scan blocked " ++
+        "the send"), r)
+
+def attach_names(atts: List<&2, M.Attach>) -> List<&2, String>:
+  match atts:
+    case Nil{}:
+      []
+    case M.Attach{name, ctype, data} <> t:
+      name <> attach_names(t)
+
+# The header fields Jev may see of an outgoing message.
+def outgoing_fields(
+  from: String,
+  to: List<&2, String>,
+  cc: List<&2, String>,
+  bcc: List<&2, String>,
+  subject: String
+) -> List<&2, M.Hdr>:
+  [
+    M.Hdr{"from", from},
+    M.Hdr{"to", String.join(to, ", ")},
+    M.Hdr{"cc", String.join(cc, ", ")},
+    M.Hdr{"bcc", String.join(bcc, ", ")},
+    M.Hdr{"subject", subject}
+  ]
+
+# The secret scan reads the header fields Jev may see, the In-Reply-To
+# and References a caller may give, the body and the attachments.
+def send_jev.put(
+  refused: List<&2, String>,
+  c: Jev.Content,
+  w: Want,
+  from: String,
+  r: Ready
+) -> IO(Out):
+  match refused:
+    case Nil{}:
+      Want{to, cc, bcc, subject, +text, irt, refs, +atts, draft, dry, +about, jev} = w
+      +fields = outgoing_fields(from, to, cc, bcc, subject)
+      scan = Secrets.secret_scan(List.append(&2, M.Hdr, fields,
+        [M.Hdr{"in-reply-to", irt}, M.Hdr{"references", refs}]), text, atts)
+      send_scanned(scan, c, Jev.Outgoing{fields, attach_names(atts), about},
+        Jev.outgoing_vetoes(about), text, r)
+    case h <> t:
+      pure_out(Err{unlisted_msg(h <> t)})
+
+# With Jev on, a send passes the allowlist, then the local secret scan of
+# its content, then Jev's veto questions, before its envelope is built.
+def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Out):
+  Ready{f, rcpts, m, allow, l, dr, dy, s, y, p} = r
+  send_jev.put(S.refused(allow, rcpts), c, w, from, r)
+
+def send_gated(jev: Jev.Switch, w: Want, from: String, r: Ready) -> IO(Out):
+  match jev:
+    case Jev.Off{}:
+      send_checked(Secrets.Clean{}, Jev.JevOff{}, [], r)
+    case Jev.On{c}:
+      send_jev(c, w, from, r)
 
 def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Out):
   match cfg:
     case Fail{m}:
       pure_out(Err{"configuration error: " ++ m})
-    case Done{Sending{+save, +allow, limit, dir}}:
+    case Done{Sending{+save, allow, limit, dir}}:
       +d = draft_of(w, from, st, False{})
       +rcpts = specs(all_rcpts(w))
       +sender = M.addr_spec(from)
       +msg = M.compose(d, boundary_of(st))
-      send_allowed(S.outbound(allow, rcpts, sender, msg), allow, rcpts, limit, dir, day_of(st),
+      send_gated(want_jev(w), w, from, Ready{sender, rcpts, msg, allow, limit, dir, day_of(st),
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
           draft_of(w, from, st, True{}), boundary_of(st)},
-        is_dry(w), SmtpPreview{sender, rcpts, msg, save})
+        is_dry(w), SmtpPreview{sender, rcpts, msg, save}})
 
 def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
   match draft:
@@ -4064,7 +4714,9 @@ def with_atts(
   irt: String,
   refs: String,
   draft: Bool,
-  dry: Bool
+  dry: Bool,
+  about: Jev.Context,
+  jev: Jev.Switch
 ) -> IO(Out):
   match a:
     case Fail{m}:
@@ -4072,16 +4724,18 @@ def with_atts(
     case Done{xs}:
       do IO<Out>:
         from : String <- env_or("MAILBEND_EMAIL", "")
-        with_atts.want(Want{to, cc, bcc, subject, text, irt, refs, xs, draft, dry}, from)
+        with_atts.want(Want{to, cc, bcc, subject, text, irt, refs, xs, draft, dry, about, jev},
+          from)
 
 # Composes from the common arguments: to, cc, bcc, subject, body,
 # in_reply_to, references and attachments ([{path, filename?, content_type?}]).
-def t_compose(+args: J.Json, draft: Bool) -> IO(Out):
+def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
   do IO<Out>:
     rs : List<&2, Attachment()> <- atts_read(attachments_arg(args))
     with_atts(atts_collect(rs), strs_arg(args, "to"), strs_arg(args, "cc"),
       strs_arg(args, "bcc"), str_arg(args, "subject", ""), str_arg(args, "body", ""),
-      str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft, dry_arg(args))
+      str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft, dry_arg(args),
+      Jev.Fresh{}, jev)
 
 # Reply and forward
 # -----------------
@@ -4178,7 +4832,9 @@ def reply_want(
   quoted: U32,
   size: U32,
   +args: J.Json,
-  me: String
+  me: String,
+  about: Jev.Context,
+  jev: Jev.Switch
 ) -> IO(Out):
   +replied = reply_to(hs)
   do IO<Out>:
@@ -4192,7 +4848,9 @@ def reply_want(
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
       bool_arg(args, "as_draft", False{}),
-      dry_arg(args))
+      dry_arg(args),
+      about,
+      jev)
     return with_fields(o, quote_fields(cut, quoted, size))
 
 def fwd_note(+hs: List<&2, M.Hdr>) -> String:
@@ -4200,7 +4858,13 @@ def fwd_note(+hs: List<&2, M.Hdr>) -> String:
     "\nDate: " ++ hdr_text(hs, "date") ++ "\nSubject: " ++ hdr_text(hs, "subject") ++
     "\nTo: " ++ hdr_text(hs, "to") ++ "\n"
 
-def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
+def fwd_want(
+  +hs: List<&2, M.Hdr>,
+  +raw: String,
+  +args: J.Json,
+  about: Jev.Context,
+  jev: Jev.Switch
+) -> IO(Out):
   do IO<Out>:
     rs : List<&2, Attachment()> <-
       atts_read_within(attachments_arg(args), (max_attachment() - C.byte_len(raw) : U32))
@@ -4208,7 +4872,7 @@ def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
       prefixed("Fwd:", hdr_text(hs, "subject")),
       str_arg(args, "body", "") ++ fwd_note(hs),
-      "", "", bool_arg(args, "as_draft", False{}), dry_arg(args))
+      "", "", bool_arg(args, "as_draft", False{}), dry_arg(args), about, jev)
 
 def respond_to(
   reply: Bool,
@@ -4216,28 +4880,50 @@ def respond_to(
   size: U32,
   +body: String,
   args: J.Json,
-  me: String
+  me: String,
+  about: Jev.Context,
+  jev: Jev.Switch
 ) -> IO(Out):
   match reply:
     case True{}:
-      reply_want(body_headers(body), M.parts(body), too_big, C.byte_len(body), size, args, me)
+      reply_want(body_headers(body), M.parts(body), too_big, C.byte_len(body), size, args, me,
+        about, jev)
     case False{}:
       match too_big:
         case True{}:
           pure_out(Err{"the original is larger than 25 MB and cannot be forwarded whole"})
         case False{}:
-          fwd_want(body_headers(body), body, args)
+          fwd_want(body_headers(body), body, args, about, jev)
+
+# What a reply or forward answers, for the gates: the original's header
+# facts, read only with Jev on.
+def respond_context(jev: Jev.Switch, reply: Bool, all: Bool, m: I.Msg) -> Jev.Context:
+  match jev:
+    case Jev.Off{}:
+      Jev.Fresh{}
+    case Jev.On{c}:
+      Jev.original_context(reply, all, Jev.whole_facts(m))
 
 # Fetches the original (read-only, PEEK), then replies (mode 0) or
 # forwards (mode 1).
-def orig_msg(ms: List<&2, I.Msg>, +args: J.Json, mode: U32, max: U32, me: String) -> IO(Out):
+def orig_msg(
+  ms: List<&2, I.Msg>,
+  +args: J.Json,
+  mode: U32,
+  max: U32,
+  me: String,
+  +jev: Jev.Switch
+) -> IO(Out):
   match ms:
     case Nil{}:
       pure_out(Err{
         "no message with UID " ++ U32.show(u32_arg(args, "uid", 0)) ++ " in " ++
           folder_arg(args)})
-    case I.Msg{uid, flags, date, +size, headers, body, _} <> t:
-      respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), size, body, args, me)
+    case +m <> t:
+      I.Msg{uid, flags, date, +size, headers, body, _} = m
+      +reply = U32.is_eq(mode, 0)
+      respond_to(reply, U32.is_gt(size, max), size, body, args, me,
+        respond_context(jev, reply, bool_arg(args, "reply_all", False{}), m), jev)
 
 def orig_found.if(
   stale: Bool,
@@ -4245,30 +4931,44 @@ def orig_found.if(
   +args: J.Json,
   mode: U32,
   max: U32,
-  me: String
+  me: String,
+  jev: Jev.Switch
 ) -> IO(Out):
   match stale:
     case True{}:
       pure_out(Err{stale_msg()})
     case False{}:
-      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0)), args, mode, max, me)
+      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0)), args, mode, max, me, jev)
 
 # The original is used only if its folder still has the caller's
 # UIDVALIDITY (checked in the same session that fetched it).
-def orig_found(r: Run(), +args: J.Json, mode: U32, max: U32, me: String) -> IO(Out):
+def orig_found(
+  r: Run(),
+  +args: J.Json,
+  mode: U32,
+  max: U32,
+  me: String,
+  jev: Jev.Switch
+) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
       orig_found.if(Bool.not(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv_arg(args))), lines,
-        args, mode, max, me)
+        args, mode, max, me, jev)
 
 def respond_request(+args: J.Json) -> String:
   Bool.pick(String, U32.is_zero(u32_arg(args, "uid", 0)),
     "\"uid\" (the message to answer) is required",
     Bool.pick(String, U32.is_zero(uidv_arg(args)), uidv_missing(), ""))
 
-def t_respond.if(problem: String, +args: J.Json, mode: U32, +max: U32) -> IO(Out):
+def t_respond.if(
+  problem: String,
+  +args: J.Json,
+  mode: U32,
+  +max: U32,
+  jev: Jev.Switch
+) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
@@ -4276,11 +4976,11 @@ def t_respond.if(problem: String, +args: J.Json, mode: U32, +max: U32) -> IO(Out
       do IO<Out>:
         me : String <- env_or("MAILBEND_EMAIL", "")
         r : Run() <- imap_run(Ops.plan_get(folder_arg(args), u32_arg(args, "uid", 0), max))
-        orig_found(r, args, mode, max, me)
+        orig_found(r, args, mode, max, me, jev)
 
-def t_respond(+args: J.Json, +mode: U32) -> IO(Out):
+def t_respond(+args: J.Json, +mode: U32, jev: Jev.Switch) -> IO(Out):
   t_respond.if(respond_request(args), args, mode,
-    Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()))
+    Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()), jev)
 
 # Downloading attachments
 # =======================
@@ -4481,237 +5181,8 @@ def t_get_attachment(+args: J.Json) -> IO(Out):
 # Classifying with Jev
 # ====================
 
-# Asking Jev
-# ----------
-
-def jev_off(name: String) -> String:
-  name ++ " is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off"
-
-# How one TypeSafe request ended: its answer; TypeSafe refused it (the
-# helper exits with 8), which a smaller request may cure; or any other
-# failure.
-type Asked is Data:
-  AskAnswered{body: String}
-  AskRefused{msg: String}
-  AskFailed{msg: String}
-
-def refusal_detail.put(m: Maybe<&2, J.Json>, out: String) -> String:
-  match m:
-    case Some{J.JStr{s}}:
-      s
-    case Some{d}:
-      J.show(d)
-    case None{}:
-      out
-
-# TypeSafe's reason for a refusal: the "detail" of its answer (as JSON
-# unless it is text), else the answer itself, cut to 1000 characters.
-def refusal_detail(+out: String) -> String:
-  detail = Maybe.bind(&2, J.Json, J.Json, J.parse(out), j => J.get(j, "detail"))
-  String.take(String.trim(refusal_detail.put(detail, out)), 1000n)
-
-# What the exit status of mailbend-typesafe means, as the start of its
-# error.
-def typesafe_cause(code: U32) -> String:
-  match code:
-    case 2:
-      "configuration error: "
-    case 3:
-      "cannot reach TypeSafe: "
-    case 7:
-      "check MAILBEND_TYPESAFE_KEY_FILE: "
-    case 9:
-      "try again later: "
-    case _:
-      Bool.pick(String, signalled(code), "the TypeSafe helper was killed by a signal: ",
-        "TypeSafe error: ")
-
-def typesafe_msg(err: String) -> String:
-  stderr_msg(err, "mailbend-typesafe: ")
-
-def asked_code(code: U32, out: String, err: String) -> Asked:
-  match code:
-    case 0:
-      AskAnswered{out}
-    case 8:
-      AskRefused{typesafe_msg(err) ++ ": " ++ refusal_detail(out)}
-    case _:
-      AskFailed{typesafe_cause(code) ++ typesafe_msg(err)}
-
-def asked(p: Proc) -> Asked:
-  match p:
-    case ProcOk{code, out, err}:
-      asked_code(code, out, err)
-    case _:
-      AskFailed{"cannot run the TypeSafe helper: " ++ proc_failure(p)}
-
-# The helper may print up to 8 MiB (it caps TypeSafe's answer at 4 MiB) and
-# take up to five minutes (it retries an overloaded service twice). It is
-# not run_helper, whose 128 MiB cap is for mail: this cap is a second guard.
-def typesafe_run(path: Result<&2, &2, String, String>, body: String) -> IO(Proc):
-  match path:
-    case Done{p}:
-      do IO<Proc>:
-        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
-          Process.run(p, ["ask"], body, 8388608, 300000)
-        return proc_of(r)
-    case Fail{m}:
-      IO.pure(Proc, ProcRefused{m})
-
-# Sends one request through mailbend-typesafe, the only program that reads
-# the TypeSafe key.
-def ask_jev(body: String) -> IO(Asked):
-  do IO<Asked>:
-    path : String <- env_or("MAILBEND_TYPESAFE_HELPER", "")
-    p : Proc <- typesafe_run(
-      helper_path(path, "MAILBEND_TYPESAFE_HELPER", "mailbend-typesafe"), body)
-    return asked(p)
-
-# Requests in turn
-# ----------------
-
-# What the requests have given so far: what Jev answered about each
-# message, and a report of each request, newest first.
-type Progress is Data:
-  Progress{answered: List<&2, Jev.Answered>, requests: List<&2, J.Json>}
-
-# The progress, or why the call stopped.
-def Tally() -> Data:
-  Result<&2, &2, String, Progress>
-
-def progress_add(
-  p: Progress,
-  xs: List<&2, Jev.Answered>,
-  requests: List<&2, J.Json>
-) -> Progress:
-  Progress{done, reqs} = p
-  Progress{List.append(&2, Jev.Answered, List.reverse(&2, Jev.Answered, xs), done),
-    List.append(&2, J.Json, requests, reqs)}
-
-# A request's report: its messages, its size in bytes (MailBend's token
-# estimate) and the input tokens TypeSafe counted, when it says.
-def request_json(n: Nat, bytes: U32, tokens: Maybe<&2, U32>) -> J.Json:
-  J.obj([
-    J.kv("messages", J.num(U32.from_nat(n))),
-    J.kv("bytes", J.num(bytes)),
-    J.kv("input_tokens", maybe_num(tokens))
-  ])
-
-def answered.put(r: Maybe<&2, Jev.Reply>, n: Nat, bytes: U32, p: Progress) -> Tally():
-  match r:
-    case None{}:
-      Fail{"TypeSafe's answer is not the JSON MailBend asked for"}
-    case Some{Jev.Reply{xs, tokens}}:
-      Done{progress_add(p, xs, [request_json(n, bytes, tokens)])}
-
-# One request's outcome added to the progress; any failure stops the call.
-# Reading an answer needs `keys`, every category option key Jev may choose.
-def answered(
-  r: Asked,
-  +es: List<&2, Jev.Entry>,
-  bytes: U32,
-  keys: List<&2, String>,
-  p: Progress
-) -> Tally():
-  match r:
-    case AskAnswered{body}:
-      answered.put(Jev.reply(body, es, keys), List.length(&2, Jev.Entry, es), bytes, p)
-    case AskRefused{m}:
-      Fail{m}
-    case AskFailed{m}:
-      Fail{m}
-
-# Sends the request for `es`, unless the call has already stopped.
-def ask_once(+es: List<&2, Jev.Entry>, keys: List<&2, String>, t: Tally()) -> IO(Tally()):
-  match t:
-    case Fail{m}:
-      IO.pure(Tally(), Fail{m})
-    case Done{p}:
-      +body = Jev.request_body(es)
-      do IO<Tally()>:
-        r : Asked <- ask_jev(body)
-        return answered(r, es, C.utf8_len(body), keys, p)
-
-# A refused request split once into halves, each asked on its own; a
-# refusal of either stops the call.
-def ask_halves(+es: List<&2, Jev.Entry>, +keys: List<&2, String>, p: Progress) -> IO(Tally()):
-  +half = Nat.div(List.length(&2, Jev.Entry, es), 2n)
-  start : Tally() = Done{p}
-  do IO<Tally()>:
-    first : Tally() <- ask_once(List.take(&2, Jev.Entry, es, half), keys, start)
-    ask_once(List.drop(&2, Jev.Entry, es, half), keys, first)
-
-def ask_batch.if(
-  split: Bool,
-  m: String,
-  es: List<&2, Jev.Entry>,
-  keys: List<&2, String>,
-  p: Progress
-) -> IO(Tally()):
-  match split:
-    case True{}:
-      ask_halves(es, keys, p)
-    case False{}:
-      IO.pure(Tally(), Fail{m})
-
-def ask_batch.put(
-  r: Asked,
-  +es: List<&2, Jev.Entry>,
-  keys: List<&2, String>,
-  bytes: U32,
-  p: Progress
-) -> IO(Tally()):
-  match r:
-    case AskRefused{m}:
-      ask_batch.if(Nat.is_gt(List.length(&2, Jev.Entry, es), 1n), m, es, keys, p)
-    case _:
-      IO.pure(Tally(), answered(r, es, bytes, keys, p))
-
-# TypeSafe's 422 is a general validation error, so a refused request of two
-# or more messages is split once, in case it was too large; a refusal of a
-# half, or of a single message, stops the call with TypeSafe's reason.
-def ask_batch(+es: List<&2, Jev.Entry>, keys: List<&2, String>, p: Progress) -> IO(Tally()):
-  +body = Jev.request_body(es)
-  do IO<Tally()>:
-    r : Asked <- ask_jev(body)
-    ask_batch.put(r, es, keys, C.utf8_len(body), p)
-
-def ask_step.put(s: Jev.Step, keys: List<&2, String>, p: Progress) -> IO(Tally()):
-  match s:
-    case Jev.Skip{f}:
-      IO.pure(Tally(), Done{progress_add(p, [Jev.Skipped{f}], [])})
-    case Jev.Ask{es}:
-      ask_batch(es, keys, p)
-
-def ask_step(s: Jev.Step, keys: List<&2, String>, t: Tally()) -> IO(Tally()):
-  match t:
-    case Fail{m}:
-      IO.pure(Tally(), Fail{m})
-    case Done{p}:
-      ask_step.put(s, keys, p)
-
-# Takes the steps in order; once the call has stopped, no further request
-# is sent.
-def ask_steps(ss: List<&2, Jev.Step>, +keys: List<&2, String>, t: Tally()) -> IO(Tally()):
-  match ss:
-    case Nil{}:
-      IO.pure(Tally(), t)
-    case s <> rest:
-      do IO<Tally()>:
-        next : Tally() <- ask_step(s, keys, t)
-        ask_steps(rest, keys, next)
-
 # mail_classify
 # -------------
-
-# The most UIDs one call of a Jev tool asks about.
-def jev_limit() -> U32:
-  50
-
-# In body mode each message is fetched up to this many bytes, of which Jev
-# sees at most Jev.max_text bytes of plain text.
-def jev_max() -> U32:
-  262144
 
 # TypeSafe's choice takes at most 255 options, and one is the none key.
 def option_limit() -> U32:
@@ -4721,21 +5192,6 @@ def option_limit() -> U32:
 # the caller's candidate folder names.
 type Classify is Data:
   Classify{folder: String, uids: List<&2, U32>, candidates: List<&2, String>}
-
-def jev_uids.if(over: Bool, tool: String, us: List<&2, U32>) -> Uids():
-  match over:
-    case True{}:
-      Fail{tool ++ " takes at most " ++ U32.show(jev_limit()) ++ " UIDs per call"}
-    case False{}:
-      Done{asc(unseen(us, []))}
-
-# The UIDs of a call of the Jev tool `tool`: each once, ascending.
-def jev_uids(tool: String, u: Uids()) -> Uids():
-  match u:
-    case Fail{m}:
-      Fail{m}
-    case Done{+us}:
-      jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
 
 def options_problem(+n: Nat) -> String:
   Bool.pick(String, Nat.is_gt(n, U32.to_nat(option_limit())),
@@ -4795,6 +5251,18 @@ def room_problem(fits: Bool) -> String:
     "the folder and candidate names are too long for one TypeSafe question: pass fewer or " ++
       "shorter candidates")
 
+# Why Jev cannot be asked with the options `opts` for the categories
+# `names` ("" when it can); `more` is checked between the number of
+# options and their room.
+def jev_options_problem(
+  c: Jev.Content,
+  names: List<&2, String>,
+  opts: Jev.Options,
+  more: String
+) -> String:
+  first_of(first_of(options_problem(List.length(&2, String, names)), more),
+    room_problem(Jev.leaves_room(c, opts)))
+
 # A candidate is a folder the caller could create: each must pass the
 # checks of mail_create_folder, and appear once.
 def candidates_problem(+g: Guard, cs: List<&2, String>, +seen: List<&2, String>) -> String:
@@ -4806,29 +5274,6 @@ def candidates_problem(+g: Guard, cs: List<&2, String>, +seen: List<&2, String>)
         Bool.pick(String, List.contains(~String, ~String.eq, seen, c),
           "candidate \"" ++ c ++ "\" is listed twice", candidate_note(c, target_problem(g, c))),
         candidates_problem(g, t, c <> seen))
-
-# `ms` in UID order, each UID once (a server may answer twice).
-def first_uids(ms: List<&2, I.Msg>, prev: U32) -> List<&2, I.Msg>:
-  match ms:
-    case Nil{}:
-      []
-    case +m <> t:
-      +u = msg_uid(m)
-      List.filter.put(I.Msg, m, first_uids(t, u), Bool.not(U32.is_eq(u, prev)))
-
-def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
-  match ms:
-    case Nil{}:
-      []
-    case m <> t:
-      msg_uid(m) <> msg_uids(t)
-
-def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
-  match ms:
-    case Nil{}:
-      []
-    case +m <> t:
-      Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max)} <> fetched_list(t, max)
 
 def classify_out(
   t: Tally(),
@@ -4854,19 +5299,15 @@ def classify_out(
 def classify_ask(
   +c: Jev.Content,
   names: List<&2, String>,
-  opts: Jev.Options,
+  +opts: Jev.Options,
   cands: List<&2, String>,
   ms: List<&2, I.Msg>,
   head: List<&2, J.Json>,
   not_found: List<&2, U32>
 ) -> IO(Out):
-  Jev.Options{json, +none} = opts
-  steps : List<&2, Jev.Step> = Jev.requests(c, fetched_list(ms, jev_max()),
-    Jev.Options{json, none})
-  start : Tally() = Done{Progress{[], []}}
   do IO<Out>:
-    t : Tally() <- ask_steps(steps, List.append(&2, String, names, [none]), start)
-    return classify_out(t, c, cands, none, head, not_found)
+    t : Tally() <- ask_options(Retried{}, c, fetched_list(ms, jev_max()), names, opts)
+    return classify_out(t, c, cands, Jev.options_none(opts), head, not_found)
 
 def classify_folders.if(
   problem: String,
@@ -4901,7 +5342,7 @@ def classify_folders(
       +g = guard_for(folders)
       +cats = categories(g)
       +canon = canonical_names(g, cands)
-      +ms = first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
+      +ms = jev_msgs(lines, uids)
       head : List<&2, J.Json> = [
         J.kv("folder", J.str(folder)),
         J.kv("uidvalidity", maybe_num(I.ok_code(lines, "UIDVALIDITY"))),
@@ -4910,10 +5351,8 @@ def classify_folders(
         J.kv("candidates", J.strs(canon))
       ]
       +names = List.append(&2, String, cats, canon)
-      +opts = Jev.options_for(names)
-      problem = first_of(
-        first_of(options_problem(List.length(&2, String, names)), candidates_problem(g, canon, [])),
-        room_problem(Jev.leaves_room(c, opts)))
+      +opts = Jev.options_for(Jev.Classifying{}, names)
+      problem = jev_options_problem(c, names, opts, candidates_problem(g, canon, []))
       classify_folders.if(problem, c, names, opts, canon, ms, head, minus(uids, msg_uids(ms)))
 
 def classify_found(
@@ -5410,7 +5849,7 @@ def triage_filed(
 ) -> IO(Out):
   Triaging{Triage{+folder, uids, +uidv, dry}, +c, +cats, opts, roles, +caps, review, found,
     not_found} = t
-  Jev.Options{json, +none} = opts
+  Jev.Options{purpose, json, +none} = opts
   +fs = filings(xs, c, none, rechecked(found, reread))
   +moves = Ops.triage_moves(folder, placements(fs))
   +move = I.has_cap(caps, "MOVE")
@@ -5461,7 +5900,7 @@ def triage_review.if(
 # is then refused).
 def triage_review(+xs: List<&2, Jev.Answered>, reqs: List<&2, J.Json>, +t: Triaging)
   -> IO(Out):
-  Triaging{Triage{folder, uids, uidv, dry}, c, cats, Jev.Options{json, none}, roles, caps,
+  Triaging{Triage{folder, uids, uidv, dry}, c, cats, Jev.Options{p, json, none}, roles, caps,
     review, found, not_found} = t
   +bound = to_review(filings(xs, c, none, found))
   triage_review.if(List.is_empty(&2, U32, bound) || Bool.not(String.is_empty(review)), folder,
@@ -5479,13 +5918,12 @@ def triage_answered(r: Tally(), t: Triaging) -> IO(Out):
 # delete one per request, the others in batches.
 def triage_ask(+t: Triaging) -> IO(Out):
   Triaging{call, +c, cats, +opts, roles, caps, review, +found, not_found} = t
-  Jev.Options{json, none} = opts
   steps : List<&2, Jev.Step> = List.append(&2, Jev.Step,
     Jev.requests(c, asked_messages(c, found, False{}), opts),
     requests_alone(c, asked_messages(c, found, True{}), opts))
-  start : Tally() = Done{Progress{[], []}}
   do IO<Out>:
-    r : Tally() <- ask_steps(steps, List.append(&2, String, cats, [none]), start)
+    r : Tally() <- ask_all(Retried{}, steps,
+      List.append(&2, String, cats, [Jev.options_none(opts)]))
     triage_answered(r, t)
 
 def triage_written(r: Run(), addrs: List<&2, String>, t: Triaging) -> IO(Out):
@@ -5540,7 +5978,7 @@ def triage_folders.if(
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       Triage{folder, +uids, uidv, dry} = call
-      +ms = first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
+      +ms = jev_msgs(lines, uids)
       +roles = role_folders(folders)
       triage_sent(Triaging{call, c, cats, opts, roles, I.caps(lines),
         review_problem(folders, roles), pendings(c, now, ms), minus(uids, msg_uids(ms))},
@@ -5557,10 +5995,9 @@ def triage_folders(f: Fs(), lines: List<&2, I.RLine>, +call: Triage, +c: Jev.Con
       Triage{folder, uids, uidv, dry} = call
       +g = guard_for(folders)
       +cats = categories(g)
-      +opts = Jev.options_for(cats)
+      +opts = Jev.options_for(Jev.Classifying{}, cats)
       problem = first_of(source_review_problem(guard_delim(g), folder),
-        first_of(options_problem(List.length(&2, String, cats)),
-          room_problem(Jev.leaves_room(c, opts))))
+        jev_options_problem(c, cats, opts, ""))
       triage_folders.if(problem, folders, lines, call, c, now, cats, opts)
 
 def triage_found.if(problem: String, +lines: List<&2, I.RLine>, call: Triage, c: Jev.Content)
@@ -5600,6 +6037,177 @@ def t_triage(args: J.Json, jev: Jev.Switch) -> IO(Out):
     case Jev.Off{}:
       pure_out(Err{jev_off("mail_triage")})
 
+# Read annotations
+# ================
+
+# With Jev on, mail_get, mail_search, mail_get_new and mail_get_thread add a
+# jev object to each message they show, once it has been read (see Jev's
+# Annotations). A list read asks in headers mode, numbering its messages by
+# position, since a thread's may come from several folders and share UIDs;
+# mail_get asks with the configured content. The category options are the
+# folders, as for mail_classify, read in a session of their own. Whatever
+# fails, the read's result is still returned, its messages unchecked.
+
+# A read to annotate: its result's fields, whether they list the messages
+# (else they are the one message read whole), the content Jev is asked
+# with, and the messages as Jev may see them.
+type Annotation is Data:
+  Annotation{fields: J.Json, listed: Bool, content: Jev.Content, msgs: List<&2, Jev.Fetched>}
+
+# The messages of a list read in headers mode, numbered from `n`.
+def listed_fetched(ms: List<&2, I.Msg>, +n: U32) -> List<&2, Jev.Fetched>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.Text{"", Jev.Complete{}}} <>
+        listed_fetched(t, (n + 1 : U32))
+
+# The message mail_get read whole; its text only in body mode.
+def whole_fetched(c: Jev.Content, +m: I.Msg, max: U32) -> Jev.Fetched:
+  match c:
+    case Jev.Headers{}:
+      Jev.Fetched{Jev.whole_facts(m), Jev.Text{"", Jev.Complete{}}}
+    case Jev.Body{}:
+      Jev.Fetched{Jev.whole_facts(m), Jev.text_of(m, max)}
+
+def with_jev(item: J.Json, j: J.Json) -> J.Json:
+  match item:
+    case J.JObj{kvs}:
+      J.JObj{J.chain(List.append(&2, J.Json, J.unchain(kvs), [J.kv("jev", j)]))}
+    case _:
+      item
+
+# Each item with the next jev object.
+def jev_items(items: List<&2, J.Json>, js: List<&2, J.Json>) -> List<&2, J.Json>:
+  match items:
+    case Nil{}:
+      []
+    case i <> t:
+      match js:
+        case Nil{}:
+          i <> t
+        case j <> u:
+          with_jev(i, j) <> jev_items(t, u)
+
+def messages_jevs.if(messages: Bool, k: String, items: J.Json, js: List<&2, J.Json>) -> J.Json:
+  match messages:
+    case True{}:
+      J.kv(k, J.JArr{J.chain(jev_items(J.unchain(items), js))})
+    case False{}:
+      J.kv(k, J.JArr{items})
+
+# A result's fields, with the jev objects `js` added in order to the items
+# of its "messages" list.
+def messages_jevs(kvs: List<&2, J.Json>, +js: List<&2, J.Json>) -> List<&2, J.Json>:
+  match kvs:
+    case Nil{}:
+      []
+    case J.JKv{+k, J.JArr{items}} <> t:
+      messages_jevs.if(String.eq(k, "messages"), k, items, js) <> messages_jevs(t, js)
+    case kv <> t:
+      kv <> messages_jevs(t, js)
+
+def jev_field(js: List<&2, J.Json>) -> List<&2, J.Json>:
+  match js:
+    case Nil{}:
+      []
+    case j <> t:
+      [J.kv("jev", j)]
+
+# The read's result with the jev objects `js` of the messages it shows.
+def annotation_out(a: Annotation, js: List<&2, J.Json>) -> Out:
+  Annotation{fields, listed, c, ms} = a
+  match listed:
+    case True{}:
+      Ok{J.JObj{J.chain(messages_jevs(J.unchain(fields), js))}}
+    case False{}:
+      with_fields(Ok{J.JObj{fields}}, jev_field(js))
+
+def unchecked_jsons(n: Nat, +c: Jev.Content, +reason: String) -> List<&2, J.Json>:
+  match n:
+    case 0n:
+      []
+    case 1n+k:
+      Jev.unchecked_json(c, reason) <> unchecked_jsons(k, c, reason)
+
+# Every message of the read unchecked, and why.
+def annotation_unchecked(+a: Annotation, reason: String) -> Out:
+  Annotation{fields, listed, c, ms} = a
+  annotation_out(a, unchecked_jsons(List.length(&2, Jev.Fetched, ms), c, reason))
+
+def annotation_answered(t: Tally(), none: String, +a: Annotation) -> Out:
+  match t:
+    case Fail{m}:
+      annotation_unchecked(a, m)
+    case Done{Progress{xs, reqs}}:
+      Annotation{fields, listed, c, ms} = a
+      annotation_out(a, Jev.annotation_jsons(List.reverse(&2, Jev.Answered, xs), c, none))
+
+# Asks once, so a hung TypeSafe holds the read up for one timeout only.
+def annotate.run(
+  problem: String,
+  names: List<&2, String>,
+  +opts: Jev.Options,
+  +a: Annotation
+) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(annotation_unchecked(a, SCon{h, t}))
+    case SNil{}:
+      Annotation{fields, listed, c, ms} = a
+      do IO<Out>:
+        t : Tally() <- ask_options(Once{}, c, ms, names, opts)
+        return annotation_answered(t, Jev.options_none(opts), a)
+
+def annotate.ask(f: Fs(), +a: Annotation) -> IO(Out):
+  match f:
+    case Fail{m}:
+      pure_out(annotation_unchecked(a, m))
+    case Done{folders}:
+      Annotation{fields, listed, c, ms} = a
+      +names = categories(guard_for(folders))
+      +opts = Jev.options_for(Jev.Annotating{}, names)
+      annotate.run(jev_options_problem(c, names, opts, ""), names, opts, a)
+
+def annotate.folders(r: Run(), a: Annotation) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(annotation_unchecked(a, m))
+    case Done{lines}:
+      do IO<Out>:
+        f : Fs() <- folders_io(lines)
+        annotate.ask(f, a)
+
+# The categories come from the folders, listed in a session of their own.
+def annotate.list(a: Annotation) -> IO(Out):
+  do IO<Out>:
+    r : Run() <- imap_run(Ops.plan_folders())
+    annotate.folders(r, a)
+
+# A read's result, annotated with Jev on when it shows any message. A
+# thread read has listed the folders already.
+def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
+  match jev s:
+    case Jev.On{c} Listed{Ok{J.JObj{fields}}, m <> t}:
+      annotate.list(Annotation{fields, True{}, Jev.Headers{}, listed_fetched(m <> t, 1)})
+    case Jev.On{c} Threaded{Ok{J.JObj{fields}}, m <> t, folders}:
+      annotate.ask(Done{folders},
+        Annotation{fields, True{}, Jev.Headers{}, listed_fetched(m <> t, 1)})
+    case Jev.On{+c} Whole{Ok{J.JObj{fields}}, m, max}:
+      annotate.list(Annotation{fields, False{}, c, [whole_fetched(c, m, max)]})
+    case _ Listed{o, ms}:
+      pure_out(o)
+    case _ Threaded{o, ms, folders}:
+      pure_out(o)
+    case _ Whole{o, m, max}:
+      pure_out(o)
+
+def annotated(jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
+  do IO<Out>:
+    s : Shown <- read
+    annotate(jev, s)
+
 # Dispatch
 # ========
 
@@ -5613,13 +6221,13 @@ def run_op(op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
     case Ops.OListFolders{}:
       t_folders(args)
     case Ops.OSearch{}:
-      t_search(args)
+      annotated(jev, t_search(args))
     case Ops.OGet{}:
-      t_get(args)
+      annotated(jev, t_get(args))
     case Ops.OGetNew{}:
-      t_get_new(args)
+      annotated(jev, t_get_new(args))
     case Ops.OGetThread{}:
-      t_get_thread(args)
+      annotated(jev, t_get_thread(args))
     case Ops.OClassify{}:
       t_classify(args, jev)
     case Ops.OTriage{}:
@@ -5641,19 +6249,19 @@ def run_op(op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
     case Ops.OTrash{}:
       t_trash(args)
     case Ops.ODelete{}:
-      t_delete(args)
+      t_delete(args, jev)
     case Ops.OCreateFolder{}:
       t_create_folder(args)
     case Ops.ORenameFolder{}:
       t_rename_folder(args)
     case Ops.OSaveDraft{}:
-      t_compose(args, True{})
+      t_compose(args, True{}, jev)
     case Ops.OSend{}:
-      t_compose(args, False{})
+      t_compose(args, False{}, jev)
     case Ops.OReply{}:
-      t_respond(args, 0)
+      t_respond(args, 0, jev)
     case Ops.OForward{}:
-      t_respond(args, 1)
+      t_respond(args, 1, jev)
 
 # Whether this call would send mail over SMTP.
 def sends(op: Ops.Op, args: J.Json) -> Bool:

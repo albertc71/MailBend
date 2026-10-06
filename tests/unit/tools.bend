@@ -97,6 +97,17 @@ def show_msgs(ms: List<&2, I.Msg>) -> String:
     case I.Msg{uid, flags, date, size, headers, body, _} <> t:
       U32.show(uid) ++ " " ++ show_msgs(t)
 
+# A read's result, then the messages it shows to be annotated.
+def show_shown(s: T.Shown) -> String:
+  match s:
+    case T.Listed{o, ms}:
+      show_out(o) ++ " | shown " ++ show_msgs(ms)
+    case T.Threaded{o, ms, T.Folders{fs, drafts, trash, sent, junk, archive}}:
+      show_out(o) ++ " | shown " ++ show_msgs(ms) ++ "with the folders, Sent " ++
+        Maybe.default(&2, String, sent, "unknown")
+    case T.Whole{o, m, max}:
+      show_out(o) ++ " | whole " ++ show_msgs([m]) ++ U32.show(max)
+
 def show_change(c: T.FolderChange) -> String:
   match c:
     case T.FolderCreate{name}:
@@ -430,23 +441,23 @@ def check_search() -> IO(Unit):
       "|" ++ show_msgs(T.oldest_first([message(5, ""), message(9, ""), message(4, "")])) ++
       "|" ++ show_u32s(T.desc([3, 9, 1])) ++ "|" ++ show_u32s(T.asc([3, 9, 1])) ++
       "|" ++ show_bool(T.uid_in(3, [1, 3])) ++ " " ++ show_bool(T.uid_in(2, [1, 3])))
-    IO.print(show_out(T.search_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
+    IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
       "INBOX", Some{7}, 12, [4, 5])))
-    IO.print(show_out(T.search_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
+    IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
       "INBOX", Some{7}, 12, [4, 5])))
-    IO.print(show_out(T.search_headers(T.imap_code(3, [], "mailbend-tls: down"),
+    IO.print(show_shown(T.search_headers(T.imap_code(3, [], "mailbend-tls: down"),
       "INBOX", Some{7}, 12, [4, 5])))
     IO.print(J.show(T.summary(message(5, raw_message()))))
 
 def check_get() -> IO(Unit):
   do IO<Unit>:
-    IO.print(show_out(T.get_msg([message(5, raw_message())], "INBOX", 5, Some{7}, 262144)))
-    IO.print(show_out(T.get_msg([message(6, html_message())], "INBOX", 6, None{}, 100)))
-    IO.print(show_out(T.get_msg([], "Work", 8, Some{7}, 100)))
+    IO.print(show_shown(T.get_msg([message(5, raw_message())], "INBOX", 5, Some{7}, 262144)))
+    IO.print(show_shown(T.get_msg([message(6, html_message())], "INBOX", 6, None{}, 100)))
+    IO.print(show_shown(T.get_msg([], "Work", 8, Some{7}, 100)))
     IO.print(show_msgs(T.with_uid([message(9, ""), message(5, ""), message(5, "")], 5)))
-    IO.print(show_out(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 4,
+    IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 4,
       1000)))
-    IO.print(show_out(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 8,
+    IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 8,
       1000)))
 
 def check_new() -> IO(Unit):
@@ -455,11 +466,11 @@ def check_new() -> IO(Unit):
       U32.show(T.last_or([], 1)))
     IO.print("[" ++ T.new_request(0, 0) ++ "] [" ++ T.new_request(5, 7) ++ "] " ++
       T.new_request(5, 0))
-    IO.print(show_out(T.new_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
+    IO.print(show_shown(T.new_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
       "INBOX", 7, 9, True{}, [4, 5])))
-    IO.print(show_out(T.new_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
+    IO.print(show_shown(T.new_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
       "INBOX", 7, 9, False{}, [4, 5])))
-    IO.print(show_out(T.new_headers(T.imap_code(2, [], "bad config"), "INBOX", 7, 9, False{},
+    IO.print(show_shown(T.new_headers(T.imap_code(2, [], "bad config"), "INBOX", 7, 9, False{},
       [4, 5])))
 
 # UID checks and change results
@@ -761,7 +772,8 @@ def check_folder_results() -> IO(Unit):
 # ---------
 
 def want(to: List<&2, String>, bcc: List<&2, String>, draft: Bool) -> T.Want:
-  T.Want{to, ["c@y.com"], bcc, "Subject", "Body", "<irt@x>", "<r@x>", [], draft, False{}}
+  T.Want{to, ["c@y.com"], bcc, "Subject", "Body", "<irt@x>", "<r@x>", [], draft, False{},
+    Jev.Fresh{}, Jev.Off{}}
 
 def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
   T.Stamp{date, token, day} = st
@@ -818,8 +830,10 @@ def check_compose() -> IO(Unit):
       show_out(T.sent_out(T.Partial{J.JNull{}}, "<m@x>", 2)))
     IO.print(problem(T.check_want(want(["a@x.com"], [], False{}), "bad")) ++
       problem(T.check_want(want(["nope"], [], False{}), "me@my.org")) ++
-      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], False{}, False{}}, "me@my.org")) ++
-      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], True{}, False{}}, "me@my.org")) ++
+      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], False{}, False{}, Jev.Fresh{},
+        Jev.Off{}}, "me@my.org")) ++
+      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], True{}, False{}, Jev.Fresh{},
+        Jev.Off{}}, "me@my.org")) ++
       problem(T.check_want(want(["a@x.com"], [], False{}), "me@my.org")))
 
 # Replies and forwards
@@ -1053,6 +1067,9 @@ def show_wants(ws: List<&2, Ops.FolderUids>) -> String:
 def search_found(before: List<&2, T.Found>) -> Result<&2, &2, String, List<&2, T.Found>>:
   T.session_found(Done{I.frame(thread_search_transcript())}, thread_search_plan(), before)
 
+def thread_fs() -> T.Folders:
+  T.Folders{[], None{}, None{}, Some{"Sent"}, None{}, None{}}
+
 def check_thread() -> IO(Unit):
   do IO<Unit>:
     IO.print(String.join(T.thread_folders("INBOX", Some{"Sent Messages"}), ",") ++ " | " ++
@@ -1070,11 +1087,11 @@ def check_thread() -> IO(Unit):
       [Th.node("INBOX", Some{7}, I.Msg{4, [], "", 0, "", "", I.VNil{}})])))
     IO.print(show_found(T.thread_found(Ops.plan_thread_headers([Ops.FolderUids{"INBOX", [4, 5]}]),
       I.frame(headers_transcript(7)))))
-    IO.print(show_out(T.thread_out(Done{T.Threading{[], [], [
+    IO.print(show_shown(T.thread_out(Done{T.Threading{[], [], [
       Th.node("INBOX", Some{7}, header_msg("Message-ID: <b@x>\r\nIn-Reply-To: <a@x>\r\n")),
-      Th.node("Sent", None{}, header_msg("Message-ID: <a@x>\r\n"))], []}},
+      Th.node("Sent", None{}, header_msg("Message-ID: <a@x>\r\n"))], []}}, thread_fs(),
       ["INBOX", "Sent"], "INBOX", 1)))
-    IO.print(show_out(T.thread_out(Fail{"down"}, ["INBOX"], "INBOX", 1)))
+    IO.print(show_shown(T.thread_out(Fail{"down"}, thread_fs(), ["INBOX"], "INBOX", 1)))
 
 # mail_classify
 # -------------
@@ -1369,21 +1386,21 @@ def main() -> IO(Unit):
 #|error "before" must be a date like 2026-02-01
 #|a1 UID SEARCH ALL\r\n
 #|5 4 |9 5 4 |4 5 9 |9 3 1 |1 3 9 |True False
-#|ok {"folder":"INBOX","uidvalidity":7,"total":12,"messages":[{"uid":5,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false},{"uid":4,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true}]}
-#|err the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again
-#|err connection or TLS verification failed: down
+#|ok {"folder":"INBOX","uidvalidity":7,"total":12,"messages":[{"uid":5,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false},{"uid":4,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true}]} | shown 5 4 
+#|err the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again | shown 
+#|err connection or TLS verification failed: down | shown 
 #|{"uid":5,"date":"Mon, 1 Feb 2026 10:00:00 +0000","from":"José <jose@example.com>","to":"me@x.com","cc":"","subject":"Lunch","message_id":"<m1@example.com>","internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"flags":["\\Seen"],"seen":true,"flagged":false}
-#|ok {"folder":"INBOX","uid":5,"uidvalidity":7,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":false,"from":"José <jose@example.com>","to":"me@x.com","cc":"","reply_to":"","subject":"Lunch","date":"Mon, 1 Feb 2026 10:00:00 +0000","message_id":"<m1@example.com>","in_reply_to":"","references":"","text":"Hello\nthere\n","html_available":false,"attachments":[]}
-#|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":" Hi & bye \n","html_available":true,"attachments":[]}
-#|err no message with UID 8 in Work
+#|ok {"folder":"INBOX","uid":5,"uidvalidity":7,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":false,"from":"José <jose@example.com>","to":"me@x.com","cc":"","reply_to":"","subject":"Lunch","date":"Mon, 1 Feb 2026 10:00:00 +0000","message_id":"<m1@example.com>","in_reply_to":"","references":"","text":"Hello\nthere\n","html_available":false,"attachments":[]} | whole 5 262144
+#|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":" Hi & bye \n","html_available":true,"attachments":[]} | whole 6 100
+#|err no message with UID 8 in Work | shown 
 #|5 
-#|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"","date":"","message_id":"","in_reply_to":"","references":"","text":"","html_available":false,"attachments":[]}
-#|err no message with UID 8 in INBOX
+#|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"","date":"","message_id":"","in_reply_to":"","references":"","text":"","html_available":false,"attachments":[]} | whole 4 1000
+#|err no message with UID 8 in INBOX | shown 
 #|9 5 |5 1
 #|[] [] "uidvalidity" is required with "since_uid": pass the uidvalidity returned with that checkpoint
-#|ok {"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":4,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true},{"uid":5,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false}]}
-#|ok {"folder":"INBOX","uidvalidity":8,"uidvalidity_changed":true,"next_since_uid":0,"has_more":true,"messages":[]}
-#|err configuration error: bad config
+#|ok {"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":4,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true},{"uid":5,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false}]} | shown 4 5 
+#|ok {"folder":"INBOX","uidvalidity":8,"uidvalidity_changed":true,"next_since_uid":0,"has_more":true,"messages":[]} | shown 
+#|err configuration error: bad config | shown 
 #|True False False True False True
 #|[] the folder's UIDVALIDITY changed since these UIDs were read, so they may name other messages; nothing was changed: search again
 #|"uidvalidity" is required: pass the value mail_search or mail_get returned with these UIDs, so stale UIDs can never change other messages
@@ -1551,8 +1568,8 @@ def main() -> IO(Unit):
 #|err down
 #|INBOX [2 9 ] | Sent [1 ] | 
 #|INBOX 7 [] 2 | 
-#|ok {"folder":"INBOX","uid":1,"searched":["INBOX","Sent"],"messages":[{"folder":"INBOX","uidvalidity":7,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<b@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":"<a@x>"},{"folder":"Sent","uidvalidity":null,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<a@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":null}]}
-#|err down
+#|ok {"folder":"INBOX","uid":1,"searched":["INBOX","Sent"],"messages":[{"folder":"INBOX","uidvalidity":7,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<b@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":"<a@x>"},{"folder":"Sent","uidvalidity":null,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<a@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":null}]} | shown 1 1 with the folders, Sent Sent
+#|err down | shown 
 #|uids 1 3 5 |uids 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 |error mail_classify takes at most 50 UIDs per call|error mail_triage takes at most 50 UIDs per call|error no uids
 #|names Ideas,Ideas/2026
 #|error candidate "": a folder name cannot be empty

@@ -640,29 +640,49 @@ def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
       lines = String.split(body, '\n')
       subparts.fin(subparts.go(lines, b, Cut{[], [], False{}, False{}}))
 
+# The most levels of nested parts a message is read to: past them, its
+# parts are left out.
+def multipart_limit() -> Nat:
+  8n
+
+# A part's own leaf, then those of its subparts and of the parts after it,
+# each with whether the bound left any out.
+def leaves.fin(
+  one: List<&2, Leaf>,
+  inner: List<&2, Leaf> & Bool,
+  more: List<&2, Leaf> & Bool
+) -> List<&2, Leaf> & Bool:
+  (a, a_cut) = inner
+  (b, b_cut) = more
+  (List.concat(&2, Leaf, [one, a, b]), a_cut || b_cut)
+
 # The single parts of `parts`, in order, walking nested multiparts up to
-# `depth` levels. A single part is a leaf and a multipart gives its
-# subparts; the side not taken is empty, so each part is parsed once.
-def leaves(+depth: Nat, parts: List<&2, String>) -> List<&2, Leaf>:
+# `depth` levels, and whether the bound left any part out. A single part
+# is a leaf and a multipart gives its subparts; the side not taken is
+# empty, so each part is parsed once.
+def leaves(+depth: Nat, parts: List<&2, String>) -> List<&2, Leaf> & Bool:
   match depth:
     case 0n:
-      []
+      ([], Bool.not(List.is_empty(&2, String, parts)))
     case 1n+p:
       match parts:
         case Nil{}:
-          []
+          ([], False{})
         case part <> rest:
           +entity = split(part)
           +hs = headers(head_of(entity))
           +body = body_of(entity)
           +b = boundary(hs)
           +single = String.is_empty(b)
-          inner = List.append(&2, Leaf, leaves.one(hs, body, single),
-            leaves(p, subparts(body, b, single)))
-          List.append(&2, Leaf, inner, leaves(1n+p, rest))
+          leaves.fin(leaves.one(hs, body, single), leaves(p, subparts(body, b, single)),
+            leaves(1n+p, rest))
+
+# A message's single parts, and whether multipart_limit left any out.
+def message_leaves.cut(msg: String) -> List<&2, Leaf> & Bool:
+  leaves(multipart_limit(), [msg])
 
 def message_leaves(msg: String) -> List<&2, Leaf>:
-  leaves(8n, [msg])
+  Pair.fst(List<&2, Leaf>, Bool, message_leaves.cut(msg))
 
 def parts_of(ls: List<&2, Leaf>) -> Parts:
   match ls:

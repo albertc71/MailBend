@@ -50,6 +50,9 @@ def tool(name, description, annotations, properties=None, required=()):
 # Annotations
 
 READS = hints(read_only=True, idempotent=True)
+# Reads whose results Jev annotates when MAILBEND_TYPESAFE is on: their
+# messages' facts may then leave the machine (the schema is static).
+ANNOTATED_READS = hints(read_only=True, idempotent=True, open_world=True)
 SETS_FLAGS = hints(idempotent=True)
 CHANGES = hints()
 DELETES = hints(destructive=True)
@@ -173,7 +176,7 @@ TOOLS = [
     tool("mail_search",
          "Search a folder, newest first. Opens the folder read-only, so "
          "nothing is marked read. All criteria are combined with AND.",
-         READS,
+         ANNOTATED_READS,
          {"folder": FOLDER,
           "from": param("string"),
           "to": param("string"),
@@ -191,7 +194,7 @@ TOOLS = [
          "Read one message: headers, plain text (or text from HTML) and the "
          "attachment list. Uses BODY.PEEK on a read-only folder, so the "
          "message stays unread.",
-         READS,
+         ANNOTATED_READS,
          {"folder": FOLDER,
           "uid": UID,
           "max_bytes": param(
@@ -203,7 +206,7 @@ TOOLS = [
          "List messages that arrived after a checkpoint (UIDVALIDITY + UID), "
          "oldest first. Pass back next_since_uid and uidvalidity on the next "
          "call. Does not use or change read/unread state.",
-         READS,
+         ANNOTATED_READS,
          {"folder": FOLDER,
           "since_uid": param(
               "integer", "Last UID already processed. Default 0.", minimum=0),
@@ -223,7 +226,7 @@ TOOLS = [
          "linked IDs are searched, at most 50 IDs each, so a long thread "
          "can be cut short; searched lists the folders. Changes nothing: "
          "messages stay unread.",
-         READS,
+         ANNOTATED_READS,
          {"folder": FOLDER, "uid": UID},
          ["uid"]),
     tool("mail_classify",

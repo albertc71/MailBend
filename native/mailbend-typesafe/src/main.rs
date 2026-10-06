@@ -1,11 +1,12 @@
 //! mailbend-typesafe: MailBend's only connection to TypeSafe's Jev.
 //!
-//!   mailbend-typesafe ask     < request JSON   > TypeSafe's answer
-//!   mailbend-typesafe --check                  (readiness check; no network)
+//!   mailbend-typesafe ask [--once] < request JSON > TypeSafe's answer
+//!   mailbend-typesafe --check                    (readiness check; no network)
 //!
 //! The Bend core builds the request and interprets the answer; this program
 //! only carries it to the fixed endpoint `https://api.typesafe.ai/v1/systemone`
-//! over verified TLS. The key comes only from MAILBEND_TYPESAFE_KEY_FILE,
+//! over verified TLS. It retries an overloaded or timed-out TypeSafe twice,
+//! unless the core asks for one attempt with `--once`. The key comes only from MAILBEND_TYPESAFE_KEY_FILE,
 //! and the program first re-executes itself with an allow-listed
 //! environment, so the key never shares a process with the mail password.
 //! A refused request's answer is written to stdout too, as it holds
@@ -51,21 +52,26 @@ fn run(args: &[OsString]) -> Result<(), Exit> {
         .collect();
     match modes.as_slice() {
         ["--check"] => Ok(()),
-        ["ask"] => {
-            // Refused before the environment is dropped, which would hide it.
-            refuse_typesafe_api_key().map_err(Exit::input)?;
-            environment::confine(args).map_err(Exit::input)?;
-            ask()
-        }
-        _ => Err(Exit::input("usage: mailbend-typesafe ask|--check")),
+        ["ask"] => ask_confined(args, api::Attempts::Retried),
+        ["ask", "--once"] => ask_confined(args, api::Attempts::Once),
+        _ => Err(Exit::input(
+            "usage: mailbend-typesafe ask [--once] | --check",
+        )),
     }
 }
 
-fn ask() -> Result<(), Exit> {
+fn ask_confined(args: &[OsString], attempts: api::Attempts) -> Result<(), Exit> {
+    // Refused before the environment is dropped, which would hide it.
+    refuse_typesafe_api_key().map_err(Exit::input)?;
+    environment::confine(args).map_err(Exit::input)?;
+    ask(attempts)
+}
+
+fn ask(attempts: api::Attempts) -> Result<(), Exit> {
     let settings = settings::Settings::from_env()?;
     let key = settings::read_key()?;
     let request = settings::read_request()?;
-    let (body, result) = match api::ask(&settings, &key, &request) {
+    let (body, result) = match api::ask(&settings, &key, &request, attempts) {
         Ok(body) => (body, Ok(())),
         Err((exit, body)) => (body, Err(exit)),
     };

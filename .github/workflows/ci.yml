@@ -59,6 +59,36 @@ jobs:
             exit 1
           fi
 
+      # The gate laws are about Jev.outbound_checked and Jev.delete_checked,
+      # so the tools reach an SMTP envelope, the SMTP session and a delete
+      # plan only through them. Code is flattened to one line first, so a
+      # call split across lines is still seen.
+      - name: Sends and deletes pass Jev's gates
+        run: |
+          flat() { cat "$@" | tr -s ' \t\n' ' '; }
+          count() { grep -oE "$1" | wc -l; }
+          outside=$(ls src/*.bend main.bend | grep -vxE 'src/(ops|imap)\.bend')
+          if [ "$(flat src/*.bend main.bend | count '[A-Za-z_]\.outbound\(')" -ne 2 ] \
+              || [ "$(flat src/jev.bend | count '[A-Za-z_]\.outbound\(')" -ne 2 ]; then
+            echo "S.outbound is called other than in Jev.outbound_checked in src/jev.bend" >&2
+            exit 1
+          fi
+          # Its definition and the one call that sends what the gate allowed.
+          if [ "$(flat src/*.bend main.bend | count 'smtp_run\(')" -ne 2 ]; then
+            echo "smtp_run has a caller other than the one after Jev's send gate" >&2
+            exit 1
+          fi
+          plans=$(flat $outside | count 'plan_delete')
+          gated=$(flat $outside | count 'delete_checked\( ?[a-z_]+, ?Ops\.plan_delete\(')
+          if [ "$plans" -ne "$gated" ]; then
+            echo "a delete plan is used without Jev.delete_checked" >&2
+            exit 1
+          fi
+          if flat $outside | grep -qE 'Ops\.delete_uids\(|CExpunge'; then
+            echo "an expunge is made outside src/ops.bend and src/imap.bend" >&2
+            exit 1
+          fi
+
       - name: Install Lean (scripts/install-lean.sh, for --verdict)
         run: sh scripts/install-lean.sh
 

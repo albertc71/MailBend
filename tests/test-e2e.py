@@ -174,6 +174,7 @@ def run_all(work):
     dry_runs(work)
     jev(work)
     triage(work)
+    gates(work)
 
 
 def reads(srv):
@@ -638,10 +639,14 @@ MUTATING_CALLS = {
 }
 
 
-def listed_tools(srv, **env):
+def tool_list(srv, **env):
     p = subprocess.run([LAUNCHER, "tools"], capture_output=True, text=True, env=srv.env(**env), timeout=120)
     outputs.extend([p.stdout, p.stderr])
-    return [t["name"] for t in json.loads(p.stdout)]
+    return json.loads(p.stdout)
+
+
+def listed_tools(srv, **env):
+    return [t["name"] for t in tool_list(srv, **env)]
 
 
 def read_only(srv):
@@ -2882,6 +2887,439 @@ def triage_protections(work, key_file):
               and [m["raw"] for m in state["mailboxes"]["Receipts"]["messages"]] == [kept[2]], r)
     finally:
         srv.stop()
+
+
+# Jev's gates: the secret scan and veto questions before a send or delete,
+# and the jev objects of the four reads
+# --------------------------------------------------------------------------
+
+GATE_VALIDITY = FIX["mailboxes"]["INBOX"]["uidvalidity"]
+GATE_SECRET, GATE_TWO_DEEP, GATE_FOUR_DEEP, GATE_UNDECODABLE, GATE_DISPOSABLE, GATE_PREVIEWED, GATE_DEADLINE, \
+    GATE_INJECTION, GATE_BINARY_PART, GATE_WIDE_ALIAS, GATE_GLOBAL, GATE_HEADER_TOKEN, GATE_RACE = range(41, 54)
+GATE_PASSWORD = "Password: hunter22"
+GATE_TOKEN = "ghp_" + "a1B2c3D4" * 4
+GATE_PEM = ("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAfakefakefakefakefake\n"
+            "-----END RSA PRIVATE KEY-----\n")
+GATE_TEXT = "the gated body text"
+ARCHIVE_VALIDITY = FIX["mailboxes"]["Archive"]["uidvalidity"]
+ANNOTATED_READS = [("mail_search", {}), ("mail_get", {"uid": GATE_PREVIEWED}), ("mail_get_new", {"since_uid": 40, "uidvalidity": GATE_VALIDITY}),
+                   ("mail_get_thread", {"uid": 2})]
+
+
+def forwarded(inner, depth):
+    """The raw text of `inner` inside `depth` nested message/rfc822 parts."""
+    raw = inner
+    for level in range(depth):
+        raw = (f"Subject: level {level}\r\nMIME-Version: 1.0\r\n"
+               f"Content-Type: multipart/mixed; boundary=\"n{level}\"\r\n\r\n--n{level}\r\n"
+               f"Content-Type: text/plain\r\n\r\nsee below\r\n--n{level}\r\nContent-Type: message/rfc822\r\n\r\n"
+               f"{raw}\r\n--n{level}--\r\n")
+    return raw
+
+
+def gate_message(uid, raw):
+    return {"uid": uid, "flags": [], "internaldate": "07-Oct-2026 09:00:00 +0000",
+            "raw": f"Message-ID: <gate{uid}@example.com>\r\nFrom: dana@example.com\r\nTo: tester@example.com\r\n{raw}"}
+
+
+def wide_original(charset):
+    """An original whose one text part is the fake password in UTF-16, under
+    the charset name `charset`."""
+    wide = base64.b64encode(GATE_PASSWORD.encode("utf-16")).decode("ascii")
+    return ("Subject: Wide text\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"w\"\r\n\r\n"
+            f"--w\r\nContent-Type: text/plain; charset={charset}\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            f"{wide}\r\n--w--\r\n")
+
+
+def gates_fixture():
+    """INBOX extended with originals to forward, each holding the same fake
+    secret: in a message forwarded inside it, just past the nesting limit
+    (four levels counting the forward itself), in a text part in UTF-16
+    (named utf-16, or unicode, its WHATWG alias), which the scan cannot
+    decode, in a key file attached as application/octet-stream, in a
+    message/global part and in a header field; with messages to delete and
+    to read; and Archive holding a security alert."""
+    fixture = copy.deepcopy(FIX)
+    secret = f"Subject: inner\r\nContent-Type: text/plain\r\n\r\n{GATE_PASSWORD}\r\n"
+    pem = base64.b64encode(GATE_PEM.encode()).decode("ascii")
+    fixture["mailboxes"]["Archive"]["messages"] = [plain_message(1, "Security alert: new sign-in", "Was it you?")]
+    fixture["mailboxes"]["INBOX"]["messages"] += [
+        plain_message(GATE_SECRET, "Account details", GATE_PASSWORD),
+        gate_message(GATE_TWO_DEEP, forwarded(secret, 1)),
+        gate_message(GATE_FOUR_DEEP, forwarded(secret, 3)),
+        gate_message(GATE_UNDECODABLE, wide_original("utf-16")),
+        plain_message(GATE_DISPOSABLE, "[disposable] Weekly newsletter", "news"),
+        plain_message(GATE_PREVIEWED, "[disposable] Monthly newsletter", "news"),
+        plain_message(GATE_DEADLINE, "[disposable] Offer deadline Friday", "news"),
+        plain_message(GATE_INJECTION, f"Please {JEV_PHRASE}", GATE_TEXT),
+        gate_message(GATE_BINARY_PART, "Subject: Keys\r\nMIME-Version: 1.0\r\n"
+                     "Content-Type: multipart/mixed; boundary=\"k\"\r\n\r\n--k\r\n"
+                     "Content-Type: text/plain\r\n\r\nthe key you asked for\r\n--k\r\n"
+                     "Content-Type: application/octet-stream; name=\"id_rsa\"\r\n"
+                     "Content-Disposition: attachment; filename=\"id_rsa\"\r\n"
+                     f"Content-Transfer-Encoding: base64\r\n\r\n{pem}\r\n--k--\r\n"),
+        gate_message(GATE_WIDE_ALIAS, wide_original("unicode")),
+        gate_message(GATE_GLOBAL, "Subject: Global\r\nMIME-Version: 1.0\r\n"
+                     "Content-Type: multipart/mixed; boundary=\"g\"\r\n\r\n--g\r\n"
+                     "Content-Type: text/plain\r\n\r\nsee below\r\n--g\r\nContent-Type: message/global\r\n\r\n"
+                     f"{secret}\r\n--g--\r\n"),
+        gate_message(GATE_HEADER_TOKEN, f"Subject: Deploy\r\nX-Deploy-Token: {GATE_TOKEN}\r\n\r\nsee the header\r\n"),
+        plain_message(GATE_RACE, "[disposable] Old newsletter", "news"),
+    ]
+    return fixture
+
+
+def gate_files(attach_dir):
+    """Files to attach: text, key and config files holding the fake
+    secrets, a UTF-16 file with only its byte order mark to tell, a file
+    named after a token, and a PDF and an image that hold none."""
+    noise = bytes(range(256)) * 64
+    for name, data in [
+        ("keys.txt", f"the deploy token is {GATE_TOKEN}\n".encode()),
+        ("big.txt", ("word " * 210000 + f"\n{GATE_PASSWORD}\n").encode()),
+        ("notes.txt", b"quarterly numbers\n"),
+        ("config.json", json.dumps({"deploy_token": GATE_TOKEN}).encode()),
+        ("id_rsa", GATE_PEM.encode()),
+        ("creds.env", f"DB_HOST=db.example.com\n{GATE_PASSWORD}\n".encode()),
+        ("key.eml", GATE_PEM.encode()),
+        ("wide.txt", b"\xff\xfe" + GATE_PASSWORD.encode("utf-16-le")),
+        (f"{GATE_TOKEN}.txt", b"nothing here\n"),
+        ("report.pdf", b"%PDF-1.7\n" + noise),
+        ("photo.png", b"\x89PNG\r\n\x1a\n" + noise),
+    ]:
+        pathlib.Path(attach_dir, name).write_bytes(data)
+
+
+def has_key(value, key):
+    """Whether `key` names a field anywhere inside the JSON `value`."""
+    if isinstance(value, dict):
+        return key in value or any(has_key(v, key) for v in value.values())
+    if isinstance(value, list):
+        return any(has_key(v, key) for v in value)
+    return False
+
+
+def gate_call(srv, ts, name, args, **env):
+    """A call, with what it logged on the mail server and the requests it
+    made to TypeSafe."""
+    log_start, asked = len(srv.log_records()), len(ts.requests())
+    c, r = tool(srv, name, args, **env)
+    return c, r, srv.log_records()[log_start:], ts.requests()[asked:]
+
+
+def logins(logged):
+    """How many IMAP sessions logged in."""
+    return sum(1 for x in logged if x["proto"] == "imap" and (" LOGIN " in x["line"] or "AUTHENTICATE" in x["line"]))
+
+
+def send_blocked(c, r, logged, needle):
+    """A send the gates blocked before any SMTP, saying why."""
+    error = r.get("error", "")
+    return (c != 0 and needle in error and "nothing was sent" in error and "mail_save_draft" in error
+            and r.get("jev", {}).get("decision") == "blocked" and not [x for x in logged if x["proto"] == "smtp"])
+
+
+def gates(work):
+    work = os.path.realpath(work)
+    key_file = typesafe_key_file(work)
+    attach_dir = os.path.join(work, "gate-attachments")
+    os.makedirs(attach_dir, exist_ok=True)
+    gate_files(attach_dir)
+    srv = Server(work, fixture=gates_fixture())
+    try:
+        gates_tool_list(srv, work, key_file)
+        gates_jev_off(srv)
+        gates_secret_scan(srv, work, key_file, attach_dir)
+        gates_vetoes(srv, work, key_file, attach_dir)
+        gates_failure(srv, work, key_file)
+        gates_annotations(srv, work, key_file)
+    finally:
+        srv.stop()
+    gates_delete(work, key_file)
+
+
+def gates_tool_list(srv, work, key_file):
+    ts = TypeSafe(work)
+    try:
+        for title, env, more in [("jev off", {}, set()), ("jev on", jev_env(ts, key_file), {"mail_triage"})]:
+            tools = tool_list(srv, **env)
+            changing = {t["name"]: t for t in tools if not t["annotations"]["readOnlyHint"]}
+            missing = [n for n, t in changing.items() if "dry_run" not in t["inputSchema"]["properties"]]
+            check(f"gates, {title}: every tool that is not read-only is listed with a dry_run argument",
+                  set(changing) == set(MUTATING_CALLS) | more and not missing, (sorted(changing), missing))
+        open_world = {t["name"] for t in tool_list(srv) if t["annotations"]["readOnlyHint"]
+                      and t["annotations"]["openWorldHint"]}
+        check("gates: of the reads, the four Jev may annotate are marked open-world",
+              open_world == {name for name, _ in ANNOTATED_READS}, open_world)
+    finally:
+        ts.stop()
+
+
+def gates_jev_off(srv):
+    n = sent_count(srv)
+    c, r = tool(srv, "mail_send", {**SEND, "body": GATE_PASSWORD})
+    check("gates, jev off: a send is not scanned and goes", c == 0 and sent_count(srv) == n + 1
+          and "secret_scan" not in r and "jev" not in r, r)
+    shown = [(name, r) for name, args in ANNOTATED_READS for c, r in [tool(srv, name, args)]
+             if c != 0 or has_key(r, "jev")]
+    check("gates, jev off: no read carries a jev object", not shown, shown)
+
+
+def gates_secret_scan(srv, work, key_file, attach_dir):
+    ts = TypeSafe(work)
+    try:
+        env = jev_env(ts, key_file, MAILBEND_ATTACH_DIR=attach_dir)
+        original = {"uidvalidity": GATE_VALIDITY, "to": FRIEND}
+        n = sent_count(srv)
+        bad = []
+        def attached(name):
+            return {**SEND, "attachments": [{"path": name}]}
+        for title, name, args, scan, needle in [
+            ("a password line in the body", "mail_send", {**SEND, "body": f"Hi,\n{GATE_PASSWORD}\n"}, "found",
+             "in the body"),
+            ("a token in the subject", "mail_send", {**SEND, "subject": f"token {GATE_TOKEN}"}, "found",
+             "in the subject field"),
+            ("a token in In-Reply-To", "mail_send", {**SEND, "in_reply_to": f"<{GATE_TOKEN}@example.com>"},
+             "found", "in the in-reply-to field"),
+            ("a token in References", "mail_send", {**SEND, "references": f"<a@example.com> <{GATE_TOKEN}@x>"},
+             "found", "in the references field"),
+            ("a token as a recipient's display name", "mail_send", {**SEND, "to": f'"{GATE_TOKEN}" <{FRIEND}>'},
+             "found", "in the to field"),
+            ("a token in a text attachment", "mail_send", attached("keys.txt"), "found", "attachment 1 > text/plain"),
+            ("a token in config.json", "mail_send", attached("config.json"), "found",
+             "attachment 1 > application/json"),
+            ("a private key in id_rsa", "mail_send", attached("id_rsa"), "found",
+             "attachment 1 > application/octet-stream"),
+            ("a password line in creds.env", "mail_send", attached("creds.env"), "found",
+             "attachment 1 > application/octet-stream"),
+            ("a private key in an .eml with no blank line", "mail_send", attached("key.eml"), "found",
+             "the header of attachment 1 > message/rfc822"),
+            ("a UTF-16 file with only its byte order mark to tell", "mail_send", attached("wide.txt"), "incomplete",
+             "cannot be decoded"),
+            ("a password line in a reply", "mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY,
+                                                         "body": GATE_PASSWORD}, "found", "in the body"),
+            ("a password line quoted from the original in a reply", "mail_reply",
+             {"uid": GATE_SECRET, "uidvalidity": GATE_VALIDITY, "body": "thanks"}, "found", "in the body"),
+            ("a password line in the forwarded original", "mail_forward", {**original, "uid": GATE_SECRET}, "found",
+             "attachment 1 > message/rfc822 > text/plain"),
+            ("a password line in a message forwarded inside the original", "mail_forward",
+             {**original, "uid": GATE_TWO_DEEP}, "found", "message/rfc822 > message/rfc822"),
+            ("a private key in an octet-stream part of the original", "mail_forward",
+             {**original, "uid": GATE_BINARY_PART}, "found", "message/rfc822 > application/octet-stream"),
+            ("a password line in a message/global part of the original", "mail_forward",
+             {**original, "uid": GATE_GLOBAL}, "found", "message/global"),
+            ("a token in a header field of the original", "mail_forward", {**original, "uid": GATE_HEADER_TOKEN},
+             "found", "the header of attachment 1 > message/rfc822"),
+            ("a password in a forward nested past 3 levels", "mail_forward", {**original, "uid": GATE_FOUR_DEEP},
+             "incomplete", "more than 3 levels deep"),
+            ("a password in a text part it cannot decode", "mail_forward", {**original, "uid": GATE_UNDECODABLE},
+             "incomplete", "cannot be decoded"),
+            ("a password in UTF-16 under the charset name unicode", "mail_forward",
+             {**original, "uid": GATE_WIDE_ALIAS}, "incomplete", "cannot be decoded"),
+            ("a password just past 1 MB of text", "mail_send", attached("big.txt"), "incomplete",
+             "more than 1 MB of text"),
+        ]:
+            c, r, logged, asked = gate_call(srv, ts, name, args, **env)
+            if not (send_blocked(c, r, logged, needle) and r.get("secret_scan") == scan and not asked
+                    and r["jev"].get("status") == "unchecked"):
+                bad.append((title, r, asked))
+        check("gates: the secret scan blocks a send, reply or forward that holds a secret, or that it cannot read "
+              "in full, before asking TypeSafe and before any SMTP", not bad and sent_count(srv) == n, bad)
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", attached(f"{GATE_TOKEN}.txt"), **env)
+        check("gates: a secret in an attachment's name is blocked, and the result names the attachment by its "
+              "position, never by the name", send_blocked(c, r, logged, "in the name of attachment 1")
+              and GATE_TOKEN not in json.dumps(r), r)
+        c, r, logged, asked = gate_call(srv, ts, "mail_save_draft", {**SEND, "body": GATE_PASSWORD}, **env)
+        check("gates: a draft is never scanned or asked about", c == 0 and r.get("saved_to") == "Drafts"
+              and "secret_scan" not in r and "jev" not in r and not asked, r)
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "body": "the password is not in this mail"},
+                                        **env)
+        check("gates: a clean send asks Jev and goes", c == 0 and r.get("secret_scan") == "clean"
+              and r.get("jev", {}).get("decision") == "proceeded" and r["jev"].get("status") == "checked"
+              and len(asked) == 1 and sent_count(srv) == n + 1, (r, asked))
+        sent = [(name, r) for name in ("report.pdf", "photo.png")
+                for c, r, logged, asked in [gate_call(srv, ts, "mail_send", attached(name), **env)]
+                if c != 0 or r.get("secret_scan") != "clean"]
+        check("gates: a PDF or an image that holds no secret is read and still sends", not sent
+              and sent_count(srv) == n + 3, sent)
+    finally:
+        ts.stop()
+
+
+def gates_vetoes(srv, work, key_file, attach_dir):
+    ts = TypeSafe(work)
+    try:
+        env = jev_env(ts, key_file, MAILBEND_ATTACH_DIR=attach_dir)
+        send = {**SEND, "body": GATE_TEXT, "attachments": [{"path": "notes.txt"}]}
+        n = sent_count(srv)
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", send, **env)
+        states = [q["body"]["state"] for q in asked]
+        check("gates, headers mode: Jev sees the outgoing header fields and attachment names, never the body",
+              c == 0 and len(states) == 1 and states[0]["outgoing"].get("subject") == SEND["subject"]
+              and states[0]["outgoing"].get("attachments") == ["notes.txt"] and not has_key(states, "text")
+              and GATE_TEXT not in json.dumps(states) and "quarterly numbers" not in json.dumps(states), (r, states))
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", send, **env, **BODY_MODE)
+        states = [q["body"]["state"] for q in asked]
+        check("gates, body mode: Jev sees the outgoing text too", c == 0 and len(states) == 1
+              and states[0]["outgoing"].get("text") == GATE_TEXT and r.get("jev", {}).get("content") == "body",
+              (r, states))
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "subject": "[veto] plans"}, **env)
+        check("gates: a send Jev vetoes is blocked", send_blocked(c, r, logged, "Jev vetoed it")
+              and "a recipient may not belong" in r["error"] and r.get("secret_scan") == "clean", r)
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "subject": "[veto] plans", "dry_run": True},
+                                        **env)
+        check("gates: a dry run of a vetoed send shows the veto", send_blocked(c, r, logged, "Jev vetoed it"), r)
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "dry_run": True}, **env)
+        check("gates: a dry run of a send shows the verdict, and sends nothing", c == 0 and r.get("dry_run") is True
+              and r.get("secret_scan") == "clean" and r.get("jev", {}).get("decision") == "proceeded"
+              and len(asked) == 1 and not [x for x in logged if x["proto"] == "smtp"], r)
+        c, r, logged, asked = gate_call(srv, ts, "mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY,
+                                                                "body": GATE_TEXT, "reply_all": True}, **env)
+        body = asked[0]["body"] if asked else {}
+        check("gates: a clean reply-all asks about the recipients, disclosure and replying to all, and goes",
+              c == 0 and set(body.get("questions", {})) == {"recipients", "disclosure", "reply_all"}
+              and "original" in body.get("state", {}), (r, body))
+        c, r, logged, asked = gate_call(srv, ts, "mail_forward", {"uid": 2, "uidvalidity": GATE_VALIDITY, "to": FRIEND},
+                                        **env)
+        body = asked[0]["body"] if asked else {}
+        check("gates: a clean forward asks whether the original may be shared, and goes",
+              c == 0 and set(body.get("questions", {})) == {"recipients", "disclosure", "forward"}, (r, body))
+        check("gates: only the sends Jev cleared were delivered", sent_count(srv) == n + 4, sent_count(srv) - n)
+    finally:
+        ts.stop()
+
+
+def gate_delete_args(*uids, dry=False):
+    return {"uids": list(uids), "uidvalidity": GATE_VALIDITY, "confirm": "permanently-delete", "dry_run": dry}
+
+
+def gates_delete(work, key_file):
+    srv = Server(work, fixture=gates_fixture())
+    ts = TypeSafe(work)
+    try:
+        gates_delete_vetoes(srv, ts, key_file)
+        gates_delete_race(srv, work, key_file)
+    finally:
+        ts.stop()
+        srv.stop()
+    srv = Server(work, caps="MOVE,SPECIAL-USE,IDLE", fixture=gates_fixture())
+    ts = TypeSafe(work)
+    try:
+        before = srv.st()
+        c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_DISPOSABLE),
+                                        **jev_env(ts, key_file))
+        check("gates: without UIDPLUS a delete is refused before TypeSafe is asked", c != 0
+              and "UIDPLUS" in r.get("error", "") and not asked and srv.st() == before, (r, asked))
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def gates_delete_vetoes(srv, ts, key_file):
+    env = jev_env(ts, key_file)
+    before = srv.st()
+    c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_PREVIEWED, dry=True), **env)
+    check("gates: a dry run of a delete shows Jev's verdict with the plan, and deletes nothing",
+          c == 0 and r.get("dry_run") is True and any("UID EXPUNGE" in line for line in r.get("imap", []))
+          and r.get("jev", {}).get("decision") == "proceeded" and srv.st() == before and len(asked) == 1, r)
+    c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_DISPOSABLE, GATE_DEADLINE), **env)
+    changing = [x["line"] for x in logged if any(t in x["line"] for t in MUTATING_COMMANDS)]
+    check("gates: a delete in which Jev would keep any message is blocked whole",
+          c != 0 and "Jev vetoed it" in r.get("error", "") and "nothing was deleted" in r["error"]
+          and f"UID {GATE_DEADLINE} carries an open action" in r["error"]
+          and r.get("jev", {}).get("decision") == "blocked" and srv.st() == before and not changing, r)
+    c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_DISPOSABLE), **env)
+    check("gates: a delete with no veto goes", c == 0 and r.get("permanently_deleted") is True
+          and GATE_DISPOSABLE not in msgs(srv.st(), "INBOX") and r.get("jev", {}).get("decision") == "proceeded", r)
+    refused(srv, "gates: a delete of more than 50 UIDs is refused with Jev on", "mail_delete",
+            gate_delete_args(*range(1, 52)), "at most 50 UIDs", **env)
+    c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(900), **env)
+    check("gates: a delete of UIDs that do not exist asks TypeSafe nothing", c != 0
+          and "none of these UIDs exist" in r.get("error", "") and not asked, r)
+
+
+def gates_delete_race(srv, work, key_file):
+    """A delete names a UID the folder does not hold yet; while TypeSafe is
+    slow to answer, a security alert moves in and takes that UID."""
+    ts = TypeSafe(work, "slow:6")
+    try:
+        env = jev_env(ts, key_file, MAILBEND_TIMEOUT_MS="60000")
+        uidnext = max(msgs(srv.st(), "INBOX")) + 1
+        out = {}
+        call = threading.Thread(target=lambda: out.update(
+            r=tool(srv, "mail_delete", gate_delete_args(GATE_RACE, uidnext), **env)))
+        call.start()
+        time.sleep(2.5)
+        moved = tool(srv, "mail_move", {"folder": "Archive", "uids": [1], "uidvalidity": ARCHIVE_VALIDITY,
+                                        "destination": "INBOX"})
+        call.join()
+        c, r = out["r"]
+        inbox = msgs(srv.st(), "INBOX")
+        asked = json.dumps([q["body"] for q in ts.requests()])
+        check("gates: a delete removes only the messages Jev was asked about, and a UID taken meanwhile is "
+              "reported missing", moved[0] == 0 and c == 0 and r.get("changed") == [GATE_RACE]
+              and r.get("missing") == [uidnext] and GATE_RACE not in inbox and uidnext in inbox
+              and "Security alert" in inbox[uidnext]["raw"] and "Security alert" not in asked, (moved, r))
+    finally:
+        ts.stop()
+
+
+def gates_failure(srv, work, key_file):
+    ts = TypeSafe(work, "status:503")
+    try:
+        env = jev_env(ts, key_file)
+        n, before = sent_count(srv), srv.st()
+        bad = []
+        for name, args in [("mail_send", SEND), ("mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY, "body": "x"}),
+                           ("mail_forward", {"uid": 2, "uidvalidity": GATE_VALIDITY, "to": FRIEND})]:
+            c, r, logged, asked = gate_call(srv, ts, name, args, **env)
+            if not (send_blocked(c, r, logged, "could not be checked with Jev")
+                    and r["jev"].get("status") == "unchecked" and len(asked) == 3):
+                bad.append((name, r, len(asked)))
+        c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_PREVIEWED), **env)
+        if not (c != 0 and "could not be checked with Jev" in r.get("error", "")
+                and "nothing was deleted" in r["error"]):
+            bad.append(("mail_delete", r))
+        check("gates: TypeSafe failing blocks send, reply, forward and delete, each after its retries", not bad
+              and sent_count(srv) == n and srv.st()["mailboxes"] == before["mailboxes"], bad)
+        unchecked = []
+        for name, args in ANNOTATED_READS:
+            c, r, logged, asked = gate_call(srv, ts, name, args, **env)
+            jevs = [m.get("jev") for m in r["messages"]] if "messages" in r else [r.get("jev")]
+            if not (c == 0 and jevs and all(j and j.get("status") == "unchecked" for j in jevs) and len(asked) == 1):
+                unchecked.append((name, r, len(asked)))
+        check("gates: TypeSafe failing leaves the reads working, every message unchecked after a single attempt",
+              not unchecked, unchecked)
+    finally:
+        ts.stop()
+
+
+def gates_annotations(srv, work, key_file):
+    ts = TypeSafe(work)
+    try:
+        env = jev_env(ts, key_file)
+        c, r = tool(srv, "mail_search", {}, **env)
+        listed = {m["uid"]: m.get("jev", {}) for m in r.get("messages", [])}
+        check("gates: every message mail_search lists carries a checked jev object",
+              c == 0 and listed and all(j.get("status") == "checked" for j in listed.values()), r)
+        flagged = {uid for uid, j in listed.items() if j.get("signals", {}).get("suspected_injection")}
+        check("gates: suspected_injection is shown only where Jev suspects it", flagged == {GATE_INJECTION}, listed)
+        missing = [(name, r) for name, args in ANNOTATED_READS[1:] for c, r in [tool(srv, name, args, **env)]
+                   if c != 0 or not has_key(r, "jev")]
+        check("gates: mail_get, mail_get_new and mail_get_thread carry jev objects", not missing, missing)
+        extra = [(name, r) for name in ("mail_probe", "mail_list_folders") for c, r in [tool(srv, name, {}, **env)]
+                 if c != 0 or has_key(r, "jev")]
+        check("gates: the other reads carry no jev object", not extra, extra)
+        sessions = {title: [logins(gate_call(srv, ts, name, args, **e)[2]) for e in ({}, env)]
+                    for title, name, args in [("thread", *ANNOTATED_READS[3]), ("search", *ANNOTATED_READS[0])]}
+        check("gates: an annotated mail_get_thread reuses the folders it resolved, and mail_search lists them in "
+              "one more session, two with SPECIAL-USE", sessions["thread"][0] == sessions["thread"][1]
+              and sessions["search"][1] == sessions["search"][0] + 2, sessions)
+        states = [q["body"]["state"] for q in ts.requests()]
+        check("gates, headers mode: the reads never send a message body to TypeSafe",
+              states and not has_key(states, "text") and GATE_TEXT not in json.dumps(states), states[:1])
+    finally:
+        ts.stop()
 
 
 if __name__ == "__main__":
