@@ -30,7 +30,7 @@ type Op is Data:
   OForward{}
 
 # Read-only operations never change the mailbox or send mail.
-def is_read_only(+op: Op) -> Bool:
+def is_read_only(op: Op) -> Bool:
   match op:
     case OProbe{}:
       True{}
@@ -46,7 +46,7 @@ def is_read_only(+op: Op) -> Bool:
       False{}
 
 # Destructive operations can lose mail: only permanent deletion.
-def is_destructive(+op: Op) -> Bool:
+def is_destructive(op: Op) -> Bool:
   match op:
     case ODelete{}:
       True{}
@@ -54,7 +54,7 @@ def is_destructive(+op: Op) -> Bool:
       False{}
 
 # The name of the tool that runs an operation.
-def name(+op: Op) -> String:
+def name(op: Op) -> String:
   match op:
     case OProbe{}:
       "mail_probe"
@@ -145,7 +145,7 @@ def find_op(ops: List<&2, Op>, +n: String) -> Maybe<&2, Op>:
       Bool.pick(Maybe<&2, Op>, String.eq(name(op), n), Some{op}, find_op(t, n))
 
 # The operation whose tool is named `n`, if any.
-def from_name(+n: String) -> Maybe<&2, Op>:
+def from_name(n: String) -> Maybe<&2, Op>:
   find_op(all_ops(), n)
 
 # Read plans
@@ -158,7 +158,7 @@ def plan_probe() -> List<&2, I.Cmd>:
 
 # Before a change: capabilities, folders, and the folder's UIDVALIDITY
 # (EXAMINE, read-only).
-def plan_preflight(+mbox: String) -> List<&2, I.Cmd>:
+def plan_preflight(mbox: String) -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}, I.CExamine{mbox}]
 
 # Capabilities and folders, for listing them.
@@ -177,7 +177,7 @@ def plan_roles() -> List<&2, I.Cmd>:
   [I.CListRoles{}]
 
 # The UIDs in `mbox` that match every key.
-def plan_search(+mbox: String, +keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
+def plan_search(mbox: String, keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CSearch{keys}]
 
 # The largest UID, 2^32 - 1.
@@ -186,7 +186,7 @@ def max_uid() -> U32:
 
 # No UID follows the largest one, so a checkpoint there only examines the
 # folder (for its UIDVALIDITY): since + 1 would wrap to the invalid UID 0.
-def plan_new_if(+at_end: Bool, +mbox: String, +since: U32) -> List<&2, I.Cmd>:
+def plan_new_if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
   match at_end:
     case True{}:
       [I.CExamine{mbox}]
@@ -194,18 +194,18 @@ def plan_new_if(+at_end: Bool, +mbox: String, +since: U32) -> List<&2, I.Cmd>:
       [I.CExamine{mbox}, I.CSearch{[I.KUidFrom{(since + 1 : U32)}]}]
 
 # The UIDs in `mbox` above the checkpoint `since`.
-def plan_new(+mbox: String, +since: U32) -> List<&2, I.Cmd>:
+def plan_new(mbox: String, +since: U32) -> List<&2, I.Cmd>:
   plan_new_if(U32.is_eq(since, max_uid()), mbox, since)
 
 # The summaries (flags, date, size, header fields) of `uids`.
-def plan_headers(+mbox: String, +uids: List<&2, U32>) -> List<&2, I.Cmd>:
+def plan_headers(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
   [
     I.CExamine{mbox},
     I.CFetch{uids, [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]}
   ]
 
 # One message in full, its body cut at `max` bytes.
-def plan_get(+mbox: String, +uid: U32, +max: U32) -> List<&2, I.Cmd>:
+def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
   [
     I.CExamine{mbox},
     I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
@@ -242,7 +242,7 @@ def delete_uids(+uids: List<&2, U32>) -> List<&2, I.Cmd>:
 
 # Marking read or unread: the guard, then one store of \Seen.
 def plan_mark(
-  +mbox: String, +uids: List<&2, U32>, +seen: Bool, +uidv: U32
+  mbox: String, +uids: List<&2, U32>, seen: Bool, uidv: U32
 ) -> List<&2, I.Cmd>:
   guarded(mbox, uids, uidv, [I.CStore{uids, seen, I.FSeen{}}])
 
@@ -295,12 +295,12 @@ def plan_unflag(
 # and expunges exactly those UIDs, which needs UIDPLUS (see with_uidplus).
 # With neither, no plan.
 def plan_move(
-  +mbox: String,
+  mbox: String,
   +uids: List<&2, U32>,
-  +dest: String,
-  +move: Bool,
-  +uidplus: Bool,
-  +uidv: U32
+  dest: String,
+  move: Bool,
+  uidplus: Bool,
+  uidv: U32
 ) -> List<&2, I.Cmd>:
   match move:
     case True{}:
@@ -311,12 +311,12 @@ def plan_move(
 
 # Trash is a move into the Trash mailbox; it never deletes on its own.
 def plan_trash(
-  +mbox: String,
-  +uids: List<&2, U32>,
-  +trash: String,
-  +move: Bool,
-  +uidplus: Bool,
-  +uidv: U32
+  mbox: String,
+  uids: List<&2, U32>,
+  trash: String,
+  move: Bool,
+  uidplus: Bool,
+  uidv: U32
 ) -> List<&2, I.Cmd>:
   plan_move(mbox, uids, trash, move, uidplus, uidv)
 
@@ -326,11 +326,11 @@ def confirm_word() -> String:
 
 # Permanent deletion of `uids` once `confirm` holds; without it, no plan.
 def plan_delete_if(
-  +confirm: Bool,
-  +mbox: String,
+  confirm: Bool,
+  mbox: String,
   +uids: List<&2, U32>,
-  +uidplus: Bool,
-  +uidv: U32
+  uidplus: Bool,
+  uidv: U32
 ) -> List<&2, I.Cmd>:
   match confirm:
     case True{}:
@@ -343,28 +343,28 @@ def plan_delete_if(
 # again in the deleting session before anything is marked. Without both
 # there is no plan.
 def plan_delete(
-  +mbox: String,
-  +uids: List<&2, U32>,
-  +confirm: String,
-  +uidplus: Bool,
-  +uidv: U32
+  mbox: String,
+  uids: List<&2, U32>,
+  confirm: String,
+  uidplus: Bool,
+  uidv: U32
 ) -> List<&2, I.Cmd>:
   plan_delete_if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
 
 # A label is an iCloud folder, so labelling is moving: every law about
 # plan_move holds for it unchanged.
 def plan_label(
-  +mbox: String,
-  +uids: List<&2, U32>,
-  +label: String,
-  +move: Bool,
-  +uidplus: Bool,
-  +uidv: U32
+  mbox: String,
+  uids: List<&2, U32>,
+  label: String,
+  move: Bool,
+  uidplus: Bool,
+  uidv: U32
 ) -> List<&2, I.Cmd>:
   plan_move(mbox, uids, label, move, uidplus, uidv)
 
 # Saving a draft appends `msg` to `drafts`, marked as a draft and seen.
-def plan_draft(+drafts: String, +msg: String) -> List<&2, I.Cmd>:
+def plan_draft(drafts: String, msg: String) -> List<&2, I.Cmd>:
   [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]
 
 # Folder plans
@@ -382,12 +382,12 @@ def plan_create(+mbox: String) -> List<&2, I.Cmd>:
 
 # The name a folder of a renamed tree gets: `from` becomes `to`, and a folder
 # inside `from` keeps its path below it.
-def renamed_to(+from: String, +to: String, +name: String) -> String:
+def renamed_to(from: String, to: String, name: String) -> String:
   to ++ String.drop(name, String.length(from))
 
 # SUBSCRIBE of the new name of each moved folder, then `rest`.
 def subscribe_moved(
-  +from: String, +to: String, +moved: List<&2, String>, +rest: List<&2, I.Cmd>
+  +from: String, +to: String, moved: List<&2, String>, rest: List<&2, I.Cmd>
 ) -> List<&2, I.Cmd>:
   match moved:
     case Nil{}:
@@ -397,7 +397,7 @@ def subscribe_moved(
         <> subscribe_moved(from, to, t, rest)
 
 # UNSUBSCRIBE of the old name of each moved folder.
-def unsubscribe_old(+moved: List<&2, String>) -> List<&2, I.Cmd>:
+def unsubscribe_old(moved: List<&2, String>) -> List<&2, I.Cmd>:
   match moved:
     case Nil{}:
       []
@@ -423,7 +423,7 @@ def plan_rename(
 # that copies or destroys mail decides. On its own this says nothing about
 # which UIDs were copied; `copied` and `expunged` below let the laws tie the
 # expunged set to the copied (or marked) one.
-def loses_mail(+cs: List<&2, I.Cmd>) -> Bool:
+def loses_mail(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
@@ -433,7 +433,7 @@ def loses_mail(+cs: List<&2, I.Cmd>) -> Bool:
       Bool.pick(Bool, I.copies_mail(e) || destroys, destroys, loses_mail(t))
 
 # The UIDs of a plan's first UID EXPUNGE, if it has one.
-def expunged(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
+def expunged(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
   match cs:
     case Nil{}:
       None{}
@@ -443,7 +443,7 @@ def expunged(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
       expunged(t)
 
 # The UIDs of a plan's first UID COPY, if it has one.
-def copied(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
+def copied(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
   match cs:
     case Nil{}:
       None{}
@@ -453,7 +453,7 @@ def copied(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
       copied(t)
 
 # The UIDs a plan first marks \Deleted, if any.
-def marked_deleted(+cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
+def marked_deleted(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
   match cs:
     case Nil{}:
       None{}
@@ -516,7 +516,7 @@ def only_flag_stores(cs: List<&2, I.Cmd>) -> Bool:
 # Whether `s` starts with `p`. Unlike String.starts_with it looks at `p`
 # first, so it decides as soon as a known prefix is matched even when the
 # rest of `s` is unknown (which is what the laws about rendering need).
-def has_prefix(+p: String, +s: String) -> Bool:
+def has_prefix(p: String, s: String) -> Bool:
   match p:
     case SNil{}:
       True{}
@@ -535,7 +535,7 @@ def peek_safe(+s: String) -> Bool:
 
 # Whether a plan opens with the UIDVALIDITY guard (after any UIDPLUS check):
 # SELECT, then an expectation of the folder's UIDVALIDITY reply.
-def pinned(+cs: List<&2, I.Cmd>) -> Bool:
+def pinned(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Con{I.CSelect{_}, Con{I.CExpect{e}, _}}:
       has_prefix("* OK [UIDVALIDITY ", e)
@@ -546,7 +546,7 @@ def pinned(+cs: List<&2, I.Cmd>) -> Bool:
 
 # The exact UIDVALIDITY line a plan's guard expects: `empty` for no plan at
 # all, and "" for a plan that changes messages without the guard.
-def pin_line_or(+cs: List<&2, I.Cmd>, +empty: String) -> String:
+def pin_line_or(cs: List<&2, I.Cmd>, empty: String) -> String:
   match cs:
     case Nil{}:
       empty
@@ -559,7 +559,7 @@ def pin_line_or(+cs: List<&2, I.Cmd>, +empty: String) -> String:
 
 # Whether a plan confirms UIDPLUS in its own session before anything else:
 # CAPABILITY, then the expectation of the word UIDPLUS.
-def checks_uidplus(+cs: List<&2, I.Cmd>) -> Bool:
+def checks_uidplus(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Con{I.CCapability{}, Con{I.CExpectWord{w}, _}}:
       String.eq(w, "UIDPLUS")
