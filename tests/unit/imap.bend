@@ -264,6 +264,8 @@ def check_names_and_dates() -> IO(Unit):
       U32.show(I.internal_seconds("20-Sep-2026 09:00:00 +0000")),
       U32.show(I.internal_seconds(" 1-Mar-2024 12:30:15 -0700")),
       U32.show(I.internal_seconds("29-Feb-2024 00:00:00 +0000")),
+      U32.show(I.internal_seconds("06-OCT-2026 09:00:00 +0000")),
+      U32.show(I.internal_seconds("06-Foo-2026 09:00:00 +0000")),
       U32.show(I.internal_seconds("not a date"))], " "))
 
 # Framing
@@ -493,7 +495,7 @@ def main() -> IO(Unit):
 #|&- ~ a a&ZeU-b&- &AAk- []
 #|&|a|😀|�|�|�A||Inbox-|😀 x
 #|1-Feb-2026;31-Dec-2026;9-Feb-2026;bad;bad;bad;bad;bad;bad;bad;bad;bad;bad;bad;
-#|0 0 0 1789894800 1709321415 1709164800 0
+#|0 0 0 1789894800 1709321415 1709164800 1791277200 0 0
 #|* X <L>{1:abc};* Y <L> Z{1:};
 #|* A {}{0:};* B {1a}{0:};* C {a1}{0:};* D 12}{0:};
 #|a1 OK {3}{0:};abc{0:};x* {2}{0:};ab{0:};

@@ -275,7 +275,8 @@ type Utf7Encoder is Data:
 type Utf7Decoder is Data:
   Utf7Decoder{out: String, b64: String, shifted: Bool}
 
-# A code point past U+FFFF as a UTF-16BE surrogate pair.
+# The four UTF-16BE bytes of the surrogate pair for a code point past U+FFFF,
+# given as `m`, its offset above U+10000 (20 bits).
 def utf16be.pair(+m: U32) -> String:
   +hi = (55296 + (m >> 10n) : U32)
   +lo = (56320 + (m .&. 1023) : U32)
@@ -809,18 +810,21 @@ def imap_date(iso: String) -> Maybe<&2, String>:
 def date_num(s: String) -> U32:
   Maybe.default(&2, U32, U32.read(s), 0)
 
-# The number of the month abbreviated `name`, from month `k` down to 1; 0
-# when none is. Each step is one short comparison.
+# The number of the month abbreviated `name` (upper case), from month `k`
+# down to 1; 0 when none is. Each step is one short comparison.
 def month_number.go(+k: Nat, +name: String) -> U32:
   match k:
     case 0n:
       0
     case 1n+p:
       +m = (U32.from_nat(p) + 1 : U32)
-      Bool.pick(U32, String.eq(C.month_name(m), name), m, month_number.go(p, name))
+      Bool.pick(U32, String.eq(String.to_upper(C.month_name(m)), name), m,
+        month_number.go(p, name))
 
+# The number of the month abbreviated `name` in any case (IMAP strings are
+# case-insensitive, RFC 3501 9); 0 when it is no month.
 def month_number(name: String) -> U32:
-  month_number.go(12n, name)
+  month_number.go(12n, String.to_upper(name))
 
 # A "+hhmm" or "-hhmm" zone's offset in seconds.
 def zone_seconds(hhmm: String) -> U32:
@@ -838,15 +842,18 @@ def utc(local: U32, zone: String) -> U32:
       local
 
 # The seconds in UTC of a date's day ("dd-Mon-yyyy"), time ("hh:mm:ss") and
-# zone, split into their fields.
+# zone, split into their fields; 0 when the month does not read, which
+# days_from_civil would take for the December before.
 def civil_seconds(
   dmy: List<&2, String>, hms: List<&2, String>, zone: String
 ) -> U32:
   match dmy hms:
     case d <> mon <> y <> Nil{} h <> mi <> s <> Nil{}:
-      days = C.days_from_civil(date_num(y), month_number(mon), date_num(d))
-      utc((days * 86400 + date_num(h) * 3600 + date_num(mi) * 60 + date_num(s) : U32),
-        zone)
+      +m = month_number(mon)
+      days = C.days_from_civil(date_num(y), m, date_num(d))
+      Bool.pick(U32, U32.is_zero(m), 0,
+        utc((days * 86400 + date_num(h) * 3600 + date_num(mi) * 60 + date_num(s) : U32),
+          zone))
     case _ _:
       0
 

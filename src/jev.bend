@@ -614,7 +614,7 @@ def option_keys(names: List<&2, String>, o: Options) -> List<&2, String>:
 # Whether the options leave room for a message: one with the largest UID
 # and no header fields fits a request on its own.
 def leaves_room(c: Content, opts: Options) -> Bool:
-  bare : Facts = Facts{4294967295, [], [], "", 0, Known{[]}, Complete{}}
+  bare : Facts = Facts{Ops.max_uid(), [], [], "", 0, Known{[]}, Complete{}}
   Maybe.is_some(&2, U32, text_room(entry(c, bare, "", opts)))
 
 # A message that starts a request (its entry `e`): whole when it fits.
