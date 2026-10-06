@@ -286,7 +286,8 @@ enforced are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#diagrams).
 ## Development
 
 ```sh
-bend PROOF.bend              # the safety laws: must print "ALL PROOFS CHECK"
+sh scripts/install-lean.sh   # once: the Lean that bend --verdict needs
+bend PROOF.bend --verdict    # the safety laws, rechecked by the proven kernel: must print "ALL PROOFS CHECK"
 sh tests/run-unit.sh         # Bend unit tests (JSON, codecs, IMAP, MIME, addresses)
 bash tests/test-transport.sh # TLS helper against a local TLS server
 python3 tests/test-cloud-network.py # local HTTPS DNS, address fallback, TLS/SNI

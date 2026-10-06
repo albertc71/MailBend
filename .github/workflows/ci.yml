@@ -50,8 +50,13 @@ jobs:
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
 
-      - name: Safety proofs
-        run: bend PROOF.bend
+      - name: Install Lean (scripts/install-lean.sh, for --verdict)
+        run: sh scripts/install-lean.sh
+
+      # --verdict checks the proofs, then rechecks every def with Bend's
+      # proven BendTT kernel (built with Lean on first use).
+      - name: Safety proofs, rechecked by the proven kernel
+        run: bend PROOF.bend --verdict
 
       - name: Unit tests
         run: sh tests/run-unit.sh

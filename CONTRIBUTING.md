@@ -29,7 +29,8 @@ Run these before opening a pull request (CI runs the same on Linux x64):
 ```sh
 scripts/install.sh --install-bend   # builds, installs the pinned Bend if missing
 sh scripts/scan-secrets.sh          # redacted secret scan, tree and history
-bend PROOF.bend                     # must print "ALL PROOFS CHECK"
+sh scripts/install-lean.sh          # once: the Lean that bend --verdict needs
+bend PROOF.bend --verdict           # must print "ALL PROOFS CHECK"
 sh tests/run-unit.sh
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
