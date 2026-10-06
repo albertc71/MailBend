@@ -103,7 +103,7 @@ type Effect is Data:
 # EMail: flags, moves or appends messages. ECopy: adds copies. EExpunge:
 # permanently removes messages. EFolder: creates, renames, subscribes or
 # unsubscribes a folder.
-def effect(+c: Cmd) -> Effect:
+def effect(c: Cmd) -> Effect:
   match c:
     case CCapability{}:
       ENone{}
@@ -145,7 +145,7 @@ def effect(+c: Cmd) -> Effect:
       ENone{}
 
 # Whether an effect can change the mailbox: EXAMINE, SEARCH and FETCH cannot.
-def writes(+e: Effect) -> Bool:
+def writes(e: Effect) -> Bool:
   match e:
     case ENone{}:
       False{}
@@ -164,7 +164,7 @@ def writes(+e: Effect) -> Bool:
 # kind of effect must be classified here too.
 
 # Whether an effect adds, removes or flags messages.
-def changes_mail(+e: Effect) -> Bool:
+def changes_mail(e: Effect) -> Bool:
   match e:
     case ENone{}:
       False{}
@@ -180,7 +180,7 @@ def changes_mail(+e: Effect) -> Bool:
       False{}
 
 # Whether an effect creates, renames, subscribes or unsubscribes a folder.
-def changes_mailbox(+e: Effect) -> Bool:
+def changes_mailbox(e: Effect) -> Bool:
   match e:
     case ENone{}:
       False{}
@@ -196,7 +196,7 @@ def changes_mailbox(+e: Effect) -> Bool:
       True{}
 
 # Whether an effect permanently removes messages: only UID EXPUNGE does.
-def destroys_mail(+e: Effect) -> Bool:
+def destroys_mail(e: Effect) -> Bool:
   match e:
     case ENone{}:
       False{}
@@ -212,7 +212,7 @@ def destroys_mail(+e: Effect) -> Bool:
       False{}
 
 # Whether an effect only adds copies of messages: UID COPY.
-def copies_mail(+e: Effect) -> Bool:
+def copies_mail(e: Effect) -> Bool:
   match e:
     case ENone{}:
       False{}
@@ -228,32 +228,32 @@ def copies_mail(+e: Effect) -> Bool:
       False{}
 
 # Whether a command permanently removes messages (UID EXPUNGE).
-def expunges(+c: Cmd) -> Bool:
+def expunges(c: Cmd) -> Bool:
   destroys_mail(effect(c))
 
 # Whether a command marks messages \Deleted.
-def marks_deleted(+c: Cmd) -> Bool:
+def marks_deleted(c: Cmd) -> Bool:
   match c:
     case CStore{u, add, FDeleted{}}:
       add
     case _:
       False{}
 
-def any_writes(+cs: List<&2, Cmd>) -> Bool:
+def any_writes(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
     case Con{c, t}:
       writes(effect(c)) || any_writes(t)
 
-def any_expunges(+cs: List<&2, Cmd>) -> Bool:
+def any_expunges(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
     case Con{c, t}:
       expunges(c) || any_expunges(t)
 
-def any_marks_deleted(+cs: List<&2, Cmd>) -> Bool:
+def any_marks_deleted(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
@@ -309,7 +309,7 @@ def mutf7_encode.ascii(+c: Char) -> String:
 
 def mutf7_encode.put(
   printable: Bool,
-  +c: Char,
+  c: Char,
   out: String,
   run: String
 ) -> Utf7Encoder:
@@ -335,7 +335,7 @@ def mutf7_encode.finish(st: Utf7Encoder) -> String:
   String.reverse(mutf7_encode.flush(out, run))
 
 # Mailbox name to its modified UTF-7 wire form.
-def mutf7_encode(+name: String) -> String:
+def mutf7_encode(name: String) -> String:
   mutf7_encode.finish(mutf7_encode.go(name, Utf7Encoder{"", ""}))
 
 # `out` with U+FFFD for the unpaired high surrogate `hi`, if any (0 is none).
@@ -423,7 +423,7 @@ def mutf7_decode.finish(st: Utf7Decoder) -> String:
   String.reverse(out)
 
 # Modified UTF-7 wire form to the mailbox name.
-def mutf7_decode(+s: String) -> String:
+def mutf7_decode(s: String) -> String:
   mutf7_decode.finish(mutf7_decode.go(s, Utf7Decoder{"", "", False{}}))
 
 # Rendering
@@ -467,7 +467,7 @@ def uid_set(uids: List<&2, U32>) -> String:
     case Con{u, t}:
       U32.show(u) ++ "," ++ uid_set(t)
 
-def flag_name(+f: Flag) -> String:
+def flag_name(f: Flag) -> String:
   match f:
     case FSeen{}:
       "\\Seen"
@@ -640,7 +640,7 @@ def search_args(+ks: List<&2, Key>) -> String:
 def header_fields() -> String:
   "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES"
 
-def item_str(+i: Item) -> String:
+def item_str(i: Item) -> String:
   match i:
     case IUid{}:
       "UID"
@@ -718,7 +718,7 @@ def tag(n: U32) -> String:
 
 # An expectation is not a command: the helper checks it against the
 # previous command's untagged replies, so it takes no tag.
-def is_expect(+c: Cmd) -> Bool:
+def is_expect(c: Cmd) -> Bool:
   match c:
     case CExpect{e}:
       True{}
@@ -748,11 +748,11 @@ def script.go(cs: List<&2, Cmd>, +n: U32) -> String:
     case Con{+c, t}:
       script.line(c, n) ++ crlf() ++ script.go(t, next_tag(c, n))
 
-def script(+cs: List<&2, Cmd>) -> String:
+def script(cs: List<&2, Cmd>) -> String:
   script.go(cs, 1)
 
 # How many commands of a script carry a tag (expectations carry none).
-def tag_count(+cs: List<&2, Cmd>) -> U32:
+def tag_count(cs: List<&2, Cmd>) -> U32:
   match cs:
     case Nil{}:
       0
@@ -760,7 +760,7 @@ def tag_count(+cs: List<&2, Cmd>) -> U32:
       (Bool.pick(U32, is_expect(c), 0, 1) + tag_count(t) : U32)
 
 # How many commands of a script are UNSUBSCRIBEs.
-def unsubscribe_count(+cs: List<&2, Cmd>) -> U32:
+def unsubscribe_count(cs: List<&2, Cmd>) -> U32:
   match cs:
     case Nil{}:
       0
@@ -771,7 +771,7 @@ def unsubscribe_count(+cs: List<&2, Cmd>) -> U32:
 
 # The tag number script() gives the first UID COPY, from tag `n` on; 0 when
 # the script has none.
-def copy_tag(+cs: List<&2, Cmd>, +n: U32) -> U32:
+def copy_tag(cs: List<&2, Cmd>, n: U32) -> U32:
   match cs:
     case Nil{}:
       0
@@ -822,7 +822,7 @@ def imap_date.parts(ps: List<&2, String>) -> Maybe<&2, String>:
       None{}
 
 # "2026-02-01" to the IMAP date "1-Feb-2026".
-def imap_date(+iso: String) -> Maybe<&2, String>:
+def imap_date(iso: String) -> Maybe<&2, String>:
   imap_date.parts(String.split(iso, '-'))
 
 # Transcript framing
@@ -998,7 +998,7 @@ def frame.finish(f: Framer) -> List<&2, RLine>:
   frame.last(line, lits, lines)
 
 # Splits a transcript into response lines, keeping literals exact.
-def frame(+transcript: String) -> List<&2, RLine>:
+def frame(transcript: String) -> List<&2, RLine>:
   frame.finish(frame.go(transcript, Framer{"", [], [], 0, "", False{}}))
 
 # Tokens
@@ -1264,7 +1264,7 @@ def code_body(s: String) -> String:
       SCon{c, code_body(t)}
 
 # The response code inside "[...]" at the start of a status text, or "".
-def resp_code(+s: String) -> String:
+def resp_code(s: String) -> String:
   match s:
     case SCon{'[', t}:
       code_body(t)
@@ -1292,7 +1292,7 @@ def first_line.go(
 def first_line(
   ~is_hit: String -> String -> Bool,
   lines: List<&2, RLine>,
-  +key: String
+  key: String
 ) -> Maybe<&2, String>:
   first_line.go(~is_hit, lines, key, "", False{})
 
@@ -1309,7 +1309,7 @@ def caps.line(hit: Bool, text: String) -> List<&2, String>:
 
 # Capabilities announced by "* CAPABILITY " (13 characters) lines,
 # upper-cased.
-def caps(+lines: List<&2, RLine>) -> List<&2, String>:
+def caps(lines: List<&2, RLine>) -> List<&2, String>:
   match lines:
     case Nil{}:
       []
@@ -1317,7 +1317,7 @@ def caps(+lines: List<&2, RLine>) -> List<&2, String>:
       List.append(&2, String, caps.line(upper_starts(text, "* CAPABILITY "), text),
         caps(t))
 
-def has_cap(+cs: List<&2, String>, +name: String) -> Bool:
+def has_cap(cs: List<&2, String>, name: String) -> Bool:
   List.contains(~String, ~String.eq, cs, name)
 
 # Folders
@@ -1355,11 +1355,11 @@ def listed(+prefix: String, lines: List<&2, RLine>) -> List<&2, Folder>:
         listed(prefix, t))
 
 # Mailboxes from "* LIST" lines.
-def folders(+lines: List<&2, RLine>) -> List<&2, Folder>:
+def folders(lines: List<&2, RLine>) -> List<&2, Folder>:
   listed("* LIST ", lines)
 
 # The subscribed mailboxes, from "* LSUB" lines.
-def subscribed(+lines: List<&2, RLine>) -> List<&2, Folder>:
+def subscribed(lines: List<&2, RLine>) -> List<&2, Folder>:
   listed("* LSUB ", lines)
 
 def has_attr.lowered(attrs: List<&2, String>, +want: String) -> Bool:
@@ -1370,11 +1370,11 @@ def has_attr.lowered(attrs: List<&2, String>, +want: String) -> Bool:
       String.eq(String.to_lower(attr), want) || has_attr.lowered(rest, want)
 
 # Whether a folder's attributes include `a`, in any case.
-def has_attr(+attrs: List<&2, String>, +a: String) -> Bool:
+def has_attr(attrs: List<&2, String>, a: String) -> Bool:
   has_attr.lowered(attrs, String.to_lower(a))
 
 # The first mailbox carrying a special-use attribute such as "\\Trash".
-def special(+fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
+def special(fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
@@ -1390,7 +1390,7 @@ def same_name(+a: String, +b: String) -> Bool:
     (String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"))
 
 # The mailbox with exactly this name, as same_name() compares them.
-def named(+fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
+def named(fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
@@ -1424,7 +1424,7 @@ def search_uids.line(hit: Bool, text: String) -> List<&2, U32>:
       []
 
 # UIDs from "* SEARCH" (8 characters) lines.
-def search_uids(+lines: List<&2, RLine>) -> List<&2, U32>:
+def search_uids(lines: List<&2, RLine>) -> List<&2, U32>:
   match lines:
     case Nil{}:
       []
@@ -1451,7 +1451,7 @@ def is_exists(+text: String) -> Bool:
     String.starts_with(text, "* ")
 
 # The count of the first "* <n> EXISTS" line.
-def exists(+lines: List<&2, RLine>) -> Maybe<&2, U32>:
+def exists(lines: List<&2, RLine>) -> Maybe<&2, U32>:
   Maybe.bind(&2, String, U32,
     first_line(~(text => key => is_exists(text)), lines, ""),
     text => U32.read(before_space(String.drop(text, 2n))))
@@ -1607,15 +1607,15 @@ def flag_fetches(lines: List<&2, RLine>) -> List<&2, Msg>:
 # --------------
 
 # The untagged reply that pins a folder's UIDVALIDITY after SELECT.
-def uidv_line(+v: U32) -> String:
+def uidv_line(v: U32) -> String:
   "* OK [UIDVALIDITY " ++ U32.show(v) ++ "]"
 
 # The tagged status of command n: "OK", "NO", "BAD", or "" if it never ran.
-def status(+lines: List<&2, RLine>, +n: U32) -> String:
+def status(lines: List<&2, RLine>, n: U32) -> String:
   String.to_upper(before_space(after_space(line_starting(lines, tag(n) ++ " "))))
 
 # The status text (after OK/NO/BAD) of command n.
-def status_text(+lines: List<&2, RLine>, +n: U32) -> String:
+def status_text(lines: List<&2, RLine>, n: U32) -> String:
   after_space(after_space(line_starting(lines, tag(n) ++ " ")))
 
 # Whether a tagged status is a refusal.
@@ -1628,11 +1628,11 @@ def is_failure(+text: String) -> Bool:
     is_refusal(String.to_upper(before_space(after_space(text))))
 
 # Whether command n was refused (NO or BAD).
-def refused(+lines: List<&2, RLine>, +n: U32) -> Bool:
+def refused(lines: List<&2, RLine>, n: U32) -> Bool:
   is_refusal(status(lines, n))
 
 # The first rejected command's status line, or "" when every command ran.
-def first_failure(+lines: List<&2, RLine>) -> String:
+def first_failure(lines: List<&2, RLine>) -> String:
   Maybe.default(&2, String,
     first_line(~(text => key => is_failure(text)), lines, ""), "")
 
