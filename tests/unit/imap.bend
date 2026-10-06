@@ -62,6 +62,67 @@ def show_uids(uids: List<&2, U32>) -> String:
 def show_tags(+cs: List<&2, I.Cmd>) -> String:
   U32.show(I.tag_count(cs)) ++ " " ++ U32.show(I.copy_tag(cs, 1))
 
+# Bit0 Bit1 Bit2 as 0/1.
+def show_bits(b: I.Bits) -> String:
+  I.Bits{b0, b1, b2} = b
+  Bool.pick(String, b0, "1", "0") ++ Bool.pick(String, b1, "1", "0") ++
+    Bool.pick(String, b2, "1", "0")
+
+def named_or_bad(m: Maybe<&2, I.Colour>) -> String:
+  match m:
+    case Some{c}:
+      I.colour_name(c)
+    case None{}:
+      "bad"
+
+# Each colour as name=bits/name found again from the name; "bad" is a name
+# that is not a colour.
+def show_colours(cs: List<&2, I.Colour>) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case Con{+c, rest}:
+      +n = I.colour_name(c)
+      n ++ "=" ++ show_bits(I.colour_bits(c)) ++ "/" ++
+        named_or_bad(I.colour_from_name(n)) ++ " " ++ show_colours(rest)
+
+def show_permanent(m: Maybe<&2, List<&2, String>>) -> String:
+  match m:
+    case Some{fs}:
+      String.join(fs, ",")
+    case None{}:
+      "none"
+
+# A flag change's session: SELECT, a STORE answered with a FETCH, then the
+# trailing FETCH with a sequence-number-only update, the real one, and an
+# update without FLAGS.
+def flag_transcript() -> String:
+  String.concat([
+    "* OK [CAPABILITY IMAP4rev1] ready\r\n",
+    "* FLAGS (\\Flagged \\Seen)\r\n",
+    "* OK [PERMANENTFLAGS (\\Seen \\Flagged \\*)] ok\r\n",
+    "a1 OK [READ-WRITE] selected\r\n",
+    "* 1 FETCH (UID 3 FLAGS (\\Seen))\r\n",
+    "a2 OK stored\r\n",
+    "* 1 FETCH (FLAGS (\\Flagged))\r\n",
+    "* 1 FETCH (UID 3 FLAGS (\\Flagged $MailFlagBit2))\r\n",
+    "* 1 FETCH (UID 3 MODSEQ (7))\r\n",
+    "a3 OK fetched\r\n",
+    "* BYE bye\r\n",
+    "Z OK bye\r\n"])
+
+# Reply counts of commands 1, 3 and a never-answered 4 (the BYE); the flags
+# each FETCH with FLAGS in command 3's replies carries; PERMANENTFLAGS from
+# command 1's replies and from command 2's (none).
+def check_flag_replies(+lines: List<&2, I.RLine>) -> IO(Unit):
+  do IO<Unit>:
+    IO.print(Nat.show(List.length(&2, I.RLine, I.replies(lines, 1))) ++ " " ++
+      Nat.show(List.length(&2, I.RLine, I.replies(lines, 3))) ++ " " ++
+      Nat.show(List.length(&2, I.RLine, I.replies(lines, 4))))
+    IO.print(show_messages(I.flag_fetches(I.replies(lines, 3))))
+    IO.print(show_permanent(I.permanent_flags(I.replies(lines, 1))) ++ " " ++
+      show_permanent(I.permanent_flags(I.replies(lines, 2))))
+
 def check_transcript(+lines: List<&2, I.RLine>) -> IO(Unit):
   do IO<Unit>:
     IO.print(Nat.show(List.length(&2, I.RLine, lines)))
@@ -85,6 +146,16 @@ def main() -> IO(Unit):
     IO.print(show_line_endings(I.script([I.CSelect{"INBOX"}, I.CExpect{I.uidv_line(7)}, I.CSearch{[I.KUids{[3, 4]}]}, I.CStore{[3, 4], True{}, I.FSeen{}}])))
     IO.print(show_line_endings(I.script([I.CCreate{"Reçus 日本"}, I.CRename{"Work", "Projects & Co"}, I.CSubscribe{"Projects & Co"}, I.CUnsubscribe{"Work"}, I.CSearch{[I.KHeader{"Message-ID", "<a@b>"}, I.KUndeleted{}]}])))
     IO.print(show_tags([I.CCapability{}, I.CExpectWord{"UIDPLUS"}, I.CSelect{"INBOX"}, I.CExpect{I.uidv_line(7)}, I.CSearch{[I.KUids{[3]}]}, I.CCopy{[3], "Work"}, I.CStore{[3], True{}, I.FDeleted{}}, I.CExpunge{[3]}]) ++ " " ++ show_tags([I.CExamine{"INBOX"}, I.CSearch{[I.KAll{}]}]))
+    IO.print(show_line_endings(I.script([
+      I.CStore{[3], True{}, I.FFlagged{}},
+      I.CStore{[3], True{}, I.FColourBit0{}},
+      I.CStore{[3], False{}, I.FColourBit1{}},
+      I.CStore{[3], False{}, I.FColourBit2{}},
+      I.CFetch{[3], [I.IUid{}, I.IFlags{}]}
+    ])))
+    IO.print(show_colours(I.colours()) ++ named_or_bad(I.colour_from_name("pink")) ++ " " ++
+      String.join(I.colour_names(), ","))
+    check_flag_replies(I.frame(flag_transcript()))
     check_transcript(I.frame(transcript()))
     IO.print(Nat.show(List.length(&2, I.RLine, I.frame("a7 OK text {3}\r\nZ OK bye\r\n"))) ++ " " ++ Maybe.default(&2, String, I.imap_date("a\r\nb-02-01"), "bad") ++ " " ++ Maybe.default(&2, String, I.imap_date("{99}-02-01"), "bad"))
 
@@ -95,6 +166,11 @@ def main() -> IO(Unit):
 #|a1 SELECT "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 7]\r\na2 UID SEARCH UID 3,4\r\na3 UID STORE 3,4 +FLAGS.SILENT (\Seen)\r\n
 #|a1 CREATE "Re&AOc-us &ZeVnLA-"\r\na2 RENAME "Work" "Projects &- Co"\r\na3 SUBSCRIBE "Projects &- Co"\r\na4 UNSUBSCRIBE "Work"\r\na5 UID SEARCH HEADER "Message-ID" "<a@b>" UNDELETED\r\n
 #|6 4 2 0
+#|a1 UID STORE 3 +FLAGS.SILENT (\Flagged)\r\na2 UID STORE 3 +FLAGS.SILENT ($MailFlagBit0)\r\na3 UID STORE 3 -FLAGS.SILENT ($MailFlagBit1)\r\na4 UID STORE 3 -FLAGS.SILENT ($MailFlagBit2)\r\na5 UID FETCH 3 (UID FLAGS)\r\n
+#|red=000/red orange=100/orange yellow=010/yellow green=110/green blue=001/blue purple=101/purple grey=011/grey bad red,orange,yellow,green,blue,purple,grey
+#|3 3 1
+#|0 \Flagged  0 [];3 \Flagged,$MailFlagBit2  0 [];
+#|\Seen,\Flagged,\* none
 #|19
 #|IMAP4REV1 MOVE UIDPLUS IDLE
 #|True

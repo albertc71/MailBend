@@ -13,6 +13,8 @@ type Op is Data:
   OGetNew{}
   OMarkRead{}
   OMarkUnread{}
+  OFlag{}
+  OUnflag{}
   OMove{}
   OLabel{}
   OTrash{}
@@ -64,6 +66,10 @@ def name(+op: Op) -> String:
       "mail_mark_read"
     case OMarkUnread{}:
       "mail_mark_unread"
+    case OFlag{}:
+      "mail_flag"
+    case OUnflag{}:
+      "mail_unflag"
     case OMove{}:
       "mail_move"
     case OLabel{}:
@@ -94,6 +100,8 @@ def all_ops() -> List<&2, Op>:
     OGetNew{},
     OMarkRead{},
     OMarkUnread{},
+    OFlag{},
+    OUnflag{},
     OMove{},
     OLabel{},
     OTrash{},
@@ -188,6 +196,60 @@ def plan_get(+mbox: String, +uid: U32, +max: U32) -> List<&2, I.Cmd>:
 # which of the UIDs exist.
 def plan_mark(+mbox: String, +uids: List<&2, U32>, +seen: Bool, +uidv: U32) -> List<&2, I.Cmd>:
   [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}, I.CStore{uids, seen, I.FSeen{}}]
+
+# A flag change: the guard, its `stores`, then a UID FETCH of the flags,
+# whose answer shows which flags the server kept.
+def plan_flag_stores(
+  mbox: String,
+  +uids: List<&2, U32>,
+  stores: List<&2, I.Cmd>,
+  uidv: U32
+) -> List<&2, I.Cmd>:
+  List.concat(&2, I.Cmd, [
+    [I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}],
+    stores,
+    [I.CFetch{uids, [I.IUid{}, I.IFlags{}]}]
+  ])
+
+# One store per colour bit, setting or clearing it.
+def colour_stores(+uids: List<&2, U32>, bits: I.Bits) -> List<&2, I.Cmd>:
+  I.Bits{b0, b1, b2} = bits
+  [
+    I.CStore{uids, b0, I.FColourBit0{}},
+    I.CStore{uids, b1, I.FColourBit1{}},
+    I.CStore{uids, b2, I.FColourBit2{}}
+  ]
+
+# Flagging with a colour: \Flagged, then each of the colour's bits set or
+# cleared, so a recolour leaves no stale bit.
+def plan_flag_bits(
+  mbox: String,
+  +uids: List<&2, U32>,
+  bits: I.Bits,
+  uidv: U32
+) -> List<&2, I.Cmd>:
+  plan_flag_stores(mbox, uids,
+    I.CStore{uids, True{}, I.FFlagged{}} <> colour_stores(uids, bits), uidv)
+
+# Flagging without a colour stores only \Flagged, so the colour bits a
+# message already has stay as they are.
+def plan_flag(
+  mbox: String,
+  +uids: List<&2, U32>,
+  colour: Maybe<&2, I.Colour>,
+  uidv: U32
+) -> List<&2, I.Cmd>:
+  match colour:
+    case None{}:
+      plan_flag_stores(mbox, uids, [I.CStore{uids, True{}, I.FFlagged{}}], uidv)
+    case Some{c}:
+      plan_flag_bits(mbox, uids, I.colour_bits(c), uidv)
+
+# Unflagging clears \Flagged, then all three colour bits.
+def plan_unflag(mbox: String, +uids: List<&2, U32>, uidv: U32) -> List<&2, I.Cmd>:
+  plan_flag_stores(mbox, uids,
+    I.CStore{uids, False{}, I.FFlagged{}} <> colour_stores(uids, I.Bits{False{}, False{}, False{}}),
+    uidv)
 
 # Moves with UID MOVE when the server has it. Otherwise copies, then marks
 # and expunges exactly those UIDs, which needs UIDPLUS (a plain EXPUNGE
@@ -365,6 +427,30 @@ def mailbox_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
       []
     case Con{+c, t}:
       cmd_if(I.changes_mailbox(I.effect(c)), c, mailbox_changes(t))
+
+# Whether a flag is \Flagged or one of the colour bits.
+def is_flag_or_colour(f: I.Flag) -> Bool:
+  match f:
+    case I.FFlagged{}:
+      True{}
+    case I.FColourBit0{}:
+      True{}
+    case I.FColourBit1{}:
+      True{}
+    case I.FColourBit2{}:
+      True{}
+    case _:
+      False{}
+
+# Whether every command is a store on \Flagged or a colour bit.
+def only_flag_stores(cs: List<&2, I.Cmd>) -> Bool:
+  match cs:
+    case Nil{}:
+      True{}
+    case Con{I.CStore{u, a, f}, t}:
+      is_flag_or_colour(f) && only_flag_stores(t)
+    case _:
+      False{}
 
 # Whether `s` starts with `p`. Unlike String.starts_with it looks at `p`
 # first, so it decides as soon as a known prefix is matched even when the

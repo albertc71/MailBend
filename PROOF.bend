@@ -89,6 +89,76 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
     case False{}:
       {==}
 
+# A flag law with a colour goes through a lemma that matches the colour's
+# bits as a parameter: plan_flag_bits builds the stores from them.
+def flag_bits_never_deletes(
+  -mbox: String,
+  -uids: List<&2, U32>,
+  bits: I.Bits,
+  -uidv: U32
+) -> {Bool.or(
+    I.any_marks_deleted(Ops.plan_flag_bits(mbox, uids, bits, uidv)),
+    I.any_expunges(Ops.plan_flag_bits(mbox, uids, bits, uidv))) == False{} : Bool}:
+  match bits:
+    case I.Bits{b0, b1, b2}:
+      {==}
+
+def Laws.flag_never_deletes(mbox, uids, colour, uidv):
+  match colour:
+    case None{}:
+      ({==}, {==})
+    case Some{c}:
+      (flag_bits_never_deletes(mbox, uids, I.colour_bits(c), uidv), {==})
+
+def flag_bits_change_only_flag_and_colour(
+  -mbox: String,
+  -uids: List<&2, U32>,
+  bits: I.Bits,
+  -uidv: U32
+) -> {Ops.only_flag_stores(Ops.mail_changes(Ops.plan_flag_bits(mbox, uids, bits, uidv))) ==
+    True{} : Bool}:
+  match bits:
+    case I.Bits{b0, b1, b2}:
+      {==}
+
+def Laws.flag_changes_only_flag_and_colour(mbox, uids, colour, uidv):
+  match colour:
+    case None{}:
+      ({==}, {==})
+    case Some{c}:
+      (flag_bits_change_only_flag_and_colour(mbox, uids, I.colour_bits(c), uidv), {==})
+
+# Rewrites the bits to the literal the law names, then computes.
+def flag_bits_change_exactly(
+  -mbox: String,
+  -uids: List<&2, U32>,
+  bits: I.Bits,
+  -b0: Bool,
+  -b1: Bool,
+  -b2: Bool,
+  -uidv: U32,
+  e: {bits == I.Bits{b0, b1, b2} : I.Bits}
+) -> {Ops.mail_changes(Ops.plan_flag_bits(mbox, uids, bits, uidv)) == [
+    I.CStore{uids, True{}, I.FFlagged{}},
+    I.CStore{uids, b0, I.FColourBit0{}},
+    I.CStore{uids, b1, I.FColourBit1{}},
+    I.CStore{uids, b2, I.FColourBit2{}}
+  ] : List<&2, I.Cmd>}:
+  %Equal.sym(I.Bits, bits, I.Bits{b0, b1, b2}, e) :
+  {Ops.mail_changes(Ops.plan_flag_bits(mbox, uids, _, uidv)) == [
+    I.CStore{uids, True{}, I.FFlagged{}},
+    I.CStore{uids, b0, I.FColourBit0{}},
+    I.CStore{uids, b1, I.FColourBit1{}},
+    I.CStore{uids, b2, I.FColourBit2{}}
+  ] : List<&2, I.Cmd>}
+  {==}
+
+def Laws.flag_changes_exactly(mbox, uids, colour, b0, b1, b2, uidv):
+  ({==}, e => flag_bits_change_exactly(mbox, uids, I.colour_bits(colour), b0, b1, b2, uidv, e))
+
+def Laws.unflag_clears_flag_and_colour(mbox, uids, uidv):
+  {==}
+
 def Laws.move_never_loses_mail(mbox, uids, dest, move, uidplus, uidv):
   match move:
     case True{}:
@@ -118,6 +188,13 @@ def Laws.delete_needs_confirmation(mbox, uids, confirm, wrong, uidplus, uidv):
 
 def Laws.mark_is_pinned(mbox, uids, seen, uidv):
   {==}
+
+def Laws.flag_is_pinned(mbox, uids, colour, uidv):
+  match colour:
+    case None{}:
+      ({==}, {==})
+    case Some{c}:
+      ({==}, {==})
 
 def Laws.move_is_pinned(mbox, uids, dest, move, uidplus, uidv):
   match move:
@@ -235,6 +312,13 @@ def Laws.expunge_renders_uid_expunge(uids):
 
 def Laws.mark_pins_callers_uidvalidity(mbox, uids, seen, uidv):
   {==}
+
+def Laws.flag_pins_callers_uidvalidity(mbox, uids, colour, uidv):
+  match colour:
+    case None{}:
+      ({==}, {==})
+    case Some{c}:
+      ({==}, {==})
 
 def Laws.move_pins_callers_uidvalidity(mbox, uids, dest, move, uidplus, uidv):
   match move:

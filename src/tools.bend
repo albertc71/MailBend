@@ -19,9 +19,13 @@ type Out is Data:
 
 # ---- the TLS helper --------------------------------------------------------------------
 
+# How a helper run ended: it exited with `code`; it never started (MailBend
+# refused its path, or spawning it failed); or it failed with errno `code`
+# after it started, or when that is not known, so what it did is unknown.
 type Proc is Data:
   ProcOk{code: U32, out: String, err: String}
-  ProcFail{msg: String}
+  ProcRefused{msg: String}
+  ProcFail{code: U32, msg: String}
 
 type Run is Data:
   RunOk{lines: List<&2, I.RLine>}
@@ -46,6 +50,29 @@ type Guard is Data:
 type FolderChange is Data:
   FolderCreate{name: String}
   FolderRename{from: String, to: String}
+
+# What mark_uids changes: \Seen; \Flagged, with a colour or keeping the
+# current one; or \Flagged and every colour bit cleared.
+type Mark is Data:
+  MarkSeen{seen: Bool}
+  MarkFlag{colour: Maybe<&2, I.Colour>}
+  MarkUnflag{}
+
+# A changed message's flags as a flag change's trailing FETCH last reported
+# them; None when no FETCH with FLAGS named its UID.
+type Observed is Data:
+  Observed{uid: U32, flags: Maybe<&2, List<&2, String>>}
+
+# Which of a plan's stores store_changes picks: those answered OK, or those
+# that may have run unanswered (with `lost`, the transcript is not whole).
+type Answer is Data:
+  Acked{}
+  Unanswered{lost: Bool}
+
+# Where a stopped flag change got to: the store changes acknowledged, those
+# that may have run unanswered, and whether every store was acknowledged.
+type Cut is Data:
+  Cut{acked: List<&2, String>, unconfirmed: List<&2, String>, all_acked: Bool}
 
 # ---- mail_search ----------------------------------------------------------------------------
 
@@ -142,12 +169,41 @@ def mode() -> IO(Mode):
     d : Flag <- flag("MAILBEND_DRAFTS_ONLY")
     return mode_of(r, d)
 
+# Errnos only spawning can give (Process.run: the pipes, posix_spawnp), with
+# the values Linux and macOS share: EPERM, ENOENT, E2BIG, ENOEXEC, EACCES,
+# ENOTDIR, EISDIR, ENFILE, EMFILE, ETXTBSY. Once the helper runs, Process.run
+# fails only with others (timeout, output cap, poll, read, write, waitpid).
+def never_started(+code: U32) -> Bool:
+  U32.is_eq(code, 1) || U32.is_eq(code, 2) || U32.is_eq(code, 7) || U32.is_eq(code, 8) ||
+    U32.is_eq(code, 13) || U32.is_eq(code, 20) || U32.is_eq(code, 21) ||
+    U32.is_eq(code, 23) || U32.is_eq(code, 24) || U32.is_eq(code, 26)
+
+def proc_fail.if(refused: Bool, code: U32, msg: String) -> Proc:
+  match refused:
+    case True{}:
+      ProcRefused{msg}
+    case False{}:
+      ProcFail{code, msg}
+
+def proc_fail(+code: U32, msg: String) -> Proc:
+  proc_fail.if(never_started(code), code, msg)
+
 def proc_of(r: Result<&1, &1, U32 & String, U32 & (String & String)>) -> Proc:
   match r:
     case Done{(code, (out, err))}:
       ProcOk{code, out, err}
     case Fail{(code, msg)}:
-      ProcFail{msg}
+      proc_fail(code, msg)
+
+# Why a helper run gave no exit status ("" when it did).
+def proc_failure(p: Proc) -> String:
+  match p:
+    case ProcOk{code, out, err}:
+      ""
+    case ProcRefused{m}:
+      m
+    case ProcFail{code, m}:
+      m
 
 def run_helper(+path: String, +mode: String, +input: String) -> IO(Proc):
   do IO<Proc>:
@@ -162,7 +218,7 @@ def helper_at(+path: String, +mode: String, +input: String) -> IO(Proc):
     case SCon{'/', t}:
       run_helper(path, mode, input)
     case _:
-      IO.pure(Proc, ProcFail{"MAILBEND_TLS_HELPER must be the absolute path of mailbend-tls (scripts/mailbend sets it)"})
+      IO.pure(Proc, ProcRefused{"MAILBEND_TLS_HELPER must be the absolute path of mailbend-tls (scripts/mailbend sets it)"})
 
 def helper(+mode: String, +input: String) -> IO(Proc):
   do IO<Proc>:
@@ -176,11 +232,17 @@ def strip_prefix(+s: String, +p: String) -> String:
 def helper_msg(+err: String) -> String:
   strip_prefix(String.trim(String.join(List.reverse(&2, String, String.lines(String.trim(err))), " | ")), "mailbend-tls: ")
 
+# Process.run reports a helper killed by a signal as exit status 128 plus the
+# signal; mailbend-tls itself exits with at most 6.
+def signalled(code: U32) -> Bool:
+  U32.is_gt(code, 128)
+
 def helper_error(+code: U32, +err: String) -> String:
-  Bool.pick(String, U32.is_eq(code, 2), "configuration error: ",
-    Bool.pick(String, U32.is_eq(code, 3), "connection or TLS verification failed: ",
-      Bool.pick(String, U32.is_eq(code, 4), "authentication failed (check MAILBEND_EMAIL and the app-specific password): ",
-        "mail server error: "))) ++ helper_msg(err)
+  Bool.pick(String, signalled(code), "the TLS helper was killed by a signal: ",
+    Bool.pick(String, U32.is_eq(code, 2), "configuration error: ",
+      Bool.pick(String, U32.is_eq(code, 3), "connection or TLS verification failed: ",
+        Bool.pick(String, U32.is_eq(code, 4), "authentication failed (check MAILBEND_EMAIL and the app-specific password): ",
+          "mail server error: ")))) ++ helper_msg(err)
 
 def stale_msg() -> String:
   "the folder's UIDVALIDITY changed since these UIDs were read, so they may name other messages; nothing was changed: search again"
@@ -191,12 +253,12 @@ def imap_code(+code: U32, +lines: List<&2, I.RLine>, +err: String) -> Run:
       Bool.pick(Run, U32.is_eq(code, 5), RunErr{"the server rejected a command: " ++ String.trim(I.first_failure(lines))},
         RunErr{helper_error(code, err)})))
 
-def imap_result(p: Proc) -> Run:
+def imap_result(+p: Proc) -> Run:
   match p:
-    case ProcFail{m}:
-      RunErr{"cannot run the TLS helper: " ++ m}
     case ProcOk{code, out, err}:
       imap_code(code, I.frame(out), err)
+    case _:
+      RunErr{"cannot run the TLS helper: " ++ proc_failure(p)}
 
 def imap_proc(+cmds: List<&2, I.Cmd>) -> IO(Proc):
   helper("imap", I.script(cmds))
@@ -207,17 +269,48 @@ def imap_run(+cmds: List<&2, I.Cmd>) -> IO(Run):
     p : Proc <- imap_proc(cmds)
     return imap_result(p)
 
+def proc_lines(p: Proc) -> List<&2, I.RLine>:
+  match p:
+    case ProcOk{code, out, err}:
+      I.frame(out)
+    case _:
+      []
+
+def run_failure(+r: Run) -> String:
+  match r:
+    case RunErr{m}:
+      m
+    case RunOk{lines}:
+      ""
+
+# Whether the helper may have acted on the mailbox without leaving a whole
+# transcript: it failed after it started (or may have), or a signal killed
+# it. The one classifier for flag changes, COPY-based moves and folder
+# changes. A helper that never started did nothing.
+def helper_lost(p: Proc) -> Bool:
+  match p:
+    case ProcOk{code, out, err}:
+      signalled(code)
+    case ProcRefused{m}:
+      False{}
+    case ProcFail{code, m}:
+      True{}
+
+# Whether command `n` was answered OK.
+def ok_at(+lines: List<&2, I.RLine>, +n: U32) -> Bool:
+  String.eq(I.status(lines, n), "OK")
+
 def smtp_code(+code: U32, +out: String, +err: String) -> Out:
   Bool.pick(Out, U32.is_zero(code), Ok{J.str(S.last_ok(String.lines(out), ""))},
     Bool.pick(Out, U32.is_eq(code, 5), Err{"the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")},
       Err{helper_error(code, err)}))
 
-def smtp_result(p: Proc) -> Out:
+def smtp_result(+p: Proc) -> Out:
   match p:
-    case ProcFail{m}:
-      Err{"cannot run the TLS helper: " ++ m}
     case ProcOk{code, out, err}:
       smtp_code(code, out, err)
+    case _:
+      Err{"cannot run the TLS helper: " ++ proc_failure(p)}
 
 def smtp_run(+envelope: String) -> IO(Out):
   do IO<Out>:
@@ -324,6 +417,13 @@ def maybe_str(+m: Maybe<&2, String>) -> J.Json:
   match m:
     case Some{s}:
       J.str(s)
+    case None{}:
+      J.JNull{}
+
+def maybe_strs(m: Maybe<&2, List<&2, String>>) -> J.Json:
+  match m:
+    case Some{xs}:
+      J.strs(xs)
     case None{}:
       J.JNull{}
 
@@ -679,8 +779,6 @@ def requested(+ms: List<&2, I.Msg>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
     case Con{m, t}:
       List.append(&2, I.Msg, Bool.pick(List<&2, I.Msg>, uid_in(msg_uid(m), uids), [m], []), requested(t, uids))
 
-# ---- flags ---------------------------------------------------------------------------------
-
 # ---- UID checks -------------------------------------------------------------------------------
 
 def uidv_is(+have: Maybe<&2, U32>, +want: U32) -> Bool:
@@ -886,12 +984,25 @@ def minus(+xs: List<&2, U32>, +ys: List<&2, U32>) -> List<&2, U32>:
     case Con{x, t}:
       List.append(&2, U32, Bool.pick(List<&2, U32>, uid_in(x, ys), [], [x]), minus(t, ys))
 
-# The result of a change: which requested UIDs existed when it ran (the
-# guard's UID SEARCH) and which did not. If none existed, nothing changed.
-def changed_of(+lines: List<&2, I.RLine>, +uids: List<&2, U32>, +folder: String, +kvs: List<&2, J.Json>) -> Out:
-  +found = asc(I.search_uids(lines))
+# The result of a change: which requested UIDs existed when it ran (`found`,
+# from the guard's UID SEARCH) and which did not. If none existed, nothing
+# changed.
+def changed_found(
+  +found: List<&2, U32>,
+  uids: List<&2, U32>,
+  folder: String,
+  kvs: List<&2, J.Json>
+) -> Out:
   Bool.pick(Out, List.is_empty(&2, U32, found), Err{"none of these UIDs exist in " ++ folder ++ "; nothing was changed"},
     ok_obj(List.append(&2, J.Json, kvs, [J.kv("changed", uids_json(found)), J.kv("missing", uids_json(minus(uids, found)))])))
+
+def changed_of(
+  lines: List<&2, I.RLine>,
+  uids: List<&2, U32>,
+  folder: String,
+  kvs: List<&2, J.Json>
+) -> Out:
+  changed_found(asc(I.search_uids(lines)), uids, folder, kvs)
 
 def changed_out(r: Run, +uids: List<&2, U32>, +folder: String, +kvs: List<&2, J.Json>) -> Out:
   match r:
@@ -902,59 +1013,361 @@ def changed_out(r: Run, +uids: List<&2, U32>, +folder: String, +kvs: List<&2, J.
 
 # ---- flags ---------------------------------------------------------------------------------------
 
-def mark_go(+uids: List<&2, U32>, +folder: String, +seen: Bool, +uidv: U32) -> IO(Out):
-  do IO<Out>:
-    r : Run <- imap_run(Ops.plan_mark(folder, uids, seen, uidv))
-    return changed_out(r, uids, folder, [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv("seen", J.bool(seen))])
+def mark_plan(uids: List<&2, U32>, folder: String, mark: Mark, uidv: U32) -> List<&2, I.Cmd>:
+  match mark:
+    case MarkSeen{seen}:
+      Ops.plan_mark(folder, uids, seen, uidv)
+    case MarkFlag{colour}:
+      Ops.plan_flag(folder, uids, colour, uidv)
+    case MarkUnflag{}:
+      Ops.plan_unflag(folder, uids, uidv)
 
-def mark_checked(+missing: Bool, +uids: List<&2, U32>, +folder: String, +seen: Bool, +uidv: U32) -> IO(Out):
+def mark_fields(folder: String, key: String, b: Bool) -> List<&2, J.Json>:
+  [J.kv("ok", J.bool(True{})), J.kv("folder", J.str(folder)), J.kv(key, J.bool(b))]
+
+# The fields a mark result opens with: the folder and what was set.
+def mark_kvs(folder: String, mark: Mark) -> List<&2, J.Json>:
+  match mark:
+    case MarkSeen{seen}:
+      mark_fields(folder, "seen", seen)
+    case MarkFlag{colour}:
+      mark_fields(folder, "flagged", True{})
+    case MarkUnflag{}:
+      mark_fields(folder, "flagged", False{})
+
+# The colour a mark sets explicitly, if any.
+def mark_colour(mark: Mark) -> Maybe<&2, I.Colour>:
+  match mark:
+    case MarkFlag{colour}:
+      colour
+    case _:
+      None{}
+
+# The flags of the last FETCH for `uid` in `ms`, which are in wire order.
+def last_flags(
+  ms: List<&2, I.Msg>,
+  +uid: U32,
+  last: Maybe<&2, List<&2, String>>
+) -> Maybe<&2, List<&2, String>>:
+  match ms:
+    case Nil{}:
+      last
+    case Con{I.Msg{u, flags, date, size, headers, body}, t}:
+      last_flags(t, uid,
+        Bool.pick(Maybe<&2, List<&2, String>>, U32.is_eq(u, uid), Some{flags}, last))
+
+def observed(uids: List<&2, U32>, +ms: List<&2, I.Msg>) -> List<&2, Observed>:
+  match uids:
+    case Nil{}:
+      []
+    case Con{+u, t}:
+      Observed{u, last_flags(ms, u, None{})} <> observed(t, ms)
+
+def observed_json(os: List<&2, Observed>) -> List<&2, J.Json>:
+  match os:
+    case Nil{}:
+      []
+    case Con{Observed{uid, flags}, t}:
+      J.obj([J.kv("uid", J.num(uid)), J.kv("flags", maybe_strs(flags))]) <> observed_json(t)
+
+# Whether a message has a colour bit exactly when the colour sets it.
+def bit_shown(flags: List<&2, String>, want: Bool, f: I.Flag) -> Bool:
+  Bool.not(Bool.xor(want, has_flag(flags, I.flag_name(f))))
+
+# Whether a message's flags show the colour: Apple Mail reads it from
+# $MailFlagBit0..2 while \Flagged is set.
+def shows_colour(+flags: List<&2, String>, bits: I.Bits) -> Bool:
+  I.Bits{b0, b1, b2} = bits
+  (has_flag(flags, "\\Flagged") && bit_shown(flags, b0, I.FColourBit0{}) &&
+    bit_shown(flags, b1, I.FColourBit1{}) && bit_shown(flags, b2, I.FColourBit2{}))
+
+# The UIDs whose reported flags do not show the colour.
+def colour_misses(os: List<&2, Observed>, +bits: I.Bits) -> List<&2, U32>:
+  match os:
+    case Nil{}:
+      []
+    case Con{Observed{uid, Some{flags}}, t}:
+      List.filter.put(U32, uid, colour_misses(t, bits), Bool.not(shows_colour(flags, bits)))
+    case Con{Observed{uid, None{}}, t}:
+      colour_misses(t, bits)
+
+def any_unobserved(os: List<&2, Observed>) -> Bool:
+  match os:
+    case Nil{}:
+      False{}
+    case Con{Observed{uid, Some{flags}}, t}:
+      any_unobserved(t)
+    case Con{Observed{uid, None{}}, t}:
+      True{}
+
+def keyword_permanent(ps: List<&2, String>, any: Bool, f: I.Flag) -> Bool:
+  any || has_flag(ps, I.flag_name(f))
+
+# Whether PERMANENTFLAGS `ps` lets every flag a colour stores last beyond
+# this session: \Flagged must be listed, and each colour keyword listed or
+# covered by \* (any new keyword). A cleared bit counts too: clearing a
+# session-only keyword may not last either.
+def colour_permanent(+ps: List<&2, String>) -> Bool:
+  +any = has_flag(ps, "\\*")
+  (has_flag(ps, "\\Flagged") && keyword_permanent(ps, any, I.FColourBit0{}) &&
+    keyword_permanent(ps, any, I.FColourBit1{}) && keyword_permanent(ps, any, I.FColourBit2{}))
+
+# Whether the colour's changes are known to last only for this session (not
+# known without PERMANENTFLAGS).
+def session_only(perm: Maybe<&2, List<&2, String>>) -> Bool:
+  match perm:
+    case Some{ps}:
+      Bool.not(colour_permanent(ps))
+    case None{}:
+      False{}
+
+# The changed UIDs known not to keep the colour: all of them when its changes
+# last only for this session, else those whose reported flags differ.
+def colour_not_kept(
+  session: Bool,
+  found: List<&2, U32>,
+  os: List<&2, Observed>,
+  bits: I.Bits
+) -> List<&2, U32>:
+  match session:
+    case True{}:
+      found
+    case False{}:
+      colour_misses(os, bits)
+
+# colour_kept: false on a known failure, "unverified" when the evidence is
+# incomplete (no PERMANENTFLAGS, or a changed UID without reported flags),
+# else true.
+def kept_json(failed: Bool, unknown: Bool) -> J.Json:
+  Bool.pick(J.Json, failed, J.bool(False{}),
+    Bool.pick(J.Json, unknown, J.str("unverified"), J.bool(True{})))
+
+# For an explicit colour: which one, whether the server kept it, and the
+# changed UIDs known not to have kept it.
+def colour_kvs(
+  colour: Maybe<&2, I.Colour>,
+  found: List<&2, U32>,
+  +os: List<&2, Observed>,
+  +perm: Maybe<&2, List<&2, String>>
+) -> List<&2, J.Json>:
+  match colour:
+    case None{}:
+      []
+    case Some{+c}:
+      +not_kept = colour_not_kept(session_only(perm), found, os, I.colour_bits(c))
+      unknown = Maybe.is_none(&2, List<&2, String>, perm) || any_unobserved(os)
+      [
+        J.kv("colour", J.str(I.colour_name(c))),
+        J.kv("colour_kept", kept_json(Bool.not(List.is_empty(&2, U32, not_kept)), unknown)),
+        J.kv("colour_not_kept", uids_json(not_kept))
+      ]
+
+# A finished flag change: the flags the trailing FETCH (the plan's last
+# command) reported for each changed message, and for an explicit colour
+# whether the server kept it, judged with the PERMANENTFLAGS that SELECT
+# (command 1) reported.
+def flag_done(
+  +lines: List<&2, I.RLine>,
+  plan: List<&2, I.Cmd>,
+  uids: List<&2, U32>,
+  +folder: String,
+  +mark: Mark
+) -> Out:
+  +found = asc(I.search_uids(lines))
+  +os = observed(found, I.flag_fetches(I.replies(lines, I.tag_count(plan))))
+  perm = I.permanent_flags(I.replies(lines, 1))
+  changed_found(found, uids, folder, List.concat(&2, J.Json, [
+    mark_kvs(folder, mark),
+    [J.kv("flags", J.arr(observed_json(os)))],
+    colour_kvs(mark_colour(mark), found, os, perm)
+  ]))
+
+def flag_run(
+  r: Run,
+  plan: List<&2, I.Cmd>,
+  uids: List<&2, U32>,
+  folder: String,
+  mark: Mark
+) -> Out:
+  match r:
+    case RunErr{m}:
+      Err{m}
+    case RunOk{lines}:
+      flag_done(lines, plan, uids, folder, mark)
+
+# A store as the change it asks for, such as "+\Flagged" or "-$MailFlagBit0".
+def change_if(keep: Bool, add: Bool, f: I.Flag, rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      (Bool.pick(String, add, "+", "-") ++ I.flag_name(f)) <> rest
+    case False{}:
+      rest
+
+# Whether store `n` is one `which` picks. A store may have run unanswered
+# when it got no answer and it was sent (the command before it was answered
+# OK), or the transcript is not whole, so whether it was sent is unknown.
+def store_is(which: Answer, +lines: List<&2, I.RLine>, +n: U32) -> Bool:
+  match which:
+    case Acked{}:
+      ok_at(lines, n)
+    case Unanswered{lost}:
+      String.is_empty(I.status(lines, n)) && (lost || ok_at(lines, (n - 1 : U32)))
+
+# The changes of the plan's stores, from tag `n` on, that `which` picks.
+def store_changes(
+  cs: List<&2, I.Cmd>,
+  +n: U32,
+  +lines: List<&2, I.RLine>,
+  +which: Answer
+) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case Con{I.CStore{u, add, f}, t}:
+      change_if(store_is(which, lines, n), add, f, store_changes(t, (n + 1 : U32), lines, which))
+    case Con{c, t}:
+      store_changes(t, Bool.pick(U32, I.is_expect(c), n, (n + 1 : U32)), lines, which)
+
+def changes_text(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      "nothing"
+    case Con{h, t}:
+      String.join(h <> t, ", ")
+
+def cut_text(all_acked: Bool, acked: List<&2, String>, unconfirmed: List<&2, String>) -> String:
+  match all_acked:
+    case True{}:
+      "the server acknowledged every flag and colour change, but the run did not finish, " ++
+        "so the flags were not read back. A retry is idempotent"
+    case False{}:
+      "the flag change stopped part-way, so the flag and colour changes may be incomplete " ++
+        "(acknowledged: " ++ changes_text(acked) ++
+        "; may have run unanswered: " ++ changes_text(unconfirmed) ++
+        "). A retry is idempotent, but a server that refused a store may refuse it again"
+
+# A flag change that stopped where it may have changed something. It is an
+# error for the caller, but not one that implies nothing changed.
+def flag_partial(reason: String, folder: String, c: Cut) -> Out:
+  Cut{+acked, +unconfirmed, all_acked} = c
+  Partial{J.obj([
+    J.kv("ok", J.bool(False{})),
+    J.kv("partial", J.bool(True{})),
+    J.kv("folder", J.str(folder)),
+    J.kv("acknowledged", J.strs(acked)),
+    J.kv("unconfirmed", J.strs(unconfirmed)),
+    J.kv("message", J.str(cut_text(all_acked, acked, unconfirmed) ++ " (" ++ reason ++ ")"))
+  ])}
+
+# Whether the guard's UID SEARCH (command 2) was answered and found none of
+# the UIDs, so no store could change anything.
+def searched_none(+lines: List<&2, I.RLine>) -> Bool:
+  Bool.not(String.is_empty(I.status(lines, 2))) && List.is_empty(&2, U32, I.search_uids(lines))
+
+# Where a flag change stopped, if it may have changed something: it did not
+# finish (or its transcript is not whole), a store was acknowledged or may
+# have run unanswered, and the search did not show that no UID exists. None
+# for a finished run, or one that stopped before any store could run.
+def flag_cut(+p: Proc, +plan: List<&2, I.Cmd>) -> Maybe<&2, Cut>:
+  +lines = proc_lines(p)
+  +lost = helper_lost(p)
+  +last = I.tag_count(plan)
+  +acked = store_changes(plan, 1, lines, Acked{})
+  +unconfirmed = store_changes(plan, 1, lines, Unanswered{lost})
+  stopped = (lost || Bool.not(ok_at(lines, last))) && Bool.not(searched_none(lines)) &&
+    Bool.not(List.is_empty(&2, String, List.append(&2, String, acked, unconfirmed)))
+  Bool.pick(Maybe<&2, Cut>, stopped,
+    Some{Cut{acked, unconfirmed, ok_at(lines, (last - 1 : U32))}}, None{})
+
+def flag_out.if(
+  cut: Maybe<&2, Cut>,
+  +p: Proc,
+  plan: List<&2, I.Cmd>,
+  uids: List<&2, U32>,
+  folder: String,
+  mark: Mark
+) -> Out:
+  match cut:
+    case Some{c}:
+      flag_partial(run_failure(imap_result(p)), folder, c)
+    case None{}:
+      flag_run(imap_result(p), plan, uids, folder, mark)
+
+# A flag change's result: partial when it stopped where it may have changed
+# something, else the finished result or a plain error.
+def flag_out(
+  +p: Proc,
+  +plan: List<&2, I.Cmd>,
+  uids: List<&2, U32>,
+  folder: String,
+  mark: Mark
+) -> Out:
+  flag_out.if(flag_cut(p, plan), p, plan, uids, folder, mark)
+
+def mark_result(
+  p: Proc,
+  plan: List<&2, I.Cmd>,
+  uids: List<&2, U32>,
+  +folder: String,
+  +mark: Mark
+) -> Out:
+  match mark:
+    case MarkSeen{seen}:
+      changed_out(imap_result(p), uids, folder, mark_kvs(folder, mark))
+    case _:
+      flag_out(p, plan, uids, folder, mark)
+
+def mark_go(+uids: List<&2, U32>, +folder: String, +mark: Mark, uidv: U32) -> IO(Out):
+  +plan = mark_plan(uids, folder, mark, uidv)
+  do IO<Out>:
+    p : Proc <- imap_proc(plan)
+    return mark_result(p, plan, uids, folder, mark)
+
+def mark_checked(
+  missing: Bool,
+  uids: List<&2, U32>,
+  folder: String,
+  mark: Mark,
+  uidv: U32
+) -> IO(Out):
   match missing:
     case True{}:
       pure_out(Err{uidv_missing()})
     case False{}:
-      mark_go(uids, folder, seen, uidv)
+      mark_go(uids, folder, mark, uidv)
 
-def mark_uids(+u: Uids, +folder: String, +seen: Bool, +uidv: U32) -> IO(Out):
+def mark_uids(u: Uids, folder: String, mark: Mark, +uidv: U32) -> IO(Out):
   match u:
     case UidsErr{m}:
       pure_out(Err{m})
     case UidsOk{uids}:
-      mark_checked(U32.is_zero(uidv), uids, folder, seen, uidv)
+      mark_checked(U32.is_zero(uidv), uids, folder, mark, uidv)
 
-def t_mark(+args: J.Json, +seen: Bool) -> IO(Out):
-  mark_uids(uids_arg(args), folder_arg(args), seen, uidv_arg(args))
+def t_mark(+args: J.Json, mark: Mark) -> IO(Out):
+  mark_uids(uids_arg(args), folder_arg(args), mark, uidv_arg(args))
+
+def flag_colour(m: Maybe<&2, I.Colour>, args: J.Json) -> IO(Out):
+  match m:
+    case Some{c}:
+      t_mark(args, MarkFlag{Some{c}})
+    case None{}:
+      pure_out(Err{"\"colour\" must be one of " ++ String.join(I.colour_names(), ", ")})
+
+# Without a "colour", flagging leaves the message's colour bits as they are.
+def flag_named(m: Maybe<&2, String>, args: J.Json) -> IO(Out):
+  match m:
+    case None{}:
+      t_mark(args, MarkFlag{None{}})
+    case Some{n}:
+      flag_colour(I.colour_from_name(n), args)
+
+def t_flag(+args: J.Json) -> IO(Out):
+  flag_named(J.as_str(J.get(args, "colour")), args)
 
 # ---- move / trash / delete -------------------------------------------------------------------
 
 def method_name(+move: Bool) -> String:
   Bool.pick(String, move, "UID MOVE", "UID COPY + UID EXPUNGE")
-
-def proc_lines(+p: Proc) -> List<&2, I.RLine>:
-  match p:
-    case ProcFail{m}:
-      []
-    case ProcOk{code, out, err}:
-      I.frame(out)
-
-def run_failure(+r: Run) -> String:
-  match r:
-    case RunErr{m}:
-      m
-    case RunOk{lines}:
-      ""
-
-# Whether the helper gave no result at all (it could not run, or timed out),
-# so what it did to the mailbox is unknown.
-def helper_lost(+p: Proc) -> Bool:
-  match p:
-    case ProcFail{m}:
-      True{}
-    case ProcOk{code, out, err}:
-      False{}
-
-# Whether command `n` was answered OK.
-def ok_at(+lines: List<&2, I.RLine>, +n: U32) -> Bool:
-  String.eq(I.status(lines, n), "OK")
 
 # Whether a plan has a UID COPY (a UID MOVE plan has none).
 def has_copy(+plan: List<&2, I.Cmd>) -> Bool:
@@ -1586,10 +1999,10 @@ def pure_att(+a: AttR) -> IO(AttR):
 
 def att_proc(+p: Proc, +name: String, +ctype: String) -> AttR:
   match p:
-    case ProcFail{m}:
-      AttErr{"cannot run mailbend-attach: " ++ m}
     case ProcOk{code, out, err}:
       Bool.pick(AttR, U32.is_zero(code), AttOk{M.Attach{name, ctype, out}}, AttErr{strip_prefix(helper_msg(err), "mailbend-attach: ")})
+    case _:
+      AttErr{"cannot run mailbend-attach: " ++ proc_failure(p)}
 
 # `budget` is what is left of the 25 MB all attachments may take together;
 # the reader refuses a file larger than that before reading it.
@@ -1724,7 +2137,7 @@ def secs_of(p: Proc) -> U32:
   match p:
     case ProcOk{code, out, err}:
       Maybe.default(&2, U32, U32.read(String.trim(out)), 0)
-    case ProcFail{m}:
+    case _:
       0
 
 def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
@@ -2082,9 +2495,13 @@ def run_op(+op: Ops.Op, +args: J.Json) -> IO(Out):
     case Ops.OGetNew{}:
       t_get_new(args)
     case Ops.OMarkRead{}:
-      t_mark(args, True{})
+      t_mark(args, MarkSeen{True{}})
     case Ops.OMarkUnread{}:
-      t_mark(args, False{})
+      t_mark(args, MarkSeen{False{}})
+    case Ops.OFlag{}:
+      t_flag(args)
+    case Ops.OUnflag{}:
+      t_mark(args, MarkUnflag{})
     case Ops.OMove{}:
       t_move(args)
     case Ops.OLabel{}:

@@ -34,9 +34,9 @@ flowchart TB
     direction TB
     main["main.bend<br/>MCP JSON-RPC server and CLI<br/>8 MiB line cap, envelope check"]
     json["src/json.bend<br/>strict JSON parser"]
-    tools["src/tools.bend<br/>17 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
+    tools["src/tools.bend<br/>19 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>53 laws proven over the plans"]
+    laws["LAWS.bend + PROOF.bend<br/>59 laws proven over the plans"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
@@ -160,13 +160,16 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Only the helper reads the password; no output contains it | helper (login, login replies not forwarded) | transport cases 2 and 18, e2e output scan |
 | Reads never change mail (`EXAMINE`, `BODY.PEEK`) | `src/ops.bend` read plans | laws in `LAWS.bend`, e2e server log |
 | Move and trash never expunge before copying; the first `UID EXPUNGE` names the first `UID COPY`'s UIDs | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail`, `move/trash_expunges_only_copied` (labels: `label_is_move`) |
+| Flagging changes exactly `\Flagged` and, for a colour, its three bits (a closed set, one pure colour-to-bits mapping), never `\Deleted` or an expunge; unflagging clears all of them; `colour_kept` is `true` only with every changed message's reported flags and PERMANENTFLAGS as evidence | `plan_flag`, `plan_unflag`, `colour_bits`, `colour_kvs` | laws `flag_never_deletes`, `flag_changes_only_flag_and_colour`, `flag_changes_exactly`, `unflag_clears_flag_and_colour`, unit test per colour, e2e kept / session-only / dropped / unverified cases |
 | A label is a move, and creating or renaming a folder touches no message | `plan_label` is `plan_move`; `plan_create`, `plan_rename` | laws `label_is_move`, `label_creates_no_folder`, `create/rename_changes_exactly`, `create/rename_changes_no_mail`, `folder_plans_destroy_nothing` |
 | Folder tools never touch INBOX, role folders or `To Delete`, nest under no missing parent, and fail closed when the delimiter is unknown; `inbox/` is written as the listed INBOX | `src/tools.bend` `*_problem`, `canonical_name` | e2e `folder_*` cases, both delimiters |
 | A move cut off after its COPY may have run is `partial`, never an error implying nothing changed | `src/tools.bend` `interrupted`, `Out.Partial` | e2e interrupted-label cases, MCP `isError` case |
+| A flag change stopped once a store was acknowledged or sent unanswered is `partial`, listing the acknowledged and possibly-run changes; one whose search found no UID, or that stopped before any store, is a plain error | `src/tools.bend` `flag_cut`, `store_changes` | e2e refused, cut-off, absent-UID, unflag-cleanup and read-back cases |
+| A helper that never started changed nothing; one that failed after starting, or was killed by a signal, may have (one classifier for flag changes, COPY-based moves and folder changes) | `src/tools.bend` `proc_of` (`ProcRefused` for the path refusal and spawn errnos), `helper_lost` | e2e relative, missing and killed helper cases |
 | Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
 | Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
 | No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
-| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_five`, e2e (all 12 mutating tools, switch values, tool lists) |
+| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_five`, e2e (all 14 mutating tools, switch values, tool lists) |
 | Attachments only from a dedicated `MAILBEND_ATTACH_DIR`, at most 32 and 25 MB | `mailbend-attach` (openat2, broad-directory and hard-link refusal, O_PATH type check), `src/tools.bend` budget | e2e (symlink, `..`, `/proc/self/environ`, `/`, home, `.ssh`, hard link, FIFO, count, budget) |
 | Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
 | Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
@@ -176,7 +179,7 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 
 ```text
 main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
-src/tools.bend       the 17 tools: arguments, sessions, results
+src/tools.bend       the 19 tools: arguments, sessions, results
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
 src/mime.bend        message parsing (headers, RFC 2047/2231, multipart) and composition
@@ -219,6 +222,7 @@ environment. Setting both is refused.
 | new mail | `EXAMINE` + `UID SEARCH UID n+1:*`, filtered to UIDs > n |
 | changes to existing messages | `SELECT`, `=EXPECT * OK [UIDVALIDITY v]` (checked by the helper), `UID SEARCH UID <uids>` (reports changed/missing) |
 | mark read / unread | then `UID STORE +FLAGS.SILENT (\Seen)` / `-FLAGS.SILENT` |
+| flag / unflag | then `UID STORE +FLAGS.SILENT (\Flagged)`; with a colour, one `UID STORE` per `$MailFlagBit0..2`, adding the bits of its index and removing the others (red has none); without one, no bit store. Unflag removes `\Flagged`, then all three bits. Then `UID FETCH (UID FLAGS)`: its own replies (the last with FLAGS per UID; none without a UID) are the reported flags, judged for a colour with SELECT's `PERMANENTFLAGS` (`colour_kept`, `colour_not_kept`) |
 | move | then `UID MOVE`; else (after `CAPABILITY` + `=EXPECT-WORD UIDPLUS` ahead of the guard) `UID COPY` + `UID STORE +FLAGS.SILENT (\Deleted)` + `UID EXPUNGE`; else refused |
 | trash | move to the resolved Trash folder using the per-role policy below |
 | label | the move plan, into an existing folder that is none of the protected ones |
@@ -325,6 +329,10 @@ These tests use the fake TLS server, not a live provider.
 - rendered read scripts start with `EXAMINE`, and every fetch item renders as
   `BODY.PEEK[...]` or metadata;
 - marking read/unread never marks `\Deleted` or expunges;
+- flagging and unflagging never mark `\Deleted` or expunge, and every store
+  they make is on `\Flagged` or a colour bit; flagging stores exactly
+  `\Flagged` without a colour, and `\Flagged` then each bit as `colour_bits`
+  gives it with one; unflagging clears `\Flagged`, then all three bits;
 - move and trash never expunge before copying, for every capability set,
   and their first `UID EXPUNGE` names the same UIDs as their first
   `UID COPY`;
@@ -338,7 +346,7 @@ These tests use the fake TLS server, not a live provider.
   which with the confirmation and UIDPLUS are the caller's UIDs;
 - `CExpunge` renders as `UID EXPUNGE`;
 - saving a draft never removes anything;
-- mark, move, trash and delete plans open with `SELECT` and the expectation
+- mark, flag, move, trash and delete plans open with `SELECT` and the expectation
   of the caller's exact UIDVALIDITY (or are empty);
 - delete and copy-based move plans confirm UIDPLUS in their own session
   before anything else;

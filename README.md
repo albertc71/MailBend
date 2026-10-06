@@ -15,6 +15,7 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_get` | Read one message: headers, text, attachment list | no |
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
 | `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
+| `mail_flag` / `mail_unflag` | Add / remove `\Flagged`; `mail_flag` sets an Apple Mail `colour` (red, orange, yellow, green, blue, purple, grey) or, without one, keeps the current colour; `mail_unflag` clears the colour. The result lists the flags the server reported and, for a colour, `colour_kept` (`true`, `false` or `"unverified"`) | flags |
 | `mail_move` | Move to another folder | yes |
 | `mail_label` | Move into an existing label folder (a label is a folder; one copy, `uidvalidity` required) | yes |
 | `mail_trash` | Move to the resolved Trash folder (recoverable) | yes |
@@ -220,7 +221,15 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   CLI), never as an error that implies nothing changed. A refused or earlier
   failure is an ordinary error. A folder change cut off after CAPABILITY
   answered says the folder may have been created or renamed: list folders
-  before retrying.
+  before retrying. A flag change (`mail_flag`, `mail_unflag`) that stops
+  once a store was acknowledged or sent unanswered also fails with
+  `partial: true`, listing the acknowledged changes and any that may have
+  run unanswered; a retry is idempotent. One that stopped before any store
+  could run, or whose search found none of the UIDs, is an ordinary error.
+  A helper that never started (a relative `MAILBEND_TLS_HELPER`, or one that
+  cannot be spawned) changed nothing, so it is an ordinary error; one that
+  failed after starting or was killed by a signal may have, so these changes
+  count it as cut off.
 - **Attachments stay inside one directory.** Attachments are read only from
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   `mailbend-attach`, a separate program with no credentials. It opens them
@@ -255,7 +264,7 @@ flowchart LR
   agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["17 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["19 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]

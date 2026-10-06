@@ -94,6 +94,63 @@ law mark_never_deletes:
   for uidv: U32
   {Bool.or(I.any_marks_deleted(Ops.plan_mark(mbox, uids, seen, uidv)), I.any_expunges(Ops.plan_mark(mbox, uids, seen, uidv))) == False{} : Bool}
 
+# Flagging and unflagging touch only \Flagged and the colour bits: they never
+# mark \Deleted or expunge, and every store they make is on one of those
+# flags. Each such law states the flag plan (with or without a colour), then
+# the unflag plan.
+law flag_never_deletes:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: Maybe<&2, I.Colour>
+  for uidv: U32
+  ({Bool.or(
+      I.any_marks_deleted(Ops.plan_flag(mbox, uids, colour, uidv)),
+      I.any_expunges(Ops.plan_flag(mbox, uids, colour, uidv))) == False{} : Bool} &
+   {Bool.or(
+      I.any_marks_deleted(Ops.plan_unflag(mbox, uids, uidv)),
+      I.any_expunges(Ops.plan_unflag(mbox, uids, uidv))) == False{} : Bool})
+
+law flag_changes_only_flag_and_colour:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: Maybe<&2, I.Colour>
+  for uidv: U32
+  ({Ops.only_flag_stores(Ops.mail_changes(Ops.plan_flag(mbox, uids, colour, uidv))) == True{} : Bool} &
+   {Ops.only_flag_stores(Ops.mail_changes(Ops.plan_unflag(mbox, uids, uidv))) == True{} : Bool})
+
+# Flagging changes exactly what was asked, in order: without a colour, one
+# store adding \Flagged (the colour bits stay as they are); with a colour,
+# \Flagged, then each colour bit added or removed as colour_bits gives it.
+law flag_changes_exactly:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: I.Colour
+  for b0: Bool
+  for b1: Bool
+  for b2: Bool
+  for uidv: U32
+  ({Ops.mail_changes(Ops.plan_flag(mbox, uids, None{}, uidv)) ==
+      [I.CStore{uids, True{}, I.FFlagged{}}] : List<&2, I.Cmd>} &
+   ({I.colour_bits(colour) == I.Bits{b0, b1, b2} : I.Bits} ->
+    {Ops.mail_changes(Ops.plan_flag(mbox, uids, Some{colour}, uidv)) == [
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CStore{uids, b0, I.FColourBit0{}},
+      I.CStore{uids, b1, I.FColourBit1{}},
+      I.CStore{uids, b2, I.FColourBit2{}}
+    ] : List<&2, I.Cmd>}))
+
+# Unflagging removes \Flagged, then all three colour bits.
+law unflag_clears_flag_and_colour:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_unflag(mbox, uids, uidv)) == [
+    I.CStore{uids, False{}, I.FFlagged{}},
+    I.CStore{uids, False{}, I.FColourBit0{}},
+    I.CStore{uids, False{}, I.FColourBit1{}},
+    I.CStore{uids, False{}, I.FColourBit2{}}
+  ] : List<&2, I.Cmd>}
+
 # Moving and trashing never lose mail: whatever server capabilities, no
 # message is expunged before it has been copied.
 law move_never_loses_mail:
@@ -221,6 +278,14 @@ law mark_is_pinned:
   for uidv: U32
   {Ops.pinned(Ops.plan_mark(mbox, uids, seen, uidv)) == True{} : Bool}
 
+law flag_is_pinned:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: Maybe<&2, I.Colour>
+  for uidv: U32
+  ({Ops.pinned(Ops.plan_flag(mbox, uids, colour, uidv)) == True{} : Bool} &
+   {Ops.pinned(Ops.plan_unflag(mbox, uids, uidv)) == True{} : Bool})
+
 law move_is_pinned:
   for mbox: String
   for uids: List<&2, U32>
@@ -254,6 +319,16 @@ law mark_pins_callers_uidvalidity:
   for seen: Bool
   for uidv: U32
   {Ops.pin_line_or(Ops.plan_mark(mbox, uids, seen, uidv), I.uidv_line(uidv)) == I.uidv_line(uidv) : String}
+
+law flag_pins_callers_uidvalidity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: Maybe<&2, I.Colour>
+  for uidv: U32
+  ({Ops.pin_line_or(Ops.plan_flag(mbox, uids, colour, uidv), I.uidv_line(uidv)) ==
+      I.uidv_line(uidv) : String} &
+   {Ops.pin_line_or(Ops.plan_unflag(mbox, uids, uidv), I.uidv_line(uidv)) ==
+      I.uidv_line(uidv) : String})
 
 law move_pins_callers_uidvalidity:
   for mbox: String

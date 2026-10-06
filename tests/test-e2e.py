@@ -25,7 +25,7 @@ PASSWORD = FIX["password"]
 FOLDER_ROLES = ("drafts", "trash", "sent", "junk", "archive")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 17
+TOOL_COUNT = 19
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -149,6 +149,7 @@ def run_all(work):
     fallback(work)
     generic_folders(work)
     folder_tools(work)
+    flag_tools(work)
 
 
 def reads(srv):
@@ -534,6 +535,8 @@ def mcp(srv):
 MUTATING_CALLS = {
     "mail_mark_read": {"uids": [5], "uidvalidity": 1700000001},
     "mail_mark_unread": {"uids": [5], "uidvalidity": 1700000001},
+    "mail_flag": {"uids": [5], "uidvalidity": 1700000001, "colour": "blue"},
+    "mail_unflag": {"uids": [5], "uidvalidity": 1700000001},
     "mail_move": {"uids": [5], "destination": "Archive", "uidvalidity": 1700000001},
     "mail_label": {"uids": [5], "label": "Archive", "uidvalidity": 1700000001},
     "mail_create_folder": {"name": "Projects"},
@@ -1198,6 +1201,215 @@ def folder_partial_over_mcp(work):
               result.get("isError") is True and body.get("partial") is True and body.get("ok") is False, res)
     finally:
         srv.stop()
+
+
+def colour_bit_numbers(state, uid):
+    """The numbers N of the $MailFlagBitN keywords an INBOX message has."""
+    return {n for n in range(3) if f"$MailFlagBit{n}" in flags(state, "INBOX", uid)}
+
+
+def reported(result):
+    """The result's flags entries as {uid: flags}, and whether each UID has exactly one."""
+    entries = result.get("flags", [])
+    uids = [e.get("uid") for e in entries]
+    return {e.get("uid"): e.get("flags") for e in entries}, len(uids) == len(set(uids))
+
+
+LIMITED_PERMANENT = "\\Seen,\\Flagged,\\Deleted,\\Draft,\\Answered"
+
+
+def flag_tools(work):
+    flag_basics(work)
+    flag_noisy_server(work)
+    flag_session_only(work)
+    flag_dropped_colour(work)
+    flag_without_permanent_flags(work)
+    flag_unobserved(work)
+    flag_cut_off(work)
+    flag_helper_failures(work)
+
+
+def flag_basics(work):
+    srv = Server(work)
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [1, 2], "uidvalidity": INBOX_VALIDITY})
+        s = srv.st()
+        seen, single = reported(r)
+        check("flag without a colour stores only \\Flagged and reports no colour",
+              c == 0 and r.get("changed") == [1, 2] and r.get("missing") == [] and r.get("flagged") is True
+              and all("\\Flagged" in flags(s, "INBOX", u) and not colour_bit_numbers(s, u) for u in (1, 2))
+              and not {"colour", "colour_kept", "colour_not_kept"} & set(r), r)
+        check("flag reports one flags entry per changed UID, as the server sent it",
+              single and sorted(seen) == [1, 2] and all("\\Flagged" in f for f in seen.values()), r)
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "green"})
+        check("flag with a colour stores its bits (green = Bit0 + Bit1) and reports it kept",
+              c == 0 and colour_bit_numbers(srv.st(), 1) == {0, 1} and r.get("colour") == "green"
+              and r.get("colour_kept") is True and r.get("colour_not_kept") == [], r)
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "blue"})
+        check("flag with another colour replaces the bits (blue = Bit2)",
+              c == 0 and colour_bit_numbers(srv.st(), 1) == {2} and r.get("colour_kept") is True, r)
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY})
+        check("flag without a colour keeps an existing blue",
+              c == 0 and colour_bit_numbers(srv.st(), 1) == {2} and "\\Flagged" in flags(srv.st(), "INBOX", 1), r)
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "red"})
+        check("an explicit red clears the colour bits", c == 0 and not colour_bit_numbers(srv.st(), 1)
+              and r.get("colour") == "red" and r.get("colour_kept") is True, r)
+        tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "purple"})
+        c, r = tool(srv, "mail_unflag", {"uids": [1, 5, 99], "uidvalidity": INBOX_VALIDITY})
+        s = srv.st()
+        check("unflag clears \\Flagged and every colour bit, and keeps other flags",
+              c == 0 and r.get("changed") == [1, 5] and r.get("missing") == [99] and r.get("flagged") is False
+              and all("\\Flagged" not in flags(s, "INBOX", u) and not colour_bit_numbers(s, u) for u in (1, 5))
+              and "\\Seen" in flags(s, "INBOX", 5) and "colour" not in r, r)
+        before, n_log = srv.st(), len(srv.log_lines())
+        c, r = tool(srv, "mail_flag", {"uids": [2], "uidvalidity": INBOX_VALIDITY, "colour": "pink"})
+        check("an unknown colour is refused before anything is sent", c != 0 and "colour" in r.get("error", "")
+              and srv.st() == before and len(srv.log_lines()) == n_log, r)
+        c, r = tool(srv, "mail_flag", {"uids": [2], "uidvalidity": 42, "colour": "red"})
+        new = srv.log_lines()[n_log:]
+        check("flag with a stale UIDVALIDITY stops after SELECT, before any STORE",
+              c != 0 and "UIDVALIDITY" in r.get("error", "") and srv.st() == before
+              and any(" SELECT " in l for l in new) and not any(" STORE " in l for l in new), (r, new))
+        c, r = tool(srv, "mail_flag", {"uids": [2], "uidvalidity": INBOX_VALIDITY, "colour": "purple"},
+                    MAILBEND_READ_ONLY="1")
+        check("read-only mode refuses mail_flag before connecting", c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "")
+              and srv.st() == before, r)
+        c, r = tool(srv, "mail_flag", {"uids": [2], "uidvalidity": INBOX_VALIDITY, "colour": "grey"},
+                    MAILBEND_DRAFTS_ONLY="1")
+        check("drafts-only mode still allows flagging", c == 0 and colour_bit_numbers(srv.st(), 2) == {1, 2}, r)
+        stores = [l for l in srv.log_lines() if " STORE " in l]
+        check("flag stores only \\Flagged and colour bits, never \\Deleted",
+              stores and all(("\\Flagged" in l or "$MailFlagBit" in l) and "\\Deleted" not in l for l in stores), stores[:3])
+    finally:
+        srv.stop()
+
+
+def flag_noisy_server(work):
+    """Unsolicited, duplicate, FLAGS-less and sequence-number-only FETCH updates."""
+    srv = Server(work, extra=["--noisy-store"])
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "green"})
+        seen, single = reported(r)
+        check("noisy FETCH updates still give one flags entry and colour_kept true",
+              c == 0 and single and sorted(seen) == [1] and "$MailFlagBit1" in seen[1]
+              and r.get("colour_kept") is True and r.get("colour_not_kept") == [], r)
+    finally:
+        srv.stop()
+
+
+def flag_session_only(work):
+    """PERMANENTFLAGS without the keywords, but the server stores them for the session."""
+    srv = Server(work, extra=["--permanent-flags", LIMITED_PERMANENT, "--session-flags"])
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [1, 2], "uidvalidity": INBOX_VALIDITY, "colour": "orange"})
+        check("session-only colour keywords give colour_kept false for every changed UID",
+              c == 0 and all(colour_bit_numbers(srv.st(), u) == {0} for u in (1, 2))
+              and r.get("colour_kept") is False and r.get("colour_not_kept") == [1, 2], r)
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "red"})
+        check("clearing session-only bits is not kept either", c == 0 and r.get("colour_kept") is False
+              and r.get("colour_not_kept") == [1], r)
+    finally:
+        srv.stop()
+
+
+def flag_dropped_colour(work):
+    """PERMANENTFLAGS without the keywords, and the server drops them."""
+    srv = Server(work, extra=["--permanent-flags", LIMITED_PERMANENT])
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [1, 2], "uidvalidity": INBOX_VALIDITY, "colour": "orange"})
+        s = srv.st()
+        seen, _ = reported(r)
+        check("a colour the server drops is reported as not kept",
+              c == 0 and r.get("colour_kept") is False and r.get("colour_not_kept") == [1, 2]
+              and all("\\Flagged" in flags(s, "INBOX", u) and not colour_bit_numbers(s, u) for u in (1, 2))
+              and all("$MailFlagBit0" not in f for f in seen.values()), r)
+    finally:
+        srv.stop()
+
+
+def flag_without_permanent_flags(work):
+    srv = Server(work, extra=["--no-permanent-flags"])
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "colour": "green"})
+        check("without PERMANENTFLAGS a colour is unverified, not kept",
+              c == 0 and colour_bit_numbers(srv.st(), 1) == {0, 1} and r.get("colour_kept") == "unverified"
+              and r.get("colour_not_kept") == [], r)
+    finally:
+        srv.stop()
+
+
+def flag_unobserved(work):
+    """A changed message whose flags the server does not report back."""
+    srv = Server(work, extra=["--fetch-no-flags", "2"])
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [1, 2], "uidvalidity": INBOX_VALIDITY, "colour": "green"})
+        seen, single = reported(r)
+        check("a changed UID without reported flags makes the colour unverified, with flags null",
+              c == 0 and single and sorted(seen) == [1, 2] and seen[2] is None and "$MailFlagBit1" in seen[1]
+              and r.get("colour_kept") == "unverified" and r.get("colour_not_kept") == [], r)
+    finally:
+        srv.stop()
+
+
+def flag_stopped(work, title, extra, name, args, acknowledged, unconfirmed, uids=(5,), **env):
+    """A flag change stopped by a fault: partial when a store was acknowledged or may have run
+    unanswered, else a plain error that changed nothing. Returns the server state after the call."""
+    srv = Server(work, extra=extra)
+    try:
+        before = srv.st()
+        c, r = tool(srv, name, {"uids": list(uids), "uidvalidity": INBOX_VALIDITY, **args}, **env)
+        after = srv.st()
+        if not acknowledged and not unconfirmed:
+            check(title + ": a plain error, not partial, and nothing changed", c != 0 and "partial" not in r
+                  and r.get("error") and after == before, r)
+            return after
+        check(title + ": partial, with the acknowledged and possibly-run changes", c != 0
+              and r.get("partial") is True and r.get("ok") is False and "error" not in r
+              and r.get("acknowledged") == acknowledged and r.get("unconfirmed") == unconfirmed
+              and "idempotent" in r.get("message", ""), r)
+        return after
+    finally:
+        srv.stop()
+
+
+def flag_cut_off(work):
+    flag_stopped(work, "a refused colour store", ["--reject", "STORE#3"], "mail_flag", {"colour": "blue"},
+                 ["+\\Flagged", "-$MailFlagBit0"], [])
+    flag_stopped(work, "a colour store cut off unanswered", ["--drop-unanswered", "STORE#2"], "mail_flag",
+                 {"colour": "blue"}, ["+\\Flagged"], ["-$MailFlagBit0"])
+    flag_stopped(work, "an unflag whose cleanup is refused", ["--reject", "STORE#2"], "mail_unflag", {},
+                 ["-\\Flagged"], [])
+    flag_stopped(work, "a refused first store", ["--reject", "STORE#1"], "mail_flag", {"colour": "blue"}, [], [])
+    flag_stopped(work, "an unflag of absent UIDs whose cleanup is refused", ["--reject", "STORE#2"],
+                 "mail_unflag", {}, [], [], uids=(99,))
+    for title, args in (("a first colour store", {"colour": "blue"}), ("a first store", {})):
+        s = flag_stopped(work, title + " cut off unanswered", ["--drop-unanswered", "STORE#1"], "mail_flag",
+                         args, [], ["+\\Flagged"], uids=(2,))
+        check(title + " cut off unanswered really ran", "\\Flagged" in flags(s, "INBOX", 2), flags(s, "INBOX", 2))
+    srv = Server(work, extra=["--reject", "FETCH#1"])
+    try:
+        c, r = tool(srv, "mail_flag", {"uids": [5], "uidvalidity": INBOX_VALIDITY, "colour": "green"})
+        check("a refused read-back after every store: partial, saying every change was acknowledged",
+              c != 0 and r.get("partial") is True and r.get("unconfirmed") == []
+              and r.get("acknowledged") == ["+\\Flagged", "+$MailFlagBit0", "+$MailFlagBit1", "-$MailFlagBit2"]
+              and "acknowledged every" in r.get("message", "") and "refused a store" not in r.get("message", "")
+              and colour_bit_numbers(srv.st(), 5) == {0, 1}, r)
+    finally:
+        srv.stop()
+
+
+def flag_helper_failures(work):
+    """A helper that never started changed nothing; one killed by a signal may have."""
+    flag_stopped(work, "a relative helper path", [], "mail_flag", {"colour": "blue"}, [], [],
+                 MAILBEND_TLS_HELPER="bin/mailbend-tls")
+    flag_stopped(work, "a helper that does not exist", [], "mail_flag", {"colour": "blue"}, [], [],
+                 MAILBEND_TLS_HELPER=os.path.join(work, "no-such-helper"))
+    killed = os.path.join(work, "killed-helper")
+    with open(killed, "w", encoding="utf-8") as f:
+        f.write("#!/bin/sh\nkill -KILL $$\n")
+    os.chmod(killed, 0o755)
+    flag_stopped(work, "a helper killed by a signal", [], "mail_flag", {"colour": "blue"}, [],
+                 ["+\\Flagged", "-$MailFlagBit0", "-$MailFlagBit1", "+$MailFlagBit2"], MAILBEND_TLS_HELPER=killed)
 
 
 if __name__ == "__main__":

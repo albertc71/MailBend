@@ -19,6 +19,11 @@ ATTS = {"type": "array", "description": "Files to attach. Only regular files ins
             "filename": {"type": "string", "description": "Name shown to the recipient. Default: the file name."},
             "content_type": {"type": "string", "description": "MIME type. Default: guessed from the extension."}}}}
 
+FLAGS_REPORTED = "flags lists each changed UID's flags as the server reported them after the change (null if it reported none). "
+FLAG_PARTIAL = ("If the change stops once a store was acknowledged or sent unanswered (or the TLS helper is lost after starting), the call fails with partial: true, "
+                "listing the acknowledged changes and those that may have run unanswered; a retry is idempotent but may fail again on a server that refuses the colour keywords. "
+                "A change that stopped before any store could run, or whose UIDs none exist, is a plain error.")
+
 def obj(props, required=()):
     return {"type": "object", "properties": props, "required": list(required), "additionalProperties": False}
 
@@ -57,6 +62,14 @@ TOOLS = [
     ("mail_mark_read", "Mark messages as read (add the \\Seen flag).",
      obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False, idempotent=True)),
     ("mail_mark_unread", "Mark messages as unread (remove the \\Seen flag).",
+     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False, idempotent=True)),
+    ("mail_flag", "Flag messages (add \\Flagged). With a colour, also set exactly that Apple Mail colour's $MailFlagBit0-2 keywords and clear the others (red has none); without one, the current colour is kept. "
+     "With a colour the result has colour_kept: true; false when a message shows other flags or PERMANENTFLAGS says a change lasts only for this session (colour_not_kept lists those UIDs); "
+     "or \"unverified\" when the server sent no PERMANENTFLAGS or no flags for a message. " + FLAGS_REPORTED + FLAG_PARTIAL,
+     obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV,
+          "colour": {"type": "string", "enum": ["red", "orange", "yellow", "green", "blue", "purple", "grey"], "description": "Flag colour. Omit it to keep the current colour."}},
+         ["uids", "uidvalidity"]), ann(False, idempotent=True)),
+    ("mail_unflag", "Unflag messages: remove \\Flagged, then clear every colour keyword. " + FLAGS_REPORTED + FLAG_PARTIAL,
      obj({"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDV}, ["uids", "uidvalidity"]), ann(False, idempotent=True)),
     ("mail_move", "Move messages to another IMAP folder. Uses UID MOVE, or copy + expunge of exactly these UIDs with UIDPLUS. If the move is cut off after the copy may have run, the call fails with partial: true and the messages may be in both folders, so check the destination before retrying.",
      obj({"folder": FOLDER, "uids": UIDS, "destination": {"type": "string", "description": "Target folder name."}, "uidvalidity": UIDV},

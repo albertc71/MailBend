@@ -13,6 +13,24 @@ type Flag is Data:
   FDraft{}
   FFlagged{}
   FAnswered{}
+  FColourBit0{}
+  FColourBit1{}
+  FColourBit2{}
+
+# Apple Mail's flag colours: a 3-bit index over $MailFlagBit0..2, meaningful
+# only while \Flagged is set.
+type Colour is Data:
+  ColRed{}
+  ColOrange{}
+  ColYellow{}
+  ColGreen{}
+  ColBlue{}
+  ColPurple{}
+  ColGrey{}
+
+# Which of $MailFlagBit0..2 a colour sets.
+type Bits is Data:
+  Bits{b0: Bool, b1: Bool, b2: Bool}
 
 # Search keys. Strings are matched by the server (substring, case-insensitive
 # for ASCII); dates are IMAP dates such as "1-Feb-2026".
@@ -261,8 +279,8 @@ def expunges(+c: Cmd) -> Bool:
 # Whether a command marks messages \Deleted.
 def marks_deleted(+c: Cmd) -> Bool:
   match c:
-    case CStore{u, True{}, FDeleted{}}:
-      True{}
+    case CStore{u, add, FDeleted{}}:
+      add
     case _:
       False{}
 
@@ -463,6 +481,77 @@ def flag_name(+f: Flag) -> String:
       "\\Flagged"
     case FAnswered{}:
       "\\Answered"
+    case FColourBit0{}:
+      "$MailFlagBit0"
+    case FColourBit1{}:
+      "$MailFlagBit1"
+    case FColourBit2{}:
+      "$MailFlagBit2"
+
+def colour_name(c: Colour) -> String:
+  match c:
+    case ColRed{}:
+      "red"
+    case ColOrange{}:
+      "orange"
+    case ColYellow{}:
+      "yellow"
+    case ColGreen{}:
+      "green"
+    case ColBlue{}:
+      "blue"
+    case ColPurple{}:
+      "purple"
+    case ColGrey{}:
+      "grey"
+
+def colours() -> List<&2, Colour>:
+  [ColRed{}, ColOrange{}, ColYellow{}, ColGreen{}, ColBlue{}, ColPurple{}, ColGrey{}]
+
+def colour_names.go(cs: List<&2, Colour>) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case Con{c, t}:
+      colour_name(c) <> colour_names.go(t)
+
+def colour_names() -> List<&2, String>:
+  colour_names.go(colours())
+
+# Walks all seven colours, keeping the match in `found`: a fold is simpler
+# than an early-stop `.if` helper.
+def colour_from_name.go(
+  cs: List<&2, Colour>,
+  +n: String,
+  found: Maybe<&2, Colour>
+) -> Maybe<&2, Colour>:
+  match cs:
+    case Nil{}:
+      found
+    case Con{+c, t}:
+      colour_from_name.go(t, n,
+        Bool.pick(Maybe<&2, Colour>, String.eq(colour_name(c), n), Some{c}, found))
+
+def colour_from_name(n: String) -> Maybe<&2, Colour>:
+  colour_from_name.go(colours(), n, None{})
+
+# The index is Bit0 x 1 + Bit1 x 2 + Bit2 x 4, with red 0 and grey 6.
+def colour_bits(c: Colour) -> Bits:
+  match c:
+    case ColRed{}:
+      Bits{False{}, False{}, False{}}
+    case ColOrange{}:
+      Bits{True{}, False{}, False{}}
+    case ColYellow{}:
+      Bits{False{}, True{}, False{}}
+    case ColGreen{}:
+      Bits{True{}, True{}, False{}}
+    case ColBlue{}:
+      Bits{False{}, False{}, True{}}
+    case ColPurple{}:
+      Bits{True{}, False{}, True{}}
+    case ColGrey{}:
+      Bits{False{}, True{}, True{}}
 
 def flag_list(+fs: List<&2, Flag>) -> String:
   match fs:
@@ -1131,20 +1220,24 @@ def search_uids(+lines: List<&2, RLine>) -> List<&2, U32>:
 def resp_code_value(+code: String) -> String:
   after_space(code)
 
-def code_hit(+hit: Bool, +text: String, +name: String, +rest: Maybe<&2, U32>) -> Maybe<&2, U32>:
+def code_hit(hit: Bool, text: String, rest: Maybe<&2, String>) -> Maybe<&2, String>:
   match hit:
     case True{}:
-      U32.read(resp_code_value(resp_code(String.drop(text, 5n))))
+      Some{resp_code_value(resp_code(String.drop(text, 5n)))}
     case False{}:
       rest
 
-# The value of a "* OK [NAME value]" response code, e.g. UIDVALIDITY.
-def ok_code(+lines: List<&2, RLine>, +name: String) -> Maybe<&2, U32>:
+# The raw value of the first "* OK [NAME value]" response code.
+def ok_code_text(lines: List<&2, RLine>, +name: String) -> Maybe<&2, String>:
   match lines:
     case Nil{}:
       None{}
     case Con{RLine{+text, l}, t}:
-      code_hit(upper_starts(text, "* OK [" ++ name ++ " "), text, name, ok_code(t, name))
+      code_hit(upper_starts(text, "* OK [" ++ name ++ " "), text, ok_code_text(t, name))
+
+# The number of a "* OK [NAME n]" response code, e.g. UIDVALIDITY.
+def ok_code(lines: List<&2, RLine>, name: String) -> Maybe<&2, U32>:
+  Maybe.bind(&2, String, U32, ok_code_text(lines, name), U32.read)
 
 def exists_hit(+hit: Bool, +text: String, +rest: Maybe<&2, U32>) -> Maybe<&2, U32>:
   match hit:
@@ -1191,17 +1284,47 @@ def msg_pairs(+vs: List<&2, IV>, +m: Msg) -> Msg:
     case _:
       m
 
-def msg_of(+vs: List<&2, IV>) -> List<&2, Msg>:
+# Whether a FETCH response's items name `key` (upper case).
+def has_item(vs: List<&2, IV>, +key: String) -> Bool:
   match vs:
-    case Con{n, Con{IAtom{f}, Con{IList{items}, Nil{}}}}:
+    case Con{IAtom{k}, Con{v, rest}}:
+      String.eq(String.to_upper(k), key) || has_item(rest, key)
+    case _:
+      False{}
+
+def msg_of.if(keep: Bool, items: List<&2, IV>) -> List<&2, Msg>:
+  match keep:
+    case True{}:
       [msg_pairs(items, msg_empty())]
+    case False{}:
+      []
+
+# Whether to keep a FETCH response: any, or with `need_flags` only one that
+# carries FLAGS. One without them (e.g. only MODSEQ) says nothing about the
+# flags.
+def msg_of.need(need_flags: Bool, items: List<&2, IV>) -> Bool:
+  match need_flags:
+    case True{}:
+      has_item(items, "FLAGS")
+    case False{}:
+      True{}
+
+def msg_of(vs: List<&2, IV>, need_flags: Bool) -> List<&2, Msg>:
+  match vs:
+    case Con{n, Con{IAtom{f}, Con{IList{+items}, Nil{}}}}:
+      msg_of.if(msg_of.need(need_flags, items), items)
     case _:
       []
 
-def fetch_line(+is_fetch: Bool, +text: String, +lits: List<&2, String>) -> List<&2, Msg>:
+def fetch_line(
+  is_fetch: Bool,
+  text: String,
+  lits: List<&2, String>,
+  need_flags: Bool
+) -> List<&2, Msg>:
   match is_fetch:
     case True{}:
-      msg_of(tokens(String.drop(text, 2n), lits))
+      msg_of(tokens(String.drop(text, 2n), lits), need_flags)
     case False{}:
       []
 
@@ -1214,13 +1337,24 @@ def before_paren(+s: String) -> String:
     case SCon{c, t}:
       SCon{c, before_paren(t)}
 
-# Messages from "* <n> FETCH (...)" lines.
-def fetched(+lines: List<&2, RLine>) -> List<&2, Msg>:
+# Messages from FETCH lines; with `need_flags`, only those that carry FLAGS.
+def fetches(lines: List<&2, RLine>, +need_flags: Bool) -> List<&2, Msg>:
   match lines:
     case Nil{}:
       []
     case Con{RLine{+text, lits}, t}:
-      List.append(&2, Msg, fetch_line(String.starts_with(text, "* ") && String.contains(String.to_upper(before_paren(text)), " FETCH "), text, lits), fetched(t))
+      is_fetch = String.starts_with(text, "* ") &&
+        String.contains(String.to_upper(before_paren(text)), " FETCH ")
+      List.append(&2, Msg, fetch_line(is_fetch, text, lits, need_flags), fetches(t, need_flags))
+
+# Messages from "* <n> FETCH (...)" lines.
+def fetched(lines: List<&2, RLine>) -> List<&2, Msg>:
+  fetches(lines, False{})
+
+# Messages from the FETCH lines that carry FLAGS. A line without UID names
+# only a sequence number, so its message has UID 0, which no request has.
+def flag_fetches(lines: List<&2, RLine>) -> List<&2, Msg>:
+  fetches(lines, True{})
 
 # The untagged reply that pins a folder's UIDVALIDITY after SELECT.
 def uidv_line(+v: U32) -> String:
@@ -1260,3 +1394,47 @@ def first_failure(+lines: List<&2, RLine>) -> String:
       ""
     case Con{RLine{+text, l}, t}:
       Bool.pick(String, is_failure(text), text, first_failure(t))
+
+# The lines after the first that starts with `p` (none if no line does).
+# `hit` says the line before `lines` did, which ends the walk.
+def after_line(lines: List<&2, RLine>, +p: String, hit: Bool) -> List<&2, RLine>:
+  match lines hit:
+    case Nil{} _:
+      []
+    case Con{l, t} True{}:
+      l <> t
+    case Con{RLine{+text, lits}, t} False{}:
+      after_line(t, p, String.starts_with(text, p))
+
+# The untagged ("* ") lines before the first that starts with `p`. `hit`
+# says the line before `lines` did, which ends the walk.
+def untagged_until(lines: List<&2, RLine>, +p: String, hit: Bool) -> List<&2, RLine>:
+  match lines hit:
+    case Nil{} _:
+      []
+    case Con{l, t} True{}:
+      []
+    case Con{RLine{+text, lits}, t} False{}:
+      List.filter.put(RLine, RLine{text, lits},
+        untagged_until(t, p, String.starts_with(text, p)), String.starts_with(text, "* "))
+
+# The untagged replies to command n: the "* " lines after command n-1's
+# tagged reply (from the start, for the first command) and before n's own
+# (or the end, if n got none). The helper runs one command at a time, so no
+# other command's replies fall in between.
+def replies(lines: List<&2, RLine>, +n: U32) -> List<&2, RLine>:
+  from = after_line(lines, tag((n - 1 : U32)) ++ " ", U32.is_eq(n, 1))
+  untagged_until(from, tag(n) ++ " ", False{})
+
+def listed_flags(vs: List<&2, IV>) -> List<&2, String>:
+  match vs:
+    case Con{IList{xs}, rest}:
+      iv_strs(xs)
+    case _:
+      []
+
+# The flags of a "* OK [PERMANENTFLAGS (...)]" reply: the flags the client
+# can change for good (RFC 3501 7.1). None when there is no such reply.
+def permanent_flags(lines: List<&2, RLine>) -> Maybe<&2, List<&2, String>>:
+  Maybe.map(&2, String, List<&2, String>, v => listed_flags(tokens(v, [])),
+    ok_code_text(lines, "PERMANENTFLAGS"))

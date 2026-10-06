@@ -7,6 +7,8 @@ Usage:
         --log FILE [--caps MOVE,UIDPLUS,SPECIAL-USE,IDLE] [--no-starttls] \\
         [--cert-name server] [--silent-port] [--delim /] [--nil-delim INBOX]
         [--drop-after COPY] [--drop-unanswered COPY] [--reject SUBSCRIBE]
+        [--permanent-flags '\\Seen,\\Flagged' [--session-flags] | --no-permanent-flags]
+        [--noisy-store] [--fetch-no-flags UID[,UID]]
 
 Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
 127.0.0.1 with OS-assigned ports, prints one line
@@ -24,6 +26,15 @@ part-way through a plan. --drop-unanswered does the same but runs the command
 and never answers it; --reject answers it NO without running it. A fault
 name VERB#N applies only to the Nth such command since the server started.
 --nil-delim NAME[,NAME] (or *) reports a NIL delimiter for those mailboxes.
+SELECT announces PERMANENTFLAGS with \\* (any keyword) unless
+--permanent-flags FLAG[,FLAG] announces only those flags and silently keeps
+only them on STORE; with --session-flags it still stores the others, as a
+server that keeps them for the session only may (RFC 3501 7.1).
+--no-permanent-flags announces none. --noisy-store answers every STORE with
+FETCH updates (one by sequence number only, one with the UID twice) and
+follows each FETCH answer with a duplicate, an update without FLAGS and an
+update by sequence number only, with no flags. --fetch-no-flags UID[,UID]
+leaves FLAGS out of the FETCH answers for those UIDs.
 
 This file speaks just enough of IMAP4rev1 and ESMTP to drive the MailBend
 transport and Bend parser; it is not a general-purpose mail server.
@@ -186,6 +197,10 @@ class State:
         self.drop_after = set()
         self.drop_unanswered = set()
         self.reject = set()
+        self.permanent_flags = DEFAULT_PERMANENT_FLAGS
+        self.session_flags = False
+        self.noisy_store = False
+        self.fetch_no_flags = set()
         self.seen = {}
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
@@ -318,6 +333,9 @@ def parse_role_names(value: str) -> set:
 def parse_upper_names(value: str) -> set:
     """Accept comma-separated names in upper case, such as COPY,STORE or MOVE,UIDPLUS."""
     return {name.strip().upper() for name in value.split(',') if name.strip()}
+
+
+DEFAULT_PERMANENT_FLAGS = ['\\Answered', '\\Flagged', '\\Deleted', '\\Seen', '\\Draft', '\\*']
 
 
 def parse_names(value: str) -> set:
@@ -864,6 +882,8 @@ class IMAPSession:
         ok = '* ok [uidvalidity' if self.state.lowercase_codes else '* OK [UIDVALIDITY'
         self.send(f'{ok} {uidvalidity}] UIDs valid\r\n')
         self.send(f'* OK [UIDNEXT {uidnext}] Predicted next UID\r\n')
+        if self.state.permanent_flags is not None:
+            self.send(f'* OK [PERMANENTFLAGS ({" ".join(self.state.permanent_flags)})] Permanent flags\r\n')
         mode, verb_name = ('READ-ONLY', 'EXAMINE') if readonly else ('READ-WRITE', 'SELECT')
         self.send(f'{tag} OK [{mode}] {verb_name} completed\r\n')
 
@@ -900,7 +920,7 @@ class IMAPSession:
                 if word == 'UID':
                     parts.append(f'UID {m["uid"]}')
                     have_uid = True
-                elif word == 'FLAGS':
+                elif word == 'FLAGS' and m['uid'] not in self.state.fetch_no_flags:
                     parts.append('FLAGS (' + ' '.join(m['flags']) + ')')
                 elif word == 'INTERNALDATE':
                     parts.append(f'INTERNALDATE "{m["internaldate"]}"')
@@ -938,6 +958,8 @@ class IMAPSession:
                 line, seen_added = self.build_fetch_response(seq, m, items)
                 mutated = mutated or seen_added
                 out_lines.append(line)
+                if self.state.noisy_store:
+                    out_lines += [line, f'* {seq} FETCH (UID {m["uid"]} MODSEQ (7))\r\n', f'* {seq} FETCH (FLAGS ())\r\n']
             if mutated:
                 self.state.save()
         for line in out_lines:
@@ -961,6 +983,9 @@ class IMAPSession:
             return
         flags_list = args[2] if isinstance(args[2], list) else [args[2]]
         flag_names = [f.decode('ascii', 'replace') for f in flags_list if isinstance(f, bytes)]
+        permanent = {f.lower() for f in self.state.permanent_flags or []}
+        if self.state.permanent_flags is not None and '\\*' not in permanent and not self.state.session_flags:
+            flag_names = [f for f in flag_names if f.lower() in permanent]
         out_lines = []
         with self.state.lock:
             messages = self.state.data['mailboxes'][mbox]['messages']
@@ -977,8 +1002,12 @@ class IMAPSession:
                     m['flags'] = [f for f in m['flags'] if f not in flag_names]
                 else:
                     m['flags'] = list(flag_names)
-                if not silent:
-                    out_lines.append(f'* {seq} FETCH (UID {m["uid"]} FLAGS (' + ' '.join(m['flags']) + '))\r\n')
+                flags = ' '.join(m['flags'])
+                if self.state.noisy_store:
+                    update = f'* {seq} FETCH (UID {m["uid"]} FLAGS ({flags}))\r\n'
+                    out_lines += [f'* {seq} FETCH (FLAGS ({flags}))\r\n', update, update]
+                elif not silent:
+                    out_lines.append(f'* {seq} FETCH (UID {m["uid"]} FLAGS ({flags}))\r\n')
             self.state.save()
         for line in out_lines:
             self.send(line)
@@ -1475,6 +1504,15 @@ def main():
                     help='run these comma-separated commands, then close the connection without answering')
     ap.add_argument('--reject', type=parse_upper_names, default=set(),
                     help='answer these comma-separated commands NO without running them')
+    ap.add_argument('--permanent-flags', type=lambda v: sorted(parse_names(v)), default=DEFAULT_PERMANENT_FLAGS,
+                    help='announce only these comma-separated PERMANENTFLAGS and keep only them on STORE')
+    ap.add_argument('--session-flags', action='store_true',
+                    help='with --permanent-flags, still store the other flags (kept for the session only)')
+    ap.add_argument('--no-permanent-flags', action='store_true', help='announce no PERMANENTFLAGS')
+    ap.add_argument('--noisy-store', action='store_true',
+                    help='answer every STORE with FETCH updates and repeat FETCH answers')
+    ap.add_argument('--fetch-no-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
+                    help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1491,6 +1529,10 @@ def main():
     state.drop_after = args.drop_after
     state.drop_unanswered = args.drop_unanswered
     state.reject = args.reject
+    state.permanent_flags = None if args.no_permanent_flags else args.permanent_flags
+    state.session_flags = args.session_flags
+    state.noisy_store = args.noisy_store
+    state.fetch_no_flags = args.fetch_no_flags
     logger = Logger(args.log)
     caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)
