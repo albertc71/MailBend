@@ -116,10 +116,8 @@ fn refuse_broad_directory(root: &[u8], directory: &OwnedFd) -> Result<(), Refusa
         .ok()
         .flatten()
         .and_then(|user| std::fs::canonicalize(user.dir).ok());
-    if let Some(home) = home {
-        if contains_path(root, home.as_os_str().as_bytes()) {
-            return Err("MAILBEND_ATTACH_DIR must not be your home directory or contain it: use a dedicated directory".to_string());
-        }
+    if home.is_some_and(|home| contains_path(root, home.as_os_str().as_bytes())) {
+        return Err("MAILBEND_ATTACH_DIR must not be your home directory or contain it: use a dedicated directory".to_string());
     }
     for name in SENSITIVE {
         if fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW).is_ok() {

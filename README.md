@@ -34,7 +34,7 @@ compiler (see [Safety](#safety)).
 
 ## Install (Linux)
 
-Needs a C compiler, Rust 1.85+ (cargo and rustc), the system CA certificates,
+Needs a C compiler, Rust 1.99+ (cargo and rustc), the system CA certificates,
 and Bend 2 (clang 14+ to compile the core; without clang the core runs
 through `bend` with a slower start).
 
@@ -49,11 +49,12 @@ scripts/install.sh --install-bend --install-rust
 `--install-bend` and no `bend` on the `PATH`, it first runs
 `scripts/install-bend.sh`, which installs the Bend release tested in CI to
 `~/.bend` after checking the archive's sha256. That pinned release is Linux
-x64 only; elsewhere, install Bend 2.0.32 yourself and run
+x64 only; elsewhere, install Bend 2.0.35 yourself and run
 `scripts/install.sh`. An already installed Bend is reused as is. Likewise,
 `--install-rust` runs `scripts/install-rust.sh` (a sha256-checked `rustup-init`
-that installs Rust 1.85 to `~/.cargo`) only when neither `cargo` nor Ubuntu
-24.04's `cargo-1.85` package provides cargo and rustc 1.85+.
+that installs Rust 1.99 to `~/.cargo`) only when `cargo` does not provide
+cargo and rustc 1.99+. Debian and Ubuntu do not package Rust 1.99, so use
+rustup rather than a distribution `cargo`.
 
 On a Grok Bot / Cursor cloud Linux computer, run `sh scripts/setup-cloud.sh`
 for a complete Debian/Ubuntu install, then use `scripts/mailbend-cloud` for
@@ -285,7 +286,8 @@ enforced are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#diagrams).
 ## Development
 
 ```sh
-bend PROOF.bend              # the safety laws: must print "ALL PROOFS CHECK"
+sh scripts/install-lean.sh   # once: the Lean that bend --verdict needs
+bend PROOF.bend --verdict    # the safety laws, rechecked by the proven kernel: must print "ALL PROOFS CHECK"
 sh tests/run-unit.sh         # Bend unit tests (JSON, codecs, IMAP, MIME, addresses)
 bash tests/test-transport.sh # TLS helper against a local TLS server
 python3 tests/test-cloud-network.py # local HTTPS DNS, address fallback, TLS/SNI

@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
-# Installs Rust 1.85, the native helpers' pinned toolchain
+# Installs Rust 1.99, the native helpers' pinned toolchain
 # (native/rust-toolchain.toml), with rustup into ~/.cargo and ~/.rustup,
 # verifying the pinned rustup-init's sha256 before running it. Only the
 # Linux x64 rustup-init is pinned.
 set -eu
 RUSTUP_VERSION=1.29.1
 RUSTUP_SHA256=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
-RUST_TOOLCHAIN=1.85
+RUST_TOOLCHAIN=1.99
 
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 

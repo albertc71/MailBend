@@ -16,7 +16,7 @@ MailBend has two small native programs:
 (cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach)
 ```
 
-The Rust workspace (`native/Cargo.toml`) pins Rust 1.85 in
+The Rust workspace (`native/Cargo.toml`) pins Rust 1.99, its MSRV, in
 `native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
 up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
 native-tls and other TLS stacks from the dependency tree.

@@ -5,8 +5,8 @@
 #   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install the pinned,
 # checksum-verified Bend release (scripts/install-bend.sh) when it is missing,
-# and --install-rust to install Rust 1.85 with a checksum-verified rustup
-# (scripts/install-rust.sh) when no cargo 1.85+ is found.
+# and --install-rust to install Rust 1.99 with a checksum-verified rustup
+# (scripts/install-rust.sh) when no cargo 1.99+ is found.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
@@ -33,34 +33,33 @@ if ! command -v bend >/dev/null 2>&1; then
   fi
 fi
 
-# Whether a "<tool> 1.N.x ..." version line is at least 1.85.
-at_least_185() {
+# The minor version of the native helpers' MSRV, Rust 1.99 (rust-version in
+# native/Cargo.toml).
+rust_minor=99
+# Whether a "<tool> 1.N.x ..." version line is at least the MSRV.
+at_least_msrv() {
   minor=$(printf '%s\n' "$1" | sed -n 's/^[a-z]* 1\.\([0-9][0-9]*\)\..*/\1/p')
-  [ -n "$minor" ] && [ "$minor" -ge 85 ]
+  [ -n "$minor" ] && [ "$minor" -ge "$rust_minor" ]
 }
-# Uses cargo $1 with rustc $2 if both are 1.85+. Asked from native/ so
+# Uses cargo $1 with rustc $2 if both meet the MSRV. Asked from native/ so
 # rustup's proxies report the toolchain native/rust-toolchain.toml pins.
 try_cargo() {
   cargo_version=$(CDPATH= cd native && "$1" --version 2>/dev/null) || return 1
   rustc_version=$(CDPATH= cd native && "$2" --version 2>/dev/null) || return 1
-  at_least_185 "$cargo_version" && at_least_185 "$rustc_version" || return 1
+  at_least_msrv "$cargo_version" && at_least_msrv "$rustc_version" || return 1
   cargo=$1 RUSTC=$2
   export RUSTC
 }
-# $CARGO if set; else cargo (rustup), else Ubuntu's cargo-1.85 and rustc-1.85.
+# $CARGO if set, else cargo (rustup).
 find_cargo() {
-  if [ -n "${CARGO:-}" ]; then
-    try_cargo "$CARGO" "${RUSTC:-rustc}"
-  else
-    try_cargo cargo "${RUSTC:-rustc}" || try_cargo cargo-1.85 "${RUSTC:-rustc-1.85}"
-  fi
+  try_cargo "${CARGO:-cargo}" "${RUSTC:-rustc}"
 }
 if ! find_cargo; then
   if [ "$install_rust" = 1 ]; then
     sh scripts/install-rust.sh
-    find_cargo || fail "Rust 1.85 was installed but cargo still cannot be used"
+    find_cargo || fail "Rust 1.$rust_minor was installed but cargo still cannot be used"
   else
-    fail "cargo and rustc 1.85+ are needed for the native helpers. Rerun this script with --install-rust, or install Ubuntu's cargo-1.85"
+    fail "cargo and rustc 1.$rust_minor+ are needed for the native helpers. Rerun this script with --install-rust"
   fi
 fi
 

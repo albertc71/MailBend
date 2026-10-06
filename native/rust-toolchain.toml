@@ -1,6 +1,6 @@
-# The MSRV, and the version Ubuntu 24.04 packages as cargo-1.85. Fuzzing
-# alone uses nightly (cargo +nightly fuzz).
+# The MSRV: the latest stable Rust, 1.99.0 (2026-09-28). Fuzzing alone uses
+# nightly (cargo +nightly fuzz).
 [toolchain]
-channel = "1.85"
+channel = "1.99"
 profile = "minimal"
 components = ["clippy", "rustfmt"]

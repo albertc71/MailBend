@@ -35,10 +35,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential clang openssl
 
-      - name: Install Rust 1.85 (native/rust-toolchain.toml)
+      - name: Install Rust 1.99 (native/rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
-          toolchain: "1.85"
+          toolchain: "1.99"
 
       - name: Install Bend
         run: |
@@ -50,8 +50,13 @@ jobs:
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
 
-      - name: Safety proofs
-        run: bend PROOF.bend
+      - name: Install Lean (scripts/install-lean.sh, for --verdict)
+        run: sh scripts/install-lean.sh
+
+      # --verdict checks the proofs, then rechecks every def with Bend's
+      # proven BendTT kernel (built with Lean on first use).
+      - name: Safety proofs, rechecked by the proven kernel
+        run: bend PROOF.bend --verdict
 
       - name: Unit tests
         run: sh tests/run-unit.sh
@@ -79,10 +84,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust 1.85 (the MSRV, native/rust-toolchain.toml)
+      - name: Install Rust 1.99 (the MSRV, native/rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
-          toolchain: "1.85"
+          toolchain: "1.99"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -97,9 +102,6 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
-
-      - name: MSRV
-        run: cargo +1.85 check --all-targets --locked
 
       - name: No way around TLS verification
         run: |
@@ -120,10 +122,15 @@ jobs:
             exit 1
           fi
 
-      - name: Dependency policy (cargo-deny)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # Installed directly, so cargo-deny reads the workspace with the Rust
+      # installed above (cargo-deny-action runs its own Rust 1.85 container).
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
-          manifest-path: native/Cargo.toml
+          tool: cargo-deny@0.20.2
+
+      - name: Dependency policy (cargo-deny)
+        run: cargo deny --log-level warn --all-features check
 
   fuzz:
     runs-on: ubuntu-24.04
@@ -139,7 +146,7 @@ jobs:
       - name: Install the pinned nightly (fuzzing only)
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
-          toolchain: nightly-2026-10-01
+          toolchain: nightly-2026-10-06
 
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
@@ -149,5 +156,5 @@ jobs:
       - name: Fuzz each parser for 60 seconds
         run: |
           for target in imap_script imap_response smtp_envelope smtp_reply dns_answer http_response url_and_proxy; do
-            cargo +nightly-2026-10-01 fuzz run "$target" -O -- -max_total_time=60
+            cargo +nightly-2026-10-06 fuzz run "$target" -O -- -max_total_time=60
           done
