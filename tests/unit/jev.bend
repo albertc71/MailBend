@@ -1,6 +1,7 @@
 # Jev: the facts and text of a message, the questions and request budget,
-# the strict reading of answers (numbers, bands, choices), and the results,
-# with missing and malformed answers read as the cautious choice.
+# the strict reading of answers (numbers, bands, choices), the triage
+# verdict and filing table, and the results, with missing and malformed
+# answers read as the cautious choice.
 
 import Base
 import ../../src/codec.bend as C
@@ -198,7 +199,7 @@ def answers_json() -> String:
 def reply_lines(m: Maybe<&2, Jev.Reply>) -> String:
   match m:
     case Some{Jev.Reply{xs, tokens}}:
-      J.show(J.arr(Jev.checked_jsons(xs, Jev.Headers{}, ["Ideas"], "none"))) ++ " tokens " ++
+      J.show(J.arr(Jev.answered_jsons(xs, Jev.Headers{}, ["Ideas"], "none"))) ++ " tokens " ++
         Maybe.default(&2, String, Maybe.map(&2, U32, String, U32.show, tokens), "none")
     case None{}:
       "no reply"
@@ -249,15 +250,155 @@ def check_answers() -> IO(Unit):
       two_entries(), ["Work", "none"])))
     IO.print(reply_lines(Jev.reply("{\"answers\":{\"u1_injection\":" ++ noul("0.01") ++
       "},\"answers\":{}}", two_entries(), ["Work", "none"])))
-    IO.print(J.show(Jev.unchecked_json(facts(9), Jev.Body{})))
-    IO.print(J.show(Jev.checked_json(Jev.with_body(facts(9), Jev.Partial{}), Jev.Body{},
-      Jev.answers_for(J.JNull{}, 9, ["none"]), [], "none")))
+    IO.print(J.show(J.arr(Jev.answered_jsons([Jev.Skipped{facts(9)}], Jev.Body{}, [], "none"))))
+    IO.print(J.show(J.arr(Jev.answered_jsons([Jev.Answered{Jev.with_body(facts(9), Jev.Partial{}),
+      Jev.answers_for(J.JNull{}, 9, ["none"])}], Jev.Body{}, [], "none"))))
+
+# Triage
+# ------
+
+def dated(uid: U32, flags: List<&2, String>, date: String, structure: I.Value) -> Jev.Facts:
+  Jev.facts_of(I.Msg{uid, flags, date, 10, headers(), "", structure})
+
+def now() -> U32:
+  I.internal_seconds("6-Oct-2026 09:00:00 +0000")
+
+def vetoes_line(vs: List<&2, String>) -> String:
+  "[" ++ String.join(vs, "; ") ++ "]"
+
+def bands() -> List<&2, Jev.Band>:
+  [Jev.Low{}, Jev.Mid{}, Jev.High{}, Jev.Missing{}]
+
+# Answers whose keep questions all read `k`, with the disposability score
+# `level` at `confidence` and the category `cat`.
+def answers(cat: Jev.Pick, +k: Jev.Band, level: Jev.Band, confidence: Jev.Band) -> Jev.Answers:
+  Jev.Answers{cat, Jev.Low{}, Jev.Low{}, Jev.Low{}, Jev.Scored{Jev.Low{}, Jev.Low{}}, Jev.NoPick{},
+    Jev.Vetoes{k, k, k, k, k}, Jev.Scored{level, confidence}, Jev.Low{}}
+
+def letter(v: Jev.Verdict) -> String:
+  match v:
+    case Jev.SafeToDelete{}:
+      "S"
+    case Jev.Keep{}:
+      "K"
+    case Jev.Review{}:
+      "R"
+    case Jev.Unanswered{}:
+      "U"
+
+def by_confidence(
+  +c: Jev.Content,
+  +whole: Jev.Completeness,
+  +vetoes: List<&2, String>,
+  +k: Jev.Band,
+  +level: Jev.Band,
+  cs: List<&2, Jev.Band>
+) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case x <> t:
+      letter(Jev.verdict(c, whole, vetoes, answers(Jev.NoPick{}, k, level, x))) ++
+        by_confidence(c, whole, vetoes, k, level, t)
+
+def by_level(
+  +c: Jev.Content,
+  +whole: Jev.Completeness,
+  +vetoes: List<&2, String>,
+  +k: Jev.Band,
+  ls: List<&2, Jev.Band>
+) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case l <> t:
+      by_confidence(c, whole, vetoes, k, l, bands()) ++ by_level(c, whole, vetoes, k, t)
+
+# The verdict for every band of the keep answers (one group each, in the
+# order of bands()), the disposability level and its confidence: S, K, R
+# or U for SafeToDelete, Keep, Review and Unanswered.
+def verdicts(
+  +c: Jev.Content,
+  +whole: Jev.Completeness,
+  +vetoes: List<&2, String>,
+  ks: List<&2, Jev.Band>
+) -> String:
+  match ks:
+    case Nil{}:
+      ""
+    case k <> t:
+      " " ++ by_level(c, whole, vetoes, k, bands()) ++ verdicts(c, whole, vetoes, t)
+
+def action_name(a: Jev.Action) -> String:
+  match a:
+    case Jev.ToReview{}:
+      "review"
+    case Jev.ToFolder{folder}:
+      "folder:" ++ folder
+    case Jev.Stay{}:
+      "stay"
+
+# The category answers filing sees: an existing folder at each band, a
+# candidate, no fitting folder, and no answer.
+def picks() -> List<&2, Jev.Pick>:
+  [Jev.Picked{"Receipts", Jev.High{}}, Jev.Picked{"Receipts", Jev.Mid{}},
+   Jev.Picked{"Receipts", Jev.Low{}}, Jev.Picked{"Receipts", Jev.Missing{}},
+   Jev.Picked{"New", Jev.High{}}, Jev.Picked{"none", Jev.High{}}, Jev.NoPick{}]
+
+def filings(+v: Jev.Verdict, ps: List<&2, Jev.Pick>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      action_name(Jev.filing(v, Jev.category_of(p, ["New"], "none"))) <> filings(v, t)
+
+def filing_line(+v: Jev.Verdict) -> String:
+  Jev.verdict_name(v) ++ ": " ++ String.join(filings(v, picks()), " ")
+
+def check_triage() -> IO(Unit):
+  +old : String = "1-Aug-2026 09:00:00 +0000"
+  young : String = "1-Oct-2026 09:00:00 +0000"
+  +skipped : Jev.Answered = Jev.Skipped{dated(3, [], old, text_part())}
+  do IO<Unit>:
+    IO.print(U32.show(Jev.review_age()))
+    IO.print(vetoes_line(Jev.code_vetoes(dated(1, ["\\Seen"], old, text_part()), now())))
+    IO.print(vetoes_line(Jev.code_vetoes(dated(1, ["\\Flagged", "\\Answered"], young, mixed()),
+      now())))
+    IO.print(vetoes_line(Jev.code_vetoes(dated(1, [], old, I.VNil{}), now())))
+    IO.print(vetoes_line(Jev.code_vetoes(dated(1, [], old, text_part()), 0)))
+    IO.print(vetoes_line(Jev.code_vetoes(dated(1, [], "yesterday", text_part()), now())))
+    IO.print(vetoes_line(Jev.code_vetoes(dated(1, [], "7-Oct-2026 09:00:00 +0000", text_part()),
+      now())))
+    IO.print(vetoes_line(Jev.flag_vetoes(["\\Seen", "\\Answered"])))
+    IO.print(vetoes_line(Jev.correspondence_vetoes(Jev.Stranger{})))
+    IO.print(vetoes_line(Jev.correspondence_vetoes(Jev.Correspondent{})))
+    IO.print(vetoes_line(Jev.correspondence_vetoes(Jev.Unverified{})))
+    IO.print(Bool.show(Jev.may_review(Jev.Body{}, Jev.Complete{}, [])) ++ " " ++
+      Bool.show(Jev.may_review(Jev.Headers{}, Jev.Complete{}, [])) ++ " " ++
+      Bool.show(Jev.may_review(Jev.Body{}, Jev.Partial{}, [])) ++ " " ++
+      Bool.show(Jev.may_review(Jev.Body{}, Jev.Complete{}, ["it is flagged"])))
+    IO.print("body" ++ verdicts(Jev.Body{}, Jev.Complete{}, [], bands()))
+    IO.print("headers" ++ verdicts(Jev.Headers{}, Jev.Complete{}, [], bands()))
+    IO.print("partial" ++ verdicts(Jev.Body{}, Jev.Partial{}, [], bands()))
+    IO.print("vetoed" ++ verdicts(Jev.Body{}, Jev.Complete{}, ["it is flagged"], bands()))
+    IO.print(Jev.verdict_name(Jev.verdict(Jev.Body{}, Jev.Complete{}, [],
+      Jev.Answers{Jev.NoPick{}, Jev.Low{}, Jev.Low{}, Jev.Low{}, Jev.Scored{Jev.Low{}, Jev.Low{}},
+        Jev.NoPick{}, Jev.Vetoes{Jev.Low{}, Jev.Low{}, Jev.Low{}, Jev.Low{}, Jev.Mid{}},
+        Jev.Scored{Jev.High{}, Jev.High{}}, Jev.High{}})))
+    IO.print(Jev.verdict_name(Jev.verdict(Jev.Body{}, Jev.Complete{}, [],
+      Jev.answers_of(skipped))))
+    IO.print(U32.show(Jev.facts_uid(Jev.answered_facts(skipped))))
+    IO.print(filing_line(Jev.SafeToDelete{}))
+    IO.print(filing_line(Jev.Keep{}))
+    IO.print(filing_line(Jev.Review{}))
+    IO.print(filing_line(Jev.Unanswered{}))
 
 def main() -> IO(Unit):
   do IO<Unit>:
     check_facts()
     check_requests()
     check_answers()
+    check_triage()
 
 #|{"uid":4,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":["Récu.pdf"]}
 #|{"uid":5,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":"unknown"}
@@ -298,5 +439,28 @@ def main() -> IO(Unit):
 #|no reply
 #|no reply
 #|no reply
-#|{"uid":9,"category":null,"jev":{"status":"unchecked","model":"jev-1.13.0","content":"body","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}}
-#|{"uid":9,"category":null,"body_truncated":true,"jev":{"status":"checked","model":"jev-1.13.0","content":"body","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"reply_needed":"unknown","action_required":"unknown","deadline_present":"unknown","priority":"unknown","suggested_action":"none","keep":{"record":"unknown","security":"unknown","personal":"unknown","open_action":"unknown","needed_again":"unknown"},"disposable":"unknown","suspected_injection":true}}}
+#|[{"uid":9,"category":null,"jev":{"status":"unchecked","model":"jev-1.13.0","content":"body","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}}]
+#|[{"uid":9,"category":null,"body_truncated":true,"jev":{"status":"checked","model":"jev-1.13.0","content":"body","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"reply_needed":"unknown","action_required":"unknown","deadline_present":"unknown","priority":"unknown","suggested_action":"none","keep":{"record":"unknown","security":"unknown","personal":"unknown","open_action":"unknown","needed_again":"unknown"},"disposable":"unknown","suspected_injection":true}}}]
+#|2592000
+#|[]
+#|[it is flagged; it has been answered; it has attachments; it is less than 30 days old]
+#|[its attachments cannot be told]
+#|[its age cannot be told]
+#|[its age cannot be told]
+#|[it is less than 30 days old]
+#|[it has been answered]
+#|[]
+#|[the user has written to its sender]
+#|[whether the user has written to its sender cannot be told]
+#|True False False False
+#|body RRRURRRURRSUUUUU KKKKKKKKKKKKKKKK KKKKKKKKKKKKKKKK UUUUUUUUUUUUUUUU
+#|headers RRRURRRURRRUUUUU KKKKKKKKKKKKKKKK KKKKKKKKKKKKKKKK UUUUUUUUUUUUUUUU
+#|partial RRRURRRURRRUUUUU KKKKKKKKKKKKKKKK KKKKKKKKKKKKKKKK UUUUUUUUUUUUUUUU
+#|vetoed KKKKKKKKKKKKKKKK KKKKKKKKKKKKKKKK KKKKKKKKKKKKKKKK KKKKKKKKKKKKKKKK
+#|keep
+#|unanswered
+#|3
+#|safe_to_delete: review review review review review review review
+#|keep: folder:Receipts stay stay stay stay stay stay
+#|review: folder:Receipts stay stay stay stay stay stay
+#|unanswered: folder:Receipts stay stay stay stay stay stay

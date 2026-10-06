@@ -4,6 +4,7 @@
 import Base
 import ../../src/imap.bend as I
 import ../../src/ops.bend as Ops
+import ../../src/jev.bend as Jev
 
 # A script on one line: each CRLF but the last becomes " | ".
 def one_line(s: String) -> String:
@@ -87,6 +88,58 @@ def classify(+cs: List<&2, I.Cmd>) -> String:
     ++ " only_flags=" ++ flag(Ops.only_flag_stores(Ops.mail_changes(cs)))
     ++ " mail=[" ++ wire(Ops.mail_changes(cs)) ++ "]"
     ++ " folders=[" ++ wire(Ops.mailbox_changes(cs)) ++ "]"
+
+# Triage
+# ------
+
+# The moves the placements ask for, and the plans behind them.
+def moves_text(ms: List<&2, Ops.FolderUids>) -> String:
+  match ms:
+    case Nil{}:
+      ""
+    case Ops.FolderUids{dest, us} <> t:
+      " " ++ dest ++ uids(us) ++ moves_text(t)
+
+def plans_text(ps: List<&2, List<&2, I.Cmd>>) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case p <> t:
+      " {" ++ wire(p) ++ "}" ++ plans_text(t)
+
+def placements() -> List<&2, Ops.Placement>:
+  [Ops.Placement{5, Jev.ToFolder{"Receipts"}}, Ops.Placement{3, Jev.ToReview{}},
+   Ops.Placement{4, Jev.Stay{}}, Ops.Placement{7, Jev.ToFolder{"Receipts"}},
+   Ops.Placement{8, Jev.ToFolder{"inbox"}}, Ops.Placement{9, Jev.ToFolder{"News"}}]
+
+def triage(cats: List<&2, String>, ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool)
+  -> String:
+  "[" ++ plans_text(Ops.plan_triage("INBOX", cats, ["Archive"], ms, move, uidplus, 42)) ++ "]"
+
+def uid_lists(xss: List<&2, List<&2, U32>>) -> List<&2, String>:
+  match xss:
+    case Nil{}:
+      []
+    case xs <> t:
+      uids(xs) <> uid_lists(t)
+
+def nested(xsss: List<&2, List<&2, List<&2, U32>>>) -> String:
+  match xsss:
+    case Nil{}:
+      ""
+    case xss <> t:
+      "(" ++ String.join(uid_lists(xss), ",") ++ ")" ++ nested(t)
+
+def triage_laws(+cats: List<&2, String>, +ps: List<&2, List<&2, I.Cmd>>) -> String:
+  +ds = Ops.plans_dests(ps)
+  "dests=" ++ String.join(ds, ",")
+    ++ " offered=" ++ flag(Ops.all_offered(cats, ds))
+    ++ " unreserved=" ++ flag(Ops.none_named(["INBOX", "Archive"], ds))
+    ++ " not_source=" ++ flag(Ops.none_same("INBOX", ds))
+    ++ " folders=[" ++ wire(Ops.plans_mailbox_changes(ps)) ++ "]"
+    ++ " distinct=" ++ flag(Ops.distinct(List.concat(&2, U32, Ops.plans_moved_uids(ps))))
+    ++ " expunged=" ++ nested(Ops.plans_expunged(ps))
+    ++ " copied=" ++ nested(Ops.plans_copied(ps))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -212,6 +265,45 @@ def main() -> IO(Unit):
     IO.print(flag(Ops.peek_safe("uid")))
     IO.print(flag(Ops.peek_safe("UID ")))
     IO.print(flag(Ops.peek_safe("")))
+    IO.print("triage")
+    IO.print(Ops.review_folder())
+    IO.print(wire(Ops.plan_sent_search("Sent Messages", ["ann@x.org", "bob@y.org"])))
+    IO.print(flag(I.any_writes(Ops.plan_sent_search("Sent", ["a@x"]))))
+    IO.print(wire(Ops.plan_reread_flags("INBOX", [3, 5])))
+    IO.print(flag(I.any_writes(Ops.plan_reread_flags("INBOX", [3]))))
+    IO.print("[" ++ moves_text(Ops.triage_moves("INBOX", placements())) ++ "]")
+    IO.print("[" ++ moves_text(Ops.triage_moves("To Delete", [Ops.Placement{1, Jev.ToReview{}}]))
+      ++ "]")
+    IO.print("[" ++ moves_text(Ops.triage_moves("INBOX", [])) ++ "]")
+    IO.print(flag(Ops.triage_dest("INBOX", ["Receipts"], [], "To Delete")))
+    IO.print(flag(Ops.triage_dest("INBOX", ["Receipts"], [], "Receipts")))
+    IO.print(flag(Ops.triage_dest("INBOX", ["Receipts"], [], "News")))
+    IO.print(flag(Ops.triage_dest("Receipts", ["Receipts"], [], "Receipts")))
+    IO.print(flag(Ops.triage_dest("Work", ["INBOX"], [], "inbox")))
+    IO.print(flag(Ops.triage_dest("INBOX", ["Archive"], ["archive"], "Archive")))
+    IO.print(flag(Ops.triage_dest("INBOX", [], ["to delete"], "To Delete")))
+    IO.print(flag(Ops.distinct([1, 2, 3])) ++ " " ++ flag(Ops.distinct([1, 2, 1])))
+    IO.print(flag(Ops.repeats([[1, 2], [3]])))
+    IO.print(flag(Ops.repeats([[1, 2], [2]])))
+    IO.print(flag(Ops.repeats([[1, 1]])))
+    IO.print(triage(["News", "Receipts"], Ops.triage_moves("INBOX", placements()), True{},
+      True{}))
+    IO.print(triage(["News", "Receipts"], Ops.triage_moves("INBOX", placements()), False{},
+      True{}))
+    IO.print(triage(["News", "Receipts"], Ops.triage_moves("INBOX", placements()), False{},
+      False{}))
+    IO.print(triage(["Receipts"], Ops.triage_moves("INBOX", placements()), True{}, True{}))
+    IO.print(triage(["A"], [Ops.FolderUids{"A", [1]}, Ops.FolderUids{"To Delete", [1]}], True{},
+      True{}))
+    IO.print(triage(["Archive"], [Ops.FolderUids{"Archive", [1]}], True{}, True{}))
+    IO.print(triage(["INBOX"], [Ops.FolderUids{"INBOX", [1]}], True{}, True{}))
+    IO.print(triage(["A"], [], True{}, True{}))
+    IO.print(triage_laws(["News", "Receipts"],
+      Ops.plan_triage("INBOX", ["News", "Receipts"], [], Ops.triage_moves("INBOX", placements()),
+        False{}, True{}, 42)))
+    IO.print(triage_laws(["A"], [[I.CCopy{[1], "B"}, I.CExpunge{[1]}], [I.CMove{[1], "A"}]]))
+    IO.print(triage_laws(["A"], [[I.CCopy{[1], "A"}, I.CExpunge{[2]}], [I.CCreate{"A"}]]))
+    IO.print(triage_laws(["inbox", "Archive"], [[I.CMove{[1], "inbox"}], [I.CMove{[2], "ARCHIVE"}]]))
 
 #|mail_probe ro=True destructive=False back=mail_probe
 #|mail_list_folders ro=True destructive=False back=mail_list_folders
@@ -220,6 +312,7 @@ def main() -> IO(Unit):
 #|mail_get_new ro=True destructive=False back=mail_get_new
 #|mail_get_thread ro=True destructive=False back=mail_get_thread
 #|mail_classify ro=True destructive=False back=mail_classify
+#|mail_triage ro=False destructive=False back=mail_triage
 #|mail_get_attachment ro=False destructive=False back=mail_get_attachment
 #|mail_mark_read ro=False destructive=False back=mail_mark_read
 #|mail_mark_unread ro=False destructive=False back=mail_mark_unread
@@ -353,3 +446,35 @@ def main() -> IO(Unit):
 #|False
 #|False
 #|False
+#|triage
+#|To Delete
+#|a1 EXAMINE "Sent Messages" | a2 UID SEARCH TO "ann@x.org" UNDELETED | a3 UID SEARCH CC "ann@x.org" UNDELETED | a4 UID SEARCH TO "bob@y.org" UNDELETED | a5 UID SEARCH CC "bob@y.org" UNDELETED
+#|False
+#|a1 EXAMINE "INBOX" | a2 UID FETCH 3,5 (UID FLAGS)
+#|False
+#|[ News[9] Receipts[5,7] To Delete[3]]
+#|[]
+#|[]
+#|True
+#|True
+#|False
+#|False
+#|False
+#|False
+#|False
+#|True False
+#|False
+#|True
+#|True
+#|[ {a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 42] | a2 UID SEARCH UID 9 | a3 UID MOVE 9 "News"} {a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 42] | a2 UID SEARCH UID 5,7 | a3 UID MOVE 5,7 "Receipts"} {a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 42] | a2 UID SEARCH UID 3 | a3 UID MOVE 3 "To Delete"}]
+#|[ {a1 CAPABILITY | =EXPECT-WORD UIDPLUS | a2 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 42] | a3 UID SEARCH UID 9 | a4 UID COPY 9 "News" | a5 UID STORE 9 +FLAGS.SILENT (\Deleted) | a6 UID EXPUNGE 9} {a1 CAPABILITY | =EXPECT-WORD UIDPLUS | a2 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 42] | a3 UID SEARCH UID 5,7 | a4 UID COPY 5,7 "Receipts" | a5 UID STORE 5,7 +FLAGS.SILENT (\Deleted) | a6 UID EXPUNGE 5,7} {a1 CAPABILITY | =EXPECT-WORD UIDPLUS | a2 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 42] | a3 UID SEARCH UID 3 | a4 UID COPY 3 "To Delete" | a5 UID STORE 3 +FLAGS.SILENT (\Deleted) | a6 UID EXPUNGE 3}]
+#|[ {} {} {}]
+#|[]
+#|[]
+#|[]
+#|[]
+#|[]
+#|dests=News,Receipts,To Delete offered=True unreserved=True not_source=True folders=[] distinct=True expunged=([9])([5,7])([3]) copied=([9])([5,7])([3])
+#|dests=B,A offered=False unreserved=True not_source=True folders=[] distinct=False expunged=([1])() copied=([1])()
+#|dests=A offered=True unreserved=True not_source=True folders=[a1 CREATE "A"] distinct=True expunged=([2])() copied=([1])()
+#|dests=inbox,ARCHIVE offered=False unreserved=False not_source=False folders=[] distinct=True expunged=()() copied=()()

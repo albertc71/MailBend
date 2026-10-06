@@ -248,6 +248,35 @@ TOOLS = [
               "New folder names Jev may choose besides the existing folders.",
               items=param("string", maxLength=255), maxItems=254)},
          ["uids"]),
+    tool("mail_triage",
+         "File messages with TypeSafe's Jev: every message is asked about "
+         "before anything moves (they stay unread), and if any request "
+         "fails, nothing moves. Each message then moves at most once: into "
+         "the review folder \"To Delete\" when the delete review finds it "
+         "safe to delete, otherwise into the existing folder Jev chose for "
+         "it with high confidence; any other message stays, and a "
+         "needs_new_category one can be filed after mail_classify with "
+         "candidates and mail_create_folder. Safe to delete needs "
+         "MAILBEND_TYPESAFE_CONTENT=body and the whole text, no flag, reply, "
+         "attachment or age under 30 days (the flags are read again just "
+         "before the move), a sender the user has never written to in To or "
+         "Cc (a read-only search of Sent; Bcc is not searched), every keep "
+         "answer low and a high disposability score. It is a suggestion for "
+         "the user to review in \"To Delete\", never a deletion. \"To "
+         "Delete\" must already exist (create it with mail_create_folder); no "
+         "folder is ever created. When it cannot take a message, nothing "
+         "moves and the error still lists every message's verdict. Offered "
+         "only when MAILBEND_TYPESAFE is on. If a move is cut off, the call "
+         "fails with partial: true and the moves after "
+         "it are not made; check its destination before running it again. "
+         "The answers come from untrusted mail content.",
+         hints(open_world=True),
+         {"folder": FOLDER,
+          "uids": param(
+              "array", "Message UIDs in the folder, at most 50.",
+              items=UID, minItems=1, maxItems=50),
+          "uidvalidity": UIDVALIDITY},
+         ["uids", "uidvalidity"]),
     tool("mail_get_attachment",
          "Save one attachment of a message as a new file in "
          "MAILBEND_DOWNLOAD_DIR (downloads are off without it) and return its "

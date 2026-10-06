@@ -4,6 +4,7 @@
 
 import Base
 import ./imap.bend as I
+import ./jev.bend as Jev
 
 # Operations
 # ----------
@@ -16,6 +17,7 @@ type Op is Data:
   OGetNew{}
   OGetThread{}
   OClassify{}
+  OTriage{}
   OGetAttachment{}
   OMarkRead{}
   OMarkUnread{}
@@ -79,6 +81,8 @@ def name(op: Op) -> String:
       "mail_get_thread"
     case OClassify{}:
       "mail_classify"
+    case OTriage{}:
+      "mail_triage"
     case OGetAttachment{}:
       "mail_get_attachment"
     case OMarkRead{}:
@@ -120,6 +124,7 @@ def all_ops() -> List<&2, Op>:
     OGetNew{},
     OGetThread{},
     OClassify{},
+    OTriage{},
     OGetAttachment{},
     OMarkRead{},
     OMarkUnread{},
@@ -158,6 +163,8 @@ def read_only_names(+ops: List<&2, Op>) -> List<&2, String>:
 def needs_jev(op: Op) -> Bool:
   match op:
     case OClassify{}:
+      True{}
+    case OTriage{}:
       True{}
     case _:
       False{}
@@ -305,7 +312,28 @@ def plan_thread_search(folders: List<&2, String>, +keys: List<&2, I.Key>) -> Lis
     case mbox <> t:
       I.CExamine{mbox} <> thread_searches(keys, plan_thread_search(t, keys))
 
-# The UIDs to fetch in one folder.
+# The keys of mail the user wrote to each address: one in To, then one in
+# Cc. Bcc is not searched.
+def sent_keys(addrs: List<&2, String>) -> List<&2, I.Key>:
+  match addrs:
+    case Nil{}:
+      []
+    case +a <> t:
+      I.KTo{a} <> (I.KCc{a} <> sent_keys(t))
+
+# Whether the user has written to each address: the Sent folder opened with
+# EXAMINE, then one UID SEARCH of undeleted mail per key of sent_keys.
+# mail_triage reads the replies by tag: tag 1 opens Sent, then each address
+# has two tags, To before Cc.
+def plan_sent_search(sent: String, addrs: List<&2, String>) -> List<&2, I.Cmd>:
+  plan_thread_search([sent], sent_keys(addrs))
+
+# The flags of some messages, read again: the folder opened with EXAMINE,
+# then a UID FETCH of FLAGS.
+def plan_reread_flags(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CFetch{uids, [I.IUid{}, I.IFlags{}]}]
+
+# Some UIDs in one folder: those to fetch there, or to move there.
 type FolderUids is Data:
   FolderUids{mbox: String, uids: List<&2, U32>}
 
@@ -468,6 +496,198 @@ def plan_label(
   uidv: U32
 ) -> List<&2, I.Cmd>:
   plan_move(mbox, uids, label, move, uidplus, uidv)
+
+# Triage plans
+# ------------
+
+# mail_triage files each message by at most one move (see Jev.filing): into
+# the review folder or into a category folder. The moves into one folder
+# are one plan_move, run in a session of its own, so every move law holds
+# for each of them. The plan checks the moves itself: if one goes into a
+# folder other than the review folder and the categories, into INBOX or a
+# reserved (role) folder, or into the folder the messages are in, or a UID
+# is in two moves, there is no plan.
+
+# The folder that mail Jev finds safe to delete is moved into, for the user
+# to review. Jev never deletes; the folder must already exist.
+def review_folder() -> String:
+  "To Delete"
+
+# A message and what filing chose for it.
+type Placement is Data:
+  Placement{uid: U32, action: Jev.Action}
+
+def destination.if(here: Bool, dest: String) -> Maybe<&2, String>:
+  match here:
+    case True{}:
+      None{}
+    case False{}:
+      Some{dest}
+
+# Where an action moves a message out of `mbox`: None when it stays there.
+def destination(+mbox: String, a: Jev.Action) -> Maybe<&2, String>:
+  match a:
+    case Jev.ToReview{}:
+      destination.if(I.same_name(review_folder(), mbox), review_folder())
+    case Jev.ToFolder{+folder}:
+      destination.if(I.same_name(folder, mbox), folder)
+    case Jev.Stay{}:
+      None{}
+
+def moving.put(
+  m: Maybe<&2, String>,
+  uid: U32,
+  rest: List<&2, FolderUids>
+) -> List<&2, FolderUids>:
+  match m:
+    case Some{dest}:
+      FolderUids{dest, [uid]} <> rest
+    case None{}:
+      rest
+
+# One move of a single message per placement that moves.
+def moving(+mbox: String, ps: List<&2, Placement>) -> List<&2, FolderUids>:
+  match ps:
+    case Nil{}:
+      []
+    case Placement{uid, a} <> t:
+      moving.put(destination(mbox, a), uid, moving(mbox, t))
+
+def folder_of(m: FolderUids) -> String:
+  FolderUids{mbox, uids} = m
+  mbox
+
+def joined.if(
+  same: Bool,
+  +dest: String,
+  uids: List<&2, U32>,
+  next: String,
+  more: List<&2, U32>,
+  rest: List<&2, FolderUids>
+) -> List<&2, FolderUids>:
+  match same:
+    case True{}:
+      FolderUids{dest, List.append(&2, U32, uids, more)} <> rest
+    case False{}:
+      FolderUids{dest, uids} <> (FolderUids{next, more} <> rest)
+
+# A move put before `ms`, joined to the first of them when it has the same
+# folder.
+def joined(m: FolderUids, ms: List<&2, FolderUids>) -> List<&2, FolderUids>:
+  FolderUids{+dest, uids} = m
+  match ms:
+    case Nil{}:
+      [FolderUids{dest, uids}]
+    case FolderUids{+next, more} <> rest:
+      joined.if(String.eq(dest, next), dest, uids, next, more, rest)
+
+def grouped(ms: List<&2, FolderUids>) -> List<&2, FolderUids>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      joined(m, grouped(t))
+
+# The moves out of `mbox` that the placements ask for: one per folder, in
+# folder order, each with its UIDs in placement order.
+def triage_moves(mbox: String, ps: List<&2, Placement>) -> List<&2, FolderUids>:
+  grouped(List.sort(~FolderUids, ~(a => b => String.is_le(folder_of(a), folder_of(b))),
+    moving(mbox, ps)))
+
+# Whether `name` is one of `names`, compared in lower case.
+def named_in(names: List<&2, String>, +name: String) -> Bool:
+  match names:
+    case Nil{}:
+      False{}
+    case n <> t:
+      String.eq(String.to_lower(n), String.to_lower(name)) || named_in(t, name)
+
+# Whether triage may move mail out of `mbox` into `dest`: never into `mbox`
+# itself, nor into INBOX or one of the `reserved` folders (in any case), and
+# only into the review folder or one of the categories `cats`.
+def triage_dest(
+  mbox: String,
+  cats: List<&2, String>,
+  reserved: List<&2, String>,
+  +dest: String
+) -> Bool:
+  Bool.not(I.same_name(dest, mbox)) &&
+    (Bool.not(named_in("INBOX" <> reserved, dest)) &&
+      (String.eq(dest, review_folder()) || List.contains(~String, ~String.eq, cats, dest)))
+
+def dests_ok(
+  +mbox: String,
+  +cats: List<&2, String>,
+  +reserved: List<&2, String>,
+  ms: List<&2, FolderUids>
+) -> Bool:
+  match ms:
+    case Nil{}:
+      True{}
+    case FolderUids{dest, uids} <> t:
+      triage_dest(mbox, cats, reserved, dest) && dests_ok(mbox, cats, reserved, t)
+
+# The UIDs of each move, in order.
+def uids_per_move(ms: List<&2, FolderUids>) -> List<&2, List<&2, U32>>:
+  match ms:
+    case Nil{}:
+      []
+    case FolderUids{dest, uids} <> t:
+      uids <> uids_per_move(t)
+
+def repeated(xs: List<&2, U32>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case +x <> +t:
+      List.contains(~U32, ~U32.is_eq, t, x) || repeated(t)
+
+# Whether a UID appears twice in the lists, within one or across two.
+def repeats(xss: List<&2, List<&2, U32>>) -> Bool:
+  repeated(List.concat(&2, U32, xss))
+
+def move_plans(
+  +mbox: String,
+  ms: List<&2, FolderUids>,
+  +move: Bool,
+  +uidplus: Bool,
+  +uidv: U32
+) -> List<&2, List<&2, I.Cmd>>:
+  match ms:
+    case Nil{}:
+      []
+    case FolderUids{dest, uids} <> t:
+      plan_move(mbox, uids, dest, move, uidplus, uidv) <> move_plans(mbox, t, move, uidplus, uidv)
+
+def plan_triage.if(
+  ok: Bool,
+  mbox: String,
+  ms: List<&2, FolderUids>,
+  move: Bool,
+  uidplus: Bool,
+  uidv: U32
+) -> List<&2, List<&2, I.Cmd>>:
+  match ok:
+    case True{}:
+      move_plans(mbox, ms, move, uidplus, uidv)
+    case False{}:
+      []
+
+# One move plan per move, in order; none at all when a move goes into a
+# folder triage may not move into (see triage_dest) or a UID is in two
+# moves. `reserved` names the role folders. With neither MOVE nor UIDPLUS
+# each plan is empty (see plan_move).
+def plan_triage(
+  +mbox: String,
+  cats: List<&2, String>,
+  reserved: List<&2, String>,
+  +ms: List<&2, FolderUids>,
+  move: Bool,
+  uidplus: Bool,
+  uidv: U32
+) -> List<&2, List<&2, I.Cmd>>:
+  plan_triage.if(dests_ok(mbox, cats, reserved, ms) && Bool.not(repeats(uids_per_move(ms))),
+    mbox, ms, move, uidplus, uidv)
 
 # Saving a draft appends `msg` to `drafts`, marked as a draft and seen.
 def plan_draft(drafts: String, msg: String) -> List<&2, I.Cmd>:
@@ -680,3 +900,122 @@ def pinned_or_empty(cs: List<&2, I.Cmd>) -> Bool:
       True{}
     case _ <> _:
       pinned(cs)
+
+# What the triage laws say about a list of plans, each run in its own
+# session, as computations over their commands. They state each promise on
+# their own, never through the plan's own check (triage_dest, repeats), so
+# that a broken check fails the proofs instead of proving itself.
+
+# The folder of every UID MOVE and UID COPY of a plan, in order.
+def dests(cs: List<&2, I.Cmd>) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case I.CMove{u, dest} <> t:
+      dest <> dests(t)
+    case I.CCopy{u, dest} <> t:
+      dest <> dests(t)
+    case _ <> t:
+      dests(t)
+
+def plans_dests(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      List.append(&2, String, dests(p), plans_dests(t))
+
+# Whether every folder is the review folder or one of `cats`.
+def all_offered(+cats: List<&2, String>, ds: List<&2, String>) -> Bool:
+  match ds:
+    case Nil{}:
+      True{}
+    case +d <> t:
+      (String.eq(d, review_folder()) || List.contains(~String, ~String.eq, cats, d)) &&
+        all_offered(cats, t)
+
+# Whether no folder is one of `names`, compared in lower case.
+def none_named(+names: List<&2, String>, ds: List<&2, String>) -> Bool:
+  match ds:
+    case Nil{}:
+      True{}
+    case d <> t:
+      Bool.not(named_in(names, d)) && none_named(names, t)
+
+# Whether no folder is `mbox`, as I.same_name compares them.
+def none_same(+mbox: String, ds: List<&2, String>) -> Bool:
+  match ds:
+    case Nil{}:
+      True{}
+    case d <> t:
+      Bool.not(I.same_name(d, mbox)) && none_same(mbox, t)
+
+# Whether no UID appears twice.
+def distinct(xs: List<&2, U32>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case +x <> +t:
+      Bool.not(List.contains(~U32, ~U32.is_eq, t, x)) && distinct(t)
+
+# The folder changes of all the plans, in order.
+def plans_mailbox_changes(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, I.Cmd>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      List.append(&2, I.Cmd, mailbox_changes(p), plans_mailbox_changes(t))
+
+# The UIDs of every UID MOVE and UID COPY of a plan, in order.
+def moved_uids(cs: List<&2, I.Cmd>) -> List<&2, List<&2, U32>>:
+  match cs:
+    case Nil{}:
+      []
+    case I.CMove{u, dest} <> t:
+      u <> moved_uids(t)
+    case I.CCopy{u, dest} <> t:
+      u <> moved_uids(t)
+    case _ <> t:
+      moved_uids(t)
+
+def plans_moved_uids(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, List<&2, U32>>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      List.append(&2, List<&2, U32>, moved_uids(p), plans_moved_uids(t))
+
+# The UIDs of every UID EXPUNGE of a plan, in order.
+def expunged_uids(cs: List<&2, I.Cmd>) -> List<&2, List<&2, U32>>:
+  match cs:
+    case Nil{}:
+      []
+    case I.CExpunge{u} <> t:
+      u <> expunged_uids(t)
+    case _ <> t:
+      expunged_uids(t)
+
+# The UIDs of every UID COPY of a plan, in order.
+def copied_uids(cs: List<&2, I.Cmd>) -> List<&2, List<&2, U32>>:
+  match cs:
+    case Nil{}:
+      []
+    case I.CCopy{u, dest} <> t:
+      u <> copied_uids(t)
+    case _ <> t:
+      copied_uids(t)
+
+# Each plan's expunged UIDs, and each plan's copied UIDs.
+def plans_expunged(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, List<&2, List<&2, U32>>>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      expunged_uids(p) <> plans_expunged(t)
+
+def plans_copied(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, List<&2, List<&2, U32>>>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      copied_uids(p) <> plans_copied(t)

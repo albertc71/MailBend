@@ -20,7 +20,8 @@ import ./jev.bend as Jev
 type Out is Data:
   Ok{j: J.Json}
   Err{msg: String}
-  # A change that stopped part-way: an error for the caller, with its result.
+  # An error for the caller that still carries a result: a change that
+  # stopped part-way, or a refusal that reports what the call found.
   Partial{j: J.Json}
 
 # The steps of a tool answer Base's Result: a value, or the message of the
@@ -74,6 +75,17 @@ def with_fields(o: Out, extra: List<&2, J.Json>) -> Out:
   match o:
     case Ok{J.JObj{items}}:
       Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
+    case _:
+      o
+
+# Puts fields before those of a result object, also of a partial one (where
+# with_fields adds them after, to a successful one only).
+def with_fields_first(o: Out, first: List<&2, J.Json>) -> Out:
+  match o:
+    case Ok{J.JObj{items}}:
+      Ok{J.JObj{J.chain(List.append(&2, J.Json, first, J.unchain(items)))}}
+    case Partial{J.JObj{items}}:
+      Partial{J.JObj{J.chain(List.append(&2, J.Json, first, J.unchain(items)))}}
     case _:
       o
 
@@ -599,11 +611,21 @@ def smtp_run(envelope: String) -> IO(Out):
 # file `path`.
 type Preview is Data:
   ImapPreview{plan: List<&2, I.Cmd>}
+  ImapPlans{plans: List<&2, List<&2, I.Cmd>>}
   SmtpPreview{from: String, rcpts: List<&2, String>, msg: String, sent_copy: Bool}
   FilePreview{path: String, data: String}
 
 def preview.result(kind: String, j: J.Json) -> Out:
   ok_obj([J.kv("dry_run", J.bool(True{})), J.kv(kind, j)])
+
+# The preview of plans that each run in a session of their own, one after
+# the other.
+def plans_preview(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      List.append(&2, String, I.preview(p), plans_preview(t))
 
 # What a dry run returns instead of making the change: the IMAP commands as
 # the TLS helper would get them, the SMTP envelope or the file. A message or
@@ -614,6 +636,8 @@ def preview(p: Preview) -> Out:
   match p:
     case ImapPreview{plan}:
       preview.result("imap", J.strs(I.preview(plan)))
+    case ImapPlans{plans}:
+      preview.result("imap", J.strs(plans_preview(plans)))
     case SmtpPreview{from, rcpts, msg, sent_copy}:
       preview.result("smtp", J.obj([
         J.kv("from", J.str(from)),
@@ -774,6 +798,76 @@ def maybe_num(m: Maybe<&2, U32>) -> J.Json:
 # Folders and their roles
 # =======================
 
+# Folder names
+# ------------
+
+def is_inbox(name: String) -> Bool:
+  I.same_name(name, "INBOX")
+
+# The delimiter LIST reports for INBOX; "" when INBOX is not listed or has none.
+def inbox_delim(fs: List<&2, I.Folder>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case I.Folder{n, d, a} <> t:
+      Bool.pick(String, is_inbox(n), d, inbox_delim(t))
+
+# The first delimiter LIST reports for any folder; "" when it reports none.
+def any_delim(fs: List<&2, I.Folder>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case I.Folder{n, d, a} <> t:
+      first_of(d, any_delim(t))
+
+# The hierarchy delimiter: INBOX's, else any folder's. "" means none is known.
+def delim_of(+fs: List<&2, I.Folder>) -> String:
+  first_of(inbox_delim(fs), any_delim(fs))
+
+# Whether `name` lies inside the folder `ancestor` (and is not that folder):
+# "Mail/Sent" lies inside "Mail" when the delimiter is "/". A server with no
+# delimiter has no nesting.
+def inside(+delim: String, ancestor: String, name: String) -> Bool:
+  Bool.not(String.is_empty(delim)) && String.starts_with(name, ancestor ++ delim)
+
+def at_or_inside(delim: String, +ancestor: String, +name: String) -> Bool:
+  String.eq(ancestor, name) || inside(delim, ancestor, name)
+
+# The review folder
+# -----------------
+
+# Only mail_triage moves mail into the review folder (see
+# Ops.review_folder), or into any folder inside it, and never out of it:
+# the user reviews what is there. mail_move and mail_label may take a
+# message out of it, when the user keeps it; mail_trash may not, and
+# mail_delete removes messages from it only on its confirmation. Names are
+# compared in lower case, as the reserved names are.
+
+def in_review(delim: String, name: String) -> Bool:
+  at_or_inside(delim, String.to_lower(Ops.review_folder()), String.to_lower(name))
+
+# Why mail_move or mail_label cannot move mail into `dest` ("" when it can).
+def review_move_problem(delim: String, dest: String) -> String:
+  Bool.pick(String, in_review(delim, dest),
+    "only mail_triage moves mail into \"" ++ Ops.review_folder() ++ "\", which the user reviews",
+    "")
+
+# Why mail_trash cannot move mail out of `folder` into `trash` ("" when it
+# can).
+def review_trash_problem(+delim: String, folder: String, trash: String) -> String:
+  Bool.pick(String, in_review(delim, folder) || in_review(delim, trash),
+    "mail_trash never moves mail into or out of \"" ++ Ops.review_folder() ++
+      "\", which the user reviews; mail_move can take a message out of it, and mail_delete " ++
+      "can remove messages from it permanently",
+    "")
+
+# Why mail_triage cannot file mail out of `folder` ("" when it can).
+def source_review_problem(delim: String, folder: String) -> String:
+  Bool.pick(String, in_review(delim, folder),
+    "mail_triage files mail out of other folders, never out of \"" ++ Ops.review_folder() ++
+      "\", which the user reviews",
+    "")
+
 # Special-use attributes
 # ----------------------
 
@@ -910,11 +1004,15 @@ def resolved_role(
   resolved_role.if(String.is_empty(override), fs, override, attr, a, b)
 
 # Why the override `value` of `variable` cannot be used; "" when it is unset
-# or names one existing selectable mailbox.
-def invalid_override(fs: List<&2, I.Folder>, +value: String, variable: String) -> String:
-  Bool.pick(String,
-    String.is_empty(value) || Maybe.is_some(&2, String, named_folder(fs, value)), "",
-    variable ++ " must name one existing selectable mailbox")
+# or names one existing selectable mailbox outside the review folder, which
+# is never a role folder, nor holds one.
+def invalid_override(+fs: List<&2, I.Folder>, +value: String, +variable: String) -> String:
+  Bool.pick(String, in_review(delim_of(fs), value),
+    variable ++ " cannot name the review folder \"" ++ Ops.review_folder() ++
+      "\" or a folder inside it",
+    Bool.pick(String,
+      String.is_empty(value) || Maybe.is_some(&2, String, named_folder(fs, value)), "",
+      variable ++ " must name one existing selectable mailbox"))
 
 # The conventional names role resolution falls back to. reserved_names uses
 # the same list, so a name added here is protected as well.
@@ -2476,6 +2574,11 @@ def move_plan.run(
     p : Proc <- imap_proc(plan)
     return moved_out(p, plan, folder, uids, dest, move)
 
+# Why a server can take no move plan (see Ops.plan_move).
+def no_move_problem() -> String:
+  "the server supports neither MOVE nor UIDPLUS; refusing to move with a plain EXPUNGE, " ++
+    "which could remove other messages"
+
 def move_plan(
   +plan: List<&2, I.Cmd>,
   folder: String,
@@ -2486,9 +2589,7 @@ def move_plan(
 ) -> IO(Out):
   match plan:
     case Nil{}:
-      pure_out(Err{
-        "the server supports neither MOVE nor UIDPLUS; refusing to move with a plain " ++
-          "EXPUNGE, which could remove other messages"})
+      pure_out(Err{no_move_problem()})
     case h <> t:
       preview_or_run(dry, ImapPreview{plan}, move_plan.run(plan, folder, uids, dest, move))
 
@@ -2513,7 +2614,7 @@ def move_caps(
   r: Run(),
   folder: String,
   uids: List<&2, U32>,
-  dest: String,
+  +dest: String,
   +uidv: U32,
   dry: Bool
 ) -> IO(Out):
@@ -2521,7 +2622,9 @@ def move_caps(
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      move_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv, dry)
+      move_caps.if(
+        first_of(uidv_problem(lines, uidv), review_move_problem(delim_of(I.folders(lines)), dest)),
+        I.caps(lines), folder, uids, dest, uidv, dry)
 
 def move_request(uidv: U32, folder: String, +dest: String) -> String:
   Bool.pick(String, String.is_empty(dest) || I.same_name(dest, folder),
@@ -2574,8 +2677,24 @@ def trash_into(
       move_plan(Ops.plan_trash(folder, uids, trash, move, I.has_cap(caps, "UIDPLUS"), uidv),
         folder, uids, trash, move, dry)
 
+def trash_to.if(
+  problem: String,
+  +trash: String,
+  caps: List<&2, String>,
+  +folder: String,
+  uids: List<&2, U32>,
+  uidv: U32,
+  dry: Bool
+) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+    case SNil{}:
+      trash_into(I.same_name(trash, folder), trash, caps, folder, uids, uidv, dry)
+
 def trash_to(
   trash: Maybe<&2, String>,
+  delim: String,
   caps: List<&2, String>,
   +folder: String,
   uids: List<&2, U32>,
@@ -2586,7 +2705,7 @@ def trash_to(
     case None{}:
       pure_out(Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
     case Some{+t}:
-      trash_into(I.same_name(t, folder), t, caps, folder, uids, uidv, dry)
+      trash_to.if(review_trash_problem(delim, folder, t), t, caps, folder, uids, uidv, dry)
 
 def trash_fs(
   f: Fs(),
@@ -2600,7 +2719,7 @@ def trash_fs(
     case Fail{m}:
       pure_out(Err{m ++ "; nothing was changed"})
     case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
-      trash_to(trash, caps, folder, uids, uidv, dry)
+      trash_to(trash, delim_of(fs), caps, folder, uids, uidv, dry)
 
 def trash_found.if(
   problem: String,
@@ -2763,20 +2882,14 @@ type FolderChange is Data:
   FolderCreate{name: String}
   FolderRename{from: String, to: String}
 
-def review_folder() -> String:
-  "To Delete"
-
 # Names reserved whether or not the server advertises them: the review folder,
 # and the conventional role names that role resolution falls back to.
 def reserved_names() -> List<&2, String>:
-  review_folder() <> conventional_names()
+  Ops.review_folder() <> conventional_names()
 
 def reserved_note() -> String:
   "INBOX, Drafts, Sent, Trash, Junk, Archive (also under their usual names), To Delete, " ++
     "and any folder configured for one of those roles or advertised with any special-use role"
-
-def is_inbox(name: String) -> Bool:
-  I.same_name(name, "INBOX")
 
 def maybe_name(m: Maybe<&2, String>, rest: List<&2, String>) -> List<&2, String>:
   match m:
@@ -2801,28 +2914,21 @@ def lowered(xs: List<&2, String>) -> List<&2, String>:
     case x <> t:
       String.to_lower(x) <> lowered(t)
 
-# The delimiter LIST reports for INBOX; "" when INBOX is not listed or has none.
-def inbox_delim(fs: List<&2, I.Folder>) -> String:
-  match fs:
-    case Nil{}:
-      ""
-    case I.Folder{n, d, a} <> t:
-      Bool.pick(String, is_inbox(n), d, inbox_delim(t))
+# The role folders: those resolved for a role, and those that advertise one.
+def role_names(
+  fs: List<&2, I.Folder>,
+  drafts: Maybe<&2, String>,
+  trash: Maybe<&2, String>,
+  sent: Maybe<&2, String>,
+  junk: Maybe<&2, String>,
+  archive: Maybe<&2, String>
+) -> List<&2, String>:
+  List.append(&2, String,
+    maybe_name(drafts, maybe_name(trash, maybe_name(sent, maybe_name(junk,
+      maybe_name(archive, []))))),
+    advertised_names(fs))
 
-# The first delimiter LIST reports for any folder; "" when it reports none.
-def any_delim(fs: List<&2, I.Folder>) -> String:
-  match fs:
-    case Nil{}:
-      ""
-    case I.Folder{n, d, a} <> t:
-      first_of(d, any_delim(t))
-
-# The hierarchy delimiter: INBOX's, else any folder's. "" means none is known.
-def delim_of(+fs: List<&2, I.Folder>) -> String:
-  first_of(inbox_delim(fs), any_delim(fs))
-
-# Reserved, in lower case: the resolved role folders, the folders that
-# advertise a role, and the reserved names.
+# Reserved, in lower case: the role folders and the reserved names.
 def guard_of(
   +fs: List<&2, I.Folder>,
   drafts: Maybe<&2, String>,
@@ -2831,10 +2937,8 @@ def guard_of(
   junk: Maybe<&2, String>,
   archive: Maybe<&2, String>
 ) -> Guard:
-  resolved = maybe_name(drafts, maybe_name(trash, maybe_name(sent,
-    maybe_name(junk, maybe_name(archive, [])))))
-  named = List.append(&2, String, advertised_names(fs), reserved_names())
-  Guard{fs, lowered(List.append(&2, String, resolved, named)), delim_of(fs)}
+  roles = role_names(fs, drafts, trash, sent, junk, archive)
+  Guard{fs, lowered(List.append(&2, String, roles, reserved_names())), delim_of(fs)}
 
 # The guard for the folders and their resolved roles.
 def guard_for(f: Folders) -> Guard:
@@ -2855,15 +2959,6 @@ def guard_delim(g: Guard) -> String:
 
 def has_folder(g: Guard, name: String) -> Bool:
   Maybe.is_some(&2, String, I.named(guard_fs(g), name))
-
-# Whether `name` lies inside the folder `ancestor` (and is not that folder):
-# "Mail/Sent" lies inside "Mail" when the delimiter is "/". A server with no
-# delimiter has no nesting.
-def inside(+delim: String, ancestor: String, name: String) -> Bool:
-  Bool.not(String.is_empty(delim)) && String.starts_with(name, ancestor ++ delim)
-
-def at_or_inside(delim: String, +ancestor: String, +name: String) -> Bool:
-  String.eq(ancestor, name) || inside(delim, ancestor, name)
 
 # Whether the lower-case `name` is a reserved folder or inside one.
 def inside_reserved(+delim: String, reserved: List<&2, String>, +name: String) -> Bool:
@@ -2980,7 +3075,7 @@ def create_problem.if(review: Bool, g: Guard, name: String) -> String:
 
 # mail_create_folder may also create the review folder, once and at top level.
 def create_problem(g: Guard, +name: String) -> String:
-  create_problem.if(String.eq(name, review_folder()), g, name)
+  create_problem.if(String.eq(name, Ops.review_folder()), g, name)
 
 def source_problem(+g: Guard, +name: String) -> String:
   first_of(Bool.pick(String, has_folder(g, name), "", "no folder is named \"" ++ name ++ "\""),
@@ -3557,13 +3652,19 @@ def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
 def stamp_of(+secs: U32, a: U32, b: U32) -> Stamp:
   Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b), M.iso_date(secs)}
 
-def stamp() -> IO(Stamp):
-  do IO<Stamp>:
+# The time in seconds since the epoch; 0 when it cannot be read.
+def now_seconds() -> IO(U32):
+  do IO<U32>:
     r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
       Process.run("/bin/date", ["+%s"], "", 64, 5000)
+    return secs_of(proc_of(r))
+
+def stamp() -> IO(Stamp):
+  do IO<Stamp>:
+    secs : U32 <- now_seconds()
     a : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
     b : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
-    return stamp_of(secs_of(proc_of(r)), rand_of(a), rand_of(b))
+    return stamp_of(secs, rand_of(a), rand_of(b))
 
 def domain_of(addr: String) -> String:
   Maybe.default(&2, String, List.last(&2, String, String.split(M.addr_spec(addr), '@')),
@@ -4469,37 +4570,23 @@ def ask_jev(body: String) -> IO(Asked):
 # Requests in turn
 # ----------------
 
-# What the requests have given so far: the message results and a report of
-# each request, newest first.
+# What the requests have given so far: what Jev answered about each
+# message, and a report of each request, newest first.
 type Progress is Data:
-  Progress{messages: List<&2, J.Json>, requests: List<&2, J.Json>}
+  Progress{answered: List<&2, Jev.Answered>, requests: List<&2, J.Json>}
 
 # The progress, or why the call stopped.
 def Tally() -> Data:
   Result<&2, &2, String, Progress>
 
-def progress_add(p: Progress, ms: List<&2, J.Json>, requests: List<&2, J.Json>) -> Progress:
+def progress_add(
+  p: Progress,
+  xs: List<&2, Jev.Answered>,
+  requests: List<&2, J.Json>
+) -> Progress:
   Progress{done, reqs} = p
-  Progress{List.append(&2, J.Json, List.reverse(&2, J.Json, ms), done),
+  Progress{List.append(&2, Jev.Answered, List.reverse(&2, Jev.Answered, xs), done),
     List.append(&2, J.Json, requests, reqs)}
-
-# What reading an answer needs: the content sent, the caller's candidates,
-# the none key, and every option key Jev may choose.
-type Asking is Data:
-  Asking{
-    content: Jev.Content,
-    candidates: List<&2, String>,
-    none: String,
-    keys: List<&2, String>
-  }
-
-def asking_content(a: Asking) -> Jev.Content:
-  Asking{c, cands, none, keys} = a
-  c
-
-def asking_keys(a: Asking) -> List<&2, String>:
-  Asking{c, cands, none, keys} = a
-  keys
 
 # A request's report: its messages, its size in bytes (MailBend's token
 # estimate) and the input tokens TypeSafe counted, when it says.
@@ -4510,28 +4597,32 @@ def request_json(n: Nat, bytes: U32, tokens: Maybe<&2, U32>) -> J.Json:
     J.kv("input_tokens", maybe_num(tokens))
   ])
 
-def answered.put(r: Maybe<&2, Jev.Reply>, n: Nat, bytes: U32, a: Asking, p: Progress) -> Tally():
+def answered.put(r: Maybe<&2, Jev.Reply>, n: Nat, bytes: U32, p: Progress) -> Tally():
   match r:
     case None{}:
       Fail{"TypeSafe's answer is not the JSON MailBend asked for"}
     case Some{Jev.Reply{xs, tokens}}:
-      Asking{c, cands, none, keys} = a
-      Done{progress_add(p, Jev.checked_jsons(xs, c, cands, none),
-        [request_json(n, bytes, tokens)])}
+      Done{progress_add(p, xs, [request_json(n, bytes, tokens)])}
 
 # One request's outcome added to the progress; any failure stops the call.
-def answered(r: Asked, +es: List<&2, Jev.Entry>, bytes: U32, +a: Asking, p: Progress) -> Tally():
+# Reading an answer needs `keys`, every category option key Jev may choose.
+def answered(
+  r: Asked,
+  +es: List<&2, Jev.Entry>,
+  bytes: U32,
+  keys: List<&2, String>,
+  p: Progress
+) -> Tally():
   match r:
     case AskAnswered{body}:
-      answered.put(Jev.reply(body, es, asking_keys(a)), List.length(&2, Jev.Entry, es), bytes,
-        a, p)
+      answered.put(Jev.reply(body, es, keys), List.length(&2, Jev.Entry, es), bytes, p)
     case AskRefused{m}:
       Fail{m}
     case AskFailed{m}:
       Fail{m}
 
 # Sends the request for `es`, unless the call has already stopped.
-def ask_once(+es: List<&2, Jev.Entry>, a: Asking, t: Tally()) -> IO(Tally()):
+def ask_once(+es: List<&2, Jev.Entry>, keys: List<&2, String>, t: Tally()) -> IO(Tally()):
   match t:
     case Fail{m}:
       IO.pure(Tally(), Fail{m})
@@ -4539,77 +4630,87 @@ def ask_once(+es: List<&2, Jev.Entry>, a: Asking, t: Tally()) -> IO(Tally()):
       +body = Jev.request_body(es)
       do IO<Tally()>:
         r : Asked <- ask_jev(body)
-        return answered(r, es, C.utf8_len(body), a, p)
+        return answered(r, es, C.utf8_len(body), keys, p)
 
 # A refused request split once into halves, each asked on its own; a
 # refusal of either stops the call.
-def ask_halves(+es: List<&2, Jev.Entry>, +a: Asking, p: Progress) -> IO(Tally()):
+def ask_halves(+es: List<&2, Jev.Entry>, +keys: List<&2, String>, p: Progress) -> IO(Tally()):
   +half = Nat.div(List.length(&2, Jev.Entry, es), 2n)
   start : Tally() = Done{p}
   do IO<Tally()>:
-    first : Tally() <- ask_once(List.take(&2, Jev.Entry, es, half), a, start)
-    ask_once(List.drop(&2, Jev.Entry, es, half), a, first)
+    first : Tally() <- ask_once(List.take(&2, Jev.Entry, es, half), keys, start)
+    ask_once(List.drop(&2, Jev.Entry, es, half), keys, first)
 
-def ask_batch.if(split: Bool, m: String, es: List<&2, Jev.Entry>, a: Asking, p: Progress)
-  -> IO(Tally()):
+def ask_batch.if(
+  split: Bool,
+  m: String,
+  es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress
+) -> IO(Tally()):
   match split:
     case True{}:
-      ask_halves(es, a, p)
+      ask_halves(es, keys, p)
     case False{}:
       IO.pure(Tally(), Fail{m})
 
-def ask_batch.put(r: Asked, +es: List<&2, Jev.Entry>, a: Asking, bytes: U32, p: Progress)
-  -> IO(Tally()):
+def ask_batch.put(
+  r: Asked,
+  +es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  bytes: U32,
+  p: Progress
+) -> IO(Tally()):
   match r:
     case AskRefused{m}:
-      ask_batch.if(Nat.is_gt(List.length(&2, Jev.Entry, es), 1n), m, es, a, p)
+      ask_batch.if(Nat.is_gt(List.length(&2, Jev.Entry, es), 1n), m, es, keys, p)
     case _:
-      IO.pure(Tally(), answered(r, es, bytes, a, p))
+      IO.pure(Tally(), answered(r, es, bytes, keys, p))
 
 # TypeSafe's 422 is a general validation error, so a refused request of two
 # or more messages is split once, in case it was too large; a refusal of a
 # half, or of a single message, stops the call with TypeSafe's reason.
-def ask_batch(+es: List<&2, Jev.Entry>, a: Asking, p: Progress) -> IO(Tally()):
+def ask_batch(+es: List<&2, Jev.Entry>, keys: List<&2, String>, p: Progress) -> IO(Tally()):
   +body = Jev.request_body(es)
   do IO<Tally()>:
     r : Asked <- ask_jev(body)
-    ask_batch.put(r, es, a, C.utf8_len(body), p)
+    ask_batch.put(r, es, keys, C.utf8_len(body), p)
 
-def ask_step.put(s: Jev.Step, a: Asking, p: Progress) -> IO(Tally()):
+def ask_step.put(s: Jev.Step, keys: List<&2, String>, p: Progress) -> IO(Tally()):
   match s:
     case Jev.Skip{f}:
-      IO.pure(Tally(), Done{progress_add(p, [Jev.unchecked_json(f, asking_content(a))], [])})
+      IO.pure(Tally(), Done{progress_add(p, [Jev.Skipped{f}], [])})
     case Jev.Ask{es}:
-      ask_batch(es, a, p)
+      ask_batch(es, keys, p)
 
-def ask_step(s: Jev.Step, a: Asking, t: Tally()) -> IO(Tally()):
+def ask_step(s: Jev.Step, keys: List<&2, String>, t: Tally()) -> IO(Tally()):
   match t:
     case Fail{m}:
       IO.pure(Tally(), Fail{m})
     case Done{p}:
-      ask_step.put(s, a, p)
+      ask_step.put(s, keys, p)
 
 # Takes the steps in order; once the call has stopped, no further request
 # is sent.
-def ask_steps(ss: List<&2, Jev.Step>, +a: Asking, t: Tally()) -> IO(Tally()):
+def ask_steps(ss: List<&2, Jev.Step>, +keys: List<&2, String>, t: Tally()) -> IO(Tally()):
   match ss:
     case Nil{}:
       IO.pure(Tally(), t)
     case s <> rest:
       do IO<Tally()>:
-        next : Tally() <- ask_step(s, a, t)
-        ask_steps(rest, a, next)
+        next : Tally() <- ask_step(s, keys, t)
+        ask_steps(rest, keys, next)
 
 # mail_classify
 # -------------
 
-# The most UIDs one call asks about.
-def classify_limit() -> U32:
+# The most UIDs one call of a Jev tool asks about.
+def jev_limit() -> U32:
   50
 
 # In body mode each message is fetched up to this many bytes, of which Jev
 # sees at most Jev.max_text bytes of plain text.
-def classify_max() -> U32:
+def jev_max() -> U32:
   262144
 
 # TypeSafe's choice takes at most 255 options, and one is the none key.
@@ -4621,19 +4722,20 @@ def option_limit() -> U32:
 type Classify is Data:
   Classify{folder: String, uids: List<&2, U32>, candidates: List<&2, String>}
 
-def classify_uids.if(over: Bool, us: List<&2, U32>) -> Uids():
+def jev_uids.if(over: Bool, tool: String, us: List<&2, U32>) -> Uids():
   match over:
     case True{}:
-      Fail{"mail_classify takes at most " ++ U32.show(classify_limit()) ++ " UIDs per call"}
+      Fail{tool ++ " takes at most " ++ U32.show(jev_limit()) ++ " UIDs per call"}
     case False{}:
       Done{asc(unseen(us, []))}
 
-def classify_uids(u: Uids()) -> Uids():
+# The UIDs of a call of the Jev tool `tool`: each once, ascending.
+def jev_uids(tool: String, u: Uids()) -> Uids():
   match u:
     case Fail{m}:
       Fail{m}
     case Done{+us}:
-      classify_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(classify_limit())), us)
+      jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
 
 def options_problem(+n: Nat) -> String:
   Bool.pick(String, Nat.is_gt(n, U32.to_nat(option_limit())),
@@ -4661,7 +4763,7 @@ def classify_candidates(+cs: List<&2, String>) -> Result<&2, &2, String, List<&2
 
 def classify_request(+args: J.Json) -> Result<&2, &2, String, Classify>:
   do Result<&2, &2, String, Classify>:
-    uids : List<&2, U32> <- classify_uids(uids_arg(args))
+    uids : List<&2, U32> <- jev_uids("mail_classify", uids_arg(args))
     cands : List<&2, String> <- classify_candidates(strs_arg(args, "candidates"))
     return Classify{folder_arg(args), uids, cands}
 
@@ -4674,6 +4776,10 @@ def category_names(+g: Guard, fs: List<&2, I.Folder>) -> List<&2, String>:
     case I.Folder{+name, d, attrs} <> t:
       List.filter.put(String, name, category_names(g, t),
         selectable(attrs) && Bool.not(reserved_target(g, name)))
+
+# The category folders, sorted.
+def categories(+g: Guard) -> List<&2, String>:
+  List.sort(~String, ~(a => b => String.is_le(a, b)), category_names(g, guard_fs(g)))
 
 def canonical_names(+g: Guard, cs: List<&2, String>) -> List<&2, String>:
   match cs:
@@ -4724,13 +4830,21 @@ def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
     case +m <> t:
       Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max)} <> fetched_list(t, max)
 
-def classify_out(t: Tally(), head: List<&2, J.Json>, not_found: List<&2, U32>) -> Out:
+def classify_out(
+  t: Tally(),
+  c: Jev.Content,
+  cands: List<&2, String>,
+  none: String,
+  head: List<&2, J.Json>,
+  not_found: List<&2, U32>
+) -> Out:
   match t:
     case Fail{m}:
       Err{m}
-    case Done{Progress{ms, reqs}}:
+    case Done{Progress{xs, reqs}}:
       ok_obj(List.append(&2, J.Json, head, [
-        J.kv("messages", J.arr(List.reverse(&2, J.Json, ms))),
+        J.kv("messages",
+          J.arr(Jev.answered_jsons(List.reverse(&2, Jev.Answered, xs), c, cands, none))),
         J.kv("not_found", uids_json(not_found)),
         J.kv("requests", J.arr(List.reverse(&2, J.Json, reqs)))
       ]))
@@ -4741,19 +4855,18 @@ def classify_ask(
   +c: Jev.Content,
   names: List<&2, String>,
   opts: Jev.Options,
-  +cands: List<&2, String>,
+  cands: List<&2, String>,
   ms: List<&2, I.Msg>,
   head: List<&2, J.Json>,
   not_found: List<&2, U32>
 ) -> IO(Out):
   Jev.Options{json, +none} = opts
-  a : Asking = Asking{c, cands, none, List.append(&2, String, names, [none])}
-  steps : List<&2, Jev.Step> = Jev.requests(c, fetched_list(ms, classify_max()),
+  steps : List<&2, Jev.Step> = Jev.requests(c, fetched_list(ms, jev_max()),
     Jev.Options{json, none})
   start : Tally() = Done{Progress{[], []}}
   do IO<Out>:
-    t : Tally() <- ask_steps(steps, a, start)
-    return classify_out(t, head, not_found)
+    t : Tally() <- ask_steps(steps, List.append(&2, String, names, [none]), start)
+    return classify_out(t, c, cands, none, head, not_found)
 
 def classify_folders.if(
   problem: String,
@@ -4786,7 +4899,7 @@ def classify_folders(
       pure_out(Err{m})
     case Done{folders}:
       +g = guard_for(folders)
-      +cats = List.sort(~String, ~(a => b => String.is_le(a, b)), category_names(g, guard_fs(g)))
+      +cats = categories(g)
       +canon = canonical_names(g, cands)
       +ms = first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
       head : List<&2, J.Json> = [
@@ -4824,7 +4937,7 @@ def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content) -> IO(Out
       pure_out(Err{m})
     case Done{Classify{+folder, +uids, cands}}:
       do IO<Out>:
-        run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), classify_max()))
+        run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), jev_max()))
         classify_found(run, folder, uids, cands, c)
 
 # mail_classify changes nothing: one session examines the folder and
@@ -4836,6 +4949,656 @@ def t_classify(+args: J.Json, jev: Jev.Switch) -> IO(Out):
       classify_run(classify_request(args), c)
     case Jev.Off{}:
       pure_out(Err{jev_off("mail_classify")})
+
+# mail_triage
+# -----------
+
+# mail_triage files messages by the filing table (Jev.filing). It reads the
+# messages and the folders as mail_classify does, adds the code's own
+# vetoes (Jev.code_vetoes, and a read-only search of the Sent folder for
+# mail to each sender still in question), then asks Jev about every message
+# before anything moves, so a failed request moves nothing. A message that
+# can still be found safe to delete (Jev.may_review) is asked about in a
+# request of its own, and only those answers can send it to the review
+# folder; the others are asked in batches, as mail_classify asks. Just
+# before the moves, the flags of the messages bound for review are read
+# again, so one flagged or answered meanwhile is kept. Each message then
+# moves at most once, by the proven triage plans.
+
+# The arguments of a call: the folder, its UIDs (each once, ascending), its
+# UIDVALIDITY, and whether only to show the moves.
+type Triage is Data:
+  Triage{folder: String, uids: List<&2, U32>, uidv: U32, dry: Bool}
+
+# A message to triage: what Jev may see of it, the code's vetoes, and its
+# sender's address while the Sent folder is still to be searched for it.
+type Pending is Data:
+  Pending{fetched: Jev.Fetched, vetoes: List<&2, String>, sender: Maybe<&2, String>}
+
+# What a call has settled before asking Jev: the call, the content sent,
+# the categories and their options, the role folders (which triage never
+# moves into), the server's capabilities, why the review folder cannot
+# take mail ("" when it can), the messages found and the UIDs not found.
+type Triaging is Data:
+  Triaging{
+    call: Triage,
+    content: Jev.Content,
+    cats: List<&2, String>,
+    opts: Jev.Options,
+    roles: List<&2, String>,
+    caps: List<&2, String>,
+    review: String,
+    found: List<&2, Pending>,
+    not_found: List<&2, U32>
+  }
+
+# A message as filed: what Jev answered, the delete review's verdict, the
+# code's vetoes, and the action filing chose.
+type Filing is Data:
+  Filing{
+    answered: Jev.Answered,
+    verdict: Jev.Verdict,
+    vetoes: List<&2, String>,
+    action: Jev.Action
+  }
+
+def triage_request(+args: J.Json) -> Result<&2, &2, String, Triage>:
+  +uidv = uidv_arg(args)
+  do Result<&2, &2, String, Triage>:
+    uids : List<&2, U32> <- jev_uids("mail_triage", uids_arg(args))
+    pinned : Unit <- checked(Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
+    return Triage{folder_arg(args), uids, uidv, dry_arg(args)}
+
+# The role folders of `f` (see role_names).
+def role_folders(f: Folders) -> List<&2, String>:
+  Folders{fs, drafts, trash, sent, junk, archive} = f
+  role_names(fs, drafts, trash, sent, junk, archive)
+
+# The review folder can take mail when it exists, can be selected and is
+# none of the role folders `roles`. Unlike the rules under "The review
+# folder", this one needs role_names, so it comes after it.
+def review_problem(f: Folders, roles: List<&2, String>) -> String:
+  Folders{fs, drafts, trash, sent, junk, archive} = f
+  +review = Ops.review_folder()
+  Bool.pick(String, Maybe.is_none(&2, String, named_folder(fs, review)),
+    "it does not exist or cannot be selected: create it with mail_create_folder",
+    Bool.pick(String, Ops.named_in(roles, review),
+      "it is also a special folder, which MailBend never fills", ""))
+
+def sent_of(f: Folders) -> Maybe<&2, String>:
+  Folders{fs, drafts, trash, sent, junk, archive} = f
+  sent
+
+# The values of every header field `name` (lower-case), in order.
+def fields_named(hs: List<&2, M.Hdr>, +name: String) -> List<&2, String>:
+  match hs:
+    case Nil{}:
+      []
+    case M.Hdr{n, v} <> t:
+      List.filter.put(String, v, fields_named(t, name), String.eq(n, name))
+
+# The address of a message's sender, when it has exactly one that reads.
+def only_sender(xs: List<&2, String>) -> Maybe<&2, String>:
+  match xs:
+    case +a <> Nil{}:
+      Bool.pick(Maybe<&2, String>, M.addr_ok(a), Some{spec_key(a)}, None{})
+    case _:
+      None{}
+
+# A message with several From fields has no sender that can be told, as
+# clients may show any of them.
+def sender_in(froms: List<&2, String>) -> Maybe<&2, String>:
+  match froms:
+    case v <> Nil{}:
+      only_sender(decoded(M.addr_list(v)))
+    case _:
+      None{}
+
+def sender_of(m: I.Msg) -> Maybe<&2, String>:
+  I.Msg{uid, flags, date, size, headers, body, structure} = m
+  sender_in(fields_named(M.headers(headers), "from"))
+
+def pending_of.put(
+  f: Jev.Fetched,
+  vetoes: List<&2, String>,
+  sender: Maybe<&2, String>
+) -> Pending:
+  match sender:
+    case Some{a}:
+      Pending{f, vetoes, Some{a}}
+    case None{}:
+      Pending{f, List.append(&2, String, vetoes, Jev.correspondence_vetoes(Jev.Unverified{})),
+        None{}}
+
+def pending_of.if(ask: Bool, f: Jev.Fetched, vetoes: List<&2, String>, m: I.Msg) -> Pending:
+  match ask:
+    case True{}:
+      pending_of.put(f, vetoes, sender_of(m))
+    case False{}:
+      Pending{f, vetoes, None{}}
+
+def pending_of.text(
+  c: Jev.Content,
+  f: Jev.Facts,
+  t: Jev.Text,
+  +vetoes: List<&2, String>,
+  m: I.Msg
+) -> Pending:
+  Jev.Text{text, +whole} = t
+  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.Text{text, whole}}, vetoes,
+    m)
+
+# A message with its code vetoes; its sender is looked up only while it
+# can still be found safe to delete.
+def pending_of(c: Jev.Content, now: U32, +m: I.Msg) -> Pending:
+  +f = Jev.facts_of(m)
+  pending_of.text(c, f, Jev.text_of(m, jev_max()), Jev.code_vetoes(f, now), m)
+
+def pendings(+c: Jev.Content, +now: U32, ms: List<&2, I.Msg>) -> List<&2, Pending>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      pending_of(c, now, m) <> pendings(c, now, t)
+
+def pending_uid(p: Pending) -> U32:
+  Pending{Jev.Fetched{f, t}, vetoes, sender} = p
+  Jev.facts_uid(f)
+
+# The senders still in question, each once, in order.
+def senders(ps: List<&2, Pending>, +seen: List<&2, String>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      []
+    case Pending{f, vetoes, Some{+a}} <> t:
+      +fresh = Bool.not(key_in(a, seen))
+      List.filter.put(String, a, senders(t, Bool.pick(List<&2, String>, fresh, a <> seen, seen)),
+        fresh)
+    case _ <> t:
+      senders(t, seen)
+
+# What the Sent search found for a sender: None when no Sent folder is
+# known, else the addresses it found mail to.
+def correspondence(written: Maybe<&2, List<&2, String>>, a: String) -> Jev.Correspondence:
+  match written:
+    case None{}:
+      Jev.Unverified{}
+    case Some{ws}:
+      Bool.pick(Jev.Correspondence, key_in(a, ws), Jev.Correspondent{}, Jev.Stranger{})
+
+def settled.put(
+  sender: Maybe<&2, String>,
+  f: Jev.Fetched,
+  vetoes: List<&2, String>,
+  written: Maybe<&2, List<&2, String>>
+) -> Pending:
+  match sender:
+    case Some{a}:
+      Pending{f, List.append(&2, String, vetoes,
+        Jev.correspondence_vetoes(correspondence(written, a))), None{}}
+    case None{}:
+      Pending{f, vetoes, None{}}
+
+def settled(ps: List<&2, Pending>, +written: Maybe<&2, List<&2, String>>) -> List<&2, Pending>:
+  match ps:
+    case Nil{}:
+      []
+    case Pending{f, vetoes, sender} <> t:
+      settled.put(sender, f, vetoes, written) <> settled(t, written)
+
+def settle(t: Triaging, written: Maybe<&2, List<&2, String>>) -> Triaging:
+  Triaging{call, c, cats, opts, roles, caps, review, found, not_found} = t
+  Triaging{call, c, cats, opts, roles, caps, review, settled(found, written), not_found}
+
+def written_to.found(rs: List<&2, I.RLine>) -> Bool:
+  Bool.not(List.is_empty(&2, U32, I.search_uids(rs)))
+
+# The senders the Sent search found mail to, in To or in Cc: tags `n` and
+# `n` + 1 search for the first of `addrs` (see plan_sent_search).
+def written_to(addrs: List<&2, String>, +lines: List<&2, I.RLine>, +n: U32) -> List<&2, String>:
+  match addrs:
+    case Nil{}:
+      []
+    case a <> t:
+      List.filter.put(String, a, written_to(t, lines, (n + 2 : U32)),
+        written_to.found(I.replies(lines, n)) || written_to.found(I.replies(lines, (n + 1 : U32))))
+
+# Whether a message is asked about in a request of its own.
+def asked_alone(c: Jev.Content, p: Pending) -> Bool:
+  Pending{Jev.Fetched{f, Jev.Text{text, whole}}, vetoes, sender} = p
+  Jev.may_review(c, whole, vetoes)
+
+# The messages asked about together (`alone` False) or one per request.
+def asked_messages(+c: Jev.Content, ps: List<&2, Pending>, +alone: Bool)
+  -> List<&2, Jev.Fetched>:
+  match ps:
+    case Nil{}:
+      []
+    case +p <> t:
+      Pending{f, vetoes, sender} = p
+      List.filter.put(Jev.Fetched, f, asked_messages(c, t, alone),
+        Bool.not(Bool.xor(asked_alone(c, p), alone)))
+
+def requests_alone(+c: Jev.Content, fs: List<&2, Jev.Fetched>, +opts: Jev.Options)
+  -> List<&2, Jev.Step>:
+  match fs:
+    case Nil{}:
+      []
+    case f <> t:
+      List.append(&2, Jev.Step, Jev.requests(c, [f], opts), requests_alone(c, t, opts))
+
+# The code's vetoes of the message `uid`; a message the call did not check
+# (which does not happen) counts as vetoed.
+def vetoes_of(ps: List<&2, Pending>, +uid: U32) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      ["it was not checked"]
+    case +p <> t:
+      Pending{f, vetoes, sender} = p
+      Bool.pick(List<&2, String>, U32.is_eq(pending_uid(p), uid), vetoes, vetoes_of(t, uid))
+
+def rechecked.put(ms: List<&2, I.Msg>, p: Pending) -> Pending:
+  match ms:
+    case Nil{}:
+      p
+    case I.Msg{uid, flags, date, size, headers, body, structure} <> t:
+      Pending{f, vetoes, sender} = p
+      Pending{f, List.append(&2, String, vetoes, Jev.flag_vetoes(flags)), sender}
+
+# The messages with the vetoes of the flags read again (`ms`, the messages
+# bound for review): one flagged or answered since the first read is kept.
+def rechecked(ps: List<&2, Pending>, +ms: List<&2, I.Msg>) -> List<&2, Pending>:
+  match ps:
+    case Nil{}:
+      []
+    case +p <> t:
+      rechecked.put(with_uid(ms, pending_uid(p)), p) <> rechecked(t, ms)
+
+def filing_of(+x: Jev.Answered, c: Jev.Content, none: String, found: List<&2, Pending>)
+  -> Filing:
+  +f = Jev.answered_facts(x)
+  +vetoes = vetoes_of(found, Jev.facts_uid(f))
+  +a = Jev.answers_of(x)
+  +v = Jev.verdict(c, Jev.facts_body(f), vetoes, a)
+  Filing{x, v, vetoes, Jev.filing(v, Jev.category_of(Jev.answers_category(a), [], none))}
+
+def answered_uid(x: Jev.Answered) -> U32:
+  Jev.facts_uid(Jev.answered_facts(x))
+
+def filings(
+  xs: List<&2, Jev.Answered>,
+  +c: Jev.Content,
+  +none: String,
+  +found: List<&2, Pending>
+) -> List<&2, Filing>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      filing_of(x, c, none, found) <> filings(t, c, none, found)
+
+def placements(fs: List<&2, Filing>) -> List<&2, Ops.Placement>:
+  match fs:
+    case Nil{}:
+      []
+    case Filing{x, v, vetoes, action} <> t:
+      Ops.Placement{answered_uid(x), action} <> placements(t)
+
+# The UIDs filing sends to review.
+def to_review(fs: List<&2, Filing>) -> List<&2, U32>:
+  match fs:
+    case Nil{}:
+      []
+    case Filing{x, v, vetoes, Jev.ToReview{}} <> t:
+      answered_uid(x) <> to_review(t)
+    case _ <> t:
+      to_review(t)
+
+def filing_jsons(
+  fs: List<&2, Filing>,
+  +c: Jev.Content,
+  +none: String,
+  +folder: String
+) -> List<&2, J.Json>:
+  match fs:
+    case Nil{}:
+      []
+    case Filing{x, v, vetoes, action} <> t:
+      J.obj(Jev.answered_kvs(x, c, [], none, [
+        J.kv("verdict", J.str(Jev.verdict_name(v))),
+        J.kv("vetoes", J.strs(vetoes)),
+        J.kv("destination", maybe_str(Ops.destination(folder, action)))
+      ])) <> filing_jsons(t, c, none, folder)
+
+def uids_text(xs: List<&2, U32>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      ("UID " ++ U32.show(x)) <> uids_text(t)
+
+def review_needed_problem.if(fine: Bool, uids: List<&2, U32>, review: String) -> String:
+  match fine:
+    case True{}:
+      ""
+    case False{}:
+      "Jev found " ++ String.join(uids_text(uids), ", ") ++ " safe to delete, but \"" ++
+        Ops.review_folder() ++ "\" cannot take them: " ++ review
+
+# Why the messages sent to review (`uids`) cannot go there: `review`, why
+# the review folder cannot take mail.
+def review_needed_problem(+uids: List<&2, U32>, +review: String) -> String:
+  review_needed_problem.if(List.is_empty(&2, U32, uids) || String.is_empty(review), uids, review)
+
+# The moves need MOVE or UIDPLUS (see plan_move), and the plan's own check
+# of them must pass, which leaves no plan at all when it fails.
+def moves_problem(+moving: Bool, move: Bool, uidplus: Bool, planned: Bool) -> String:
+  Bool.pick(String, moving && Bool.not(move || uidplus), no_move_problem(),
+    Bool.pick(String, moving && Bool.not(planned),
+      "the moves failed the triage plan's own check", ""))
+
+# Where the moves stand: the result of each move made so far (newest
+# first), and whether one did not finish, which stops the rest.
+type Moved is Data:
+  Moved{results: List<&2, J.Json>, stopped: Bool}
+
+def moved_error(dest: String, m: String) -> J.Json:
+  J.obj([J.kv("ok", J.bool(False{})), J.kv("destination", J.str(dest)), J.kv("error", J.str(m))])
+
+def moved_add(o: Out, dest: String, results: List<&2, J.Json>) -> Moved:
+  match o:
+    case Ok{j}:
+      Moved{j <> results, False{}}
+    case Err{m}:
+      Moved{moved_error(dest, m) <> results, True{}}
+    case Partial{j}:
+      Moved{j <> results, True{}}
+
+# One move, unless an earlier one did not finish.
+def triage_moving.step(
+  m: Ops.FolderUids,
+  p: List<&2, I.Cmd>,
+  folder: String,
+  move: Bool,
+  s: Moved
+) -> IO(Moved):
+  Ops.FolderUids{+dest, uids} = m
+  match s:
+    case Moved{results, True{}}:
+      IO.pure(Moved, Moved{results, True{}})
+    case Moved{results, False{}}:
+      do IO<Moved>:
+        o : Out <- move_plan.run(p, folder, uids, dest, move)
+        return moved_add(o, dest, results)
+
+# Runs each move's plan in turn, each in a session of its own.
+def triage_moving(
+  ms: List<&2, Ops.FolderUids>,
+  ps: List<&2, List<&2, I.Cmd>>,
+  +folder: String,
+  +move: Bool,
+  s: Moved
+) -> IO(Moved):
+  match ms:
+    case Nil{}:
+      IO.pure(Moved, s)
+    case m <> mt:
+      match ps:
+        case Nil{}:
+          IO.pure(Moved, s)
+        case p <> pt:
+          do IO<Moved>:
+            next : Moved <- triage_moving.step(m, p, folder, move, s)
+            triage_moving(mt, pt, folder, move, next)
+
+# The moves' result. A move that did not finish stopped the rest: those
+# before it are done, so the call is partial.
+def triage_result(s: Moved) -> Out:
+  match s:
+    case Moved{results, False{}}:
+      ok_obj([J.kv("moves", J.arr(List.reverse(&2, J.Json, results)))])
+    case Moved{results, True{}}:
+      Partial{J.obj([
+        J.kv("ok", J.bool(False{})),
+        J.kv("partial", J.bool(True{})),
+        J.kv("message", J.str("a move did not finish, so the moves after it were not made; " ++
+          "see moves, and check its destination before running mail_triage again")),
+        J.kv("moves", J.arr(List.reverse(&2, J.Json, results)))
+      ])}
+
+def triage_filed.run(
+  ms: List<&2, Ops.FolderUids>,
+  ps: List<&2, List<&2, I.Cmd>>,
+  folder: String,
+  move: Bool
+) -> IO(Out):
+  do IO<Out>:
+    s : Moved <- triage_moving(ms, ps, folder, move, Moved{[], False{}})
+    return triage_result(s)
+
+# The call's own fields come first in its result. A refusal still reports
+# them, every message's verdict and destination included, though nothing
+# moved.
+def triage_filed.if(
+  problem: String,
+  kvs: List<&2, J.Json>,
+  dry: Bool,
+  ms: List<&2, Ops.FolderUids>,
+  +plans: List<&2, List<&2, I.Cmd>>,
+  folder: String,
+  move: Bool
+) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(with_fields_first(Partial{J.obj([
+        J.kv("ok", J.bool(False{})),
+        J.kv("error", J.str(SCon{h, t} ++ "; nothing was moved"))
+      ])}, kvs))
+    case SNil{}:
+      do IO<Out>:
+        o : Out <- preview_or_run(dry, ImapPlans{plans}, triage_filed.run(ms, plans, folder, move))
+        return with_fields_first(o, kvs)
+
+# Files the messages Jev answered about (`xs`, in UID order), with the
+# vetoes of the flags read again (`reread`): the review folder must be able
+# to take any message sent to review, and the server must be able to move.
+def triage_filed(
+  xs: List<&2, Jev.Answered>,
+  reqs: List<&2, J.Json>,
+  reread: List<&2, I.Msg>,
+  t: Triaging
+) -> IO(Out):
+  Triaging{Triage{+folder, uids, +uidv, dry}, +c, +cats, opts, roles, +caps, review, found,
+    not_found} = t
+  Jev.Options{json, +none} = opts
+  +fs = filings(xs, c, none, rechecked(found, reread))
+  +moves = Ops.triage_moves(folder, placements(fs))
+  +move = I.has_cap(caps, "MOVE")
+  +uidplus = I.has_cap(caps, "UIDPLUS")
+  +plans = Ops.plan_triage(folder, cats, roles, moves, move, uidplus, uidv)
+  kvs : List<&2, J.Json> = [
+    J.kv("folder", J.str(folder)),
+    J.kv("uidvalidity", J.num(uidv)),
+    J.kv("content", J.str(Jev.content_name(c))),
+    J.kv("categories", J.strs(cats)),
+    J.kv("messages", J.arr(filing_jsons(fs, c, none, folder))),
+    J.kv("not_found", uids_json(not_found)),
+    J.kv("requests", J.arr(List.reverse(&2, J.Json, reqs)))
+  ]
+  problem = first_of(review_needed_problem(to_review(fs), review),
+    moves_problem(Bool.not(List.is_empty(&2, Ops.FolderUids, moves)), move, uidplus,
+      Bool.not(List.is_empty(&2, List<&2, I.Cmd>, plans))))
+  triage_filed.if(problem, kvs, dry, moves, plans, folder, move)
+
+def triage_reread(r: Run(), xs: List<&2, Jev.Answered>, reqs: List<&2, J.Json>, t: Triaging)
+  -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{"cannot read the flags of the messages for review again (" ++ m ++
+        "); nothing was moved"})
+    case Done{lines}:
+      triage_filed(xs, reqs, I.flag_fetches(lines), t)
+
+def triage_review.if(
+  skip: Bool,
+  folder: String,
+  uids: List<&2, U32>,
+  xs: List<&2, Jev.Answered>,
+  reqs: List<&2, J.Json>,
+  t: Triaging
+) -> IO(Out):
+  match skip:
+    case True{}:
+      triage_filed(xs, reqs, [], t)
+    case False{}:
+      do IO<Out>:
+        r : Run() <- imap_run(Ops.plan_reread_flags(folder, uids))
+        triage_reread(r, xs, reqs, t)
+
+# Reads the flags of the messages bound for review again, in a short
+# read-only session of their own just before the moves; there is nothing to
+# read when none is, or when the review folder cannot take them (the call
+# is then refused).
+def triage_review(+xs: List<&2, Jev.Answered>, reqs: List<&2, J.Json>, +t: Triaging)
+  -> IO(Out):
+  Triaging{Triage{folder, uids, uidv, dry}, c, cats, Jev.Options{json, none}, roles, caps,
+    review, found, not_found} = t
+  +bound = to_review(filings(xs, c, none, found))
+  triage_review.if(List.is_empty(&2, U32, bound) || Bool.not(String.is_empty(review)), folder,
+    bound, xs, reqs, t)
+
+def triage_answered(r: Tally(), t: Triaging) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m ++ "; nothing was moved"})
+    case Done{Progress{xs, reqs}}:
+      triage_review(List.sort(~Jev.Answered,
+        ~(a => b => U32.is_le(answered_uid(a), answered_uid(b))), xs), reqs, t)
+
+# Asks Jev about every message: those that can still be found safe to
+# delete one per request, the others in batches.
+def triage_ask(+t: Triaging) -> IO(Out):
+  Triaging{call, +c, cats, +opts, roles, caps, review, +found, not_found} = t
+  Jev.Options{json, none} = opts
+  steps : List<&2, Jev.Step> = List.append(&2, Jev.Step,
+    Jev.requests(c, asked_messages(c, found, False{}), opts),
+    requests_alone(c, asked_messages(c, found, True{}), opts))
+  start : Tally() = Done{Progress{[], []}}
+  do IO<Out>:
+    r : Tally() <- ask_steps(steps, List.append(&2, String, cats, [none]), start)
+    triage_answered(r, t)
+
+def triage_written(r: Run(), addrs: List<&2, String>, t: Triaging) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{"cannot search the Sent folder for mail to the senders (" ++ m ++
+        "); nothing was moved"})
+    case Done{lines}:
+      triage_ask(settle(t, Some{written_to(addrs, lines, 2)}))
+
+def triage_sent.put(sent: Maybe<&2, String>, +addrs: List<&2, String>, t: Triaging) -> IO(Out):
+  match sent:
+    case None{}:
+      triage_ask(settle(t, None{}))
+    case Some{box}:
+      do IO<Out>:
+        r : Run() <- imap_run(Ops.plan_sent_search(box, addrs))
+        triage_written(r, addrs, t)
+
+def triage_sent.if(
+  no_senders: Bool,
+  sent: Maybe<&2, String>,
+  addrs: List<&2, String>,
+  t: Triaging
+) -> IO(Out):
+  match no_senders:
+    case True{}:
+      triage_ask(t)
+    case False{}:
+      triage_sent.put(sent, addrs, t)
+
+# Searches the Sent folder, read-only, for mail to each sender still in
+# question; without a known Sent folder, whether the user wrote to them
+# cannot be told, which vetoes the review.
+def triage_sent(+t: Triaging, sent: Maybe<&2, String>) -> IO(Out):
+  Triaging{call, c, cats, opts, roles, caps, review, found, not_found} = t
+  +addrs = senders(found, [])
+  triage_sent.if(List.is_empty(&2, String, addrs), sent, addrs, t)
+
+def triage_folders.if(
+  problem: String,
+  +folders: Folders,
+  +lines: List<&2, I.RLine>,
+  +call: Triage,
+  +c: Jev.Content,
+  now: U32,
+  cats: List<&2, String>,
+  opts: Jev.Options
+) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+    case SNil{}:
+      Triage{folder, +uids, uidv, dry} = call
+      +ms = first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
+      +roles = role_folders(folders)
+      triage_sent(Triaging{call, c, cats, opts, roles, I.caps(lines),
+        review_problem(folders, roles), pendings(c, now, ms), minus(uids, msg_uids(ms))},
+        sent_of(folders))
+
+# The categories come from the folders LIST gave in the same session as the
+# fetch, as for mail_classify; triage takes no candidates.
+def triage_folders(f: Fs(), lines: List<&2, I.RLine>, +call: Triage, +c: Jev.Content, now: U32)
+  -> IO(Out):
+  match f:
+    case Fail{m}:
+      pure_out(Err{m ++ "; nothing was moved"})
+    case Done{+folders}:
+      Triage{folder, uids, uidv, dry} = call
+      +g = guard_for(folders)
+      +cats = categories(g)
+      +opts = Jev.options_for(cats)
+      problem = first_of(source_review_problem(guard_delim(g), folder),
+        first_of(options_problem(List.length(&2, String, cats)),
+          room_problem(Jev.leaves_room(c, opts))))
+      triage_folders.if(problem, folders, lines, call, c, now, cats, opts)
+
+def triage_found.if(problem: String, +lines: List<&2, I.RLine>, call: Triage, c: Jev.Content)
+  -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+    case SNil{}:
+      do IO<Out>:
+        f : Fs() <- folders_io(lines)
+        now : U32 <- now_seconds()
+        triage_folders(f, lines, call, c, now)
+
+def triage_found(r: Run(), call: Triage, c: Jev.Content) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{+lines}:
+      Triage{folder, uids, +uidv, dry} = call
+      triage_found.if(uidv_problem(lines, uidv), lines, Triage{folder, uids, uidv, dry}, c)
+
+def triage_run(r: Result<&2, &2, String, Triage>, +c: Jev.Content) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{Triage{+folder, +uids, uidv, dry}}:
+      do IO<Out>:
+        run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), jev_max()))
+        triage_found(run, Triage{folder, uids, uidv, dry}, c)
+
+# mail_triage reads like mail_classify (EXAMINE, BODY.PEEK) and then only
+# moves, each message at most once, through Ops.plan_triage.
+def t_triage(args: J.Json, jev: Jev.Switch) -> IO(Out):
+  match jev:
+    case Jev.On{c}:
+      triage_run(triage_request(args), c)
+    case Jev.Off{}:
+      pure_out(Err{jev_off("mail_triage")})
 
 # Dispatch
 # ========
@@ -4859,6 +5622,8 @@ def run_op(op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
       t_get_thread(args)
     case Ops.OClassify{}:
       t_classify(args, jev)
+    case Ops.OTriage{}:
+      t_triage(args, jev)
     case Ops.OGetAttachment{}:
       t_get_attachment(args)
     case Ops.OMarkRead{}:

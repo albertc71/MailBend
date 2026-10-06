@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -172,6 +173,7 @@ def run_all(work):
     threads(work)
     dry_runs(work)
     jev(work)
+    triage(work)
 
 
 def reads(srv):
@@ -2212,11 +2214,17 @@ def jev_fixture(folders=0, width=4):
     return fixture
 
 
-def jev(work):
-    work = os.path.realpath(work)
-    key_file = os.path.join(work, "typesafe-key")
+def typesafe_key_file(work):
+    """The TypeSafe key in a file readable only by its owner."""
+    key_file = os.path.join(os.path.realpath(work), "typesafe-key")
     with open(os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         f.write(TYPESAFE_KEY + "\n")
+    return key_file
+
+
+def jev(work):
+    work = os.path.realpath(work)
+    key_file = typesafe_key_file(work)
     srv = Server(work, fixture=jev_fixture())
     try:
         jev_switches(srv, work, key_file)
@@ -2237,13 +2245,16 @@ def jev_switches(srv, work, key_file):
     ts = TypeSafe(work)
     try:
         names = listed_tools(srv)
-        check("jev off: mail_classify is not listed", "mail_classify" not in names and len(names) == TOOL_COUNT, names)
+        check("jev off: mail_classify and mail_triage are not listed",
+              "mail_classify" not in names and "mail_triage" not in names and len(names) == TOOL_COUNT, names)
         c, r = tool(srv, "mail_classify", {"uids": [1]})
         check("jev off: mail_classify is refused", c != 0 and "MAILBEND_TYPESAFE is off" in r.get("error", ""), r)
         names = listed_tools(srv, **jev_env(ts, key_file))
-        check("jev on: every tool is listed, mail_classify after mail_get_thread",
-              len(names) == TOOL_COUNT + 1 and names[names.index("mail_get_thread") + 1] == "mail_classify", names)
-        check("jev on, read-only: the read tools and mail_classify are listed",
+        check("jev on: every tool is listed, mail_classify and mail_triage after mail_get_thread",
+              len(names) == TOOL_COUNT + 2
+              and names[names.index("mail_get_thread") + 1:names.index("mail_get_thread") + 3]
+              == ["mail_classify", "mail_triage"], names)
+        check("jev on, read-only: the read tools and mail_classify are listed, mail_triage is not",
               listed_tools(srv, MAILBEND_READ_ONLY="1", **jev_env(ts, key_file)) == READ_TOOLS + ["mail_classify"])
         bad = []
         for title, over, needle in [
@@ -2489,6 +2500,387 @@ def jev_options(work, key_file):
               c != 0 and "too long for one TypeSafe question" in r.get("error", "") and ts.requests() == [], r)
     finally:
         ts.stop()
+        srv.stop()
+
+
+# mail_triage, against tests/fake_typesafe.py
+# --------------------------------------------
+
+REVIEW = "To Delete"
+TRIAGE_VALIDITY = FIX["mailboxes"]["INBOX"]["uidvalidity"]
+BODY_MODE = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1"}
+OLD_DAY = "01-Jun-2026 09:00:00 +0000"
+FRIEND = "friend@example.com"
+DEADLINE_TAIL = "The deadline for this offer is Friday."
+
+
+def today():
+    """Today's INTERNALDATE: a message from today is under 30 days old."""
+    return time.strftime("%d-%b-%Y 09:00:00 +0000", time.gmtime())
+
+
+def triage_message(uid, subject, sender="news@example.com", date=OLD_DAY, flags=(), body="See you.",
+                   attachment=False):
+    head = (f"Message-ID: <triage{uid}@example.com>\r\nFrom: {sender}\r\nTo: tester@example.com\r\n"
+            f"Subject: {subject}\r\nMIME-Version: 1.0\r\n")
+    if attachment:
+        raw = (head + "Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\n"
+               f"{body}\r\n--b\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=\"bill.txt\"\r\n"
+               "\r\nx\r\n--b--\r\n")
+    else:
+        raw = head + f"Content-Type: text/plain; charset=us-ascii\r\n\r\n{body}\r\n"
+    return {"uid": uid, "flags": list(flags), "internaldate": date, "raw": raw}
+
+
+# One message per row of the filing table and per code veto. "[disposable]"
+# scripts the fake's answers as safe to throw away (see fake_typesafe.py);
+# a subject naming a folder files it there with high confidence.
+SAFE, FLAGGED_RECEIPT, NO_FOLDER, CUT, FRIENDLY, FRESH, ATTACHED, RECEIPT = range(21, 29)
+
+
+def triage_fixture(review=True):
+    fixture = copy.deepcopy(FIX)
+    long_body = ("z" * 99 + "\r\n") * 200 + DEADLINE_TAIL
+    fixture["mailboxes"]["INBOX"]["messages"] += [
+        triage_message(SAFE, "[disposable] Weekly newsletter"),
+        triage_message(FLAGGED_RECEIPT, "[disposable] Receipts for May", flags=["\\Flagged"]),
+        triage_message(NO_FOLDER, "Lunch plans", sender="dana@example.com"),
+        triage_message(CUT, "[disposable] Long digest", body=long_body),
+        triage_message(FRIENDLY, "[disposable] Old note", sender=f"Friend <{FRIEND}>"),
+        triage_message(FRESH, "[disposable] Fresh promo", date=today()),
+        triage_message(ATTACHED, "[disposable] Bill", attachment=True),
+        triage_message(RECEIPT, "[disposable] Receipts for July"),
+    ]
+    fixture["mailboxes"]["Sent Messages"]["messages"].append(
+        {"uid": 1, "flags": ["\\Seen"], "internaldate": OLD_DAY,
+         "raw": f"Message-ID: <sent1@example.com>\r\nFrom: tester@example.com\r\nTo: {FRIEND}\r\n"
+                "Subject: hello\r\n\r\nhi\r\n"})
+    fixture["mailboxes"]["Receipts"] = {"uidvalidity": 1900000001, "special": [], "messages": []}
+    if review:
+        fixture["mailboxes"][REVIEW] = {"uidvalidity": 1900000002, "special": [], "messages": []}
+    return fixture
+
+
+TRIAGED = [SAFE, FLAGGED_RECEIPT, NO_FOLDER, CUT, FRIENDLY, FRESH, ATTACHED, RECEIPT]
+
+
+def triage_call(srv, ts, key_file, uids=TRIAGED, **over):
+    return tool(srv, "mail_triage", {"uids": uids, "uidvalidity": TRIAGE_VALIDITY},
+                **jev_env(ts, key_file, **over))
+
+
+def raw_of(fixture, uid):
+    return next(m["raw"] for m in fixture["mailboxes"]["INBOX"]["messages"] if m["uid"] == uid)
+
+
+def triage_unchanged(srv, before, log_start):
+    """The mail and folders are as they were, and no command changed them."""
+    changing = [line for line in srv.log_lines()[log_start:] if any(t in line for t in MUTATING_COMMANDS)]
+    return srv.st() == before and not changing
+
+
+def triage(work):
+    key_file = typesafe_key_file(work)
+    for caps in (None, NO_MOVE_CAPS):
+        triage_body(work, key_file, caps)
+    triage_headers(work, key_file)
+    triage_dry_run(work, key_file)
+    triage_failures(work, key_file)
+    triage_no_review_folder(work, key_file)
+    triage_senders(work, key_file)
+    triage_flagged_meanwhile(work, key_file)
+    triage_protections(work, key_file)
+
+
+def triage_body(work, key_file, caps):
+    method = "UID COPY + UID EXPUNGE" if caps == NO_MOVE_CAPS else "UID MOVE"
+    tag = f"triage body ({method}): "
+    fixture = triage_fixture()
+    srv = Server(work, caps=caps, fixture=fixture)
+    ts = TypeSafe(work)
+    try:
+        log_start = len(srv.log_lines())
+        c, r = triage_call(srv, ts, key_file, TRIAGED + [99], **BODY_MODE)
+        got = {m["uid"]: m for m in r.get("messages", [])}
+        state = srv.st()
+        inbox = msgs(state, "INBOX")
+        check(tag + "a result per message, in UID order, and the missing UID", c == 0 and list(got) == TRIAGED
+              and r.get("not_found") == [99] and r.get("content") == "body" and r.get("folder") == "INBOX", r)
+        check(tag + "a message safe to delete moves into the review folder",
+              got.get(SAFE, {}).get("verdict") == "safe_to_delete" and got[SAFE].get("destination") == REVIEW
+              and got[SAFE].get("vetoes") == [] and SAFE not in inbox, got.get(SAFE))
+        check(tag + "safe to delete goes to review whatever its category",
+              got.get(RECEIPT, {}).get("verdict") == "safe_to_delete" and got[RECEIPT].get("category") == "Receipts"
+              and got[RECEIPT].get("destination") == REVIEW and RECEIPT not in inbox, got.get(RECEIPT))
+        check(tag + "a vetoed message with a confident category moves into its folder",
+              got.get(FLAGGED_RECEIPT, {}).get("verdict") == "keep" and "it is flagged" in got[FLAGGED_RECEIPT].get("vetoes", [])
+              and got[FLAGGED_RECEIPT].get("destination") == "Receipts" and FLAGGED_RECEIPT not in inbox,
+              got.get(FLAGGED_RECEIPT))
+        check(tag + "no confident category stays", got.get(NO_FOLDER, {}).get("needs_new_category") is True
+              and got[NO_FOLDER].get("destination") is None and NO_FOLDER in inbox, got.get(NO_FOLDER))
+        check(tag + "a shortened body is reported body_truncated and does not enter the review folder",
+              got.get(CUT, {}).get("body_truncated") is True and got[CUT].get("verdict") == "review"
+              and got[CUT].get("destination") is None and CUT in inbox, got.get(CUT))
+        vetoes = {uid: got.get(uid, {}).get("vetoes", []) for uid in (FRIENDLY, FRESH, ATTACHED)}
+        check(tag + "the code's vetoes keep a message the user wrote to, a new one and one with attachments",
+              "the user has written to its sender" in vetoes[FRIENDLY]
+              and "it is less than 30 days old" in vetoes[FRESH] and "it has attachments" in vetoes[ATTACHED]
+              and all(got.get(uid, {}).get("verdict") == "keep" and got[uid].get("destination") is None
+                      and uid in inbox for uid in vetoes), vetoes)
+        boxes = {REVIEW: [SAFE, RECEIPT], "Receipts": [FLAGGED_RECEIPT]}
+        once = {uid: copies_of(state, raw_of(fixture, uid)) for uids in boxes.values() for uid in uids}
+        check(tag + "each moved message is in exactly one folder, its destination",
+              all(sorted(m["raw"] for m in state["mailboxes"][box]["messages"])
+                  == sorted(raw_of(fixture, uid) for uid in uids) for box, uids in boxes.items())
+              and set(once.values()) == {1}, (once, {b: len(state["mailboxes"][b]["messages"]) for b in boxes}))
+        check(tag + "one move per destination", len(r.get("moves", [])) == 2 and all(m.get("ok") for m in r["moves"]),
+              r.get("moves"))
+        log = srv.log_lines()[log_start:]
+        moving = [line.split(" ", 1)[1] for line in log if " MOVE " in line or " COPY " in line]
+        want = "UID COPY" if caps == NO_MOVE_CAPS else "UID MOVE"
+        check(tag + "the moves name exactly the filed UIDs, by " + method,
+              sorted(moving) == sorted([f'{want} {FLAGGED_RECEIPT} "Receipts"', f'{want} {SAFE},{RECEIPT} "{REVIEW}"']),
+              moving)
+        check(tag + "no folder is created, and nothing is expunged but by UID",
+              not any(any(t in line for t in FOLDER_COMMANDS) or line.split(" ", 1)[-1] == "EXPUNGE" for line in log), log)
+        searches = [line.split(" ", 1)[1] for line in log if " SEARCH TO " in line or " SEARCH CC " in line]
+        sent_open = [line.split(" ", 1)[1] for line in log if "Sent Messages" in line]
+        check(tag + "the Sent folder is examined and searched in To and in Cc once for each sender in question",
+              sent_open == ['EXAMINE "Sent Messages"'] and sorted(searches) == sorted(
+                  [f'UID SEARCH {key} "{a}" UNDELETED' for a in ("dana@example.com", FRIEND, "news@example.com")
+                   for key in ("TO", "CC")]),
+              (sent_open, searches))
+        reread = [line.split(" ", 1)[1] for line in log if line.endswith("(UID FLAGS)")]
+        check(tag + "the flags of the messages bound for review are read again before they move",
+              reread == [f"UID FETCH {SAFE},{RECEIPT} (UID FLAGS)"], reread)
+        sent = ts.requests()
+        asked = [sorted(e["uid"] for e in q["body"]["state"]["emails"]) for q in sent]
+        alone = [uids for uids in asked if any(u in uids for u in (SAFE, RECEIPT, NO_FOLDER))]
+        check(tag + "a message that may still be safe to delete is asked about in a request of its own",
+              sorted(alone) == [[SAFE], [NO_FOLDER], [RECEIPT]], asked)
+        check(tag + "the other messages are asked about together",
+              sorted(u for uids in asked if len(uids) > 1 for u in uids) == [FLAGGED_RECEIPT, CUT, FRIENDLY, FRESH, ATTACHED],
+              asked)
+        cut = [e.get("text", "") for q in sent for e in q["body"]["state"]["emails"] if e["uid"] == CUT]
+        check(tag + "the removed tail of the shortened body, which would keep it, never reached TypeSafe",
+              len(cut) == 1 and cut[0].startswith("z" * 99) and DEADLINE_TAIL not in cut[0], [len(t) for t in cut])
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def triage_headers(work, key_file):
+    tag = "triage headers: "
+    fixture = triage_fixture()
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    try:
+        c, r = triage_call(srv, ts, key_file)
+        got = {m["uid"]: m for m in r.get("messages", [])}
+        state = srv.st()
+        check(tag + "a message with a confident category moves into its folder, never into the review folder",
+              c == 0 and got.get(RECEIPT, {}).get("verdict") == "review" and got[RECEIPT].get("destination") == "Receipts"
+              and got.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts"
+              and sorted(m["raw"] for m in state["mailboxes"]["Receipts"]["messages"])
+              == sorted(raw_of(fixture, u) for u in (FLAGGED_RECEIPT, RECEIPT)), r)
+        check(tag + "nothing is safe to delete without the text",
+              not state["mailboxes"][REVIEW]["messages"]
+              and all(m.get("verdict") != "safe_to_delete" for m in got.values()), got)
+        states = [e for q in ts.requests() for e in q["body"]["state"]["emails"]]
+        check(tag + "no text is sent", states and all("text" not in e for e in states), states[:1])
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def triage_dry_run(work, key_file):
+    srv = Server(work, fixture=triage_fixture())
+    ts = TypeSafe(work)
+    try:
+        before, log_start = srv.st(), len(srv.log_lines())
+        c, r = tool(srv, "mail_triage", {"uids": TRIAGED, "uidvalidity": TRIAGE_VALIDITY, "dry_run": True},
+                    **jev_env(ts, key_file, **BODY_MODE))
+        imap = r.get("imap", [])
+        check("triage dry run: the moves are shown with the verdicts, and nothing changes",
+              c == 0 and r.get("dry_run") is True and any(f'UID MOVE {SAFE},{RECEIPT} "{REVIEW}"' in line for line in imap)
+              and {m["uid"]: m.get("destination") for m in r.get("messages", [])}.get(SAFE) == REVIEW
+              and triage_unchanged(srv, before, log_start), r)
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def triage_failures(work, key_file):
+    srv = Server(work, fixture=triage_fixture())
+    try:
+        # The statuses TypeSafe answered, in order, begin with `first`.
+        for title, scenario, needle, first in [
+            ("TypeSafe down changes nothing", "status:401", "TypeSafe rejected the key", [401]),
+            ("a later request that fails moves nothing, though an earlier one was answered", "fail-after:1",
+             "scenario refusal", [200, 422]),
+        ]:
+            ts = TypeSafe(work, scenario)
+            try:
+                before, log_start = srv.st(), len(srv.log_lines())
+                c, r = triage_call(srv, ts, key_file, **BODY_MODE)
+                statuses = [q["status"] for q in ts.requests()]
+                check(f"triage {scenario}: {title}", c != 0 and needle in r.get("error", "")
+                      and "nothing was moved" in r["error"] and statuses[:len(first)] == first
+                      and triage_unchanged(srv, before, log_start), (r, statuses))
+            finally:
+                ts.stop()
+        ts = TypeSafe(work)
+        try:
+            refused(srv, "triage: a stale UIDVALIDITY is refused", "mail_triage",
+                    {"uids": [SAFE], "uidvalidity": 42}, "UIDVALIDITY", **jev_env(ts, key_file, **BODY_MODE))
+            refused(srv, "triage: UIDVALIDITY is required", "mail_triage", {"uids": [SAFE]}, "uidvalidity",
+                    **jev_env(ts, key_file, **BODY_MODE))
+            refused(srv, "triage: more than 50 UIDs are refused", "mail_triage",
+                    {"uids": list(range(1, 52)), "uidvalidity": TRIAGE_VALIDITY}, "at most 50 UIDs",
+                    **jev_env(ts, key_file, **BODY_MODE))
+            refused(srv, "triage: the review folder is never triaged", "mail_triage",
+                    {"folder": REVIEW, "uids": [1], "uidvalidity": 1900000002}, "never out of",
+                    **jev_env(ts, key_file, **BODY_MODE))
+            refused(srv, "triage: read-only mode refuses it", "mail_triage",
+                    {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY}, "MAILBEND_READ_ONLY",
+                    MAILBEND_READ_ONLY="1", **jev_env(ts, key_file, **BODY_MODE))
+            check("triage: read-only mode does not list it",
+                  "mail_triage" not in listed_tools(srv, MAILBEND_READ_ONLY="1", **jev_env(ts, key_file)))
+            refused(srv, "triage: with Jev off it is refused", "mail_triage",
+                    {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY}, "MAILBEND_TYPESAFE is off")
+        finally:
+            ts.stop()
+    finally:
+        srv.stop()
+
+
+def triage_no_review_folder(work, key_file):
+    srv = Server(work, fixture=triage_fixture(review=False))
+    ts = TypeSafe(work)
+    try:
+        before, log_start = srv.st(), len(srv.log_lines())
+        c, r = triage_call(srv, ts, key_file, **BODY_MODE)
+        got = {m["uid"]: m for m in r.get("messages", [])}
+        check("triage: a missing review folder is refused for messages safe to delete, never created",
+              c != 0 and r.get("ok") is False and "create it with mail_create_folder" in r.get("error", "")
+              and "nothing was moved" in r["error"] and triage_unchanged(srv, before, log_start), r)
+        check("triage: the refusal still reports every message's verdict and proposed destination",
+              list(got) == TRIAGED and got[SAFE].get("verdict") == "safe_to_delete"
+              and got[SAFE].get("destination") == REVIEW and got[FLAGGED_RECEIPT].get("destination") == "Receipts"
+              and r.get("folder") == "INBOX" and len(r.get("requests", [])) > 1, got)
+        c, r = triage_call(srv, ts, key_file, [FLAGGED_RECEIPT])
+        check("triage: without a review folder, a message no review needs is still filed",
+              c == 0 and FLAGGED_RECEIPT not in msgs(srv.st(), "INBOX") and REVIEW not in srv.st()["mailboxes"], r)
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+CC_ONLY, TWO_FROM = 31, 32
+
+
+def triage_senders(work, key_file):
+    """The Sent check counts mail to a sender in Cc, and a message whose
+    sender cannot be told apart is never safe to delete."""
+    tag = "triage senders: "
+    cc = "cc@example.com"
+    fixture = triage_fixture()
+    two_from = triage_message(TWO_FROM, "[disposable] Two senders", sender="stranger@example.com")
+    two_from["raw"] = two_from["raw"].replace("From: stranger@example.com\r\n",
+                                              f"From: stranger@example.com\r\nFrom: Friend <{FRIEND}>\r\n")
+    fixture["mailboxes"]["INBOX"]["messages"] += [
+        triage_message(CC_ONLY, "[disposable] Old update", sender=cc), two_from]
+    fixture["mailboxes"]["Sent Messages"]["messages"].append(
+        {"uid": 2, "flags": ["\\Seen"], "internaldate": OLD_DAY,
+         "raw": f"Message-ID: <sent2@example.com>\r\nFrom: tester@example.com\r\nTo: other@example.com\r\n"
+                f"Cc: {cc}\r\nSubject: update\r\n\r\nhi\r\n"})
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    try:
+        c, r = triage_call(srv, ts, key_file, [CC_ONLY, TWO_FROM], **BODY_MODE)
+        got = {m["uid"]: m for m in r.get("messages", [])}
+        state = srv.st()
+        check(tag + "a sender the user wrote to only in Cc keeps the message",
+              c == 0 and got.get(CC_ONLY, {}).get("verdict") == "keep"
+              and "the user has written to its sender" in got[CC_ONLY].get("vetoes", [])
+              and got[CC_ONLY].get("destination") is None and CC_ONLY in msgs(state, "INBOX"), r)
+        check(tag + "a message with two From fields has no sender that can be told, so it stays",
+              got.get(TWO_FROM, {}).get("verdict") == "keep"
+              and "whether the user has written to its sender cannot be told" in got[TWO_FROM].get("vetoes", [])
+              and got[TWO_FROM].get("destination") is None and TWO_FROM in msgs(state, "INBOX")
+              and not state["mailboxes"][REVIEW]["messages"], got.get(TWO_FROM))
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def triage_flagged_meanwhile(work, key_file):
+    """A message flagged while TypeSafe is still answering stays out of the
+    review folder: its flags are read again just before the moves."""
+    srv = Server(work, fixture=triage_fixture())
+    ts = TypeSafe(work, "slow:6")
+    try:
+        out = {}
+        call = threading.Thread(target=lambda: out.update(r=triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)))
+        call.start()
+        deadline = time.time() + 60
+        while time.time() < deadline and not any(" SEARCH CC " in line for line in srv.log_lines()):
+            time.sleep(0.1)
+        fc, fr = tool(srv, "mail_flag", {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY})
+        call.join()
+        c, r = out.get("r", (None, {}))
+        got = {m["uid"]: m for m in r.get("messages", [])}
+        state = srv.st()
+        check("triage: a message flagged while Jev is asked is kept and stays where it is",
+              fc == 0 and c == 0 and got.get(SAFE, {}).get("verdict") == "keep"
+              and "it is flagged" in got[SAFE].get("vetoes", []) and got[SAFE].get("destination") is None
+              and SAFE in msgs(state, "INBOX") and not state["mailboxes"][REVIEW]["messages"], (fr, r))
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def triage_protections(work, key_file):
+    fixture = triage_fixture()
+    fixture["mailboxes"][REVIEW]["messages"] = [triage_message(1, "Kept newsletter"),
+                                                triage_message(2, "Kept receipt")]
+    fixture["mailboxes"][f"{REVIEW}/Kept"] = {"uidvalidity": 1900000003, "special": [], "messages": []}
+    srv = Server(work, fixture=fixture)
+    try:
+        review = {"folder": REVIEW, "uidvalidity": 1900000002}
+        c, r = tool(srv, "mail_create_folder", {"name": "Old"})
+        check("triage protection: the folder to rename exists", c == 0 and "Old" in srv.st()["mailboxes"], r)
+        for title, name, args, needle in [
+            ("mail_move into the review folder", "mail_move",
+             {"uids": [1], "destination": REVIEW, "uidvalidity": TRIAGE_VALIDITY}, "only mail_triage"),
+            ("mail_move into a folder inside it", "mail_move",
+             {"uids": [1], "destination": "to delete/x", "uidvalidity": TRIAGE_VALIDITY}, "only mail_triage"),
+            ("mail_label into the review folder", "mail_label",
+             {"uids": [1], "label": REVIEW, "uidvalidity": TRIAGE_VALIDITY}, "relies on"),
+            ("mail_trash out of the review folder", "mail_trash", {**review, "uids": [1]}, "mail_trash never moves"),
+            ("mail_rename_folder into the review folder", "mail_rename_folder", {"from": "Old", "to": REVIEW},
+             "relies on"),
+            ("mail_rename_folder of the review folder", "mail_rename_folder", {"from": REVIEW, "to": "Kept"},
+             "relies on"),
+            ("mail_create_folder inside the review folder", "mail_create_folder", {"name": f"{REVIEW}/x"},
+             "relies on"),
+        ]:
+            refused(srv, f"triage protection: {title} is refused", name, args, needle)
+        refused(srv, "triage protection: a role override inside the review folder is refused", "mail_save_draft",
+                {"to": ["a@example.com"], "subject": "s", "body": "b"}, "cannot name the review folder",
+                MAILBEND_DRAFTS_FOLDER=f"{REVIEW}/Kept")
+        kept = {m["uid"]: m["raw"] for m in fixture["mailboxes"][REVIEW]["messages"]}
+        c, r = tool(srv, "mail_move", {**review, "uids": [1], "destination": "INBOX"})
+        state = srv.st()
+        check("triage protection: mail_move takes a message the user keeps out of the review folder",
+              c == 0 and 1 not in msgs(state, REVIEW)
+              and any(m["raw"] == kept[1] for m in state["mailboxes"]["INBOX"]["messages"]), r)
+        c, r = tool(srv, "mail_label", {**review, "uids": [2], "label": "Receipts"})
+        state = srv.st()
+        check("triage protection: mail_label files a message the user keeps out of the review folder",
+              c == 0 and not state["mailboxes"][REVIEW]["messages"]
+              and [m["raw"] for m in state["mailboxes"]["Receipts"]["messages"]] == [kept[2]], r)
+    finally:
         srv.stop()
 
 

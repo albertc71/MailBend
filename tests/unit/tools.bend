@@ -1091,10 +1091,17 @@ def show_asked(a: T.Asked) -> String:
 def asked(code: U32, out: String, err: String) -> String:
   show_asked(T.asked(T.ProcOk{code, out, err}))
 
+def answered_uids(xs: List<&2, Jev.Answered>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      T.answered_uid(x) <> answered_uids(t)
+
 def show_tally(t: T.Tally()) -> String:
   match t:
-    case Done{T.Progress{ms, reqs}}:
-      "progress " ++ J.show(J.arr(ms)) ++ " " ++ J.show(J.arr(reqs))
+    case Done{T.Progress{xs, reqs}}:
+      "progress " ++ show_u32s(answered_uids(xs)) ++ " " ++ J.show(J.arr(reqs))
     case Fail{m}:
       "stopped " ++ m
 
@@ -1115,15 +1122,19 @@ def many_names(n: Nat) -> List<&2, String>:
 def classify_msg(uid: U32) -> I.Msg:
   I.Msg{uid, [], "", 0, "", "", I.VNil{}}
 
-def asking() -> T.Asking:
-  T.Asking{Jev.Headers{}, [], "none", ["Work", "none"]}
+def keys() -> List<&2, String>:
+  ["Work", "none"]
+
+def skipped(uid: U32) -> Jev.Answered:
+  Jev.Skipped{Jev.facts_of(classify_msg(uid))}
 
 def check_classify() -> IO(Unit):
   do IO<Unit>:
-    IO.print(show_uids(T.classify_uids(Done{[5, 3, 5, 1]})) ++ "|" ++
-      show_uids(T.classify_uids(Done{many_uids(50n)})) ++ "|" ++
-      show_uids(T.classify_uids(Done{many_uids(51n)})) ++ "|" ++
-      show_uids(T.classify_uids(Fail{"no uids"})))
+    IO.print(show_uids(T.jev_uids("mail_classify", Done{[5, 3, 5, 1]})) ++ "|" ++
+      show_uids(T.jev_uids("mail_classify", Done{many_uids(50n)})) ++ "|" ++
+      show_uids(T.jev_uids("mail_classify", Done{many_uids(51n)})) ++ "|" ++
+      show_uids(T.jev_uids("mail_triage", Done{many_uids(51n)})) ++ "|" ++
+      show_uids(T.jev_uids("mail_classify", Fail{"no uids"})))
     IO.print(show_names(T.classify_candidates(["Ideas", "Ideas/2026"])))
     IO.print(show_names(T.classify_candidates(["Ideas", ""])))
     IO.print(show_names(T.classify_candidates(["Ideas", "a\tb"])))
@@ -1156,16 +1167,104 @@ def check_classify() -> IO(Unit):
     IO.print(show_asked(T.asked(T.ProcRefused{"no such file"})))
     IO.print(J.show(T.request_json(2n, 100, None{})) ++ " " ++
       J.show(T.request_json(1n, 9, Some{7})))
-    IO.print(show_tally(T.answered(T.AskAnswered{"not json"}, [], 10, asking(),
+    IO.print(show_tally(T.answered(T.AskAnswered{"not json"}, [], 10, keys(),
       T.Progress{[], []})))
-    IO.print(show_tally(T.answered(T.AskRefused{"no"}, [], 10, asking(), T.Progress{[], []})))
-    IO.print(show_tally(T.answered(T.AskAnswered{"{\"answers\":{}}"}, [], 10, asking(),
-      T.Progress{[J.num(1)], []})))
+    IO.print(show_tally(T.answered(T.AskRefused{"no"}, [], 10, keys(), T.Progress{[], []})))
+    IO.print(show_tally(T.answered(T.AskAnswered{"{\"answers\":{}}"}, [], 10, keys(),
+      T.Progress{[skipped(1)], []})))
     IO.print(show_out(T.classify_out(Done{T.progress_add(T.progress_add(T.Progress{[], []},
-      [J.num(1), J.num(2)], [J.str("r1")]), [J.num(3)], [J.str("r2")])},
-      [J.kv("folder", J.str("INBOX"))], [9])))
-    IO.print(show_out(T.classify_out(Fail{"stopped"}, [], [])))
+      [skipped(1), skipped(2)], [J.str("r1")]), [skipped(3)], [J.str("r2")])},
+      Jev.Headers{}, [], "none", [J.kv("folder", J.str("INBOX"))], [9])))
+    IO.print(show_out(T.classify_out(Fail{"stopped"}, Jev.Headers{}, [], "none", [], [])))
     IO.print(T.jev_off("mail_classify"))
+
+# mail_triage
+# -----------
+
+def review_folders(trash: Maybe<&2, String>) -> T.Folders:
+  T.Folders{[I.Folder{"INBOX", "/", []}, I.Folder{"To Delete", "/", []}], None{}, trash, None{},
+    None{}, None{}}
+
+def pending(uid: U32, sender: Maybe<&2, String>) -> T.Pending:
+  T.Pending{Jev.Fetched{Jev.facts_of(classify_msg(uid)), Jev.Text{"", Jev.Complete{}}}, [],
+    sender}
+
+def review_problem_of(f: T.Folders) -> String:
+  +g = f
+  problem(T.review_problem(g, T.role_folders(g)))
+
+# The flags a UID FETCH reports for UID 2, as the re-read of flags gets them.
+def reread() -> List<&2, I.Msg>:
+  I.flag_fetches(I.frame("* 1 FETCH (UID 2 FLAGS (\\Seen \\Answered))\r\na1 OK\r\n"))
+
+def vetoes_line(ps: List<&2, T.Pending>) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case T.Pending{f, vetoes, sender} <> t:
+      "[" ++ String.join(vetoes, ",") ++ "]" ++ vetoes_line(t)
+
+def sender_line(m: Maybe<&2, String>) -> String:
+  match m:
+    case Some{a}:
+      a
+    case None{}:
+      "none"
+
+def check_triage() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(problem(T.review_move_problem("/", "To Delete")) ++
+      problem(T.review_move_problem("/", "to delete/Old")) ++
+      problem(T.review_move_problem("/", "Work/To Delete")) ++
+      problem(T.review_move_problem("/", "INBOX")))
+    IO.print(problem(T.review_trash_problem("/", "To Delete", "Deleted Messages")) ++
+      problem(T.review_trash_problem("/", "INBOX", "to delete/x")) ++
+      problem(T.review_trash_problem("/", "INBOX", "Deleted Messages")))
+    IO.print(problem(T.source_review_problem("/", "To Delete")) ++
+      problem(T.source_review_problem("/", "INBOX")))
+    IO.print(problem(T.invalid_override(folders(), "To Delete", "MAILBEND_X")) ++
+      problem(T.invalid_override(folders(), "to delete/Old", "MAILBEND_X")) ++
+      problem(T.invalid_override(folders(), "To Deleted", "MAILBEND_X")))
+    IO.print(review_problem_of(review_folders(None{})) ++
+      review_problem_of(review_folders(Some{"To Delete"})) ++
+      review_problem_of(T.Folders{[I.Folder{"INBOX", "/", []}, I.Folder{"to delete", "/",
+        ["\\Archive"]}, I.Folder{"To Delete", "/", []}], None{}, None{}, None{}, None{}, None{}}) ++
+      review_problem_of(T.Folders{[I.Folder{"INBOX", "/", []}], None{}, None{}, None{},
+        None{}, None{}}))
+    IO.print(String.join(T.fields_named(M.headers("From: a@x\r\nTo: c@z\r\nfrom: b@y\r\n"),
+      "from"), ","))
+    IO.print(sender_line(T.sender_in(["Ann <a@x.org>"])) ++ " " ++
+      sender_line(T.sender_in(["a@x.org", "b@y.org"])) ++ " " ++
+      sender_line(T.sender_in(["a@x.org, b@y.org"])) ++ " " ++ sender_line(T.sender_in([])))
+    IO.print(String.join(T.senders([pending(1, Some{"a@x"}), pending(2, None{}),
+      pending(3, Some{"b@y"}), pending(4, Some{"a@x"})], []), ","))
+    IO.print(String.join(T.written_to(["a@x", "b@y", "c@z"],
+      I.frame("a1 OK\r\n* SEARCH\r\na2 OK\r\n* SEARCH 4 9\r\na3 OK\r\n* SEARCH\r\n" ++
+        "a4 OK\r\n* SEARCH\r\na5 OK\r\n* SEARCH\r\na6 OK\r\n* SEARCH 2\r\na7 OK\r\n"), 2),
+      ","))
+    IO.print(vetoes_line(T.rechecked([pending(1, None{}), pending(2, None{})], reread())) ++
+      " " ++ vetoes_line(T.rechecked([pending(2, None{})], [])))
+    IO.print(String.join(Jev.correspondence_vetoes(T.correspondence(None{}, "a@x")), ",") ++
+      "|" ++ String.join(Jev.correspondence_vetoes(T.correspondence(Some{["a@x"]}, "a@x")), ",") ++
+      "|" ++ String.join(Jev.correspondence_vetoes(T.correspondence(Some{["b@y"]}, "a@x")), ","))
+    IO.print(String.join(T.vetoes_of([pending(1, None{})], 1), ",") ++ "|" ++
+      String.join(T.vetoes_of([pending(1, None{})], 2), ","))
+    IO.print(problem(T.review_needed_problem([3, 4], "it does not exist")) ++
+      problem(T.review_needed_problem([], "it does not exist")) ++
+      problem(T.review_needed_problem([3], "")))
+    IO.print(problem(T.moves_problem(True{}, False{}, False{}, True{})) ++
+      problem(T.moves_problem(True{}, False{}, True{}, False{})) ++
+      problem(T.moves_problem(True{}, True{}, False{}, True{})) ++
+      problem(T.moves_problem(False{}, False{}, False{}, False{})))
+    IO.print(show_out(T.triage_result(T.Moved{[], False{}})))
+    IO.print(show_out(T.triage_result(T.Moved{[T.moved_error("To Delete", "lost"),
+      J.str("first")], True{}})))
+    IO.print(show_out(T.with_fields_first(T.Ok{J.obj([J.kv("moves", J.arr([]))])},
+      [J.kv("folder", J.str("INBOX"))])))
+    IO.print(show_out(T.with_fields_first(T.Partial{J.obj([J.kv("ok", J.bool(False{}))])},
+      [J.kv("folder", J.str("INBOX"))])))
+    IO.print(show_out(T.with_fields_first(T.Err{"no"}, [J.kv("folder", J.str("INBOX"))])))
+    IO.print(T.jev_off("mail_triage"))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -1190,6 +1289,7 @@ def main() -> IO(Unit):
     check_sending()
     check_thread()
     check_classify()
+    check_triage()
 
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
@@ -1405,7 +1505,7 @@ def main() -> IO(Unit):
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
 #|"x"
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify,mail_triage,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify
 #|True True False True False False
 #|True True False True True True False True False True False
@@ -1453,7 +1553,7 @@ def main() -> IO(Unit):
 #|INBOX 7 [] 2 | 
 #|ok {"folder":"INBOX","uid":1,"searched":["INBOX","Sent"],"messages":[{"folder":"INBOX","uidvalidity":7,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<b@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":"<a@x>"},{"folder":"Sent","uidvalidity":null,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<a@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":null}]}
 #|err down
-#|uids 1 3 5 |uids 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 |error mail_classify takes at most 50 UIDs per call|error no uids
+#|uids 1 3 5 |uids 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 |error mail_classify takes at most 50 UIDs per call|error mail_triage takes at most 50 UIDs per call|error no uids
 #|names Ideas,Ideas/2026
 #|error candidate "": a folder name cannot be empty
 #|error candidate "a	b": a folder name cannot contain control characters
@@ -1483,7 +1583,27 @@ def main() -> IO(Unit):
 #|{"messages":2,"bytes":100,"input_tokens":null} {"messages":1,"bytes":9,"input_tokens":7}
 #|stopped TypeSafe's answer is not the JSON MailBend asked for
 #|stopped no
-#|progress [1] [{"messages":0,"bytes":10,"input_tokens":null}]
-#|ok {"folder":"INBOX","messages":[1,2,3],"not_found":[9],"requests":["r1","r2"]}
+#|progress 1  [{"messages":0,"bytes":10,"input_tokens":null}]
+#|ok {"folder":"INBOX","messages":[{"uid":1,"category":null,"jev":{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}},{"uid":2,"category":null,"jev":{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}},{"uid":3,"category":null,"jev":{"status":"unchecked","model":"jev-1.13.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}}],"not_found":[9],"requests":["r1","r2"]}
 #|err stopped
 #|mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off
+#|[only mail_triage moves mail into "To Delete", which the user reviews][only mail_triage moves mail into "To Delete", which the user reviews][][]
+#|[mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it, and mail_delete can remove messages from it permanently][mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it, and mail_delete can remove messages from it permanently][]
+#|[mail_triage files mail out of other folders, never out of "To Delete", which the user reviews][]
+#|[MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X must name one existing selectable mailbox]
+#|[][it is also a special folder, which MailBend never fills][it is also a special folder, which MailBend never fills][it does not exist or cannot be selected: create it with mail_create_folder]
+#|a@x,b@y
+#|a@x.org none none none
+#|a@x,b@y
+#|a@x,c@z
+#|[][it has been answered] []
+#|whether the user has written to its sender cannot be told|the user has written to its sender|
+#||it was not checked
+#|[Jev found UID 3, UID 4 safe to delete, but "To Delete" cannot take them: it does not exist][][]
+#|[the server supports neither MOVE nor UIDPLUS; refusing to move with a plain EXPUNGE, which could remove other messages][the moves failed the triage plan's own check][][]
+#|ok {"moves":[]}
+#|partial {"ok":false,"partial":true,"message":"a move did not finish, so the moves after it were not made; see moves, and check its destination before running mail_triage again","moves":["first",{"ok":false,"destination":"To Delete","error":"lost"}]}
+#|ok {"folder":"INBOX","moves":[]}
+#|partial {"folder":"INBOX","ok":false}
+#|err no
+#|mail_triage is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off

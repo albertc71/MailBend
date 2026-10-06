@@ -37,9 +37,9 @@ flowchart TB
     direction TB
     main["main.bend<br/>MCP JSON-RPC server and CLI<br/>8 MiB line cap, envelope check"]
     json["src/json.bend<br/>strict JSON parser"]
-    tools["src/tools.bend<br/>22 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
+    tools["src/tools.bend<br/>23 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>69 laws proven over the plans, the envelope and Jev requests"]
+    laws["LAWS.bend + PROOF.bend<br/>77 laws proven over the plans, the envelope and Jev requests"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
@@ -184,16 +184,17 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Move and trash never expunge before copying; the first `UID EXPUNGE` names the first `UID COPY`'s UIDs | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail`, `move/trash_expunges_only_copied` (labels: `label_is_move`) |
 | Flagging changes exactly `\Flagged` and, for a colour, its three bits (a closed set, one pure colour-to-bits mapping), never `\Deleted` or an expunge; unflagging clears all of them; `colour_kept` is `true` only with every changed message's reported flags and PERMANENTFLAGS as evidence | `plan_flag`, `plan_unflag`, `colour_bits`, `colour_kvs` | laws `flag_never_deletes`, `flag_changes_only_flag_and_colour`, `flag_changes_exactly`, `unflag_clears_flag_and_colour`, unit test per colour, e2e kept / session-only / dropped / unverified cases |
 | A label is a move, and creating or renaming a folder touches no message | `plan_label` is `plan_move`; `plan_create`, `plan_rename` | laws `label_is_move`, `label_creates_no_folder`, `create/rename_changes_exactly`, `create/rename_changes_no_mail`, `folder_plans_destroy_nothing` |
-| Folder tools never touch INBOX, role folders or `To Delete`, nest under no missing parent, and fail closed when the delimiter is unknown; `inbox/` is written as the listed INBOX | `src/tools.bend` `*_problem`, `canonical_name` | e2e `folder_*` cases, both delimiters |
+| Folder tools never touch INBOX, role folders or `To Delete`, nest under no missing parent, and fail closed when the delimiter is unknown; `inbox/` is written as the listed INBOX; only `mail_triage` moves mail into `To Delete` or a folder inside it, `mail_move` and `mail_label` may move mail out of it but `mail_trash` may not, and no role override may name it or a folder inside it | `src/tools.bend` `*_problem`, `canonical_name`, `review_move_problem`, `review_trash_problem`, `invalid_override` | e2e `folder_*` cases (both delimiters) and `triage_protections` cases |
 | A move cut off after its COPY may have run is `partial`, never an error implying nothing changed | `src/tools.bend` `interrupted`, `Out.Partial` | e2e interrupted-label cases, MCP `isError` case |
 | A flag change stopped once a store was acknowledged or sent unanswered is `partial`, listing the acknowledged and possibly-run changes; one whose search found no UID, or that stopped before any store, is a plain error | `src/tools.bend` `flag_cut`, `store_changes` | e2e refused, cut-off, absent-UID, unflag-cleanup and read-back cases |
 | A helper that never started changed nothing; one that failed after starting, or was killed by a signal, may have (one classifier for flag changes, COPY-based moves and folder changes) | `src/tools.bend` `proc_of` (`ProcRefused` for the path refusal and spawn errnos), `helper_lost` | e2e relative, missing and killed helper cases |
 | Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
 | Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
 | No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
-| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; `mail_classify` is refused and hidden unless `MAILBEND_TYPESAFE` is on; unclear switch values fail | `src/tools.bend` (`config`, `gated`, `offered_tools`), `Ops.listed` | laws `read_only_tools_are_exactly_seven`, `tools_listed_per_config`, e2e (all 15 mutating tools, switch values, tool lists with Jev off and on) |
+| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; `mail_classify` and `mail_triage` are refused and hidden unless `MAILBEND_TYPESAFE` is on; unclear switch values fail | `src/tools.bend` (`config`, `gated`, `offered_tools`), `Ops.listed` | laws `read_only_tools_are_exactly_seven`, `tools_listed_per_config`, e2e (all 15 mutating tools, `mail_triage` in read-only mode, switch values, tool lists with Jev off and on) |
 | The TypeSafe key never shares a process with the mail password: it is read only from `MAILBEND_TYPESAFE_KEY_FILE` by `mailbend-typesafe`, which re-executes with an allow-listed environment; `MAILBEND_TYPESAFE_API_KEY` set fails every tool; the key is redacted from answers | `native/mailbend-typesafe` (`environment`, `settings`, `api`), `mailbend-io` `secret`, `config` in `src/tools.bend`, `mailbend-tls` refusal | Rust tests (allow-list, redaction, exit codes), e2e (`/proc/<pid>/environ` of the helper, key in the environment, echoed key, output scan) |
 | Jev gets header facts and attachment names, and message text only with `MAILBEND_TYPESAFE_CONTENT=body` and `MAILBEND_TYPESAFE_ZERO_RETENTION=1`; `mail_classify` changes nothing and creates no folder | `src/jev.bend` (`state_of`), `plan_classify` (`EXAMINE`, `BODY.PEEK`, `BODYSTRUCTURE`) | laws `headers_state_has_no_body`, `classify_writes_nothing`, `fetch_items_never_set_seen`; unit tests; e2e recorded requests, server log and state |
+| Triage moves each message at most once, only into `To Delete` or an existing category folder it was given (never INBOX, a role folder or the source folder), creates no folder, and expunges only what it copied; it moves nothing unless every Jev request succeeded; `To Delete` needs a body-mode message with its whole text, no code veto (flagged or answered, read again just before the moves; attachments; under 30 days old; a sender with one From field whom the user never wrote to in To or Cc) and Jev's low keep answers and high disposability, asked in a request of its own | `Jev.verdict`, `Jev.filing`, `Ops.plan_triage` (guards its own destinations and repeats; the laws restate both independently), `t_triage` | laws `triage_moves_only_to_known_folders`, `triage_creates_no_mailbox`, `triage_one_move_per_message`, `triage_expunges_only_moved`, `filing_matches_table`, `uncertain_changes_nothing`, `sent_search_writes_nothing`, `reread_flags_writes_nothing`; unit tests over every band, verdict and category; e2e per table row with and without MOVE, a Cc-only correspondent, two From fields, a message flagged during the call |
 | A missing or malformed Jev answer reads as the cautious one; a refused request is split once, any other failure stops the call | `src/jev.bend` (bands, picks), `ask_batch` in `src/tools.bend` | law `missing_answer_is_cautious`, unit tests, e2e against `tests/fake_typesafe.py` (401, 422, 429, 529, timeout, malformed, split, later-batch failure) |
 | With an allowlist, a message goes only when every envelope recipient is allowed; the envelope has no other source | `S.outbound` in `src/smtp.bend`, `send_with` in `src/tools.bend` | laws `allowlist_refuses_unlisted`, `no_allowlist_is_unchanged`, CI grep for other envelope callers, unit and e2e allowlist cases |
 | The daily send limit is reserved before SMTP and fails closed; no tool reads or changes the count | `mailbend-attach count` (`flock`, openat2), `reserve` in `src/tools.bend` | Rust tests (two concurrent processes), e2e at, below and over the limit |
@@ -211,8 +212,9 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 
 ```text
 main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
-src/tools.bend       the 22 tools: arguments, sessions, results
-src/jev.bend         TypeSafe's Jev: message facts, questions, requests and typed answers
+src/tools.bend       the 23 tools: arguments, sessions, results
+src/jev.bend         TypeSafe's Jev: message facts, questions, requests, typed answers,
+                     the triage verdict and the filing table
 src/thread.bend      which messages form a thread, and their order and parents
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
@@ -430,12 +432,20 @@ SMTP envelope in `src/smtp.bend`; `PROOF.bend` proves them, and
 - exactly the seven read tools (the six reads and `mail_classify`) are
   read-only, and each combination of read-only, drafts-only and Jev lists
   exactly its tools;
-- the classify plan contains no command that can change a mailbox;
+- the classify plan, the search of Sent for mail to a message's sender,
+  and the second read of the flags before triage moves contain no command
+  that can change a mailbox;
+- triage plans move only into `To Delete` or a category passed in (never
+  INBOX, a role folder passed in, or the source folder), change no folder,
+  move no UID twice, and expunge in
+  each plan exactly what it copied; filing follows its table for every
+  verdict and category, and an uncertain category or an all-missing answer
+  set produces no plan;
 - a headers-mode Jev request holds the UID, header fields and attachment
   names only, never message text;
-- a missing Jev answer is the cautious one: an unknown band that counts as
-  keep and as suspected injection, no suggested action, and no folder
-  chosen.
+- a missing Jev answer is the cautious one: an unknown band that never
+  clears a message for review and counts as suspected injection, no
+  suggested action, and no folder chosen.
 
 The laws are about these pure plans, the envelope and their rendering. The native helpers,
 TLS, MIME parsing, the agent's choices and the runtime configuration are

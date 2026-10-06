@@ -612,7 +612,8 @@ type Pick is Data:
 type Scored is Data:
   Scored{level: Band, confidence: Band}
 
-# The keep questions: any that does not read Low keeps the message.
+# The keep questions: any that reads Mid or High keeps the message; a
+# missing one leaves the verdict Unanswered (see verdict).
 type Vetoes is Data:
   Vetoes{record: Band, security: Band, personal: Band, open_action: Band, needed_again: Band}
 
@@ -629,9 +630,11 @@ type Answers is Data:
     injection: Band
   }
 
-# A message's facts and what Jev answered about it.
+# A message's facts and what Jev answered about it; Skipped when its header
+# facts alone exceed what one request may hold, so Jev was not asked.
 type Answered is Data:
   Answered{facts: Facts, answers: Answers}
+  Skipped{facts: Facts}
 
 # Below 0.30 is Low and above 0.70 High: TypeSafe routes the range between
 # to people.
@@ -943,9 +946,8 @@ def reply(body: String, es: List<&2, Entry>, categories: List<&2, String>) -> Ma
 # Policies
 # --------
 
-# Whether a band counts against a message: only Low clears it. The
-# injection screen flags a message, and a keep question keeps it, unless
-# its answer is Low.
+# Whether the injection screen flags a message: unless its answer is Low,
+# a missing one included.
 def suspects(b: Band) -> Bool:
   match b:
     case Low{}:
@@ -1018,6 +1020,224 @@ def category_of(p: Pick, candidates: List<&2, String>, none: String) -> Category
       category_of.put(confidence, key, candidates, none)
     case NoPick{}:
       Uncategorised{}
+
+# Triage
+# ------
+
+# mail_triage files each message by at most one move: into the review
+# folder (see Ops.review_folder) when the delete review finds it safe to
+# delete, so the user can review it there, or into its category folder.
+# Jev never deletes. The review needs every check to pass: the code's own
+# vetoes, read from the message's facts before Jev is asked, then each of
+# Jev's keep questions and its disposability score.
+
+# The age below which a message never goes to review: 30 days, in seconds.
+def review_age() -> U32:
+  2592000
+
+def veto_if(fires: Bool, reason: String) -> List<&2, String>:
+  List.filter.put(String, reason, [], fires)
+
+def attachment_vetoes(a: Attachments) -> List<&2, String>:
+  match a:
+    case Known{names}:
+      veto_if(Bool.not(List.is_empty(&2, String, names)), "it has attachments")
+    case Unknown{}:
+      ["its attachments cannot be told"]
+
+# A message's age goes by its INTERNALDATE, which the server sets; `now` is
+# the time in seconds since the epoch, 0 when it is unknown.
+def age_vetoes(+now: U32, date: String) -> List<&2, String>:
+  +at = I.internal_seconds(date)
+  young = U32.is_lt(now, at) || U32.is_lt((now - at : U32), review_age())
+  Bool.pick(List<&2, String>, U32.is_zero(now) || U32.is_zero(at), ["its age cannot be told"],
+    veto_if(young, "it is less than 30 days old"))
+
+# The vetoes of a message's flags: it is flagged or answered. mail_triage
+# reads them again just before a message goes to review.
+def flag_vetoes(+flags: List<&2, String>) -> List<&2, String>:
+  List.append(&2, String, veto_if(I.has_attr(flags, "\\Flagged"), "it is flagged"),
+    veto_if(I.has_attr(flags, "\\Answered"), "it has been answered"))
+
+# Why the code keeps a message out of review, whatever Jev answers: it is
+# flagged or answered, has or may have attachments, or is under 30 days
+# old or of unknown age.
+def code_vetoes(f: Facts, now: U32) -> List<&2, String>:
+  Facts{uid, fields, flags, date, size, atts, body} = f
+  List.concat(&2, String, [flag_vetoes(flags), attachment_vetoes(atts), age_vetoes(now, date)])
+
+# Whether the user has written to a message's sender, as a read-only
+# search of the Sent folder for mail to that address tells; Unverified when
+# the sender has no single readable address or no Sent folder is known.
+type Correspondence is Data:
+  Stranger{}
+  Correspondent{}
+  Unverified{}
+
+def correspondence_vetoes(c: Correspondence) -> List<&2, String>:
+  match c:
+    case Stranger{}:
+      []
+    case Correspondent{}:
+      ["the user has written to its sender"]
+    case Unverified{}:
+      ["whether the user has written to its sender cannot be told"]
+
+def is_complete(w: Completeness) -> Bool:
+  match w:
+    case Complete{}:
+      True{}
+    case Partial{}:
+      False{}
+
+# Whether a message can still be found safe to delete before Jev is asked:
+# in body mode, with all of its text and no code veto. Only such a message
+# is asked about in a request of its own.
+def may_review(c: Content, whole: Completeness, vetoes: List<&2, String>) -> Bool:
+  is_body(c) && is_complete(whole) && List.is_empty(&2, String, vetoes)
+
+# The delete review's verdict on a message. It only says whether the review
+# folder is allowed; filing decides the move. Unanswered: Jev gave no usable
+# answer to a keep question or the disposability score.
+type Verdict is Data:
+  SafeToDelete{}
+  Keep{}
+  Review{}
+  Unanswered{}
+
+def is_safe(v: Verdict) -> Bool:
+  match v:
+    case SafeToDelete{}:
+      True{}
+    case Keep{}:
+      False{}
+    case Review{}:
+      False{}
+    case Unanswered{}:
+      False{}
+
+def verdict_name(v: Verdict) -> String:
+  match v:
+    case SafeToDelete{}:
+      "safe_to_delete"
+    case Keep{}:
+      "keep"
+    case Review{}:
+      "review"
+    case Unanswered{}:
+      "unanswered"
+
+def is_high(b: Band) -> Bool:
+  match b:
+    case Low{}:
+      False{}
+    case Mid{}:
+      False{}
+    case High{}:
+      True{}
+    case Missing{}:
+      False{}
+
+def is_missing(b: Band) -> Bool:
+  match b:
+    case Low{}:
+      False{}
+    case Mid{}:
+      False{}
+    case High{}:
+      False{}
+    case Missing{}:
+      True{}
+
+# Whether a keep answer keeps the message: Mid or High (Missing is told
+# apart, as Unanswered).
+def keeps(b: Band) -> Bool:
+  match b:
+    case Low{}:
+      False{}
+    case Mid{}:
+      True{}
+    case High{}:
+      True{}
+    case Missing{}:
+      False{}
+
+def any_keeps(v: Vetoes) -> Bool:
+  Vetoes{record, security, personal, open_action, needed_again} = v
+  keeps(record) || keeps(security) || keeps(personal) || keeps(open_action) ||
+    keeps(needed_again)
+
+def any_missing(v: Vetoes) -> Bool:
+  Vetoes{record, security, personal, open_action, needed_again} = v
+  is_missing(record) || is_missing(security) || is_missing(personal) ||
+    is_missing(open_action) || is_missing(needed_again)
+
+# Keep when a code veto or a keep answer fires; Unanswered when a keep
+# answer or the disposability score is missing; SafeToDelete only when the
+# message could be reviewed (see may_review), every keep answer is Low and
+# the disposability score is High with High confidence; Review otherwise.
+# The answers must come from a request about this message alone whenever
+# may_review holds.
+def verdict(c: Content, whole: Completeness, +vetoes: List<&2, String>, a: Answers) -> Verdict:
+  Answers{cat, reply, action, deadline, priority, suggested, +keep, disposable, injection} = a
+  Scored{+level, +confidence} = disposable
+  kept = Bool.not(List.is_empty(&2, String, vetoes)) || any_keeps(keep)
+  missing = any_missing(keep) || is_missing(level) || is_missing(confidence)
+  sure = may_review(c, whole, vetoes) && is_high(level) && is_high(confidence)
+  Bool.pick(Verdict, kept, Keep{},
+    Bool.pick(Verdict, missing, Unanswered{}, Bool.pick(Verdict, sure, SafeToDelete{}, Review{})))
+
+# What triage does with a message: move it into the review folder or into
+# a category folder, or leave it where it is.
+type Action is Data:
+  ToReview{}
+  ToFolder{folder: String}
+  Stay{}
+
+def filed(c: Category) -> Action:
+  match c:
+    case Filed{folder}:
+      ToFolder{folder}
+    case Proposed{folder}:
+      Stay{}
+    case NeedsNew{}:
+      Stay{}
+    case Uncategorised{}:
+      Stay{}
+
+# The filing table: a message safe to delete goes to review whatever its
+# category; any other is filed into its category only when Jev chose an
+# existing folder with High confidence, and otherwise stays.
+def filing(v: Verdict, c: Category) -> Action:
+  match v:
+    case SafeToDelete{}:
+      ToReview{}
+    case Keep{}:
+      filed(c)
+    case Review{}:
+      filed(c)
+    case Unanswered{}:
+      filed(c)
+
+def answered_facts(x: Answered) -> Facts:
+  match x:
+    case Answered{f, a}:
+      f
+    case Skipped{f}:
+      f
+
+# What Jev answered about a message; for one it was not asked about, the
+# answers of an empty reply, all of them Missing.
+def answers_of(x: Answered) -> Answers:
+  match x:
+    case Answered{f, a}:
+      a
+    case Skipped{f}:
+      answers_for(J.JNull{}, facts_uid(f), [])
+
+def answers_category(a: Answers) -> Pick:
+  Answers{cat, reply, action, deadline, priority, suggested, keep, disposable, injection} = a
+  cat
 
 # Results
 # -------
@@ -1115,22 +1335,49 @@ def truncated_kvs(c: Content, b: Completeness) -> List<&2, J.Json>:
     case _ _:
       []
 
-# A classified message.
-def checked_json(
+# A classified message's fields, `extra` coming just before its jev object.
+def checked_kvs(
   +f: Facts,
   +c: Content,
   +a: Answers,
   candidates: List<&2, String>,
-  none: String
-) -> J.Json:
+  none: String,
+  extra: List<&2, J.Json>
+) -> List<&2, J.Json>:
   Answers{cat, reply, action, deadline, priority, suggested, keep, disposable, injection} = a
-  J.obj(J.kv("uid", J.num(facts_uid(f))) <> List.concat(&2, J.Json, [
+  J.kv("uid", J.num(facts_uid(f))) <> List.concat(&2, J.Json, [
     category_kvs(category_of(cat, candidates, none)),
     truncated_kvs(c, facts_body(f)),
+    extra,
     [J.kv("jev", jev_json(Checked{}, c, True{}, [], signals_json(a)))]
-  ]))
+  ])
 
-def checked_jsons(
+def unchecked_reason() -> String:
+  "its header fields alone exceed what one TypeSafe request may hold"
+
+# A message left unchecked because its header facts alone exceed what one
+# request may hold, `extra` coming just before its jev object.
+def unchecked_kvs(f: Facts, c: Content, extra: List<&2, J.Json>) -> List<&2, J.Json>:
+  J.kv("uid", J.num(facts_uid(f))) <> J.kv("category", J.JNull{}) <>
+    List.append(&2, J.Json, extra,
+      [J.kv("jev", jev_json(Unchecked{}, c, True{}, [unchecked_reason()], J.obj([])))])
+
+# A message's result fields, whether Jev was asked about it or not.
+def answered_kvs(
+  x: Answered,
+  c: Content,
+  candidates: List<&2, String>,
+  none: String,
+  extra: List<&2, J.Json>
+) -> List<&2, J.Json>:
+  match x:
+    case Answered{f, a}:
+      checked_kvs(f, c, a, candidates, none, extra)
+    case Skipped{f}:
+      unchecked_kvs(f, c, extra)
+
+# The results mail_classify reports, in order.
+def answered_jsons(
   xs: List<&2, Answered>,
   +c: Content,
   +candidates: List<&2, String>,
@@ -1139,17 +1386,5 @@ def checked_jsons(
   match xs:
     case Nil{}:
       []
-    case Answered{f, a} <> t:
-      checked_json(f, c, a, candidates, none) <> checked_jsons(t, c, candidates, none)
-
-def unchecked_reason() -> String:
-  "its header fields alone exceed what one TypeSafe request may hold"
-
-# A message left unchecked because its header facts alone exceed what one
-# request may hold.
-def unchecked_json(f: Facts, c: Content) -> J.Json:
-  J.obj([
-    J.kv("uid", J.num(facts_uid(f))),
-    J.kv("category", J.JNull{}),
-    J.kv("jev", jev_json(Unchecked{}, c, True{}, [unchecked_reason()], J.obj([])))
-  ])
+    case x <> t:
+      J.obj(answered_kvs(x, c, candidates, none, [])) <> answered_jsons(t, c, candidates, none)

@@ -16,6 +16,7 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
 | `mail_get_thread` | The conversation of a message, oldest first, from its folder, INBOX and Sent: linked by Message-ID, In-Reply-To and References only (never by subject), each message with its folder, `uidvalidity` and `parent` | no |
 | `mail_classify` | Ask TypeSafe's Jev, for up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention; only with `MAILBEND_TYPESAFE` on (see [TypeSafe's Jev](#typesafes-jev)) | no |
+| `mail_triage` | File up to 50 messages with Jev: each moves at most once, into the existing folder Jev chose with high confidence, or into `To Delete` for you to review when the delete review finds it safe to delete; only with `MAILBEND_TYPESAFE` on (see [Triage](#triage-and-the-to-delete-folder)) | yes |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file |
 | `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
 | `mail_flag` / `mail_unflag` | Add / remove `\Flagged`; `mail_flag` sets an Apple Mail `colour` (red, orange, yellow, green, blue, purple, grey) or, without one, keeps the current colour; `mail_unflag` clears the colour. The result lists the flags the server reported and, for a colour, `colour_kept` (`true`, `false` or `"unverified"`) | flags |
@@ -138,13 +139,14 @@ agent can take through MailBend.
 ### TypeSafe's Jev
 
 `mail_classify` asks [TypeSafe](https://docs.typesafe.ai)'s Jev model about
-messages. It is off, hidden and refused unless you turn it on, and it
-changes nothing: no flag, no move, no folder. These settings are checked
-even when it is off, and any bad value fails every tool:
+messages, and `mail_triage` files them by its answers. Both are off, hidden
+and refused unless you turn Jev on; `mail_classify` changes nothing: no
+flag, no move, no folder. These settings are checked even when Jev is off,
+and any bad value fails every tool:
 
 | Setting | Effect |
 | --- | --- |
-| `MAILBEND_TYPESAFE` | `1`/`true` lists `mail_classify`; `0`/`false`/empty keeps it off. |
+| `MAILBEND_TYPESAFE` | `1`/`true` lists `mail_classify` and `mail_triage` (read-only mode still hides `mail_triage`); `0`/`false`/empty keeps them off. |
 | `MAILBEND_TYPESAFE_KEY_FILE` | Required when on: the absolute path of a file you own with mode 600 holding only the TypeSafe key, with the same rules as `MAILBEND_PASSWORD_FILE`. Only `mailbend-typesafe` reads it. |
 | `MAILBEND_TYPESAFE_CONTENT` | `headers` (the default) sends each message's UID, its decoded From, To, Cc, Subject, Date, List-Id, List-Unsubscribe, Auto-Submitted and Precedence headers, and its attachment names. `body` also sends up to 16 KB of its plain text. |
 | `MAILBEND_TYPESAFE_ZERO_RETENTION` | `1`/`true` is your statement that the TypeSafe account has a zero-retention plan; `body` content is refused without it. MailBend cannot check this statement. |
@@ -168,6 +170,50 @@ The result also lists `not_found` UIDs and, per request, its `messages`,
 `bytes` and TypeSafe's `input_tokens`. A request TypeSafe refuses is split
 once into halves; any other failure stops the call. The answers come from
 untrusted mail content.
+
+#### Triage and the To Delete folder
+
+`mail_triage(folder, uids, uidvalidity, dry_run?)` reads the messages as
+`mail_classify` does, asks Jev about every one of them before anything
+moves, and then moves each message at most once, following one table
+(`filing` in `src/jev.bend`):
+
+| Delete review | Category answer | Action |
+| --- | --- | --- |
+| safe to delete | any | move into `To Delete` |
+| keep, review, or unanswered | an existing folder with high confidence | move into that folder |
+| keep, review, or unanswered | a candidate, no fitting folder, a lower confidence, or none | stay |
+
+A message is safe to delete only when every check passes: content mode is
+`body` and Jev saw the whole text (a `body_truncated` message never is);
+the message is not flagged or answered, has no attachments (and they can be
+told), and is at least 30 days old; it has one From field with one readable
+address, and you have never written to that sender in To or Cc (two
+read-only searches of the Sent folder per sender; Bcc is not searched);
+every keep answer (record, account security, personally written, open
+action, needed again) is low; and the disposability score is high with high
+confidence. Such a message is asked about in a request of its own, and only
+those answers can send it to `To Delete`; the others are asked in batches,
+as `mail_classify` asks. Just before the moves, a short read-only session
+reads the flags of the messages bound for `To Delete` again: one you
+flagged or answered meanwhile is kept, and filed like any kept message.
+Each message's result gives its `verdict` (`safe_to_delete`, `keep`,
+`review` or `unanswered`), the code's `vetoes`, its `destination` (or
+`null`) and the `jev` object; `moves` lists one move per destination folder.
+
+Triage never deletes: `To Delete` is a folder for you to review, and
+`mail_delete` remains the only way to remove mail permanently. Create it
+once with `mail_create_folder`; triage never creates a folder. When a
+message is safe to delete but `To Delete` is missing (or is a special
+folder), the call is refused and moves nothing, but its error still lists
+every message's verdict and proposed destination. If any TypeSafe request
+fails, nothing moves. A move cut off part way fails the call with
+`partial: true` and leaves the later moves unmade. Only `mail_triage` moves
+mail into `To Delete` or a folder inside it. `mail_move` and `mail_label`
+may move a message you keep out of it; `mail_trash` does not, and triage
+never files mail out of it. No folder tool renames it or creates a folder
+inside it, and no `MAILBEND_*_FOLDER` override may name it or a folder
+inside it.
 
 Other providers require compatible password-authenticated IMAP over implicit
 TLS and SMTP with STARTTLS. Set `MAILBEND_IMAP_HOST`, `MAILBEND_IMAP_PORT`,
@@ -299,6 +345,11 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   folder must already exist. IMAP has no way to delete a folder only when it
   is empty, and iCloud deletes a folder's messages with it, so delete folders
   in Apple Mail or iCloud.com.
+- **Triage moves each message once, into a folder it may fill.**
+  `mail_triage` files each message by at most one proven move, into
+  `To Delete` or a category folder passed in, never into INBOX, a role
+  folder or the folder it reads, and creates no folder (proven for every
+  input).
 - **An interrupted move says so.** A move (`mail_move`, `mail_trash`,
   `mail_label`) cut off when its COPY may have run fails with `partial: true`
   (the messages may be in both folders; `isError` over MCP, exit 1 on the
@@ -377,7 +428,7 @@ flowchart LR
   agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["22 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["23 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]

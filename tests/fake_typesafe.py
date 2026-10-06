@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A fake TypeSafe API (POST /v1/systemone) behind a local HTTPS proxy, used
-to exercise mailbend-typesafe and mail_classify without the real service.
+to exercise mailbend-typesafe, mail_classify and mail_triage without the
+real service.
 
 Usage:
     python3 fake_typesafe.py --certdir DIR --key KEY --log FILE [--scenario NAME]
@@ -27,7 +28,11 @@ Answers are deterministic, from the state alone: a category is the folder
 (or candidate) whose name appears in the email's subject, else the "none"
 option; questions about injection answer yes when the email says "ignore
 previous instructions"; reply_needed answers yes when the subject asks a
-question. Everything else is a middling answer.
+question. An email whose subject carries the marker "[disposable]" is
+scripted as safe to throw away: every keep question answers no and the
+disposability score is its top level with high confidence, unless the text
+mentions a deadline, which keeps it open (keep_open_action answers yes).
+Everything else is a middling answer.
 
 Every request is appended to --log as JSONL: the CONNECT target, the names
 (never the values) of the environment variables of each running
@@ -41,7 +46,7 @@ Scenarios (--scenario):
     over:<bytes>      answer 422 to a request body of more than <bytes> bytes
     fail-after:<n>    answer the first <n> requests, then 422 to every other
     malformed         answer 200 with a body that is not TypeSafe's JSON
-    slow              wait 30 seconds before answering
+    slow[:<seconds>]  wait 30 (or <seconds>) seconds before answering
 """
 import argparse
 import json
@@ -118,6 +123,7 @@ def answer(qid, q, emails):
     subject = str(email.get("subject", ""))
     text = (subject + " " + str(email.get("text", ""))).lower()
     kind = q["type"]
+    disposable = "[disposable]" in subject.lower()
     if kind == "choice":
         # The category options end with MailBend's "none" key, whatever it is called.
         options = list(q["criteria"])
@@ -127,10 +133,17 @@ def answer(qid, q, emails):
         else:
             pick = max(named, key=len) if named else options[-1]
         return {"type": "choice", "choice": pick, "probabilities": {pick: 0.9}, "confidence": 0.9}
+    if kind == "score" and name == "disposable" and disposable:
+        return {"type": "score", "score": 2.0, "legend": q["criteria"],
+                "probabilities": [0.0, 0.05, 0.95], "confidence": 0.95}
     if kind == "score":
         return {"type": "score", "score": 1.0, "legend": q["criteria"],
                 "probabilities": [0.1, 0.8, 0.1], "confidence": 0.8}
-    if name == "injection":
+    if name == "keep_open_action" and "deadline" in text:
+        yes = 0.95
+    elif name.startswith("keep_") and disposable:
+        yes = 0.05
+    elif name == "injection":
         yes = 0.95 if "ignore previous instructions" in text else 0.02
     elif name == "reply_needed":
         yes = 0.9 if "?" in subject else 0.1
@@ -179,7 +192,7 @@ class Fake:
             n = self.count
         kind, _, arg = self.scenario.partition(":")
         if kind == "slow":
-            time.sleep(30)
+            time.sleep(float(arg or 30))
         if kind == "echo-key":
             return 401, {"detail": f"invalid key {auth}"}
         if auth != f"Bearer {self.key}":

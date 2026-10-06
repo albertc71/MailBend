@@ -22,8 +22,8 @@ import ./src/smtp.bend as S
 # Reading is read-only, and permanent deletion is not. Exactly seven tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
-# mail_classify only asks TypeSafe about messages, and is listed only when
-# MAILBEND_TYPESAFE is on.
+# mail_classify only asks TypeSafe about messages; mail_triage asks it, then
+# moves them. Both are listed only when MAILBEND_TYPESAFE is on.
 
 # LAW: mail_get is read-only
 law read_is_read_only:
@@ -53,16 +53,17 @@ law read_only_tools_are_exactly_seven:
     : List<&2, String>}
 
 # LAW: the tools each configuration lists: with Jev on, every tool; with it
-# off, all but mail_classify; drafts-only mode hides mail_send; read-only
-# mode lists only the read-only tools, whatever drafts-only says
+# off, all but mail_classify and mail_triage; drafts-only mode hides
+# mail_send; read-only mode lists only the read-only tools, whatever
+# drafts-only says
 law tools_listed_per_config:
   for drafts: Bool
   ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
-       "mail_get_thread", "mail_classify", "mail_get_attachment", "mail_mark_read",
-       "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash",
-       "mail_delete", "mail_create_folder", "mail_rename_folder", "mail_save_draft",
-       "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
+       "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
+       "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
+       "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
+       "mail_save_draft", "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
        "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
@@ -71,10 +72,10 @@ law tools_listed_per_config:
        "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
-       "mail_get_thread", "mail_classify", "mail_get_attachment", "mail_mark_read",
-       "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash",
-       "mail_delete", "mail_create_folder", "mail_rename_folder", "mail_save_draft",
-       "mail_reply", "mail_forward"] : List<&2, String>} &
+       "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
+       "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
+       "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
+       "mail_save_draft", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
        "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
@@ -150,6 +151,19 @@ law thread_plans_write_nothing:
   {Bool.or(
     I.any_writes(Ops.plan_thread_search(folders, keys)),
     I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
+
+# LAW: for every Sent folder and addresses, the search of Sent for mail to
+# them writes nothing
+law sent_search_writes_nothing:
+  for sent: String
+  for addrs: List<&2, String>
+  {I.any_writes(Ops.plan_sent_search(sent, addrs)) == False{} : Bool}
+
+# LAW: for every mailbox and UIDs, reading their flags again writes nothing
+law reread_flags_writes_nothing:
+  for mbox: String
+  for uids: List<&2, U32>
+  {I.any_writes(Ops.plan_reread_flags(mbox, uids)) == False{} : Bool}
 
 # LAW: for every mailbox, UIDs, content and size limit, the classify plan
 # writes nothing
@@ -712,6 +726,131 @@ law label_creates_no_folder:
   {Ops.mailbox_changes(Ops.plan_label(mbox, uids, label, move, uidplus, uidv)) ==
     [] : List<&2, I.Cmd>}
 
+# Triage
+# ------
+
+# mail_triage files each message by at most one move (Jev.filing): into the
+# review folder "To Delete" when the delete review finds it safe to delete,
+# or into the existing folder Jev chose for it with High confidence; any
+# other message stays. The moves into one folder are one plan_move, in a
+# session of its own, so the move laws above hold for each plan. These laws
+# hold for every source folder, category list, reserved (role) folder list,
+# list of moves, capabilities and UIDVALIDITY.
+
+# LAW: every UID MOVE and UID COPY of a triage plan goes into the review
+# folder or one of the categories passed in; never into INBOX or one of the
+# reserved (role) folders passed in, in any case; and never into the
+# source folder
+law triage_moves_only_to_known_folders:
+  for mbox: String
+  for cats: List<&2, String>
+  for reserved: List<&2, String>
+  for ms: List<&2, Ops.FolderUids>
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.all_offered(cats,
+      Ops.plans_dests(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv))) ==
+      True{} : Bool} &
+   {Ops.none_named("INBOX" <> reserved,
+      Ops.plans_dests(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv))) ==
+      True{} : Bool} &
+   {Ops.none_same(mbox,
+      Ops.plans_dests(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv))) ==
+      True{} : Bool})
+
+# LAW: triage changes no folder: a new category exists only through
+# mail_create_folder
+law triage_creates_no_mailbox:
+  for mbox: String
+  for cats: List<&2, String>
+  for reserved: List<&2, String>
+  for ms: List<&2, Ops.FolderUids>
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.plans_mailbox_changes(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv)) ==
+    [] : List<&2, I.Cmd>}
+
+# LAW: no UID is moved or copied twice, within one triage plan or across two
+law triage_one_move_per_message:
+  for mbox: String
+  for cats: List<&2, String>
+  for reserved: List<&2, String>
+  for ms: List<&2, Ops.FolderUids>
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.distinct(List.concat(&2, U32,
+    Ops.plans_moved_uids(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv)))) ==
+    True{} : Bool}
+
+# LAW: each triage plan expunges only what it copied: its UID EXPUNGEs name,
+# in order, exactly the UIDs of its UID COPYs (a plan with UID MOVE has
+# neither)
+law triage_expunges_only_moved:
+  for mbox: String
+  for cats: List<&2, String>
+  for reserved: List<&2, String>
+  for ms: List<&2, Ops.FolderUids>
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  {Ops.plans_expunged(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv)) ==
+    Ops.plans_copied(Ops.plan_triage(mbox, cats, reserved, ms, move, uidplus, uidv))
+    : List<&2, List<&2, List<&2, U32>>>}
+
+# LAW: filing follows its table for every verdict and category: a message
+# safe to delete goes to review whatever its category; with any other
+# verdict (Keep, Review, or Unanswered when the delete answers are missing),
+# an existing folder chosen with High confidence files it, and a candidate,
+# no fitting folder, a lower confidence or no category answer leaves it
+law filing_matches_table:
+  for cat: Jev.Category
+  for v: Jev.Verdict
+  for unsafe: {Jev.is_safe(v) == False{} : Bool}
+  for folder: String
+  ({Jev.filing(Jev.SafeToDelete{}, cat) == Jev.ToReview{} : Jev.Action} &
+   {Jev.filing(v, Jev.Filed{folder}) == Jev.ToFolder{folder} : Jev.Action} &
+   {Jev.filing(v, Jev.Proposed{folder}) == Jev.Stay{} : Jev.Action} &
+   {Jev.filing(v, Jev.NeedsNew{}) == Jev.Stay{} : Jev.Action} &
+   {Jev.filing(v, Jev.Uncategorised{}) == Jev.Stay{} : Jev.Action})
+
+# LAW: a message that is not safe to delete, with a category answer below
+# High confidence or none at all, is in no triage plan; nor is a message
+# whose answers are all missing (an empty reply), whatever its content,
+# completeness and code vetoes
+law uncertain_changes_nothing:
+  for v: Jev.Verdict
+  for unsafe: {Jev.is_safe(v) == False{} : Bool}
+  for key: String
+  for conf: Jev.Band
+  for unsure: {Jev.is_high(conf) == False{} : Bool}
+  for candidates: List<&2, String>
+  for none: String
+  for c: Jev.Content
+  for whole: Jev.Completeness
+  for vetoes: List<&2, String>
+  for uid: U32
+  for keys: List<&2, String>
+  for mbox: String
+  for cats: List<&2, String>
+  for reserved: List<&2, String>
+  for move: Bool
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{uid,
+       Jev.filing(v, Jev.category_of(Jev.Picked{key, conf}, candidates, none))}]),
+       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>} &
+   {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{uid,
+       Jev.filing(v, Jev.category_of(Jev.NoPick{}, candidates, none))}]),
+       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>} &
+   {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{uid,
+       Jev.filing(Jev.verdict(c, whole, vetoes, Jev.answers_for(J.JNull{}, uid, keys)),
+         Jev.category_of(Jev.answers_category(Jev.answers_for(J.JNull{}, uid, keys)),
+           candidates, none))}]),
+       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>})
+
 # Dry runs
 # --------
 
@@ -754,8 +893,8 @@ law headers_state_has_no_body:
         [J.kv("attachments", Jev.attachments_json(atts))]))
     : J.Json}
 
-# LAW: a missing answer keeps the message and flags it (Jev.suspects reads
-# both), suggests nothing and files it nowhere, whatever the key,
+# LAW: a missing answer reads as Missing, which the injection screen flags
+# (Jev.suspects), suggests nothing and files it nowhere, whatever the key,
 # candidates and none key
 law missing_answer_is_cautious:
   for key: String

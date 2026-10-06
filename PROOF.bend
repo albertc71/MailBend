@@ -9,6 +9,7 @@
 
 import Base
 import ./LAWS.bend as Laws
+import ./src/json.bend as J
 import ./src/imap.bend as I
 import ./src/jev.bend as Jev
 import ./src/ops.bend as Ops
@@ -120,6 +121,12 @@ def Laws.thread_plans_write_nothing(folders, keys, found):
     thread_search_writes_nothing(folders, keys)) :
     {Bool.or(_, I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
   thread_headers_write_nothing(found)
+
+def Laws.sent_search_writes_nothing(sent, addrs):
+  thread_search_writes_nothing([sent], Ops.sent_keys(addrs))
+
+def Laws.reread_flags_writes_nothing(mbox, uids):
+  {==}
 
 def Laws.classify_writes_nothing(mbox, uids, body, max):
   match body:
@@ -666,6 +673,563 @@ def Laws.label_creates_no_folder(mbox, uids, label, move, uidplus, uidv):
           {==}
         case False{}:
           {==}
+
+# Triage
+# ------
+
+# A triage plan is the move plans of its moves, or none when the plan's
+# own check of the moves fails: each law goes through a .if lemma that
+# takes that check's verdict, `ok`, and (where the law needs what the check
+# found) `e`, the verdict's equation. The laws state their promises on their
+# own, so a lemma derives each from the check, part by part. The move plans
+# are a list over the moves, so the lemmas about them go by induction over
+# it, using a fact about one plan_move at each step. A failed premise
+# True == False is refuted through a motive that sends True to Unit and
+# False to Empty.
+
+def bool_motive(b: Bool) -> Type:
+  match b:
+    case True{}:
+      Unit
+    case False{}:
+      Empty
+
+def true_is_not_false(e: {True{} == False{} : Bool}) -> Empty:
+  %e : bool_motive(_)
+  Unit{}
+
+def and_left(a: Bool, -b: Bool, e: {Bool.and(a, b) == True{} : Bool}) -> {a == True{} : Bool}:
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      Empty.absurd({False{} == True{} : Bool},
+        true_is_not_false(Equal.sym(Bool, False{}, True{}, e)))
+
+def and_right(a: Bool, -b: Bool, e: {Bool.and(a, b) == True{} : Bool}) -> {b == True{} : Bool}:
+  match a:
+    case True{}:
+      e
+    case False{}:
+      Empty.absurd({b == True{} : Bool}, true_is_not_false(Equal.sym(Bool, False{}, True{}, e)))
+
+def or_false_left(a: Bool, -b: Bool, e: {Bool.or(a, b) == False{} : Bool}) -> {a == False{} : Bool}:
+  match a:
+    case True{}:
+      Empty.absurd({True{} == False{} : Bool}, true_is_not_false(e))
+    case False{}:
+      {==}
+
+def or_false_right(a: Bool, -b: Bool, e: {Bool.or(a, b) == False{} : Bool})
+  -> {b == False{} : Bool}:
+  match a:
+    case True{}:
+      Empty.absurd({b == False{} : Bool}, true_is_not_false(e))
+    case False{}:
+      e
+
+def not_true(b: Bool, e: {Bool.not(b) == True{} : Bool}) -> {b == False{} : Bool}:
+  match b:
+    case True{}:
+      Empty.absurd({True{} == False{} : Bool},
+        true_is_not_false(Equal.sym(Bool, False{}, True{}, e)))
+    case False{}:
+      {==}
+
+# The guard's verdict on the moves.
+def triage_ok(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  +ms: List<&2, Ops.FolderUids>
+) -> Bool:
+  Ops.dests_ok(mbox, cats, reserved, ms) && Bool.not(Ops.repeats(Ops.uids_per_move(ms)))
+
+# The folders the moves go into, in order.
+def move_dests(ms: List<&2, Ops.FolderUids>) -> List<&2, String>:
+  match ms:
+    case Nil{}:
+      []
+    case Ops.FolderUids{dest, uids} <> t:
+      dest <> move_dests(t)
+
+# With MOVE, or by copy with UIDPLUS, the plans move or copy into the
+# moves' folders, in order; with neither there are no plans to do so.
+def dests_by_move(-mbox: String, ms: List<&2, Ops.FolderUids>, -uidplus: Bool, -uidv: U32)
+  -> {Ops.plans_dests(Ops.move_plans(mbox, ms, True{}, uidplus, uidv)) == move_dests(ms)
+       : List<&2, String>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      %dests_by_move(mbox, t, uidplus, uidv) :
+        {Con{dest, Ops.plans_dests(Ops.move_plans(mbox, t, True{}, uidplus, uidv))} ==
+          Con{dest, _} : List<&2, String>}
+      {==}
+
+def dests_by_copy(-mbox: String, ms: List<&2, Ops.FolderUids>, -uidv: U32)
+  -> {Ops.plans_dests(Ops.move_plans(mbox, ms, False{}, True{}, uidv)) == move_dests(ms)
+       : List<&2, String>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      %dests_by_copy(mbox, t, uidv) :
+        {Con{dest, Ops.plans_dests(Ops.move_plans(mbox, t, False{}, True{}, uidv))} ==
+          Con{dest, _} : List<&2, String>}
+      {==}
+
+def dests_by_none(-mbox: String, ms: List<&2, Ops.FolderUids>, -uidv: U32)
+  -> {Ops.plans_dests(Ops.move_plans(mbox, ms, False{}, False{}, uidv)) == []
+       : List<&2, String>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      dests_by_none(mbox, t, uidv)
+
+# The parts of the check of one destination.
+def unreserved(+reserved: List<&2, String>, +dest: String) -> Bool:
+  Bool.not(Ops.named_in("INBOX" <> reserved, dest))
+
+def offered(+cats: List<&2, String>, +dest: String) -> Bool:
+  String.eq(dest, Ops.review_folder()) || List.contains(~String, ~String.eq, cats, dest)
+
+def dest_not_source(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>, +dest: String,
+  e: {Ops.triage_dest(mbox, cats, reserved, dest) == True{} : Bool})
+  -> {Bool.not(I.same_name(dest, mbox)) == True{} : Bool}:
+  and_left(Bool.not(I.same_name(dest, mbox)),
+    Bool.and(unreserved(reserved, dest), offered(cats, dest)), e)
+
+def dest_unreserved(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>, +dest: String,
+  e: {Ops.triage_dest(mbox, cats, reserved, dest) == True{} : Bool})
+  -> {unreserved(reserved, dest) == True{} : Bool}:
+  and_left(unreserved(reserved, dest), offered(cats, dest),
+    and_right(Bool.not(I.same_name(dest, mbox)),
+      Bool.and(unreserved(reserved, dest), offered(cats, dest)), e))
+
+def dest_offered(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>, +dest: String,
+  e: {Ops.triage_dest(mbox, cats, reserved, dest) == True{} : Bool})
+  -> {offered(cats, dest) == True{} : Bool}:
+  and_right(unreserved(reserved, dest), offered(cats, dest),
+    and_right(Bool.not(I.same_name(dest, mbox)),
+      Bool.and(unreserved(reserved, dest), offered(cats, dest)), e))
+
+# Each part, for every move the check passed.
+def offered_moves(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  ms: List<&2, Ops.FolderUids>,
+  +e: {Ops.dests_ok(mbox, cats, reserved, ms) == True{} : Bool})
+  -> {Ops.all_offered(cats, move_dests(ms)) == True{} : Bool}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{+dest, uids} <> +t:
+      %Equal.sym(Bool, offered(cats, dest), True{},
+        dest_offered(mbox, cats, reserved, dest,
+          and_left(Ops.triage_dest(mbox, cats, reserved, dest),
+            Ops.dests_ok(mbox, cats, reserved, t), e))) :
+        {Bool.and(_, Ops.all_offered(cats, move_dests(t))) == True{} : Bool}
+      offered_moves(mbox, cats, reserved, t,
+        and_right(Ops.triage_dest(mbox, cats, reserved, dest),
+          Ops.dests_ok(mbox, cats, reserved, t), e))
+
+def unreserved_moves(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  ms: List<&2, Ops.FolderUids>,
+  +e: {Ops.dests_ok(mbox, cats, reserved, ms) == True{} : Bool})
+  -> {Ops.none_named("INBOX" <> reserved, move_dests(ms)) == True{} : Bool}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{+dest, uids} <> +t:
+      %Equal.sym(Bool, unreserved(reserved, dest), True{},
+        dest_unreserved(mbox, cats, reserved, dest,
+          and_left(Ops.triage_dest(mbox, cats, reserved, dest),
+            Ops.dests_ok(mbox, cats, reserved, t), e))) :
+        {Bool.and(_, Ops.none_named("INBOX" <> reserved, move_dests(t))) == True{} : Bool}
+      unreserved_moves(mbox, cats, reserved, t,
+        and_right(Ops.triage_dest(mbox, cats, reserved, dest),
+          Ops.dests_ok(mbox, cats, reserved, t), e))
+
+def not_source_moves(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  ms: List<&2, Ops.FolderUids>,
+  +e: {Ops.dests_ok(mbox, cats, reserved, ms) == True{} : Bool})
+  -> {Ops.none_same(mbox, move_dests(ms)) == True{} : Bool}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{+dest, uids} <> +t:
+      %Equal.sym(Bool, Bool.not(I.same_name(dest, mbox)), True{},
+        dest_not_source(mbox, cats, reserved, dest,
+          and_left(Ops.triage_dest(mbox, cats, reserved, dest),
+            Ops.dests_ok(mbox, cats, reserved, t), e))) :
+        {Bool.and(_, Ops.none_same(mbox, move_dests(t))) == True{} : Bool}
+      not_source_moves(mbox, cats, reserved, t,
+        and_right(Ops.triage_dest(mbox, cats, reserved, dest),
+          Ops.dests_ok(mbox, cats, reserved, t), e))
+
+# What triage_moves_only_to_known_folders says of the folders `ds`.
+def known(+mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  +ds: List<&2, String>) -> Type:
+  ({Ops.all_offered(cats, ds) == True{} : Bool} &
+   {Ops.none_named("INBOX" <> reserved, ds) == True{} : Bool} &
+   {Ops.none_same(mbox, ds) == True{} : Bool})
+
+def known_dests(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  +ms: List<&2, Ops.FolderUids>,
+  +e: {Ops.dests_ok(mbox, cats, reserved, ms) == True{} : Bool})
+  -> known(mbox, cats, reserved, move_dests(ms)):
+  (offered_moves(mbox, cats, reserved, ms, e), unreserved_moves(mbox, cats, reserved, ms, e),
+   not_source_moves(mbox, cats, reserved, ms, e))
+
+def known_plans(
+  +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  +ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, +uidv: U32,
+  e: {Ops.dests_ok(mbox, cats, reserved, ms) == True{} : Bool})
+  -> known(mbox, cats, reserved, Ops.plans_dests(Ops.move_plans(mbox, ms, move, uidplus, uidv))):
+  match move:
+    case True{}:
+      %Equal.sym(List<&2, String>,
+        Ops.plans_dests(Ops.move_plans(mbox, ms, True{}, uidplus, uidv)), move_dests(ms),
+        dests_by_move(mbox, ms, uidplus, uidv)) :
+        known(mbox, cats, reserved, _)
+      known_dests(mbox, cats, reserved, ms, e)
+    case False{}:
+      match uidplus:
+        case True{}:
+          %Equal.sym(List<&2, String>,
+            Ops.plans_dests(Ops.move_plans(mbox, ms, False{}, True{}, uidv)), move_dests(ms),
+            dests_by_copy(mbox, ms, uidv)) :
+            known(mbox, cats, reserved, _)
+          known_dests(mbox, cats, reserved, ms, e)
+        case False{}:
+          %Equal.sym(List<&2, String>,
+            Ops.plans_dests(Ops.move_plans(mbox, ms, False{}, False{}, uidv)), [],
+            dests_by_none(mbox, ms, uidv)) :
+            known(mbox, cats, reserved, _)
+          ({==}, {==}, {==})
+
+def triage_moves_only_to_known_folders.if(
+  ok: Bool, +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  +ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, uidv: U32,
+  e: {triage_ok(mbox, cats, reserved, ms) == ok : Bool})
+  -> known(mbox, cats, reserved,
+       Ops.plans_dests(Ops.plan_triage.if(ok, mbox, ms, move, uidplus, uidv))):
+  match ok:
+    case True{}:
+      known_plans(mbox, cats, reserved, ms, move, uidplus, uidv,
+        and_left(Ops.dests_ok(mbox, cats, reserved, ms),
+          Bool.not(Ops.repeats(Ops.uids_per_move(ms))), e))
+    case False{}:
+      ({==}, {==}, {==})
+
+def Laws.triage_moves_only_to_known_folders(mbox, cats, reserved, ms, move, uidplus, uidv):
+  +m = mbox
+  +cs = cats
+  +rs = reserved
+  +xs = ms
+  triage_moves_only_to_known_folders.if(triage_ok(m, cs, rs, xs), m, cs, rs, xs, move, uidplus,
+    uidv, {==})
+
+def move_plans_change_no_mailbox(
+  +mbox: String, ms: List<&2, Ops.FolderUids>, +move: Bool, +uidplus: Bool, +uidv: U32)
+  -> {Ops.plans_mailbox_changes(Ops.move_plans(mbox, ms, move, uidplus, uidv)) == []
+       : List<&2, I.Cmd>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      %Equal.sym(List<&2, I.Cmd>,
+        Ops.mailbox_changes(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)), [],
+        Laws.label_creates_no_folder(mbox, uids, dest, move, uidplus, uidv)) :
+        {List.append(&2, I.Cmd, _,
+          Ops.plans_mailbox_changes(Ops.move_plans(mbox, t, move, uidplus, uidv))) == []
+          : List<&2, I.Cmd>}
+      move_plans_change_no_mailbox(mbox, t, move, uidplus, uidv)
+
+def triage_creates_no_mailbox.if(
+  ok: Bool, mbox: String, ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, uidv: U32)
+  -> {Ops.plans_mailbox_changes(Ops.plan_triage.if(ok, mbox, ms, move, uidplus, uidv)) == []
+       : List<&2, I.Cmd>}:
+  match ok:
+    case True{}:
+      move_plans_change_no_mailbox(mbox, ms, move, uidplus, uidv)
+    case False{}:
+      {==}
+
+def Laws.triage_creates_no_mailbox(mbox, cats, reserved, ms, move, uidplus, uidv):
+  +m = mbox
+  +xs = ms
+  triage_creates_no_mailbox.if(triage_ok(m, cats, reserved, xs), m, xs, move, uidplus, uidv)
+
+# With MOVE, or by copy with UIDPLUS, the plans move exactly the UIDs of the
+# moves, in order; with neither there are no plans to move anything.
+def moved_by_move(
+  -mbox: String, ms: List<&2, Ops.FolderUids>, -uidplus: Bool, -uidv: U32)
+  -> {Ops.plans_moved_uids(Ops.move_plans(mbox, ms, True{}, uidplus, uidv)) ==
+       Ops.uids_per_move(ms) : List<&2, List<&2, U32>>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      %moved_by_move(mbox, t, uidplus, uidv) :
+        {Con{uids, Ops.plans_moved_uids(Ops.move_plans(mbox, t, True{}, uidplus, uidv))} ==
+          Con{uids, _} : List<&2, List<&2, U32>>}
+      {==}
+
+def moved_by_copy(-mbox: String, ms: List<&2, Ops.FolderUids>, -uidv: U32)
+  -> {Ops.plans_moved_uids(Ops.move_plans(mbox, ms, False{}, True{}, uidv)) ==
+       Ops.uids_per_move(ms) : List<&2, List<&2, U32>>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      %moved_by_copy(mbox, t, uidv) :
+        {Con{uids, Ops.plans_moved_uids(Ops.move_plans(mbox, t, False{}, True{}, uidv))} ==
+          Con{uids, _} : List<&2, List<&2, U32>>}
+      {==}
+
+def moved_by_none(-mbox: String, ms: List<&2, Ops.FolderUids>, -uidv: U32)
+  -> {Ops.plans_moved_uids(Ops.move_plans(mbox, ms, False{}, False{}, uidv)) == []
+       : List<&2, List<&2, U32>>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      moved_by_none(mbox, t, uidv)
+
+# UIDs the check found unrepeated are distinct, UID by UID.
+def distinct_if_unrepeated(xs: List<&2, U32>, +e: {Ops.repeated(xs) == False{} : Bool})
+  -> {Ops.distinct(xs) == True{} : Bool}:
+  match xs:
+    case Nil{}:
+      {==}
+    case +x <> +t:
+      %Equal.sym(Bool, List.contains(~U32, ~U32.is_eq, t, x), False{},
+        or_false_left(List.contains(~U32, ~U32.is_eq, t, x), Ops.repeated(t), e)) :
+        {Bool.and(Bool.not(_), Ops.distinct(t)) == True{} : Bool}
+      distinct_if_unrepeated(t,
+        or_false_right(List.contains(~U32, ~U32.is_eq, t, x), Ops.repeated(t), e))
+
+def triage_one_move_per_message.put(
+  -mbox: String, +ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, -uidv: U32,
+  r: {Ops.repeats(Ops.uids_per_move(ms)) == False{} : Bool})
+  -> {Ops.distinct(List.concat(&2, U32,
+       Ops.plans_moved_uids(Ops.move_plans(mbox, ms, move, uidplus, uidv)))) == True{} : Bool}:
+  match move:
+    case True{}:
+      %Equal.sym(List<&2, List<&2, U32>>,
+        Ops.plans_moved_uids(Ops.move_plans(mbox, ms, True{}, uidplus, uidv)),
+        Ops.uids_per_move(ms), moved_by_move(mbox, ms, uidplus, uidv)) :
+        {Ops.distinct(List.concat(&2, U32, _)) == True{} : Bool}
+      distinct_if_unrepeated(List.concat(&2, U32, Ops.uids_per_move(ms)), r)
+    case False{}:
+      match uidplus:
+        case True{}:
+          %Equal.sym(List<&2, List<&2, U32>>,
+            Ops.plans_moved_uids(Ops.move_plans(mbox, ms, False{}, True{}, uidv)),
+            Ops.uids_per_move(ms), moved_by_copy(mbox, ms, uidv)) :
+            {Ops.distinct(List.concat(&2, U32, _)) == True{} : Bool}
+          distinct_if_unrepeated(List.concat(&2, U32, Ops.uids_per_move(ms)), r)
+        case False{}:
+          %Equal.sym(List<&2, List<&2, U32>>,
+            Ops.plans_moved_uids(Ops.move_plans(mbox, ms, False{}, False{}, uidv)), [],
+            moved_by_none(mbox, ms, uidv)) :
+            {Ops.distinct(List.concat(&2, U32, _)) == True{} : Bool}
+          {==}
+
+def triage_one_move_per_message.if(
+  ok: Bool, +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
+  +ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, uidv: U32,
+  e: {triage_ok(mbox, cats, reserved, ms) == ok : Bool})
+  -> {Ops.distinct(List.concat(&2, U32,
+       Ops.plans_moved_uids(Ops.plan_triage.if(ok, mbox, ms, move, uidplus, uidv)))) ==
+       True{} : Bool}:
+  match ok:
+    case True{}:
+      +unique = Bool.not(Ops.repeats(Ops.uids_per_move(ms)))
+      triage_one_move_per_message.put(mbox, ms, move, uidplus, uidv,
+        not_true(Ops.repeats(Ops.uids_per_move(ms)),
+          and_right(Ops.dests_ok(mbox, cats, reserved, ms), unique, e)))
+    case False{}:
+      {==}
+
+def Laws.triage_one_move_per_message(mbox, cats, reserved, ms, move, uidplus, uidv):
+  +m = mbox
+  +cs = cats
+  +rs = reserved
+  +xs = ms
+  triage_one_move_per_message.if(triage_ok(m, cs, rs, xs), m, cs, rs, xs, move, uidplus, uidv,
+    {==})
+
+# one move plan's UID EXPUNGEs and UID COPYs, by computation
+def move_expunges_copied(
+  -mbox: String, -uids: List<&2, U32>, -dest: String, move: Bool, uidplus: Bool, -uidv: U32)
+  -> {Ops.expunged_uids(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)) ==
+       Ops.copied_uids(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv))
+       : List<&2, List<&2, U32>>}:
+  match move:
+    case True{}:
+      {==}
+    case False{}:
+      match uidplus:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+
+def move_plans_expunge_copied(
+  -mbox: String, ms: List<&2, Ops.FolderUids>, +move: Bool, +uidplus: Bool, -uidv: U32)
+  -> {Ops.plans_expunged(Ops.move_plans(mbox, ms, move, uidplus, uidv)) ==
+       Ops.plans_copied(Ops.move_plans(mbox, ms, move, uidplus, uidv))
+       : List<&2, List<&2, List<&2, U32>>>}:
+  match ms:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{dest, uids} <> t:
+      %move_expunges_copied(mbox, uids, dest, move, uidplus, uidv) :
+        {Con{Ops.expunged_uids(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)),
+            Ops.plans_expunged(Ops.move_plans(mbox, t, move, uidplus, uidv))} ==
+          Con{_, Ops.plans_copied(Ops.move_plans(mbox, t, move, uidplus, uidv))}
+          : List<&2, List<&2, List<&2, U32>>>}
+      %move_plans_expunge_copied(mbox, t, move, uidplus, uidv) :
+        {Con{Ops.expunged_uids(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)),
+            Ops.plans_expunged(Ops.move_plans(mbox, t, move, uidplus, uidv))} ==
+          Con{Ops.expunged_uids(Ops.plan_move(mbox, uids, dest, move, uidplus, uidv)), _}
+          : List<&2, List<&2, List<&2, U32>>>}
+      {==}
+
+def triage_expunges_only_moved.if(
+  ok: Bool, -mbox: String, ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, -uidv: U32)
+  -> {Ops.plans_expunged(Ops.plan_triage.if(ok, mbox, ms, move, uidplus, uidv)) ==
+       Ops.plans_copied(Ops.plan_triage.if(ok, mbox, ms, move, uidplus, uidv))
+       : List<&2, List<&2, List<&2, U32>>>}:
+  match ok:
+    case True{}:
+      move_plans_expunge_copied(mbox, ms, move, uidplus, uidv)
+    case False{}:
+      {==}
+
+def Laws.triage_expunges_only_moved(mbox, cats, reserved, ms, move, uidplus, uidv):
+  +m = mbox
+  +xs = ms
+  triage_expunges_only_moved.if(triage_ok(m, cats, reserved, xs), m, xs, move, uidplus, uidv)
+
+# filing a message that is not safe to delete, case by case over its verdict
+def filing_matches_table.unsafe(
+  v: Jev.Verdict, unsafe: {Jev.is_safe(v) == False{} : Bool}, -folder: String)
+  -> ({Jev.filing(v, Jev.Filed{folder}) == Jev.ToFolder{folder} : Jev.Action} &
+      {Jev.filing(v, Jev.Proposed{folder}) == Jev.Stay{} : Jev.Action} &
+      {Jev.filing(v, Jev.NeedsNew{}) == Jev.Stay{} : Jev.Action} &
+      {Jev.filing(v, Jev.Uncategorised{}) == Jev.Stay{} : Jev.Action}):
+  match v:
+    case Jev.SafeToDelete{}:
+      Empty.absurd(
+        ({Jev.filing(Jev.SafeToDelete{}, Jev.Filed{folder}) == Jev.ToFolder{folder}
+            : Jev.Action} &
+         {Jev.filing(Jev.SafeToDelete{}, Jev.Proposed{folder}) == Jev.Stay{} : Jev.Action} &
+         {Jev.filing(Jev.SafeToDelete{}, Jev.NeedsNew{}) == Jev.Stay{} : Jev.Action} &
+         {Jev.filing(Jev.SafeToDelete{}, Jev.Uncategorised{}) == Jev.Stay{} : Jev.Action}),
+        true_is_not_false(unsafe))
+    case Jev.Keep{}:
+      ({==}, {==}, {==}, {==})
+    case Jev.Review{}:
+      ({==}, {==}, {==}, {==})
+    case Jev.Unanswered{}:
+      ({==}, {==}, {==}, {==})
+
+def Laws.filing_matches_table(cat, v, unsafe, folder):
+  ({==}, filing_matches_table.unsafe(v, unsafe, folder))
+
+# A message that stays is in no plan: it has no move, and no moves pass the
+# check, which leaves no plan.
+def stays_unplanned(
+  -mbox: String, -cats: List<&2, String>, -reserved: List<&2, String>, -uid: U32, -move: Bool,
+  -uidplus: Bool, -uidv: U32)
+  -> {Ops.plan_triage(mbox, cats, reserved,
+       Ops.triage_moves(mbox, [Ops.Placement{uid, Jev.Stay{}}]), move, uidplus, uidv) == []
+       : List<&2, List<&2, I.Cmd>>}:
+  {==}
+
+# A category below High confidence, or none, files nothing: case by case
+# over the verdict, then the confidence.
+def unsure_files_nothing(
+  v: Jev.Verdict, unsafe: {Jev.is_safe(v) == False{} : Bool}, -cat: Jev.Category,
+  e: {Jev.filed(cat) == Jev.Stay{} : Jev.Action})
+  -> {Jev.filing(v, cat) == Jev.Stay{} : Jev.Action}:
+  match v:
+    case Jev.SafeToDelete{}:
+      Empty.absurd({Jev.ToReview{} == Jev.Stay{} : Jev.Action}, true_is_not_false(unsafe))
+    case Jev.Keep{}:
+      e
+    case Jev.Review{}:
+      e
+    case Jev.Unanswered{}:
+      e
+
+def unsure_is_unfiled(
+  -key: String, conf: Jev.Band, unsure: {Jev.is_high(conf) == False{} : Bool},
+  -candidates: List<&2, String>, -none: String)
+  -> {Jev.filed(Jev.category_of(Jev.Picked{key, conf}, candidates, none)) == Jev.Stay{}
+       : Jev.Action}:
+  match conf:
+    case Jev.Low{}:
+      {==}
+    case Jev.Mid{}:
+      {==}
+    case Jev.High{}:
+      Empty.absurd(
+        {Jev.filed(Jev.category_of(Jev.Picked{key, Jev.High{}}, candidates, none)) == Jev.Stay{}
+          : Jev.Action},
+        true_is_not_false(unsure))
+    case Jev.Missing{}:
+      {==}
+
+# With every answer missing, a code veto keeps the message and otherwise it
+# is Unanswered; either way it has no category, so it stays.
+def missing_stays(
+  -c: Jev.Content, -whole: Jev.Completeness, vetoes: List<&2, String>, -uid: U32,
+  -keys: List<&2, String>, -candidates: List<&2, String>, -none: String)
+  -> {Jev.filing(Jev.verdict(c, whole, vetoes, Jev.answers_for(J.JNull{}, uid, keys)),
+       Jev.category_of(Jev.answers_category(Jev.answers_for(J.JNull{}, uid, keys)),
+         candidates, none)) == Jev.Stay{} : Jev.Action}:
+  match vetoes:
+    case Nil{}:
+      {==}
+    case h <> t:
+      {==}
+
+def Laws.uncertain_changes_nothing(
+  v, unsafe, key, conf, unsure, candidates, none, c, whole, vetoes, uid, keys, mbox, cats,
+  reserved, move, uidplus, uidv):
+  +u = uid
+  +a = v
+  +no = unsafe
+  (%Equal.sym(Jev.Action,
+      Jev.filing(a, Jev.category_of(Jev.Picked{key, conf}, candidates, none)), Jev.Stay{},
+      unsure_files_nothing(a, no, Jev.category_of(Jev.Picked{key, conf}, candidates, none),
+        unsure_is_unfiled(key, conf, unsure, candidates, none))) :
+     {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{u, _}]),
+       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
+   stays_unplanned(mbox, cats, reserved, u, move, uidplus, uidv),
+   %Equal.sym(Jev.Action, Jev.filing(a, Jev.category_of(Jev.NoPick{}, candidates, none)),
+      Jev.Stay{},
+      unsure_files_nothing(a, no, Jev.category_of(Jev.NoPick{}, candidates, none), {==})) :
+     {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{u, _}]),
+       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
+   stays_unplanned(mbox, cats, reserved, u, move, uidplus, uidv),
+   %Equal.sym(Jev.Action,
+      Jev.filing(Jev.verdict(c, whole, vetoes, Jev.answers_for(J.JNull{}, u, keys)),
+        Jev.category_of(Jev.answers_category(Jev.answers_for(J.JNull{}, u, keys)),
+          candidates, none)),
+      Jev.Stay{}, missing_stays(c, whole, vetoes, u, keys, candidates, none)) :
+     {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{u, _}]),
+       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
+   stays_unplanned(mbox, cats, reserved, u, move, uidplus, uidv))
 
 # Dry runs
 # --------
