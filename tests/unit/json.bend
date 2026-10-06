@@ -18,9 +18,9 @@ def round_trips(xs: List<&2, String>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{h, Nil{}}:
+    case h <> Nil{}:
       round_trip(h)
-    case Con{h, t}:
+    case h <> t:
       round_trip(h) ++ " " ++ round_trips(t)
 
 # Parses s, or falls back to null.

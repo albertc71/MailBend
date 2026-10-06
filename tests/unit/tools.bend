@@ -26,7 +26,7 @@ def show_u32s(xs: List<&2, U32>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{x, t}:
+    case x <> t:
       U32.show(x) ++ " " ++ show_u32s(t)
 
 def show_maybe_u32s(m: Maybe<&2, List<&2, U32>>) -> String:
@@ -75,7 +75,7 @@ def show_msgs(ms: List<&2, I.Msg>) -> String:
   match ms:
     case Nil{}:
       ""
-    case Con{I.Msg{uid, flags, date, size, headers, body}, t}:
+    case I.Msg{uid, flags, date, size, headers, body} <> t:
       U32.show(uid) ++ " " ++ show_msgs(t)
 
 def show_change(c: T.FolderChange) -> String:
@@ -131,7 +131,7 @@ def show_attaches(xs: List<&2, M.Attach>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{x, t}:
+    case x <> t:
       show_attach(x) ++ ";" ++ show_attaches(t)
 
 def show_atts(a: T.Attachments()) -> String:
@@ -794,7 +794,7 @@ def names_of(ts: List<&2, J.Json>) -> List<&2, String>:
   match ts:
     case Nil{}:
       []
-    case Con{t, rest}:
+    case t <> rest:
       T.str_arg(t, "name", "") <> names_of(rest)
 
 def tool_names(ts: J.Json) -> String:

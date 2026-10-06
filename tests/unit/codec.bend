@@ -41,7 +41,7 @@ def widths(ns: List<&2, U32>) -> String:
   match ns:
     case Nil{}:
       ""
-    case Con{n, t}:
+    case n <> t:
       U32.show(C.utf8_width(n)) ++ widths(t)
 
 def hex_vals(s: String) -> String:

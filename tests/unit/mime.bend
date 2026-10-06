@@ -48,7 +48,7 @@ def show_atts(xs: List<&2, M.Att>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{M.Att{n, t, s}, r}:
+    case M.Att{n, t, s} <> r:
       n ++ "|" ++ t ++ "|" ++ U32.show(s) ++ ";" ++ show_atts(r)
 
 def show_parts(p: M.Parts) -> String:
@@ -102,7 +102,7 @@ def show_hdrs(hs: List<&2, M.Hdr>) -> String:
   match hs:
     case Nil{}:
       ""
-    case Con{M.Hdr{n, v}, t}:
+    case M.Hdr{n, v} <> t:
       n ++ "=" ++ v ++ ";" ++ show_hdrs(t)
 
 # A message's parts with nothing trimmed and line breaks made visible.

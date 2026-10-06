@@ -21,14 +21,14 @@ def specs(xs: List<&2, String>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{x, t}:
+    case x <> t:
       "[" ++ M.addr_spec(x) ++ "]" ++ specs(t)
 
 def oks(xs: List<&2, String>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{x, t}:
+    case x <> t:
       Bool.show(M.addr_ok(x)) ++ " " ++ oks(t)
 
 def main() -> IO(Unit):

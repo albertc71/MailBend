@@ -243,21 +243,21 @@ def any_writes(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
+    case c <> t:
       writes(effect(c)) || any_writes(t)
 
 def any_expunges(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
+    case c <> t:
       expunges(c) || any_expunges(t)
 
 def any_marks_deleted(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
+    case c <> t:
       marks_deleted(c) || any_marks_deleted(t)
 
 # Modified UTF-7 mailbox names (RFC 3501 5.1.3)
@@ -462,9 +462,9 @@ def uid_set(uids: List<&2, U32>) -> String:
   match uids:
     case Nil{}:
       ""
-    case Con{u, Nil{}}:
+    case u <> Nil{}:
       U32.show(u)
-    case Con{u, t}:
+    case u <> t:
       U32.show(u) ++ "," ++ uid_set(t)
 
 def flag_name(f: Flag) -> String:
@@ -510,7 +510,7 @@ def colour_names.go(cs: List<&2, Colour>) -> List<&2, String>:
   match cs:
     case Nil{}:
       []
-    case Con{c, t}:
+    case c <> t:
       colour_name(c) <> colour_names.go(t)
 
 def colour_names() -> List<&2, String>:
@@ -526,7 +526,7 @@ def colour_from_name.go(
   match cs:
     case Nil{}:
       found
-    case Con{+c, t}:
+    case +c <> t:
       colour_from_name.go(t, n,
         Bool.pick(Maybe<&2, Colour>, String.eq(colour_name(c), n), Some{c}, found))
 
@@ -555,9 +555,9 @@ def flag_list(fs: List<&2, Flag>) -> String:
   match fs:
     case Nil{}:
       ""
-    case Con{f, Nil{}}:
+    case f <> Nil{}:
       flag_name(f)
-    case Con{f, t}:
+    case f <> t:
       flag_name(f) ++ " " ++ flag_list(t)
 
 def key_str(k: Key) -> String:
@@ -621,9 +621,9 @@ def keys_str(ks: List<&2, Key>) -> String:
   match ks:
     case Nil{}:
       ""
-    case Con{k, Nil{}}:
+    case k <> Nil{}:
       key_str(k)
-    case Con{k, t}:
+    case k <> t:
       key_str(k) ++ " " ++ keys_str(t)
 
 # The SEARCH criteria: ALL when there are none, and CHARSET UTF-8 when a
@@ -632,7 +632,7 @@ def search_args(+ks: List<&2, Key>) -> String:
   match ks:
     case Nil{}:
       "ALL"
-    case Con{h, t}:
+    case h <> t:
       Bool.pick(String, List.all(~&2, ~Key, ~key_plain, ks), "", "CHARSET UTF-8 ") ++
         keys_str(ks)
 
@@ -659,9 +659,9 @@ def items_str(xs: List<&2, Item>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{i, Nil{}}:
+    case i <> Nil{}:
       item_str(i)
-    case Con{i, t}:
+    case i <> t:
       item_str(i) ++ " " ++ items_str(t)
 
 def store_op(add: Bool) -> String:
@@ -745,7 +745,7 @@ def script.go(cs: List<&2, Cmd>, +n: U32) -> String:
   match cs:
     case Nil{}:
       ""
-    case Con{+c, t}:
+    case +c <> t:
       script.line(c, n) ++ crlf() ++ script.go(t, next_tag(c, n))
 
 def script(cs: List<&2, Cmd>) -> String:
@@ -756,7 +756,7 @@ def tag_count(cs: List<&2, Cmd>) -> U32:
   match cs:
     case Nil{}:
       0
-    case Con{c, t}:
+    case c <> t:
       (Bool.pick(U32, is_expect(c), 0, 1) + tag_count(t) : U32)
 
 # How many commands of a script are UNSUBSCRIBEs.
@@ -764,9 +764,9 @@ def unsubscribe_count(cs: List<&2, Cmd>) -> U32:
   match cs:
     case Nil{}:
       0
-    case Con{CUnsubscribe{m}, t}:
+    case CUnsubscribe{m} <> t:
       (1 + unsubscribe_count(t) : U32)
-    case Con{c, t}:
+    case c <> t:
       unsubscribe_count(t)
 
 # The tag number script() gives the first UID COPY, from tag `n` on; 0 when
@@ -775,9 +775,9 @@ def copy_tag(cs: List<&2, Cmd>, n: U32) -> U32:
   match cs:
     case Nil{}:
       0
-    case Con{CCopy{u, d}, t}:
+    case CCopy{u, d} <> t:
       n
-    case Con{c, t}:
+    case c <> t:
       copy_tag(t, next_tag(c, n))
 
 # Dates
@@ -816,7 +816,7 @@ def imap_date.nums(
 
 def imap_date.parts(ps: List<&2, String>) -> Maybe<&2, String>:
   match ps:
-    case Con{y, Con{m, Con{d, Nil{}}}}:
+    case y <> m <> d <> Nil{}:
       imap_date.nums(y, U32.read(m), U32.read(d))
     case _:
       None{}
@@ -1034,7 +1034,7 @@ def tokens.push(
   stack: List<&2, List<&2, Value>>
 ) -> List<&2, List<&2, Value>>:
   match stack:
-    case Con{top, rest}:
+    case top <> rest:
       (v <> top) <> rest
     case Nil{}:
       [[v]]
@@ -1043,7 +1043,7 @@ def tokens.close(
   +stack: List<&2, List<&2, Value>>
 ) -> List<&2, List<&2, Value>>:
   match stack:
-    case Con{top, Con{up, rest}}:
+    case top <> up <> rest:
       (VList{List.reverse(&2, Value, top)} <> up) <> rest
     case _:
       stack
@@ -1063,7 +1063,7 @@ def tokens.literal(
   lits: List<&2, String>
 ) -> Tokenizer:
   match lits:
-    case Con{l, rest}:
+    case l <> rest:
       Tokenizer{TPlain{}, tokens.push(VStr{l}, stack), rest}
     case Nil{}:
       Tokenizer{TPlain{}, tokens.push(VStr{""}, stack), []}
@@ -1186,14 +1186,14 @@ def tokens.flatten.go(
   match rest:
     case Nil{}:
       done
-    case Con{up, r}:
+    case up <> r:
       tokens.flatten.go(r, List.reverse(&2, Value, VList{done} <> up))
 
 def tokens.flatten(stack: List<&2, List<&2, Value>>) -> List<&2, Value>:
   match stack:
     case Nil{}:
       []
-    case Con{top, rest}:
+    case top <> rest:
       tokens.flatten.go(rest, List.reverse(&2, Value, top))
 
 # The values once the text ends: an open atom or quoted string is kept.
@@ -1226,7 +1226,7 @@ def Value.texts(vs: List<&2, Value>) -> List<&2, String>:
   match vs:
     case Nil{}:
       []
-    case Con{v, t}:
+    case v <> t:
       Value.text(v) <> Value.texts(t)
 
 # Response lines
@@ -1285,7 +1285,7 @@ def first_line.go(
       Some{last}
     case Nil{} False{}:
       None{}
-    case Con{RLine{+text, lits}, t} False{}:
+    case RLine{+text, lits} <> t False{}:
       first_line.go(~is_hit, t, key, text, is_hit(text, key))
 
 # The text of the first line that `is_hit(text, key)` accepts.
@@ -1313,7 +1313,7 @@ def caps(lines: List<&2, RLine>) -> List<&2, String>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, l}, t}:
+    case RLine{+text, l} <> t:
       List.append(&2, String, caps.line(upper_starts(text, "* CAPABILITY "), text),
         caps(t))
 
@@ -1328,7 +1328,7 @@ type Folder is Data:
 
 def folder_of(vs: List<&2, Value>) -> List<&2, Folder>:
   match vs:
-    case Con{VList{attrs}, Con{d, Con{n, Nil{}}}}:
+    case VList{attrs} <> d <> n <> Nil{}:
       [Folder{mutf7_decode(Value.text(n)), Value.text(d), Value.texts(attrs)}]
     case _:
       []
@@ -1350,7 +1350,7 @@ def listed(+prefix: String, lines: List<&2, RLine>) -> List<&2, Folder>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, lits}, t}:
+    case RLine{+text, lits} <> t:
       List.append(&2, Folder, listed.line(upper_starts(text, prefix), text, lits),
         listed(prefix, t))
 
@@ -1366,7 +1366,7 @@ def has_attr.lowered(attrs: List<&2, String>, +want: String) -> Bool:
   match attrs:
     case Nil{}:
       False{}
-    case Con{attr, rest}:
+    case attr <> rest:
       String.eq(String.to_lower(attr), want) || has_attr.lowered(rest, want)
 
 # Whether a folder's attributes include `a`, in any case.
@@ -1378,7 +1378,7 @@ def special(fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
-    case Con{Folder{name, d, attrs}, t}:
+    case Folder{name, d, attrs} <> t:
       Bool.pick(Maybe<&2, String>, has_attr(attrs, attr), Some{name},
         special(t, attr))
 
@@ -1394,7 +1394,7 @@ def named(fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
-    case Con{Folder{+name, d, a}, t}:
+    case Folder{+name, d, a} <> t:
       Bool.pick(Maybe<&2, String>, same_name(name, want), Some{name},
         named(t, want))
 
@@ -1413,7 +1413,7 @@ def nums(ws: List<&2, String>) -> List<&2, U32>:
   match ws:
     case Nil{}:
       []
-    case Con{w, t}:
+    case w <> t:
       nums.put(U32.read(w), nums(t))
 
 def search_uids.line(hit: Bool, text: String) -> List<&2, U32>:
@@ -1428,7 +1428,7 @@ def search_uids(lines: List<&2, RLine>) -> List<&2, U32>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, l}, t}:
+    case RLine{+text, l} <> t:
       List.append(&2, U32, search_uids.line(upper_starts(text, "* SEARCH"), text),
         search_uids(t))
 
@@ -1525,7 +1525,7 @@ def msg_set(m: Msg, k: String, +v: Value) -> Msg:
 
 def msg_pairs(vs: List<&2, Value>, m: Msg) -> Msg:
   match vs:
-    case Con{VAtom{k}, Con{v, rest}}:
+    case VAtom{k} <> v <> rest:
       msg_pairs(rest, msg_set(m, k, v))
     case _:
       m
@@ -1533,7 +1533,7 @@ def msg_pairs(vs: List<&2, Value>, m: Msg) -> Msg:
 # Whether a FETCH response's items name `key` (upper case).
 def has_item(vs: List<&2, Value>, +key: String) -> Bool:
   match vs:
-    case Con{VAtom{k}, Con{v, rest}}:
+    case VAtom{k} <> v <> rest:
       String.eq(String.to_upper(k), key) || has_item(rest, key)
     case _:
       False{}
@@ -1557,7 +1557,7 @@ def msg_of.need(need_flags: Bool, items: List<&2, Value>) -> Bool:
 
 def msg_of(vs: List<&2, Value>, need_flags: Bool) -> List<&2, Msg>:
   match vs:
-    case Con{n, Con{VAtom{f}, Con{VList{+items}, Nil{}}}}:
+    case n <> VAtom{f} <> VList{+items} <> Nil{}:
       msg_of.if(msg_of.need(need_flags, items), items)
     case _:
       []
@@ -1588,7 +1588,7 @@ def fetches(lines: List<&2, RLine>, +need_flags: Bool) -> List<&2, Msg>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, lits}, t}:
+    case RLine{+text, lits} <> t:
       is_fetch = String.starts_with(text, "* ") &&
         String.contains(String.to_upper(before_paren(text)), " FETCH ")
       List.append(&2, Msg, fetches.line(is_fetch, text, lits, need_flags),
@@ -1642,9 +1642,9 @@ def after_line(lines: List<&2, RLine>, +p: String, hit: Bool) -> List<&2, RLine>
   match lines hit:
     case Nil{} _:
       []
-    case Con{l, t} True{}:
+    case l <> t True{}:
       l <> t
-    case Con{RLine{text, lits}, t} False{}:
+    case RLine{text, lits} <> t False{}:
       after_line(t, p, String.starts_with(text, p))
 
 # The untagged ("* ") lines before the first that starts with `p`. `hit`
@@ -1657,9 +1657,9 @@ def untagged_until(
   match lines hit:
     case Nil{} _:
       []
-    case Con{l, t} True{}:
+    case l <> t True{}:
       []
-    case Con{RLine{+text, lits}, t} False{}:
+    case RLine{+text, lits} <> t False{}:
       List.filter.put(RLine, RLine{text, lits},
         untagged_until(t, p, String.starts_with(text, p)),
         String.starts_with(text, "* "))
@@ -1674,7 +1674,7 @@ def replies(lines: List<&2, RLine>, +n: U32) -> List<&2, RLine>:
 
 def listed_flags(vs: List<&2, Value>) -> List<&2, String>:
   match vs:
-    case Con{VList{xs}, rest}:
+    case VList{xs} <> rest:
       Value.texts(xs)
     case _:
       []

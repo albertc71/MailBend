@@ -27,7 +27,7 @@ def uid_strs(us: List<&2, U32>) -> List<&2, String>:
   match us:
     case Nil{}:
       []
-    case Con{u, t}:
+    case u <> t:
       U32.show(u) <> uid_strs(t)
 
 def uids(us: List<&2, U32>) -> String:
@@ -53,7 +53,7 @@ def op_lines(ops: List<&2, Ops.Op>) -> List<&2, String>:
   match ops:
     case Nil{}:
       []
-    case Con{+op, t}:
+    case +op <> t:
       (Ops.name(op) ++ " ro=" ++ flag(Ops.is_read_only(op))
         ++ " destructive=" ++ flag(Ops.is_destructive(op))
         ++ " back=" ++ maybe_op(Ops.from_name(Ops.name(op)))) <> op_lines(t)

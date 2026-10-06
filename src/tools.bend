@@ -388,9 +388,9 @@ def json_strs(xs: List<&2, J.Json>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{J.JStr{s}, t}:
+    case J.JStr{s} <> t:
       s <> json_strs(t)
-    case Con{x, t}:
+    case x <> t:
       json_strs(t)
 
 def strs_of(m: Maybe<&2, J.Json>) -> List<&2, String>:
@@ -423,7 +423,7 @@ def uids_go(xs: List<&2, J.Json>) -> Maybe<&2, List<&2, U32>>:
   match xs:
     case Nil{}:
       Some{[]}
-    case Con{x, t}:
+    case x <> t:
       do Maybe<&2, List<&2, U32>>:
         u : U32 <- positive(J.as_u32(Some{x}))
         rest : List<&2, U32> <- uids_go(t)
@@ -466,7 +466,7 @@ def uids_items(xs: List<&2, U32>) -> List<&2, J.Json>:
   match xs:
     case Nil{}:
       []
-    case Con{x, t}:
+    case x <> t:
       J.num(x) <> uids_items(t)
 
 def uids_json(xs: List<&2, U32>) -> J.Json:
@@ -520,7 +520,7 @@ def role_in(roles: List<&2, RoleAttr>, +attrs: List<&2, String>) -> Maybe<&2, St
   match roles:
     case Nil{}:
       None{}
-    case Con{RoleAttr{attr, name}, t}:
+    case RoleAttr{attr, name} <> t:
       Bool.pick(Maybe<&2, String>, I.has_attr(attrs, attr), Some{name}, role_in(t, attrs))
 
 # Attribute checks retain the server's actual LIST metadata. Role resolution
@@ -567,14 +567,14 @@ def role_candidates(
   match fs:
     case Nil{}:
       []
-    case Con{I.Folder{+name, delimiter, +attrs}, t}:
+    case I.Folder{+name, delimiter, +attrs} <> t:
       List.filter.put(I.Folder, I.Folder{name, delimiter, attrs},
         role_candidates(t, attr, a, b, advertised),
         role_match(advertised, name, attrs, attr, a, b))
 
 def unique_folder(fs: List<&2, I.Folder>) -> Maybe<&2, String>:
   match fs:
-    case Con{I.Folder{name, d, attrs}, Nil{}}:
+    case I.Folder{name, d, attrs} <> Nil{}:
       Bool.pick(Maybe<&2, String>, selectable(attrs), Some{name}, None{})
     case _:
       None{}
@@ -599,7 +599,7 @@ def override_candidates(fs: List<&2, I.Folder>, +want: String) -> List<&2, I.Fol
   match fs:
     case Nil{}:
       []
-    case Con{+f, t}:
+    case +f <> t:
       I.Folder{name, d, attrs} = f
       List.filter.put(I.Folder, f, override_candidates(t, want), I.same_name(name, want))
 
@@ -723,7 +723,7 @@ def merge_attrs(xs: List<&2, String>, +ys: List<&2, String>) -> List<&2, String>
   match xs:
     case Nil{}:
       ys
-    case Con{+x, t}:
+    case +x <> t:
       merge_attrs(t, Bool.pick(List<&2, String>, I.has_attr(ys, x), ys, x <> ys))
 
 # `fs` with `entry`'s attributes added to the folder of the same name, or
@@ -732,7 +732,7 @@ def merge_folder(fs: List<&2, I.Folder>, +entry: I.Folder) -> List<&2, I.Folder>
   match fs:
     case Nil{}:
       [entry]
-    case Con{I.Folder{+name, delimiter, +attrs}, +t}:
+    case I.Folder{+name, delimiter, +attrs} <> +t:
       I.Folder{other, d, extra} = entry
       +same = I.same_name(name, other)
       attrs_now = Bool.pick(List<&2, String>, same, merge_attrs(extra, attrs), attrs)
@@ -743,7 +743,7 @@ def merge_folders(extra: List<&2, I.Folder>, ordinary: List<&2, I.Folder>) -> Li
   match extra:
     case Nil{}:
       ordinary
-    case Con{entry, t}:
+    case entry <> t:
       merge_folders(t, merge_folder(ordinary, entry))
 
 def roles_of(r: Run(), ordinary: List<&2, I.Folder>) -> IO(Fs()):
@@ -792,7 +792,7 @@ def folders_json(fs: List<&2, I.Folder>) -> List<&2, J.Json>:
   match fs:
     case Nil{}:
       []
-    case Con{f, t}:
+    case f <> t:
       folder_json(f) <> folders_json(t)
 
 # Reading mail
@@ -829,7 +829,7 @@ def summaries(ms: List<&2, I.Msg>) -> List<&2, J.Json>:
   match ms:
     case Nil{}:
       []
-    case Con{m, t}:
+    case m <> t:
       summary(m) <> summaries(t)
 
 def msg_uid(m: I.Msg) -> U32:
@@ -860,7 +860,7 @@ def requested(ms: List<&2, I.Msg>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
   match ms:
     case Nil{}:
       []
-    case Con{+m, t}:
+    case +m <> t:
       List.filter.put(I.Msg, m, requested(t, uids), uid_in(msg_uid(m), uids))
 
 def uidv_is(have: Maybe<&2, U32>, want: U32) -> Bool:
@@ -1062,7 +1062,7 @@ def search_fetch(
   match uids:
     case Nil{}:
       pure_out(list_out(folder, uidv, total, []))
-    case Con{h, t}:
+    case h <> t:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_headers(folder, uids))
         return search_headers(r, folder, uidv, total, uids)
@@ -1095,7 +1095,7 @@ def atts_json(xs: List<&2, M.Att>) -> List<&2, J.Json>:
   match xs:
     case Nil{}:
       []
-    case Con{M.Att{n, t, s}, r}:
+    case M.Att{n, t, s} <> r:
       J.obj([J.kv("filename", J.str(n)), J.kv("content_type", J.str(t)), J.kv("size", J.num(s))]) <>
         atts_json(r)
 
@@ -1145,7 +1145,7 @@ def with_uid(ms: List<&2, I.Msg>, +uid: U32) -> List<&2, I.Msg>:
   match ms:
     case Nil{}:
       []
-    case Con{+m, t}:
+    case +m <> t:
       Bool.pick(List<&2, I.Msg>, U32.is_eq(msg_uid(m), uid), [m], with_uid(t, uid))
 
 def get_msg(
@@ -1158,7 +1158,7 @@ def get_msg(
   match ms:
     case Nil{}:
       Err{"no message with UID " ++ U32.show(uid) ++ " in " ++ folder}
-    case Con{+m, t}:
+    case +m <> t:
       +body = msg_body(m)
       get_json(m, folder, uidv, max, body_headers(body), M.parts(body))
 
@@ -1171,7 +1171,7 @@ def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Out:
 
 def get_uid(u: Uids(), +folder: String, +max: U32) -> IO(Out):
   match u:
-    case Done{Con{+uid, Nil{}}}:
+    case Done{+uid <> Nil{}}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_get(folder, uid, max))
         return get_out(r, folder, uid, max)
@@ -1191,7 +1191,7 @@ def above(xs: List<&2, U32>, +since: U32) -> List<&2, U32>:
   match xs:
     case Nil{}:
       []
-    case Con{+x, t}:
+    case +x <> t:
       List.filter.put(U32, x, above(t, since), U32.is_gt(x, since))
 
 def last_or(xs: List<&2, U32>, d: U32) -> U32:
@@ -1258,7 +1258,7 @@ def new_fetch(
   match uids:
     case Nil{}:
       pure_out(new_out(folder, uidv, False{}, since, False{}, []))
-    case Con{h, t}:
+    case h <> t:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_headers(folder, uids))
         return new_headers(r, folder, uidv, last_or(uids, since), more, uids)
@@ -1331,7 +1331,7 @@ def minus(xs: List<&2, U32>, +ys: List<&2, U32>) -> List<&2, U32>:
   match xs:
     case Nil{}:
       []
-    case Con{+x, t}:
+    case +x <> t:
       List.filter.put(U32, x, minus(t, ys), Bool.not(uid_in(x, ys)))
 
 def changed_found.if(
@@ -1441,7 +1441,7 @@ def last_flags(
   match ms:
     case Nil{}:
       last
-    case Con{I.Msg{u, flags, date, size, headers, body}, t}:
+    case I.Msg{u, flags, date, size, headers, body} <> t:
       last_flags(t, uid,
         Bool.pick(Maybe<&2, List<&2, String>>, U32.is_eq(u, uid), Some{flags}, last))
 
@@ -1449,14 +1449,14 @@ def observed(uids: List<&2, U32>, +ms: List<&2, I.Msg>) -> List<&2, Observed>:
   match uids:
     case Nil{}:
       []
-    case Con{+u, t}:
+    case +u <> t:
       Observed{u, last_flags(ms, u, None{})} <> observed(t, ms)
 
 def observed_json(os: List<&2, Observed>) -> List<&2, J.Json>:
   match os:
     case Nil{}:
       []
-    case Con{Observed{uid, flags}, t}:
+    case Observed{uid, flags} <> t:
       J.obj([J.kv("uid", J.num(uid)), J.kv("flags", maybe_strs(flags))]) <> observed_json(t)
 
 # Whether a message has a colour bit exactly when the colour sets it.
@@ -1475,18 +1475,18 @@ def colour_misses(os: List<&2, Observed>, +bits: I.Bits) -> List<&2, U32>:
   match os:
     case Nil{}:
       []
-    case Con{Observed{uid, Some{flags}}, t}:
+    case Observed{uid, Some{flags}} <> t:
       List.filter.put(U32, uid, colour_misses(t, bits), Bool.not(shows_colour(flags, bits)))
-    case Con{Observed{uid, None{}}, t}:
+    case Observed{uid, None{}} <> t:
       colour_misses(t, bits)
 
 def any_unobserved(os: List<&2, Observed>) -> Bool:
   match os:
     case Nil{}:
       False{}
-    case Con{Observed{uid, Some{flags}}, t}:
+    case Observed{uid, Some{flags}} <> t:
       any_unobserved(t)
-    case Con{Observed{uid, None{}}, t}:
+    case Observed{uid, None{}} <> t:
       True{}
 
 def keyword_permanent(ps: List<&2, String>, any: Bool, f: I.Flag) -> Bool:
@@ -1612,16 +1612,16 @@ def store_changes(
   match cs:
     case Nil{}:
       []
-    case Con{I.CStore{u, add, f}, t}:
+    case I.CStore{u, add, f} <> t:
       change_if(store_is(which, lines, n), add, f, store_changes(t, (n + 1 : U32), lines, which))
-    case Con{c, t}:
+    case c <> t:
       store_changes(t, Bool.pick(U32, I.is_expect(c), n, (n + 1 : U32)), lines, which)
 
 def changes_text(xs: List<&2, String>) -> String:
   match xs:
     case Nil{}:
       "nothing"
-    case Con{h, t}:
+    case h <> t:
       String.join(h <> t, ", ")
 
 def cut_text(all_acked: Bool, acked: List<&2, String>, unconfirmed: List<&2, String>) -> String:
@@ -1840,7 +1840,7 @@ def move_plan(
       pure_out(Err{
         "the server supports neither MOVE nor UIDPLUS; refusing to move with a plain " ++
           "EXPUNGE, which could remove other messages"})
-    case Con{h, t}:
+    case h <> t:
       do IO<Out>:
         p : Proc <- imap_proc(plan)
         return moved_out(p, plan, folder, uids, dest, move)
@@ -2010,7 +2010,7 @@ def delete_plan(+plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) ->
     case Nil{}:
       pure_out(Err{
         "the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"})
-    case Con{h, t}:
+    case h <> t:
       do IO<Out>:
         r : Run() <- imap_run(plan)
         return changed_out(r, uids, folder, [
@@ -2134,7 +2134,7 @@ def advertised_names(fs: List<&2, I.Folder>) -> List<&2, String>:
   match fs:
     case Nil{}:
       []
-    case Con{I.Folder{name, d, attrs}, t}:
+    case I.Folder{name, d, attrs} <> t:
       name_if(recognized_role(attrs), name, advertised_names(t))
 
 # Kept by hand: List.map takes only affine lists.
@@ -2142,7 +2142,7 @@ def lowered(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{x, t}:
+    case x <> t:
       String.to_lower(x) <> lowered(t)
 
 # The delimiter LIST reports for INBOX; "" when INBOX is not listed or has none.
@@ -2150,7 +2150,7 @@ def inbox_delim(fs: List<&2, I.Folder>) -> String:
   match fs:
     case Nil{}:
       ""
-    case Con{I.Folder{n, d, a}, t}:
+    case I.Folder{n, d, a} <> t:
       Bool.pick(String, is_inbox(n), d, inbox_delim(t))
 
 # The first delimiter LIST reports for any folder; "" when it reports none.
@@ -2158,7 +2158,7 @@ def any_delim(fs: List<&2, I.Folder>) -> String:
   match fs:
     case Nil{}:
       ""
-    case Con{I.Folder{n, d, a}, t}:
+    case I.Folder{n, d, a} <> t:
       first_of(d, any_delim(t))
 
 # The hierarchy delimiter: INBOX's, else any folder's. "" means none is known.
@@ -2214,7 +2214,7 @@ def inside_reserved(+delim: String, reserved: List<&2, String>, +name: String) -
   match reserved:
     case Nil{}:
       False{}
-    case Con{r, t}:
+    case r <> t:
       at_or_inside(delim, r, name) || inside_reserved(delim, t, name)
 
 # Whether the lower-case `name` is a reserved folder or contains one.
@@ -2222,7 +2222,7 @@ def holds_reserved(+delim: String, reserved: List<&2, String>, +name: String) ->
   match reserved:
     case Nil{}:
       False{}
-    case Con{r, t}:
+    case r <> t:
       at_or_inside(delim, name, r) || holds_reserved(delim, t, name)
 
 # INBOX is reserved itself, but not its children: some servers keep every
@@ -2250,14 +2250,14 @@ def without_last(ls: List<&2, String>, h: String) -> List<&2, String>:
   match ls:
     case Nil{}:
       []
-    case Con{n, rest}:
+    case n <> rest:
       h <> without_last(rest, n)
 
 def init_of(ls: List<&2, String>) -> List<&2, String>:
   match ls:
     case Nil{}:
       []
-    case Con{h, t}:
+    case h <> t:
       without_last(t, h)
 
 # The folder `name` sits in; "" for a top-level name.
@@ -2269,7 +2269,7 @@ def with_inbox(inbox: String, ls: List<&2, String>) -> List<&2, String>:
   match ls:
     case Nil{}:
       []
-    case Con{+h, +t}:
+    case +h <> +t:
       Bool.pick(List<&2, String>, is_inbox(h), inbox <> t, h <> t)
 
 # Only the exact name INBOX is case-insensitive, so a server could take
@@ -2358,7 +2358,7 @@ def children_problem(+g: Guard, +from: String, +to: String, fs: List<&2, I.Folde
   match fs:
     case Nil{}:
       ""
-    case Con{I.Folder{name, d, a}, t}:
+    case I.Folder{name, d, a} <> t:
       first_of(child_problem(g, from, to, name), children_problem(g, from, to, t))
 
 def rename_problem(+g: Guard, +from: String, +to: String) -> String:
@@ -2409,7 +2409,7 @@ def subscribed_tree(
   match fs:
     case Nil{}:
       []
-    case Con{I.Folder{+name, d, attrs}, t}:
+    case I.Folder{+name, d, attrs} <> t:
       moves = at_or_inside(delim, root, name) && Bool.not(I.has_attr(attrs, "\\NonExistent")) &&
         Maybe.is_some(&2, String, I.named(subs, name))
       name_if(moves, name, subscribed_tree(delim, root, t, subs))
@@ -2632,7 +2632,7 @@ def bytes_str(xs: List<&2, U32>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{x, t}:
+    case x <> t:
       SCon{C.chr(x), bytes_str(t)}
 
 def basename(+path: String) -> String:
@@ -2665,7 +2665,7 @@ def suffix_type(ss: List<&2, Suffix>, +name: String) -> String:
   match ss:
     case Nil{}:
       "application/octet-stream"
-    case Con{Suffix{ending, ctype}, t}:
+    case Suffix{ending, ctype} <> t:
       Bool.pick(String, String.ends_with(name, ending), ctype, suffix_type(t, name))
 
 def ext_type(name: String) -> String:
@@ -2814,7 +2814,7 @@ def atts_go(
   match xs:
     case Nil{}:
       IO.pure(List<&2, Attachment()>, [])
-    case Con{a, t}:
+    case a <> t:
       do IO<List<&2, Attachment()>>:
         +o : Attachment() <- att_gate(go, n, a, budget)
         rest : List<&2, Attachment()> <-
@@ -2838,9 +2838,9 @@ def atts_collect(rs: List<&2, Attachment()>) -> Attachments():
   match rs:
     case Nil{}:
       Done{[]}
-    case Con{Fail{m}, t}:
+    case Fail{m} <> t:
       Fail{m}
-    case Con{Done{a}, t}:
+    case Done{a} <> t:
       atts_cons(a, atts_collect(t))
 
 # Stamps and drafts
@@ -2938,7 +2938,7 @@ def specs(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{x, t}:
+    case x <> t:
       M.addr_spec(x) <> specs(t)
 
 # Send or save as draft
@@ -2947,7 +2947,7 @@ def specs(xs: List<&2, String>) -> List<&2, String>:
 # "[APPENDUID <uidvalidity> <uid>]" in the APPEND's tagged OK.
 def appenduid(ws: List<&2, String>) -> J.Json:
   match ws:
-    case Con{code, Con{v, Con{uid, Nil{}}}}:
+    case code <> v <> uid <> Nil{}:
       Bool.pick(J.Json, String.eq(String.to_upper(code), "APPENDUID"), maybe_num(U32.read(uid)),
         J.JNull{})
     case _:
@@ -3086,7 +3086,7 @@ def quote_lines(ls: List<&2, String>) -> String:
   match ls:
     case Nil{}:
       ""
-    case Con{l, t}:
+    case l <> t:
       "> " ++ l ++ "\n" ++ quote_lines(t)
 
 # An address as a comparison key: its addr-spec, lower-cased.
@@ -3097,7 +3097,7 @@ def spec_keys(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{x, t}:
+    case x <> t:
       spec_key(x) <> spec_keys(t)
 
 def key_in(k: String, ks: List<&2, String>) -> Bool:
@@ -3108,7 +3108,7 @@ def fresh(xs: List<&2, String>, +seen: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{+x, t}:
+    case +x <> t:
       +k = spec_key(x)
       +repeated = key_in(k, seen)
       List.filter.put(String, x,
@@ -3155,7 +3155,7 @@ def decoded(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{x, t}:
+    case x <> t:
       M.decode_header(x) <> decoded(t)
 
 # The addresses of a header, split before RFC 2047 decoding (a decoded name
@@ -3272,7 +3272,7 @@ def orig_msg(ms: List<&2, I.Msg>, +args: J.Json, mode: U32, max: U32, me: String
       pure_out(Err{
         "no message with UID " ++ U32.show(u32_arg(args, "uid", 0)) ++ " in " ++
           folder_arg(args)})
-    case Con{I.Msg{uid, flags, date, +size, headers, body}, t}:
+    case I.Msg{uid, flags, date, +size, headers, body} <> t:
       respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), size, body, args, me)
 
 def orig_checked(

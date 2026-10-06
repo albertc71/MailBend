@@ -43,21 +43,21 @@ def show_folders(folders: List<&2, I.Folder>) -> String:
   match folders:
     case Nil{}:
       ""
-    case Con{I.Folder{name, delimiter, attrs}, rest}:
+    case I.Folder{name, delimiter, attrs} <> rest:
       name ++ "|" ++ delimiter ++ "|" ++ String.join(attrs, ",") ++ ";" ++ show_folders(rest)
 
 def show_messages(messages: List<&2, I.Msg>) -> String:
   match messages:
     case Nil{}:
       ""
-    case Con{I.Msg{uid, flags, date, size, headers, body}, rest}:
+    case I.Msg{uid, flags, date, size, headers, body} <> rest:
       U32.show(uid) ++ " " ++ String.join(flags, ",") ++ " " ++ date ++ " " ++ U32.show(size) ++ " [" ++ show_line_endings(body) ++ "];" ++ show_messages(rest)
 
 def show_uids(uids: List<&2, U32>) -> String:
   match uids:
     case Nil{}:
       ""
-    case Con{uid, rest}:
+    case uid <> rest:
       U32.show(uid) ++ " " ++ show_uids(rest)
 
 # The number of tagged commands and the tag of the first COPY.
@@ -83,7 +83,7 @@ def show_colours(cs: List<&2, I.Colour>) -> String:
   match cs:
     case Nil{}:
       ""
-    case Con{+c, rest}:
+    case +c <> rest:
       +n = I.colour_name(c)
       n ++ "=" ++ show_bits(I.colour_bits(c)) ++ "/" ++
         named_or_bad(I.colour_from_name(n)) ++ " " ++ show_colours(rest)
@@ -176,7 +176,7 @@ def show_effects(cs: List<&2, I.Cmd>) -> String:
   match cs:
     case Nil{}:
       ""
-    case Con{+c, rest}:
+    case +c <> rest:
       +e = I.effect(c)
       effect_name(e) ++ ":" ++ bit(I.writes(e)) ++ bit(I.changes_mail(e)) ++
         bit(I.changes_mailbox(e)) ++ bit(I.destroys_mail(e)) ++
@@ -203,7 +203,7 @@ def show_items(xs: List<&2, I.Item>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{i, rest}:
+    case i <> rest:
       I.item_str(i) ++ ";" ++ show_items(rest)
 
 def every_flag() -> List<&2, I.Flag>:
@@ -214,7 +214,7 @@ def show_flag_names(fs: List<&2, I.Flag>) -> String:
   match fs:
     case Nil{}:
       ""
-    case Con{f, rest}:
+    case f <> rest:
       I.flag_name(f) ++ ";" ++ show_flag_names(rest)
 
 def check_rendering() -> IO(Unit):
@@ -242,7 +242,7 @@ def show_dates(isos: List<&2, String>) -> String:
   match isos:
     case Nil{}:
       ""
-    case Con{iso, rest}:
+    case iso <> rest:
       Maybe.default(&2, String, I.imap_date(iso), "bad") ++ ";" ++ show_dates(rest)
 
 def check_names_and_dates() -> IO(Unit):
@@ -278,7 +278,7 @@ def show_rlines(lines: List<&2, I.RLine>) -> String:
   match lines:
     case Nil{}:
       ""
-    case Con{I.RLine{text, +lits}, rest}:
+    case I.RLine{text, +lits} <> rest:
       show_text(text) ++ "{" ++ Nat.show(List.length(&2, String, lits)) ++ ":" ++
         show_text(String.join(lits, "|")) ++ "};" ++ show_rlines(rest)
 
@@ -302,7 +302,7 @@ def show_full_messages(ms: List<&2, I.Msg>) -> String:
   match ms:
     case Nil{}:
       ""
-    case Con{m, rest}:
+    case m <> rest:
       show_message(m) ++ ";" ++ show_full_messages(rest)
 
 def response_transcript() -> String:

@@ -22,7 +22,7 @@ type Json is Data:
 
 def chain(xs: List<&2, Json>) -> Json:
   match xs:
-    case []:
+    case Nil{}:
       JEnd{}
     case h <> t:
       JCons{h, chain(t)}
@@ -47,7 +47,7 @@ def bool(b: Bool) -> Json:
 
 def str_chain(xs: List<&2, String>) -> Json:
   match xs:
-    case []:
+    case Nil{}:
       JEnd{}
     case h <> t:
       JCons{JStr{h}, str_chain(t)}
@@ -546,7 +546,7 @@ def add(
   v: Json, stack: List<&2, Frame>, done: Maybe<&2, Json>
 ) -> Maybe<&2, Builder>:
   match stack:
-    case []:
+    case Nil{}:
       match done:
         case None{}:
           Some{Builder{[], Some{v}}}
@@ -647,9 +647,9 @@ def build(toks: List<&2, Tok>, b: Maybe<&2, Builder>) -> Maybe<&2, Json>:
   match toks b:
     case _ None{}:
       None{}
-    case [] Some{Builder{[], Some{v}}}:
+    case Nil{} Some{Builder{Nil{}, Some{v}}}:
       Some{v}
-    case [] Some{_}:
+    case Nil{} Some{_}:
       None{}
     case t <> rest Some{Builder{stack, done}}:
       build(rest, step(t, stack, done))

@@ -132,7 +132,7 @@ def read_only_names(+ops: List<&2, Op>) -> List<&2, String>:
   match ops:
     case Nil{}:
       []
-    case Con{op, t}:
+    case op <> t:
       names_if(is_read_only(op), op, read_only_names(t))
 
 # The first operation among `ops` named `n`. The list is short, so the
@@ -141,7 +141,7 @@ def find_op(ops: List<&2, Op>, +n: String) -> Maybe<&2, Op>:
   match ops:
     case Nil{}:
       None{}
-    case Con{+op, t}:
+    case +op <> t:
       Bool.pick(Maybe<&2, Op>, String.eq(name(op), n), Some{op}, find_op(t, n))
 
 # The operation whose tool is named `n`, if any.
@@ -394,7 +394,7 @@ def subscribe_moved(
   match moved:
     case Nil{}:
       rest
-    case Con{name, t}:
+    case name <> t:
       I.CSubscribe{renamed_to(from, to, name)}
         <> subscribe_moved(from, to, t, rest)
 
@@ -403,7 +403,7 @@ def unsubscribe_old(moved: List<&2, String>) -> List<&2, I.Cmd>:
   match moved:
     case Nil{}:
       []
-    case Con{name, t}:
+    case name <> t:
       I.CUnsubscribe{name} <> unsubscribe_old(t)
 
 # RENAME leaves subscriptions alone (RFC 3501 6.3.5), so each folder that
@@ -430,7 +430,7 @@ def loses_mail(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
+    case c <> t:
       +e = I.effect(c)
       +destroys = I.destroys_mail(e)
       Bool.pick(Bool, I.copies_mail(e) || destroys, destroys, loses_mail(t))
@@ -440,9 +440,9 @@ def expunged(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
   match cs:
     case Nil{}:
       None{}
-    case Con{I.CExpunge{u}, _}:
+    case I.CExpunge{u} <> _:
       Some{u}
-    case Con{_, t}:
+    case _ <> t:
       expunged(t)
 
 # The UIDs of a plan's first UID COPY, if it has one.
@@ -450,9 +450,9 @@ def copied(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
   match cs:
     case Nil{}:
       None{}
-    case Con{I.CCopy{u, _}, _}:
+    case I.CCopy{u, _} <> _:
       Some{u}
-    case Con{_, t}:
+    case _ <> t:
       copied(t)
 
 # The UIDs a plan first marks \Deleted, if any.
@@ -460,9 +460,9 @@ def marked_deleted(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
   match cs:
     case Nil{}:
       None{}
-    case Con{I.CStore{u, True{}, I.FDeleted{}}, _}:
+    case I.CStore{u, True{}, I.FDeleted{}} <> _:
       Some{u}
-    case Con{_, t}:
+    case _ <> t:
       marked_deleted(t)
 
 # `c` before `rest` when `keep` holds, else just `rest`.
@@ -480,7 +480,7 @@ def mail_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
   match cs:
     case Nil{}:
       []
-    case Con{c, t}:
+    case c <> t:
       cmd_if(I.changes_mail(I.effect(c)), c, mail_changes(t))
 
 # The commands of a plan that change folders (create, rename, subscribe,
@@ -489,7 +489,7 @@ def mailbox_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
   match cs:
     case Nil{}:
       []
-    case Con{c, t}:
+    case c <> t:
       cmd_if(I.changes_mailbox(I.effect(c)), c, mailbox_changes(t))
 
 # Whether a flag is \Flagged or one of the colour bits.
@@ -511,7 +511,7 @@ def only_flag_stores(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       True{}
-    case Con{I.CStore{_, _, f}, t}:
+    case I.CStore{_, _, f} <> t:
       is_flag_or_colour(f) && only_flag_stores(t)
     case _:
       False{}
@@ -540,9 +540,9 @@ def peek_safe(+s: String) -> Bool:
 # SELECT, then an expectation of the folder's UIDVALIDITY reply.
 def pinned(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
-    case Con{I.CSelect{_}, Con{I.CExpect{e}, _}}:
+    case I.CSelect{_} <> I.CExpect{e} <> _:
       has_prefix("* OK [UIDVALIDITY ", e)
-    case Con{I.CCapability{}, Con{I.CExpectWord{_}, t}}:
+    case I.CCapability{} <> I.CExpectWord{_} <> t:
       pinned(t)
     case _:
       False{}
@@ -553,9 +553,9 @@ def pin_line_or(cs: List<&2, I.Cmd>, empty: String) -> String:
   match cs:
     case Nil{}:
       empty
-    case Con{I.CSelect{_}, Con{I.CExpect{e}, _}}:
+    case I.CSelect{_} <> I.CExpect{e} <> _:
       e
-    case Con{I.CCapability{}, Con{I.CExpectWord{_}, t}}:
+    case I.CCapability{} <> I.CExpectWord{_} <> t:
       pin_line_or(t, "")
     case _:
       ""
@@ -564,7 +564,7 @@ def pin_line_or(cs: List<&2, I.Cmd>, empty: String) -> String:
 # CAPABILITY, then the expectation of the word UIDPLUS.
 def checks_uidplus(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
-    case Con{I.CCapability{}, Con{I.CExpectWord{w}, _}}:
+    case I.CCapability{} <> I.CExpectWord{w} <> _:
       String.eq(w, "UIDPLUS")
     case _:
       False{}
@@ -574,7 +574,7 @@ def checks_uidplus_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       True{}
-    case Con{_, _}:
+    case _ <> _:
       checks_uidplus(cs)
 
 # Pinned, or no plan at all (a refused operation sends nothing).
@@ -582,5 +582,5 @@ def pinned_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       True{}
-    case Con{_, _}:
+    case _ <> _:
       pinned(cs)

@@ -195,7 +195,7 @@ def ew_bytes(b64: Bool, text: String) -> String:
 # word read as UTF-8.
 def ew_parts(ps: List<&2, String>, word: String) -> String:
   match ps:
-    case "=" <> cs <> enc <> text <> "=" <> []:
+    case "=" <> cs <> enc <> text <> "=" <> Nil{}:
       C.charset_decode(cs, ew_bytes(String.eq(String.to_upper(enc), "B"), text))
     case _:
       C.utf8_decode(word)
@@ -296,7 +296,7 @@ def pct_decode(s: String) -> String:
 
 def ext_parts(ps: List<&2, String>, v: String) -> String:
   match ps:
-    case cs <> lang <> text <> []:
+    case cs <> lang <> text <> Nil{}:
       C.charset_decode(cs, pct_decode(text))
     case _:
       v
@@ -745,7 +745,7 @@ def ew_encode(chunks: List<&2, String>) -> String:
   match chunks:
     case Nil{}:
       ""
-    case c <> []:
+    case c <> Nil{}:
       encoded_word(c)
     case c <> t:
       encoded_word(c) ++ "\r\n " ++ ew_encode(t)
@@ -924,7 +924,7 @@ def encode_addrs(xs: List<&2, String>) -> String:
   match xs:
     case Nil{}:
       ""
-    case x <> []:
+    case x <> Nil{}:
       encode_addr(x)
     case x <> t:
       encode_addr(x) ++ ",\r\n " ++ encode_addrs(t)

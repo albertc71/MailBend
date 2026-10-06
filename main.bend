@@ -269,7 +269,7 @@ def handle_lines(ls: List<&2, String>) -> IO(Unit):
   match ls:
     case Nil{}:
       IO.pure(Unit, Unit{})
-    case Con{l, t}:
+    case l <> t:
       do IO<Unit>:
         handle_line(l)
         handle_lines(t)
@@ -329,7 +329,7 @@ def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32) -> IO(Unit):
           do IO<Unit>:
             handle_line(pending(parts))
             File.close(f)
-        case Con{h, t}:
+        case h <> t:
           serve.chunk(f, String.split(T.bytes_str(xs), '\n'), parts, n)
 
 # `pieces` is the chunk split at its newlines. Its first piece ends the
@@ -341,7 +341,7 @@ def serve.chunk(
   match pieces:
     case Nil{}:
       serve(f, parts, n)
-    case Con{+p, rest}:
+    case +p <> rest:
       +length = (n + byte_length(p) : U32)
       serve.chunk.if(f, rest, p <> parts, length, U32.is_gt(length, line_cap()))
 
@@ -365,7 +365,7 @@ def serve.rest(
   match rest:
     case Nil{}:
       serve(f, parts, n)
-    case Con{h, t}:
+    case h <> t:
       do IO<Unit>:
         handle_line(pending(parts))
         handle_lines(complete_lines(rest))
@@ -416,7 +416,7 @@ def share(xs: List<String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{h, t}:
+    case h <> t:
       h <> share(t)
 
 # IO.args answers the program as invoked first, like C's argv[0].
@@ -424,22 +424,22 @@ def command_args(xs: List<String>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Con{prog, t}:
+    case prog <> t:
       share(t)
 
 def cli(args: List<&2, String>) -> IO(Unit):
   match args:
-    case Con{"mcp", Nil{}}:
+    case "mcp" <> Nil{}:
       mcp()
-    case Con{"tools", Nil{}}:
+    case "tools" <> Nil{}:
       do IO<Unit>:
         ts : J.Json <- offered_tools()
         IO.print(J.show(ts))
-    case Con{"call", Con{name, Nil{}}}:
+    case "call" <> name <> Nil{}:
       call_cli(name, "{}")
-    case Con{"call", Con{name, Con{raw, Nil{}}}}:
+    case "call" <> name <> raw <> Nil{}:
       call_cli(name, raw)
-    case Con{"version", Nil{}}:
+    case "version" <> Nil{}:
       IO.print("mailbend " ++ version())
     case _:
       IO.die(Unit, 2, usage())

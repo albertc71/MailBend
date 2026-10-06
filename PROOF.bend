@@ -413,7 +413,7 @@ def unsubscribe_old_changes_only_folders(moved: List<&2, String>)
   match moved:
     case Nil{}:
       {==}
-    case Con{name, t}:
+    case name <> t:
       %unsubscribe_old_changes_only_folders(t) :
         {Con{I.CUnsubscribe{name}, Ops.unsubscribe_old(t)} ==
           Con{I.CUnsubscribe{name}, _} : List<&2, I.Cmd>}
@@ -426,7 +426,7 @@ def subscribe_moved_changes_only_folders(
   match moved:
     case Nil{}:
       {==}
-    case Con{name, t}:
+    case name <> t:
       %subscribe_moved_changes_only_folders(from, to, t, rest) :
         {Con{I.CSubscribe{Ops.renamed_to(from, to, name)},
             Ops.subscribe_moved(from, to, t, Ops.mailbox_changes(rest))} ==
@@ -438,7 +438,7 @@ def unsubscribe_old_changes_no_mail(moved: List<&2, String>)
   match moved:
     case Nil{}:
       {==}
-    case Con{name, t}:
+    case name <> t:
       %unsubscribe_old_changes_no_mail(t) :
         {Ops.mail_changes(Ops.unsubscribe_old(t)) == _ : List<&2, I.Cmd>}
       {==}
@@ -450,7 +450,7 @@ def subscribe_moved_changes_no_mail(
   match moved:
     case Nil{}:
       {==}
-    case Con{name, t}:
+    case name <> t:
       %subscribe_moved_changes_no_mail(from, to, t, rest) :
         {Ops.mail_changes(Ops.subscribe_moved(from, to, t, rest)) == _ : List<&2, I.Cmd>}
       {==}
@@ -460,7 +460,7 @@ def unsubscribe_old_expunges_nothing(moved: List<&2, String>)
   match moved:
     case Nil{}:
       {==}
-    case Con{name, t}:
+    case name <> t:
       %unsubscribe_old_expunges_nothing(t) :
         {I.any_expunges(Ops.unsubscribe_old(t)) == _ : Bool}
       {==}
@@ -472,7 +472,7 @@ def subscribe_moved_expunges_nothing(
   match moved:
     case Nil{}:
       {==}
-    case Con{name, t}:
+    case name <> t:
       %subscribe_moved_expunges_nothing(from, to, t, rest) :
         {I.any_expunges(Ops.subscribe_moved(from, to, t, rest)) == _ : Bool}
       {==}
