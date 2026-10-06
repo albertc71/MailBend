@@ -58,7 +58,7 @@ type Draft is Data:
 # ============
 
 # Whether c is one of the characters of `set`.
-def char_in(+c: Char, +set: String) -> Bool:
+def char_in(c: Char, set: String) -> Bool:
   String.contains(set, SCon{c, SNil{}})
 
 # Whether s is plain ASCII of at most `max` characters.
@@ -93,14 +93,14 @@ def split.go(s: String, acc: String) -> Split:
     case SCon{c, t}:
       split.go(t, SCon{c, acc})
 
-def split(+msg: String) -> Split:
+def split(msg: String) -> Split:
   split.go(msg, "")
 
-def head_of(+s: Split) -> String:
+def head_of(s: Split) -> String:
   Split{head, body} = s
   head
 
-def body_of(+s: Split) -> String:
+def body_of(s: Split) -> String:
   Split{head, body} = s
   body
 
@@ -138,7 +138,7 @@ def after_colon(s: String) -> String:
 
 # A continuation line extends the last field; with no field yet it is
 # ignored.
-def hdr_cont(+line: String, acc: List<&2, Hdr>) -> List<&2, Hdr>:
+def hdr_cont(line: String, acc: List<&2, Hdr>) -> List<&2, Hdr>:
   match acc:
     case Hdr{n, v} <> r:
       Hdr{n, v ++ " " ++ String.trim(line)} <> r
@@ -170,11 +170,11 @@ def hdr_fold(lines: List<&2, String>, acc: List<&2, Hdr>) -> List<&2, Hdr>:
       hdr_fold(t, hdr_line(strip_cr(l), acc))
 
 # The header fields, unfolded, with lower-case names and raw values.
-def headers(+head: String) -> List<&2, Hdr>:
+def headers(head: String) -> List<&2, Hdr>:
   hdr_fold(String.split(head, '\n'), [])
 
 # The value of the first field `name` (lower-case), or "".
-def header(+hs: List<&2, Hdr>, +name: String) -> String:
+def header(hs: List<&2, Hdr>, +name: String) -> String:
   match hs:
     case Nil{}:
       ""
@@ -232,7 +232,7 @@ def tab_to_space(s: String) -> String:
 
 # A raw header value to text: encoded words decoded, raw 8-bit read as UTF-8.
 # Space and tab are both linear whitespace between words.
-def decode_header(+v: String) -> String:
+def decode_header(v: String) -> String:
   ew_join(String.split(tab_to_space(v), ' '), False{}, True{})
 
 # Parameters (Content-Type, Content-Disposition)
@@ -255,7 +255,7 @@ def unquote.if(+t: String, quoted: Bool) -> String:
       t
 
 # A trimmed value without its surrounding quotes and "\" escapes.
-def unquote(+s: String) -> String:
+def unquote(s: String) -> String:
   +t = String.trim(s)
   quoted = String.starts_with(t, "\"") && String.ends_with(t, "\"")
   unquote.if(t, quoted && Nat.is_gt(String.length(t), 1n))
@@ -276,11 +276,11 @@ def split_params.go(
 
 # Splits a structured header value at ';' outside quoted strings (which may
 # hold "\"" escapes), so 'filename="Q1; final.pdf"' stays one parameter.
-def split_params(+s: String) -> List<&2, String>:
+def split_params(s: String) -> List<&2, String>:
   split_params.go(s, "", False{}, False{}, [])
 
 # The main value before the first ';', lower-cased.
-def main_value(+v: String) -> String:
+def main_value(v: String) -> String:
   first = Maybe.default(&2, String, List.head(&2, String, split_params(v)), "")
   String.to_lower(String.trim(first))
 
@@ -324,7 +324,7 @@ def after_eq(s: String) -> String:
       after_eq(t)
 
 # The key of a "key=value" parameter, trimmed and lower-cased.
-def param_key(+p: String) -> String:
+def param_key(p: String) -> String:
   String.to_lower(String.trim(before_eq(p)))
 
 # The raw value of exactly the parameter `name`, or "".
@@ -337,7 +337,7 @@ def param_raw(+ps: List<&2, String>, +name: String) -> String:
         param_raw(t, name))
 
 def param_first.put(
-  +val: String, rest: String, plain: Bool, ext: Bool
+  val: String, rest: String, plain: Bool, ext: Bool
 ) -> String:
   match plain ext:
     case True{} _:
@@ -375,11 +375,11 @@ def pct_tokens(bytes: String) -> List<&2, String>:
     case SCon{c, t}:
       pct_char(c) <> pct_tokens(t)
 
-def pct_encode(+bytes: String) -> String:
+def pct_encode(bytes: String) -> String:
   String.concat(pct_tokens(bytes))
 
 def cont_seg.put(
-  +enc: String, +plain: String, has_enc: Bool, has_plain: Bool
+  enc: String, plain: String, has_enc: Bool, has_plain: Bool
 ) -> Maybe<&2, String>:
   match has_enc has_plain:
     case True{} _:
@@ -392,7 +392,7 @@ def cont_seg.put(
 # Continuation segment n, percent-encoded: "name*n*=" as is, else a plain
 # "name*n=" encoded here; None when there is neither.
 def cont_seg(
-  +ps: List<&2, String>, +name: String, +n: U32
+  +ps: List<&2, String>, name: String, n: U32
 ) -> Maybe<&2, String>:
   +key = name ++ "*" ++ U32.show(n)
   +enc = param_raw(ps, key ++ "*")
@@ -404,7 +404,7 @@ def cont_seg(
 # order and percent-encoded throughout, so ext_value can decode it; "" when
 # there is none. `seg` is segment n; the fuel bounds the segments read.
 def cont_join(
-  fuel: Nat, +ps: List<&2, String>, +name: String, +n: U32,
+  fuel: Nat, +ps: List<&2, String>, +name: String, n: U32,
   seg: Maybe<&2, String>
 ) -> String:
   match fuel:
@@ -421,7 +421,7 @@ def cont_join(
 # A joined continuation to text. Only an encoded first segment ("name*0*=")
 # carries the charset'lang' prefix; without it the value is plain text
 # (encoded segments decoded as UTF-8).
-def cont_value(first_enc: Bool, +cont: String) -> String:
+def cont_value(first_enc: Bool, cont: String) -> String:
   match first_enc:
     case True{}:
       ext_value(cont)
@@ -429,7 +429,7 @@ def cont_value(first_enc: Bool, +cont: String) -> String:
       C.utf8_decode(pct_decode(cont))
 
 def param.cont(
-  +ps: List<&2, String>, +name: String, +cont: String, none: Bool
+  ps: List<&2, String>, name: String, cont: String, none: Bool
 ) -> String:
   match none:
     case True{}:
@@ -439,7 +439,7 @@ def param.cont(
       cont_value(first_enc, cont)
 
 def param.ext(
-  +ps: List<&2, String>, +name: String, +ext: String, none: Bool
+  +ps: List<&2, String>, +name: String, ext: String, none: Bool
 ) -> String:
   match none:
     case True{}:
@@ -451,7 +451,7 @@ def param.ext(
 # A parameter of a structured header value, e.g. param(ct, "charset"). An
 # RFC 2231 extended value ("name*=", or continuations "name*0*=", ...) wins
 # over a plain fallback ("name=").
-def param(+v: String, +name: String) -> String:
+def param(v: String, +name: String) -> String:
   +ps = List.tail(&2, String, split_params(v))
   +ext = unquote(param_raw(ps, name ++ "*"))
   param.ext(ps, name, ext, String.is_empty(ext))
@@ -459,7 +459,7 @@ def param(+v: String, +name: String) -> String:
 # Bodies
 # ------
 
-def transfer_decode.put(+body: String, b64: Bool, qp: Bool) -> String:
+def transfer_decode.put(body: String, b64: Bool, qp: Bool) -> String:
   match b64 qp:
     case True{} _:
       C.b64_decode(body)
@@ -469,7 +469,7 @@ def transfer_decode.put(+body: String, b64: Bool, qp: Bool) -> String:
       body
 
 # A body with its Content-Transfer-Encoding undone.
-def transfer_decode(+cte: String, +body: String) -> String:
+def transfer_decode(cte: String, body: String) -> String:
   +e = String.to_lower(String.trim(cte))
   transfer_decode.put(body,
     String.eq(e, "base64"), String.eq(e, "quoted-printable"))
@@ -499,11 +499,11 @@ def lf_lines(s: String) -> String:
       SCon{c, lf_lines(t)}
 
 # The text of an inline part: decoded from its charset, with LF line breaks.
-def leaf.text(+ct: String, +bytes: String) -> String:
+def leaf.text(ct: String, bytes: String) -> String:
   lf_lines(C.charset_decode(default_cs(param(ct, "charset")), bytes))
 
 def leaf.put(
-  +ct: String, +typ: String, +name: String, +bytes: String,
+  ct: String, typ: String, name: String, bytes: String,
   attached: Bool, plain: Bool, html: Bool
 ) -> Parts:
   match attached plain html:
@@ -514,7 +514,7 @@ def leaf.put(
     case _ _ _:
       Parts{"", "", [Att{name, typ, U32.from_nat(String.length(bytes))}]}
 
-def file_name.if(+ct: String, +from_cd: String, none: Bool) -> String:
+def file_name.if(ct: String, from_cd: String, none: Bool) -> String:
   match none:
     case True{}:
       param(ct, "name")
@@ -523,13 +523,13 @@ def file_name.if(+ct: String, +from_cd: String, none: Bool) -> String:
 
 # A part's file name: the Content-Disposition filename, else the
 # Content-Type name.
-def file_name(+ct: String, +cd: String) -> String:
+def file_name(ct: String, cd: String) -> String:
   +from_cd = param(cd, "filename")
   file_name.if(ct, from_cd, String.is_empty(from_cd))
 
 # One non-multipart entity (its header fields and body). Unless attached,
 # text/plain and text/html are read as text; anything else is an attachment.
-def leaf(+hs: List<&2, Hdr>, +body: String) -> Parts:
+def leaf(+hs: List<&2, Hdr>, body: String) -> Parts:
   +ct = header(hs, "content-type")
   +cd = header(hs, "content-disposition")
   +typ = Bool.pick(String, String.is_empty(ct), "text/plain", main_value(ct))
@@ -541,7 +541,7 @@ def leaf(+hs: List<&2, Hdr>, +body: String) -> Parts:
     String.eq(typ, "text/plain"), String.eq(typ, "text/html"))
 
 # A single part's content; a multipart has none of its own.
-def leaf.if(+hs: List<&2, Hdr>, +body: String, single: Bool) -> Parts:
+def leaf.if(hs: List<&2, Hdr>, body: String, single: Bool) -> Parts:
   match single:
     case True{}:
       leaf(hs, body)
@@ -552,7 +552,7 @@ def leaf.if(+hs: List<&2, Hdr>, +body: String, single: Bool) -> Parts:
 # ---------
 
 # The boundary of a multipart entity, or "" for a single part.
-def boundary(+hs: List<&2, Hdr>) -> String:
+def boundary(hs: List<&2, Hdr>) -> String:
   +ct = header(hs, "content-type")
   multipart = String.starts_with(main_value(ct), "multipart/")
   Bool.pick(String, multipart, param(ct, "boundary"), "")
@@ -586,7 +586,7 @@ def cut_line.put(+line: String, +c: Cut, close: Bool, open: Bool) -> Cut:
           kept = Bool.pick(List<&2, String>, inside, line <> cur, cur)
           Cut{kept, parts, inside, False{}}
 
-def cut_line(+line: String, +b: String, +c: Cut) -> Cut:
+def cut_line(+line: String, b: String, c: Cut) -> Cut:
   +l = String.trim_end(line)
   +delimiter = "--" ++ b
   cut_line.put(line, c,
@@ -599,14 +599,14 @@ def cut_go(lines: List<&2, String>, +b: String, c: Cut) -> Cut:
     case l <> t:
       cut_go(t, b, cut_line(strip_cr(l), b, c))
 
-def cut_end(+c: Cut) -> List<&2, String>:
+def cut_end(c: Cut) -> List<&2, String>:
   Cut{cur, parts, inside, done} = c
   List.reverse(&2, String, cut_push(cur, parts, inside && Bool.not(done)))
 
 # The parts of a multipart body cut at boundary `b` (without the preamble
 # and epilogue); a truncated message keeps its last, partial part. A
 # `single` part has none.
-def subparts(+body: String, +b: String, single: Bool) -> List<&2, String>:
+def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
   match single:
     case True{}:
       []
@@ -636,7 +636,7 @@ def walk(+depth: Nat, +parts: List<&2, String>) -> Parts:
           merge(here, walk(1n+p, rest))
 
 # The readable content of a whole message.
-def parts(+msg: String) -> Parts:
+def parts(msg: String) -> Parts:
   walk(8n, [msg])
 
 # HTML to text (when there is no text/plain part)
@@ -663,7 +663,7 @@ def strip_go(s: String, st: Strip) -> Strip:
     case SCon{c, t}:
       strip_go(t, strip_step(c, st))
 
-def strip_out(+st: Strip) -> String:
+def strip_out(st: Strip) -> String:
   Strip{out, tag} = st
   String.reverse(out)
 
@@ -702,7 +702,7 @@ def squeeze(s: String, sp: Bool) -> String:
       here ++ squeeze(t, blank)
 
 # A rough plain-text view of HTML: tags removed, common entities decoded.
-def html_text(+html: String) -> String:
+def html_text(html: String) -> String:
   squeeze(entities(strip_out(strip_go(html, Strip{"", False{}}))), False{})
 
 # A def, not a Bool.pick, so the HTML is stripped only when there is no
@@ -738,7 +738,7 @@ def ew_chunks(s: String, +cur: String, +n: U32) -> List<&2, String>:
       rest = ew_chunks(t, next, Bool.pick(U32, full, w, (n + w : U32)))
       push_rev(cur, rest, full)
 
-def encoded_word(+text: String) -> String:
+def encoded_word(text: String) -> String:
   "=?UTF-8?B?" ++ C.b64_encode(C.utf8_encode(text), False{}) ++ "?="
 
 def ew_encode(chunks: List<&2, String>) -> String:
@@ -751,10 +751,10 @@ def ew_encode(chunks: List<&2, String>) -> String:
       encoded_word(c) ++ "\r\n " ++ ew_encode(t)
 
 # Text as encoded words, folded into lines of at most 76 characters.
-def encoded_words(+s: String) -> String:
+def encoded_words(s: String) -> String:
   ew_encode(ew_chunks(s, "", 0))
 
-def encode_header.if(+s: String, plain: Bool) -> String:
+def encode_header.if(s: String, plain: Bool) -> String:
   match plain:
     case True{}:
       s
@@ -788,7 +788,7 @@ def last_angle(s: String, found: String) -> String:
     case SCon{c, t}:
       last_angle(t, found)
 
-def inside_angle(+s: String) -> String:
+def inside_angle(s: String) -> String:
   last_angle(s, "")
 
 # The text without "(comments)" (nested, outside quotes).
@@ -807,7 +807,7 @@ def strip_comments(s: String, +depth: U32, +q: Bool) -> String:
       here = Bool.pick(String, keep, SCon{c, SNil{}}, "")
       here ++ strip_comments(t, depth_next, q_next)
 
-def addr_spec.if(+a: String, angle: Bool) -> String:
+def addr_spec.if(a: String, angle: Bool) -> String:
   match angle:
     case True{}:
       String.trim(inside_angle(a))
@@ -829,7 +829,7 @@ def addr_chars_ok(s: String) -> Bool:
       addr_char_ok(c) && addr_chars_ok(t)
 
 # No control characters (CR, LF, NUL, ...) anywhere.
-def no_ctl(+s: String) -> Bool:
+def no_ctl(s: String) -> Bool:
   match s:
     case SNil{}:
       True{}
@@ -855,7 +855,7 @@ def addr_ok(+a: String) -> Bool:
     && Bool.not(String.ends_with(s, "@"))
   no_ctl(a) && addr_chars_ok(s) && one_at && inner_at
 
-def all_addrs_ok(+xs: List<&2, String>) -> Bool:
+def all_addrs_ok(xs: List<&2, String>) -> Bool:
   match xs:
     case Nil{}:
       True{}
@@ -874,10 +874,10 @@ def quote_esc(s: String) -> String:
       SCon{c, quote_esc(t)}
 
 # A quoted string, with '"' and '\' escaped.
-def quoted(+s: String) -> String:
+def quoted(s: String) -> String:
   "\"" ++ quote_esc(s) ++ "\""
 
-def encode_display.if(+name: String, plain: Bool) -> String:
+def encode_display.if(name: String, plain: Bool) -> String:
   match plain:
     case True{}:
       quoted(name)
@@ -904,10 +904,10 @@ def display_part.go(
         Bool.pick(Bool, Bool.not(esc) && Char.is_eq(c, '"'), Bool.not(q), q),
         Bool.not(esc) && q && Char.is_eq(c, '\\'))
 
-def display_part(+a: String) -> String:
+def display_part(a: String) -> String:
   display_part.go(a, "", "", False{}, False{})
 
-def encode_addr.if(+name: String, +address: String, named: Bool) -> String:
+def encode_addr.if(name: String, address: String, named: Bool) -> String:
   match named:
     case True{}:
       encode_display(unquote(name)) ++ " <" ++ address ++ ">"
@@ -960,7 +960,7 @@ def short_line(+s: String) -> String:
   Bool.pick(String, Nat.is_le(String.length(s), 900n), s, "")
 
 # Message IDs folded one per line, so References never passes 998 chars.
-def fold_ids(+ids: List<&2, String>) -> String:
+def fold_ids(ids: List<&2, String>) -> String:
   match ids:
     case Nil{}:
       ""
@@ -969,7 +969,7 @@ def fold_ids(+ids: List<&2, String>) -> String:
       sep = Bool.pick(String, String.is_empty(rest), "", "\r\n ")
       Bool.pick(String, String.is_empty(i), "", short_line(i) ++ sep) ++ rest
 
-def opt_header(+name: String, +v: String) -> String:
+def opt_header(name: String, +v: String) -> String:
   Bool.pick(String, String.is_empty(v), "", name ++ ": " ++ v ++ "\r\n")
 
 # Attachments
@@ -1053,10 +1053,10 @@ def name_param.if(+key: String, +name: String, plain: Bool) -> String:
 # A file name parameter: quoted when it is short plain ASCII, else an ASCII
 # fallback plus RFC 2231 continuations of the UTF-8 name, percent-encoded,
 # one short line each (encoded words are not allowed inside parameters).
-def name_param(+key: String, +name: String) -> String:
+def name_param(key: String, +name: String) -> String:
   name_param.if(key, name, is_short_plain(name, 200n))
 
-def att_head(+b: String, +ctype: String, +name: String, +cte: String) -> String:
+def att_head(b: String, ctype: String, +name: String, cte: String) -> String:
   "--" ++ b ++ "\r\n"
     ++ "Content-Type: " ++ ctype ++ "; " ++ name_param("name", name) ++ "\r\n"
     ++ "Content-Disposition: attachment; " ++ name_param("filename", name)
@@ -1068,7 +1068,7 @@ def att_head(+b: String, +ctype: String, +name: String, +cte: String) -> String:
 # The CRLF after a raw message always belongs to the next boundary, so the
 # message's own final CRLF survives decoding. `ctype` is already safe.
 def att_body(
-  raw: Bool, +b: String, +ctype: String, +name: String, +data: String
+  raw: Bool, b: String, +ctype: String, name: String, data: String
 ) -> String:
   match raw:
     case True{}:
@@ -1081,7 +1081,7 @@ def att_body(
 
 # Whether a message/rfc822 attachment can travel raw (it is 7-bit clean).
 # Other types never do, and their data is not scanned.
-def att_part.raw(+data: String, rfc822: Bool) -> Bool:
+def att_part.raw(data: String, rfc822: Bool) -> Bool:
   match rfc822:
     case True{}:
       seven_bit(data, 0)
@@ -1105,12 +1105,12 @@ def att_parts(+b: String, xs: List<&2, Attach>) -> String:
 # -------
 
 # The text part: its headers, a blank line, then quoted-printable UTF-8.
-def text_part(+text: String) -> String:
+def text_part(text: String) -> String:
   "Content-Type: text/plain; charset=utf-8\r\n"
     ++ "Content-Transfer-Encoding: quoted-printable\r\n\r\n"
     ++ C.qp_encode(C.utf8_encode(crlf_lines(text)), 0)
 
-def body_section(+b: String, +text: String, +atts: List<&2, Attach>) -> String:
+def body_section(+b: String, text: String, +atts: List<&2, Attach>) -> String:
   match atts:
     case Nil{}:
       text_part(text)
@@ -1122,7 +1122,7 @@ def body_section(+b: String, +text: String, +atts: List<&2, Attach>) -> String:
 
 # The whole message, 7-bit ASCII with CRLF line breaks. `b` is the
 # multipart boundary to use when there are attachments.
-def compose(+d: Draft, +b: String) -> String:
+def compose(d: Draft, b: String) -> String:
   Draft{from, to, cc, bcc, subject, text, date, msgid, irt, refs, atts} = d
   in_reply_to = short_line(String.trim(one_line(irt)))
   ids = String.split(String.trim(one_line(refs)), ' ')
@@ -1161,12 +1161,12 @@ def day_name(n: U32) -> String:
     case _:
       "Sat"
 
-def wday(+days: U32) -> String:
+def wday(days: U32) -> String:
   day_name(((days + 4) % 7 : U32))
 
 # Days since 1970-01-01 to "D Mon YYYY" (civil-from-days, H. Hinnant),
 # shifted by 719468 days so all arithmetic stays unsigned.
-def civil(+days: U32) -> String:
+def civil(days: U32) -> String:
   +z = (days + 719468 : U32)
   +era = (z / 146097 : U32)
   +doe = (z - era * 146097 : U32)
