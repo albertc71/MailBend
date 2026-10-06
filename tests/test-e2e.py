@@ -3206,6 +3206,7 @@ def gates_delete(work, key_file):
     finally:
         ts.stop()
         srv.stop()
+    gates_flags_first(work, key_file)
     srv = Server(work, caps="MOVE,SPECIAL-USE,IDLE", fixture=gates_fixture())
     ts = TypeSafe(work)
     try:
@@ -3240,6 +3241,30 @@ def gates_delete_vetoes(srv, ts, key_file):
     c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(900), **env)
     check("gates: a delete of UIDs that do not exist asks TypeSafe nothing", c != 0
           and "none of these UIDs exist" in r.get("error", "") and not asked, r)
+
+
+def gates_flags_first(work, key_file):
+    """The server precedes every FETCH answer with an unsolicited update
+    holding only UID and FLAGS, which Jev must never be asked about in
+    place of the message."""
+    srv = Server(work, extra=["--flags-first"], fixture=gates_fixture())
+    ts = TypeSafe(work)
+    try:
+        env = jev_env(ts, key_file)
+        c, r = classify(srv, ts, key_file, {"uids": [GATE_PREVIEWED]}, **BODY_MODE)
+        seen = [(e.get("subject"), e.get("text")) for q in ts.requests() for e in q["body"]["state"]["emails"]]
+        check("gates, body mode: an unsolicited FLAGS update does not stand in for the message mail_classify "
+              "asks about", c == 0 and [s for s, t in seen] == ["[disposable] Monthly newsletter"]
+              and all("news" in (t or "") for s, t in seen), (r, seen))
+        c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_DISPOSABLE), **env)
+        subjects = [e.get("subject") for q in asked for e in q["body"]["state"]["emails"]]
+        check("gates: an unsolicited FLAGS update does not stand in for the message a delete asks about",
+              c == 0 and r.get("jev", {}).get("decision") == "proceeded"
+              and subjects == ["[disposable] Weekly newsletter"]
+              and GATE_DISPOSABLE not in msgs(srv.st(), "INBOX"), (r, subjects))
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def gates_delete_race(srv, work, key_file):

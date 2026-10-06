@@ -2392,19 +2392,29 @@ def jev_uids(tool: String, u: Uids()) -> Uids():
     case Done{+us}:
       jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
 
-# `ms` in UID order, each UID once (a server may answer twice).
-def first_uids(ms: List<&2, I.Msg>, prev: U32) -> List<&2, I.Msg>:
+# Whether a FETCH response carries what a Jev tool fetched: the header
+# fields, and with `body` the message too. An unsolicited update (RFC 9051
+# 7.5.2), such as FLAGS alone, does not.
+def has_facts(m: I.Msg, body: Bool) -> Bool:
+  I.Msg{uid, flags, date, size, headers, text, st} = m
+  Bool.not(String.is_empty(headers) || (body && String.is_empty(text)))
+
+# `ms` in UID order, each UID once: its first response that carries what
+# was fetched (a server may answer twice, or add updates). A UID with none
+# is left out, so it counts as missing.
+def first_uids(ms: List<&2, I.Msg>, +prev: U32, +body: Bool) -> List<&2, I.Msg>:
   match ms:
     case Nil{}:
       []
     case +m <> t:
       +u = msg_uid(m)
-      List.filter.put(I.Msg, m, first_uids(t, u), Bool.not(U32.is_eq(u, prev)))
+      +keep = has_facts(m, body) && Bool.not(U32.is_eq(u, prev))
+      List.filter.put(I.Msg, m, first_uids(t, Bool.pick(U32, keep, u, prev), body), keep)
 
 # The messages of `uids` a session fetched, in UID order, each once: those
-# Jev is asked about.
-def jev_msgs(lines: List<&2, I.RLine>, uids: List<&2, U32>) -> List<&2, I.Msg>:
-  first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
+# Jev is asked about. `body` says the fetch took the messages whole.
+def jev_msgs(lines: List<&2, I.RLine>, uids: List<&2, U32>, body: Bool) -> List<&2, I.Msg>:
+  first_uids(oldest_first(requested(I.fetched(lines), uids)), 0, body)
 
 def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
   match ms:
@@ -3252,8 +3262,8 @@ def delete_gated(
   dry: Bool
 ) -> IO(Out):
   match jev uidplus:
-    case Jev.On{c} True{}:
-      delete_ask(jev_msgs(lines, uids), c, folder, uids, confirm, uidv, dry)
+    case Jev.On{+c} True{}:
+      delete_ask(jev_msgs(lines, uids, Jev.is_body(c)), c, folder, uids, confirm, uidv, dry)
     case Jev.On{c} False{}:
       delete_decided(Jev.Decision{Jev.JevOff{}, []}, False{}, folder, uids, uids, confirm, uidv,
         dry)
@@ -5339,7 +5349,7 @@ def classify_folders(
       +g = guard_for(folders)
       +cats = categories(g)
       +canon = canonical_names(g, cands)
-      +ms = jev_msgs(lines, uids)
+      +ms = jev_msgs(lines, uids, Jev.is_body(c))
       head : List<&2, J.Json> = [
         J.kv("folder", J.str(folder)),
         J.kv("uidvalidity", maybe_num(I.ok_code(lines, "UIDVALIDITY"))),
@@ -5976,7 +5986,7 @@ def triage_folders.if(
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       Triage{folder, +uids, uidv, dry} = call
-      +ms = jev_msgs(lines, uids)
+      +ms = jev_msgs(lines, uids, Jev.is_body(c))
       +roles = role_folders(folders)
       triage_sent(Triaging{call, c, cats, opts, roles, I.caps(lines),
         review_problem(folders, roles), pendings(c, now, ms), minus(uids, msg_uids(ms))},

@@ -1139,6 +1139,13 @@ def many_names(n: Nat) -> List<&2, String>:
 def classify_msg(uid: U32) -> I.Msg:
   I.Msg{uid, [], "", 0, "", "", I.VNil{}}
 
+# A FETCH response for `uid` with these header fields and no message text.
+def fetched_msg(uid: U32, headers: String) -> I.Msg:
+  I.Msg{uid, [], "", 0, headers, "", I.VNil{}}
+
+def body_msg(uid: U32) -> I.Msg:
+  I.Msg{uid, [], "", 0, "x", "x", I.VNil{}}
+
 def keys() -> List<&2, String>:
   ["Work", "none"]
 
@@ -1165,8 +1172,11 @@ def check_classify() -> IO(Unit):
     IO.print(problem(T.candidates_problem(guard(), ["Nope/New"], [])))
     IO.print(problem(T.options_problem(254n)) ++ problem(T.options_problem(255n)))
     IO.print(problem(T.room_problem(True{})) ++ problem(T.room_problem(False{})))
-    IO.print(show_u32s(T.msg_uids(T.first_uids(T.oldest_first([classify_msg(3), classify_msg(1),
-      classify_msg(3), classify_msg(2)]), 0))))
+    IO.print(show_u32s(T.msg_uids(T.first_uids(T.oldest_first([fetched_msg(3, ""),
+      fetched_msg(3, "x"), fetched_msg(1, "x"), fetched_msg(3, "x"), fetched_msg(4, ""),
+      fetched_msg(2, "x")]), 0, False{}))) ++ "|" ++
+      show_u32s(T.msg_uids(T.first_uids([fetched_msg(1, "x"), body_msg(2), body_msg(2)], 0,
+        True{}))))
     IO.print(asked(0, "{\"answers\":{}}", ""))
     IO.print(asked(8, "{\"detail\":\"bad question\"}",
       "mailbend-typesafe: TypeSafe refused the request (HTTP 422)\n"))
@@ -1587,7 +1597,7 @@ def main() -> IO(Unit):
 #|[candidate "Nope/New": the parent folder "Nope" does not exist; create it first]
 #|[][Jev chooses among at most 254 folders and candidates (TypeSafe takes 255 options, and one is "none"); there are 255]
 #|[][the folder and candidate names are too long for one TypeSafe question: pass fewer or shorter candidates]
-#|1 2 3 
+#|1 2 3 |2 
 #|answered {"answers":{}}
 #|refused TypeSafe refused the request (HTTP 422): bad question
 #|refused TypeSafe refused the request (HTTP 422): [{"loc":["body"],"msg":"bad"}]

@@ -8,7 +8,7 @@ Usage:
         [--cert-name server] [--silent-port] [--delim /] [--nil-delim INBOX]
         [--drop-after COPY] [--drop-unanswered COPY] [--reject SUBSCRIBE]
         [--permanent-flags '\\Seen,\\Flagged' [--session-flags] | --no-permanent-flags]
-        [--noisy-store] [--fetch-no-flags UID[,UID]] [--file-sent MAILBOX]
+        [--noisy-store] [--flags-first] [--fetch-no-flags UID[,UID]] [--file-sent MAILBOX]
         [--bodystructure real|omit|corrupt]
 
 Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
@@ -34,7 +34,9 @@ server that keeps them for the session only may (RFC 3501 7.1).
 --no-permanent-flags announces none. --noisy-store answers every STORE with
 FETCH updates (one by sequence number only, one with the UID twice) and
 follows each FETCH answer with a duplicate, an update without FLAGS and an
-update by sequence number only, with no flags. --fetch-no-flags UID[,UID]
+update by sequence number only, with no flags. --flags-first precedes each
+FETCH answer with an unsolicited update holding only UID and FLAGS (RFC 9051
+7.5.2). --fetch-no-flags UID[,UID]
 leaves FLAGS out of the FETCH answers for those UIDs. --file-sent MAILBOX
 appends every message accepted over SMTP to MAILBOX, seen, as a provider
 that files sent mail itself does.
@@ -212,6 +214,7 @@ class State:
         self.session_flags = False
         self.noisy_store = False
         self.fetch_no_flags = set()
+        self.flags_first = False
         self.cut_goodbye = False
         self.file_sent = None
         self.bodystructure = 'real'
@@ -1023,6 +1026,8 @@ class IMAPSession:
             for seq, m in enumerate(messages, start=1):
                 if m['uid'] not in wanted:
                     continue
+                if self.state.flags_first:
+                    out_lines.append(f'* {seq} FETCH (UID {m["uid"]} FLAGS ({" ".join(m["flags"])}))\r\n')
                 line, seen_added = self.build_fetch_response(seq, m, items)
                 mutated = mutated or seen_added
                 out_lines.append(line)
@@ -1584,6 +1589,8 @@ def main():
     ap.add_argument('--no-permanent-flags', action='store_true', help='announce no PERMANENTFLAGS')
     ap.add_argument('--noisy-store', action='store_true',
                     help='answer every STORE with FETCH updates and repeat FETCH answers')
+    ap.add_argument('--flags-first', action='store_true',
+                    help='precede every FETCH answer with an unsolicited update holding only UID and FLAGS')
     ap.add_argument('--fetch-no-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     ap.add_argument('--cut-goodbye', action='store_true',
@@ -1611,6 +1618,7 @@ def main():
     state.session_flags = args.session_flags
     state.noisy_store = args.noisy_store
     state.fetch_no_flags = args.fetch_no_flags
+    state.flags_first = args.flags_first
     state.cut_goodbye = args.cut_goodbye
     state.file_sent = args.file_sent
     state.bodystructure = args.bodystructure
