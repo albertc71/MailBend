@@ -49,7 +49,7 @@ scripts/install.sh --install-bend --install-rust
 `--install-bend` and no `bend` on the `PATH`, it first runs
 `scripts/install-bend.sh`, which installs the Bend release tested in CI to
 `~/.bend` after checking the archive's sha256. That pinned release is Linux
-x64 only; elsewhere, install Bend 2.0.32 yourself and run
+x64 only; elsewhere, install Bend 2.0.35 yourself and run
 `scripts/install.sh`. An already installed Bend is reused as is. Likewise,
 `--install-rust` runs `scripts/install-rust.sh` (a sha256-checked `rustup-init`
 that installs Rust 1.99 to `~/.cargo`) only when `cargo` does not provide
