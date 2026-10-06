@@ -502,6 +502,53 @@ def smtp_run(envelope: String) -> IO(Out):
     p : Proc <- helper("smtp", envelope)
     return smtp_result(p)
 
+# Dry runs
+# --------
+
+# The change a tool is about to make, as a dry run shows it: run an IMAP
+# plan, send `msg` from `from` to `rcpts` (the values the envelope is built
+# from) and save a Sent copy when `sent_copy` is set, or save `data` as the
+# file `path`.
+type Preview is Data:
+  ImapPreview{plan: List<&2, I.Cmd>}
+  SmtpPreview{from: String, rcpts: List<&2, String>, msg: String, sent_copy: Bool}
+  FilePreview{path: String, data: String}
+
+def preview.result(kind: String, j: J.Json) -> Out:
+  ok_obj([J.kv("dry_run", J.bool(True{})), J.kv(kind, j)])
+
+# What a dry run returns instead of making the change: the IMAP commands as
+# the TLS helper would get them, the SMTP envelope or the file. A message or
+# file shows only its size, and no line holds a credential: the helper logs
+# in by itself. `sent_copy` states the intent under MAILBEND_SAVE_SENT; the
+# real send still skips the copy when the server has filed one itself.
+def preview(p: Preview) -> Out:
+  match p:
+    case ImapPreview{plan}:
+      preview.result("imap", J.strs(I.preview(plan)))
+    case SmtpPreview{from, rcpts, msg, sent_copy}:
+      preview.result("smtp", J.obj([
+        J.kv("from", J.str(from)),
+        J.kv("rcpt", J.strs(rcpts)),
+        J.kv("data", J.str(C.size_note(C.byte_len(msg)))),
+        J.kv("sent_copy", J.bool(sent_copy))
+      ]))
+    case FilePreview{path, data}:
+      preview.result("file", J.obj([
+        J.kv("path", J.str(path)),
+        J.kv("data", J.str(C.size_note(C.byte_len(data))))
+      ]))
+
+# Every tool that changes or sends mail, or saves a file, makes its change
+# here, once its read-only checks have passed: `run` makes it, and a dry
+# run only shows it. `run` is an IO action, so a dry run never performs it.
+def preview_or_run(dry: Bool, p: Preview, run: IO(Out)) -> IO(Out):
+  match dry:
+    case True{}:
+      pure_out(preview(p))
+    case False{}:
+      run
+
 # Arguments and JSON
 # ==================
 
@@ -516,6 +563,10 @@ def bool_arg(args: J.Json, key: String, d: Bool) -> Bool:
 
 def u32_arg(args: J.Json, key: String, d: U32) -> U32:
   Maybe.default(&2, U32, J.as_u32(J.get(args, key)), d)
+
+# Whether a tool that changes or sends mail is only to show the change.
+def dry_arg(args: J.Json) -> Bool:
+  bool_arg(args, "dry_run", False{})
 
 def folder_arg(args: J.Json) -> String:
   str_arg(args, "folder", "INBOX")
@@ -2198,34 +2249,40 @@ def mark_result(
     case _:
       flag_out(p, plan, uids, folder, mark)
 
-def mark_uids.run(+uids: List<&2, U32>, +folder: String, +mark: Mark, uidv: U32) -> IO(Out):
-  +plan = mark_plan(uids, folder, mark, uidv)
+def mark_uids.run(
+  +plan: List<&2, I.Cmd>,
+  uids: List<&2, U32>,
+  folder: String,
+  mark: Mark
+) -> IO(Out):
   do IO<Out>:
     p : Proc <- imap_proc(plan)
     return mark_result(p, plan, uids, folder, mark)
 
 def mark_uids.if(
   missing: Bool,
-  uids: List<&2, U32>,
-  folder: String,
-  mark: Mark,
-  uidv: U32
+  +uids: List<&2, U32>,
+  +folder: String,
+  +mark: Mark,
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match missing:
     case True{}:
       pure_out(Err{uidv_missing()})
     case False{}:
-      mark_uids.run(uids, folder, mark, uidv)
+      +plan = mark_plan(uids, folder, mark, uidv)
+      preview_or_run(dry, ImapPreview{plan}, mark_uids.run(plan, uids, folder, mark))
 
-def mark_uids(u: Uids(), folder: String, mark: Mark, +uidv: U32) -> IO(Out):
+def mark_uids(u: Uids(), folder: String, mark: Mark, +uidv: U32, dry: Bool) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      mark_uids.if(U32.is_zero(uidv), uids, folder, mark, uidv)
+      mark_uids.if(U32.is_zero(uidv), uids, folder, mark, uidv, dry)
 
 def t_mark(+args: J.Json, mark: Mark) -> IO(Out):
-  mark_uids(uids_arg(args), folder_arg(args), mark, uidv_arg(args))
+  mark_uids(uids_arg(args), folder_arg(args), mark, uidv_arg(args), dry_arg(args))
 
 def flag_colour(m: Maybe<&2, I.Colour>, args: J.Json) -> IO(Out):
   match m:
@@ -2320,12 +2377,24 @@ def moved_out(
 ) -> Out:
   moved_out.if(interrupted(plan, p), imap_result(p), folder, uids, dest, move)
 
-def move_plan(
+def move_plan.run(
   +plan: List<&2, I.Cmd>,
   folder: String,
   uids: List<&2, U32>,
   dest: String,
   move: Bool
+) -> IO(Out):
+  do IO<Out>:
+    p : Proc <- imap_proc(plan)
+    return moved_out(p, plan, folder, uids, dest, move)
+
+def move_plan(
+  +plan: List<&2, I.Cmd>,
+  folder: String,
+  uids: List<&2, U32>,
+  dest: String,
+  move: Bool,
+  dry: Bool
 ) -> IO(Out):
   match plan:
     case Nil{}:
@@ -2333,9 +2402,7 @@ def move_plan(
         "the server supports neither MOVE nor UIDPLUS; refusing to move with a plain " ++
           "EXPUNGE, which could remove other messages"})
     case h <> t:
-      do IO<Out>:
-        p : Proc <- imap_proc(plan)
-        return moved_out(p, plan, folder, uids, dest, move)
+      preview_or_run(dry, ImapPreview{plan}, move_plan.run(plan, folder, uids, dest, move))
 
 def move_caps.if(
   problem: String,
@@ -2343,7 +2410,8 @@ def move_caps.if(
   +folder: String,
   +uids: List<&2, U32>,
   +dest: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -2351,20 +2419,21 @@ def move_caps.if(
     case SNil{}:
       +move = I.has_cap(caps, "MOVE")
       move_plan(Ops.plan_move(folder, uids, dest, move, I.has_cap(caps, "UIDPLUS"), uidv),
-        folder, uids, dest, move)
+        folder, uids, dest, move, dry)
 
 def move_caps(
   r: Run(),
   folder: String,
   uids: List<&2, U32>,
   dest: String,
-  +uidv: U32
+  +uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      move_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv)
+      move_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv, dry)
 
 def move_request(uidv: U32, folder: String, +dest: String) -> String:
   Bool.pick(String, String.is_empty(dest) || I.same_name(dest, folder),
@@ -2376,7 +2445,8 @@ def move_uids.if(
   +folder: String,
   uids: List<&2, U32>,
   dest: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -2384,17 +2454,18 @@ def move_uids.if(
     case SNil{}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
-        move_caps(r, folder, uids, dest, uidv)
+        move_caps(r, folder, uids, dest, uidv, dry)
 
-def move_uids(u: Uids(), +folder: String, +dest: String, +uidv: U32) -> IO(Out):
+def move_uids(u: Uids(), +folder: String, +dest: String, +uidv: U32, dry: Bool) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      move_uids.if(move_request(uidv, folder, dest), folder, uids, dest, uidv)
+      move_uids.if(move_request(uidv, folder, dest), folder, uids, dest, uidv, dry)
 
 def t_move(+args: J.Json) -> IO(Out):
-  move_uids(uids_arg(args), folder_arg(args), str_arg(args, "destination", ""), uidv_arg(args))
+  move_uids(uids_arg(args), folder_arg(args), str_arg(args, "destination", ""), uidv_arg(args),
+    dry_arg(args))
 
 def trash_into(
   same: Bool,
@@ -2402,7 +2473,8 @@ def trash_into(
   +caps: List<&2, String>,
   +folder: String,
   +uids: List<&2, U32>,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match same:
     case True{}:
@@ -2412,40 +2484,43 @@ def trash_into(
     case False{}:
       +move = I.has_cap(caps, "MOVE")
       move_plan(Ops.plan_trash(folder, uids, trash, move, I.has_cap(caps, "UIDPLUS"), uidv),
-        folder, uids, trash, move)
+        folder, uids, trash, move, dry)
 
 def trash_to(
   trash: Maybe<&2, String>,
   caps: List<&2, String>,
   +folder: String,
   uids: List<&2, U32>,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match trash:
     case None{}:
       pure_out(Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
     case Some{+t}:
-      trash_into(I.same_name(t, folder), t, caps, folder, uids, uidv)
+      trash_into(I.same_name(t, folder), t, caps, folder, uids, uidv, dry)
 
 def trash_fs(
   f: Fs(),
   caps: List<&2, String>,
   folder: String,
   uids: List<&2, U32>,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match f:
     case Fail{m}:
       pure_out(Err{m ++ "; nothing was changed"})
     case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
-      trash_to(trash, caps, folder, uids, uidv)
+      trash_to(trash, caps, folder, uids, uidv, dry)
 
 def trash_found.if(
   problem: String,
   +lines: List<&2, I.RLine>,
   folder: String,
   uids: List<&2, U32>,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -2453,47 +2528,67 @@ def trash_found.if(
     case SNil{}:
       do IO<Out>:
         f : Fs() <- folders_io(lines)
-        trash_fs(f, I.caps(lines), folder, uids, uidv)
+        trash_fs(f, I.caps(lines), folder, uids, uidv, dry)
 
-def trash_found(r: Run(), folder: String, uids: List<&2, U32>, +uidv: U32) -> IO(Out):
+def trash_found(
+  r: Run(),
+  folder: String,
+  uids: List<&2, U32>,
+  +uidv: U32,
+  dry: Bool
+) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      trash_found.if(uidv_problem(lines, uidv), lines, folder, uids, uidv)
+      trash_found.if(uidv_problem(lines, uidv), lines, folder, uids, uidv, dry)
 
-def trash_uids.if(missing: Bool, +folder: String, uids: List<&2, U32>, uidv: U32) -> IO(Out):
+def trash_uids.if(
+  missing: Bool,
+  +folder: String,
+  uids: List<&2, U32>,
+  uidv: U32,
+  dry: Bool
+) -> IO(Out):
   match missing:
     case True{}:
       pure_out(Err{uidv_missing()})
     case False{}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
-        trash_found(r, folder, uids, uidv)
+        trash_found(r, folder, uids, uidv, dry)
 
-def trash_uids(u: Uids(), folder: String, +uidv: U32) -> IO(Out):
+def trash_uids(u: Uids(), folder: String, +uidv: U32, dry: Bool) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      trash_uids.if(U32.is_zero(uidv), folder, uids, uidv)
+      trash_uids.if(U32.is_zero(uidv), folder, uids, uidv, dry)
 
 def t_trash(+args: J.Json) -> IO(Out):
-  trash_uids(uids_arg(args), folder_arg(args), uidv_arg(args))
+  trash_uids(uids_arg(args), folder_arg(args), uidv_arg(args), dry_arg(args))
 
-def delete_plan(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) -> IO(Out):
+def delete_plan.run(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) -> IO(Out):
+  do IO<Out>:
+    r : Run() <- imap_run(plan)
+    return changed_out(r, uids, folder, [
+      J.kv("ok", J.bool(True{})),
+      J.kv("folder", J.str(folder)),
+      J.kv("permanently_deleted", J.bool(True{}))
+    ])
+
+def delete_plan(
+  +plan: List<&2, I.Cmd>,
+  folder: String,
+  uids: List<&2, U32>,
+  dry: Bool
+) -> IO(Out):
   match plan:
     case Nil{}:
       pure_out(Err{
         "the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"})
     case h <> t:
-      do IO<Out>:
-        r : Run() <- imap_run(plan)
-        return changed_out(r, uids, folder, [
-          J.kv("ok", J.bool(True{})),
-          J.kv("folder", J.str(folder)),
-          J.kv("permanently_deleted", J.bool(True{}))
-        ])
+      preview_or_run(dry, ImapPreview{plan}, delete_plan.run(plan, folder, uids))
 
 def delete_caps.if(
   problem: String,
@@ -2501,34 +2596,37 @@ def delete_caps.if(
   +folder: String,
   +uids: List<&2, U32>,
   confirm: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       delete_plan(Ops.plan_delete(folder, uids, confirm, I.has_cap(caps, "UIDPLUS"), uidv),
-        folder, uids)
+        folder, uids, dry)
 
 def delete_caps(
   r: Run(),
   folder: String,
   uids: List<&2, U32>,
   confirm: String,
-  +uidv: U32
+  +uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      delete_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, confirm, uidv)
+      delete_caps.if(uidv_problem(lines, uidv), I.caps(lines), folder, uids, confirm, uidv, dry)
 
 def delete_uids.if(
   problem: String,
   +folder: String,
   uids: List<&2, U32>,
   confirm: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -2536,7 +2634,7 @@ def delete_uids.if(
     case SNil{}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
-        delete_caps(r, folder, uids, confirm, uidv)
+        delete_caps(r, folder, uids, confirm, uidv, dry)
 
 # The plan itself refuses without the confirmation word (a proven law);
 # these checks only explain why before connecting.
@@ -2546,15 +2644,16 @@ def delete_request(confirm: String, uidv: U32) -> String:
       "\"permanently-delete\" to proceed (use mail_trash to move them to Trash instead)",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
-def delete_uids(u: Uids(), folder: String, +confirm: String, +uidv: U32) -> IO(Out):
+def delete_uids(u: Uids(), folder: String, +confirm: String, +uidv: U32, dry: Bool) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      delete_uids.if(delete_request(confirm, uidv), folder, uids, confirm, uidv)
+      delete_uids.if(delete_request(confirm, uidv), folder, uids, confirm, uidv, dry)
 
 def t_delete(+args: J.Json) -> IO(Out):
-  delete_uids(uids_arg(args), folder_arg(args), str_arg(args, "confirm", ""), uidv_arg(args))
+  delete_uids(uids_arg(args), folder_arg(args), str_arg(args, "confirm", ""), uidv_arg(args),
+    dry_arg(args))
 
 # Folders: create, rename, label
 # ------------------------------
@@ -2968,52 +3067,61 @@ def folder_out.if(
 def folder_out(+p: Proc, plan: List<&2, I.Cmd>, c: FolderChange) -> Out:
   folder_out.if(ok_at(proc_lines(p), 2), p, plan, c, run_failure(imap_result(p)))
 
-def folder_guarded.if(problem: String, +plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
+def folder_guarded.run(+plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
+  do IO<Out>:
+    p : Proc <- imap_proc(plan)
+    return folder_out(p, plan, c)
+
+def folder_guarded.if(
+  problem: String,
+  +plan: List<&2, I.Cmd>,
+  c: FolderChange,
+  dry: Bool
+) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
-        p : Proc <- imap_proc(plan)
-        return folder_out(p, plan, c)
+      preview_or_run(dry, ImapPreview{plan}, folder_guarded.run(plan, c))
 
-def folder_guarded(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange) -> IO(Out):
+def folder_guarded(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange, dry: Bool) -> IO(Out):
   +canonical = change_canonical(g, c)
-  folder_guarded.if(change_problem(g, canonical), change_plan(g, subs, canonical), canonical)
+  folder_guarded.if(change_problem(g, canonical), change_plan(g, subs, canonical), canonical,
+    dry)
 
-def folder_fs(f: Fs(), subs: List<&2, I.Folder>, c: FolderChange) -> IO(Out):
+def folder_fs(f: Fs(), subs: List<&2, I.Folder>, c: FolderChange, dry: Bool) -> IO(Out):
   match f:
     case Fail{m}:
       pure_out(Err{m ++ "; nothing was changed"})
     case Done{folders}:
-      folder_guarded(guard_for(folders), subs, c)
+      folder_guarded(guard_for(folders), subs, c, dry)
 
-def folder_found(r: Run(), c: FolderChange) -> IO(Out):
+def folder_found(r: Run(), c: FolderChange, dry: Bool) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
       do IO<Out>:
         f : Fs() <- folders_io(lines)
-        folder_fs(f, I.subscribed(lines), c)
+        folder_fs(f, I.subscribed(lines), c, dry)
 
-def folder_change.if(problem: String, c: FolderChange) -> IO(Out):
+def folder_change.if(problem: String, c: FolderChange, dry: Bool) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_folder_scan())
-        folder_found(r, c)
+        folder_found(r, c, dry)
 
-def folder_change(+c: FolderChange) -> IO(Out):
-  folder_change.if(change_raw_problem(c), c)
+def folder_change(+c: FolderChange, dry: Bool) -> IO(Out):
+  folder_change.if(change_raw_problem(c), c, dry)
 
-def t_create_folder(args: J.Json) -> IO(Out):
-  folder_change(FolderCreate{str_arg(args, "name", "")})
+def t_create_folder(+args: J.Json) -> IO(Out):
+  folder_change(FolderCreate{str_arg(args, "name", "")}, dry_arg(args))
 
 def t_rename_folder(+args: J.Json) -> IO(Out):
-  folder_change(FolderRename{str_arg(args, "from", ""), str_arg(args, "to", "")})
+  folder_change(FolderRename{str_arg(args, "from", ""), str_arg(args, "to", "")}, dry_arg(args))
 
 # Runs the label plan unless `problem` rules it out.
 def label_fs.if(
@@ -3022,13 +3130,14 @@ def label_fs.if(
   folder: String,
   uids: List<&2, U32>,
   label: String,
-  move: Bool
+  move: Bool,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
-      move_plan(plan, folder, uids, label, move)
+      move_plan(plan, folder, uids, label, move, dry)
 
 def label_fs(
   f: Fs(),
@@ -3036,7 +3145,8 @@ def label_fs(
   +folder: String,
   +uids: List<&2, U32>,
   +label: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match f:
     case Fail{m}:
@@ -3045,7 +3155,7 @@ def label_fs(
       +move = I.has_cap(caps, "MOVE")
       label_fs.if(label_problem(guard_for(folders), label),
         Ops.plan_label(folder, uids, label, move, I.has_cap(caps, "UIDPLUS"), uidv),
-        folder, uids, label, move)
+        folder, uids, label, move, dry)
 
 def label_found.if(
   problem: String,
@@ -3053,7 +3163,8 @@ def label_found.if(
   folder: String,
   uids: List<&2, U32>,
   label: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -3061,27 +3172,29 @@ def label_found.if(
     case SNil{}:
       do IO<Out>:
         f : Fs() <- folders_io(lines)
-        label_fs(f, I.caps(lines), folder, uids, label, uidv)
+        label_fs(f, I.caps(lines), folder, uids, label, uidv, dry)
 
 def label_found(
   r: Run(),
   folder: String,
   uids: List<&2, U32>,
   label: String,
-  +uidv: U32
+  +uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{+lines}:
-      label_found.if(uidv_problem(lines, uidv), lines, folder, uids, label, uidv)
+      label_found.if(uidv_problem(lines, uidv), lines, folder, uids, label, uidv, dry)
 
 def label_uids.if(
   problem: String,
   +folder: String,
   uids: List<&2, U32>,
   label: String,
-  uidv: U32
+  uidv: U32,
+  dry: Bool
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -3089,22 +3202,23 @@ def label_uids.if(
     case SNil{}:
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
-        label_found(r, folder, uids, label, uidv)
+        label_found(r, folder, uids, label, uidv, dry)
 
 def label_request(uidv: U32, folder: String, +label: String) -> String:
   Bool.pick(String, String.is_empty(label) || I.same_name(label, folder),
     "\"label\" must name a folder other than the one the messages are in",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
-def label_uids(u: Uids(), +folder: String, +label: String, +uidv: U32) -> IO(Out):
+def label_uids(u: Uids(), +folder: String, +label: String, +uidv: U32, dry: Bool) -> IO(Out):
   match u:
     case Fail{m}:
       pure_out(Err{m})
     case Done{uids}:
-      label_uids.if(label_request(uidv, folder, label), folder, uids, label, uidv)
+      label_uids.if(label_request(uidv, folder, label), folder, uids, label, uidv, dry)
 
 def t_label(+args: J.Json) -> IO(Out):
-  label_uids(uids_arg(args), folder_arg(args), str_arg(args, "label", ""), uidv_arg(args))
+  label_uids(uids_arg(args), folder_arg(args), str_arg(args, "label", ""), uidv_arg(args),
+    dry_arg(args))
 
 # Composing
 # =========
@@ -3327,7 +3441,8 @@ def atts_collect(rs: List<&2, Attachment()>) -> Attachments():
 type Stamp is Data:
   Stamp{date: String, token: String, day: String}
 
-# What the tools want composed; Bcc goes only into the SMTP envelope.
+# What the tools want composed; Bcc goes only into the SMTP envelope. With
+# `draft` the message is saved instead of sent; with `dry` that is only shown.
 type Want is Data:
   Want{
     to: List<&2, String>,
@@ -3338,7 +3453,8 @@ type Want is Data:
     irt: String,
     refs: String,
     atts: List<&2, M.Attach>,
-    draft: Bool
+    draft: Bool,
+    dry: Bool
   }
 
 def secs_of(p: Proc) -> U32:
@@ -3374,7 +3490,7 @@ def domain_of(addr: String) -> String:
 # the header); a sent message never carries one, Bcc goes only into the
 # SMTP envelope.
 def draft_of(w: Want, +from: String, st: Stamp, keep_bcc: Bool) -> M.Draft:
-  Want{to, cc, bcc, subject, text, irt, refs, atts, draft} = w
+  Want{to, cc, bcc, subject, text, irt, refs, atts, draft, dry} = w
   Stamp{date, token, day} = st
   msgid = "<" ++ token ++ "@" ++ domain_of(from) ++ ">"
   M.Draft{from, to, cc, Bool.pick(List<&2, String>, keep_bcc, bcc, []), subject, text, date,
@@ -3393,12 +3509,16 @@ def day_of(st: Stamp) -> String:
   day
 
 def all_rcpts(w: Want) -> List<&2, String>:
-  Want{to, cc, bcc, s, x, i, r, a, d} = w
+  Want{to, cc, bcc, s, x, i, r, a, d, y} = w
   List.concat(&2, String, [to, cc, bcc])
 
 def is_draft(w: Want) -> Bool:
-  Want{t, c, b, s, x, i, r, a, draft} = w
+  Want{t, c, b, s, x, i, r, a, draft, y} = w
   draft
+
+def is_dry(w: Want) -> Bool:
+  Want{t, c, b, s, x, i, r, a, d, dry} = w
+  dry
 
 def specs(xs: List<&2, String>) -> List<&2, String>:
   match xs:
@@ -3434,30 +3554,34 @@ def draft_saved(r: Run(), drafts: String, msgid: String) -> Out:
         J.kv("message_id", J.str(msgid))
       ])
 
-def draft_append(m: Maybe<&2, String>, msg: String, msgid: String) -> IO(Out):
+def draft_append.run(plan: List<&2, I.Cmd>, drafts: String, msgid: String) -> IO(Out):
+  do IO<Out>:
+    r : Run() <- imap_run(plan)
+    return draft_saved(r, drafts, msgid)
+
+def draft_append(m: Maybe<&2, String>, msg: String, msgid: String, dry: Bool) -> IO(Out):
   match m:
     case None{}:
       pure_out(Err{"no unique selectable Drafts folder: configure MAILBEND_DRAFTS_FOLDER"})
     case Some{+drafts}:
-      do IO<Out>:
-        r : Run() <- imap_run(Ops.plan_draft(drafts, msg))
-        return draft_saved(r, drafts, msgid)
+      +plan = Ops.plan_draft(drafts, msg)
+      preview_or_run(dry, ImapPreview{plan}, draft_append.run(plan, drafts, msgid))
 
-def draft_fs(f: Fs(), msg: String, msgid: String) -> IO(Out):
+def draft_fs(f: Fs(), msg: String, msgid: String, dry: Bool) -> IO(Out):
   match f:
     case Fail{m}:
       pure_out(Err{m ++ "; no draft was saved"})
     case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
-      draft_append(drafts, msg, msgid)
+      draft_append(drafts, msg, msgid, dry)
 
-def draft_folder(r: Run(), msg: String, msgid: String) -> IO(Out):
+def draft_folder(r: Run(), msg: String, msgid: String, dry: Bool) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{lines}:
       do IO<Out>:
         f : Fs() <- folders_io(lines)
-        draft_fs(f, msg, msgid)
+        draft_fs(f, msg, msgid, dry)
 
 def sent_out(o: Out, msgid: String, n: U32) -> Out:
   match o:
@@ -3671,8 +3795,14 @@ def unlisted_msg(refused: List<&2, String>) -> String:
   "MAILBEND_ALLOWED_RECIPIENTS does not allow sending to " ++ String.join(refused, ", ") ++
     "; nothing was sent"
 
+def send_allowed.run(envelope: String, limit: U32, dir: String, day: String, s: Sent) -> IO(Out):
+  do IO<Out>:
+    problem : String <- reserve(limit, dir, day)
+    send_allowed.if(problem, envelope, s)
+
 # The send itself: S.outbound gives the envelope only when the allowlist
 # allows every recipient; only then is a place in the daily count reserved.
+# A dry run reserves none and shows `p`, what the envelope is built from.
 def send_allowed(
   envelope: Maybe<&2, String>,
   allow: List<&2, String>,
@@ -3680,28 +3810,29 @@ def send_allowed(
   limit: U32,
   dir: String,
   day: String,
-  s: Sent
+  s: Sent,
+  dry: Bool,
+  p: Preview
 ) -> IO(Out):
   match envelope:
     case None{}:
       pure_out(Err{unlisted_msg(S.refused(allow, rcpts))})
     case Some{e}:
-      do IO<Out>:
-        problem : String <- reserve(limit, dir, day)
-        send_allowed.if(problem, e, s)
+      preview_or_run(dry, p, send_allowed.run(e, limit, dir, day, s))
 
 def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Out):
   match cfg:
     case Fail{m}:
       pure_out(Err{"configuration error: " ++ m})
-    case Done{Sending{save, +allow, limit, dir}}:
+    case Done{Sending{+save, +allow, limit, dir}}:
       +d = draft_of(w, from, st, False{})
       +rcpts = specs(all_rcpts(w))
-      send_allowed(
-        S.outbound(allow, rcpts, M.addr_spec(from), M.compose(d, boundary_of(st))),
-        allow, rcpts, limit, dir, day_of(st),
+      +sender = M.addr_spec(from)
+      +msg = M.compose(d, boundary_of(st))
+      send_allowed(S.outbound(allow, rcpts, sender, msg), allow, rcpts, limit, dir, day_of(st),
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
-          draft_of(w, from, st, True{}), boundary_of(st)})
+          draft_of(w, from, st, True{}), boundary_of(st)},
+        is_dry(w), SmtpPreview{sender, rcpts, msg, save})
 
 def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
   match draft:
@@ -3709,7 +3840,7 @@ def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
       +d = draft_of(w, from, st, True{})
       do IO<Out>:
         r : Run() <- imap_run(Ops.plan_probe())
-        draft_folder(r, M.compose(d, boundary_of(st)), msgid_of(d))
+        draft_folder(r, M.compose(d, boundary_of(st)), msgid_of(d), is_dry(w))
     case False{}:
       do IO<Out>:
         cfg : Sends() <- sending()
@@ -3748,7 +3879,8 @@ def with_atts(
   text: String,
   irt: String,
   refs: String,
-  draft: Bool
+  draft: Bool,
+  dry: Bool
 ) -> IO(Out):
   match a:
     case Fail{m}:
@@ -3756,7 +3888,7 @@ def with_atts(
     case Done{xs}:
       do IO<Out>:
         from : String <- env_or("MAILBEND_EMAIL", "")
-        with_atts.want(Want{to, cc, bcc, subject, text, irt, refs, xs, draft}, from)
+        with_atts.want(Want{to, cc, bcc, subject, text, irt, refs, xs, draft, dry}, from)
 
 # Composes from the common arguments: to, cc, bcc, subject, body,
 # in_reply_to, references and attachments ([{path, filename?, content_type?}]).
@@ -3765,7 +3897,7 @@ def t_compose(+args: J.Json, draft: Bool) -> IO(Out):
     rs : List<&2, Attachment()> <- atts_read(attachments_arg(args))
     with_atts(atts_collect(rs), strs_arg(args, "to"), strs_arg(args, "cc"),
       strs_arg(args, "bcc"), str_arg(args, "subject", ""), str_arg(args, "body", ""),
-      str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft)
+      str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft, dry_arg(args))
 
 # Reply and forward
 # -----------------
@@ -3875,7 +4007,8 @@ def reply_want(
       reply_body(args, hs, p, cut),
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
-      bool_arg(args, "as_draft", False{}))
+      bool_arg(args, "as_draft", False{}),
+      dry_arg(args))
     return with_fields(o, quote_fields(cut, quoted, size))
 
 def fwd_note(+hs: List<&2, M.Hdr>) -> String:
@@ -3891,7 +4024,7 @@ def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
       prefixed("Fwd:", hdr_text(hs, "subject")),
       str_arg(args, "body", "") ++ fwd_note(hs),
-      "", "", bool_arg(args, "as_draft", False{}))
+      "", "", bool_arg(args, "as_draft", False{}), dry_arg(args))
 
 def respond_to(
   reply: Bool,
@@ -4025,10 +4158,10 @@ def downloads() -> IO(Result<&2, &2, String, Downloads>):
 # complete, never replacing an existing file.
 
 # What mail_get_attachment is asked: where to save, the message, which of
-# its attachments (from 0, in mail_get's order) and the file name to save
-# it as ("" for the attachment's own).
+# its attachments (from 0, in mail_get's order), the file name to save it as
+# ("" for the attachment's own), and whether only to show the file.
 type Download is Data:
-  Download{to: Downloads, folder: String, uid: U32, index: U32, filename: String}
+  Download{to: Downloads, folder: String, uid: U32, index: U32, filename: String, dry: Bool}
 
 def index_arg(m: Maybe<&2, U32>) -> Result<&2, &2, String, U32>:
   match m:
@@ -4045,7 +4178,7 @@ def download_request(
     d : Downloads <- s
     uid : U32 <- single_uid(uids_arg(args), "mail_get_attachment")
     index : U32 <- index_arg(J.as_u32(J.get(args, "index")))
-    return Download{d, folder_arg(args), uid, index, str_arg(args, "filename", "")}
+    return Download{d, folder_arg(args), uid, index, str_arg(args, "filename", ""), dry_arg(args)}
 
 def whole_body.if(cut: Bool, body: String) -> Result<&2, &2, String, String>:
   match cut:
@@ -4131,23 +4264,30 @@ def download.run(d: Downloads, a: M.Attach, folder: String, uid: U32) -> IO(Out)
       J.kv("path", J.str(file_path(dir, name)))
     ])
 
+# The file a download saves: the attachment under its name in the directory.
+def download.file(d: Downloads, a: M.Attach) -> Preview:
+  Downloads{dir, attach_dir, path, helper} = d
+  M.Attach{name, ctype, data} = a
+  FilePreview{file_path(dir, name), data}
+
 def download.put(
   r: Result<&2, &2, String, M.Attach>,
-  d: Downloads,
+  +d: Downloads,
   folder: String,
-  uid: U32
+  uid: U32,
+  dry: Bool
 ) -> IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
-    case Done{a}:
-      download.run(d, a, folder, uid)
+    case Done{+a}:
+      preview_or_run(dry, download.file(d, a), download.run(d, a, folder, uid))
 
 def download.fetch(q: Download) -> IO(Out):
-  Download{d, +folder, +uid, index, filename} = q
+  Download{d, +folder, +uid, index, filename, dry} = q
   do IO<Out>:
     r : Run() <- imap_run(Ops.plan_get(folder, uid, max_attachment()))
-    download.put(file_to_save(r, uid, folder, index, filename), d, folder, uid)
+    download.put(file_to_save(r, uid, folder, index, filename), d, folder, uid, dry)
 
 def download(r: Result<&2, &2, String, Download>) -> IO(Out):
   match r:
@@ -4444,13 +4584,43 @@ def missing_problem(req: J.Json, +kvs: J.Json) -> String:
     case _:
       ""
 
+def key_count(kvs: J.Json, +key: String) -> U32:
+  match kvs:
+    case J.JCons{J.JKv{k, v}, t}:
+      (Bool.pick(U32, String.eq(k, key), 1, 0) + key_count(t, key) : U32)
+    case J.JCons{v, t}:
+      key_count(t, key)
+    case _:
+      0
+
+def repeat_problem.go(names: J.Json, +kvs: J.Json) -> String:
+  match names:
+    case J.JCons{J.JKv{+k, v}, t}:
+      first_of(Bool.pick(String, U32.is_gt(key_count(kvs, k), 1),
+        "\"" ++ k ++ "\" is given more than once", ""), repeat_problem.go(t, kvs))
+    case _:
+      ""
+
+# The first property that more than one argument names. MailBend reads the
+# first of repeated members, but many JSON libraries keep the last, so a
+# client could read `"dry_run": false, "dry_run": true` as a dry run that
+# MailBend would run for real. Only the properties are counted, which keeps
+# the work linear in the arguments; an unknown name is refused before this.
+def repeat_problem(props: J.Json, kvs: J.Json) -> String:
+  match props:
+    case J.JObj{names}:
+      repeat_problem.go(names, kvs)
+    case _:
+      ""
+
 def args_obj_problem(args: J.Json, +input: J.Json, +tool: String) -> String:
   match args:
     case J.JObj{+kvs}:
       +props = object_field(input, "properties")
       first_of(args_problem(props, kvs, tool),
-        first_of(missing_problem(array_items(J.get(input, "required")), kvs),
-          att_check(J.find(kvs, "attachments"), props, tool)))
+        first_of(repeat_problem(props, kvs),
+          first_of(missing_problem(array_items(J.get(input, "required")), kvs),
+            att_check(J.find(kvs, "attachments"), props, tool))))
     case _:
       "the arguments must be a JSON object"
 

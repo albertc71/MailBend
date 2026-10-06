@@ -111,7 +111,12 @@ class Server:
 
 
 def tool(srv, name, args=None, **env):
-    p = subprocess.run([LAUNCHER, "call", name, json.dumps(args or {})], capture_output=True, text=True,
+    return tool_text(srv, name, json.dumps(args or {}), **env)
+
+
+def tool_text(srv, name, text, **env):
+    """Calls a tool with its arguments as raw JSON text."""
+    p = subprocess.run([LAUNCHER, "call", name, text], capture_output=True, text=True,
                        env=srv.env(**env), timeout=120)
     outputs.extend([p.stdout, p.stderr])
     try:
@@ -163,6 +168,7 @@ def run_all(work):
     send_safety(work)
     downloads(work)
     threads(work)
+    dry_runs(work)
 
 
 def reads(srv):
@@ -1991,6 +1997,127 @@ def threads(work):
               "(3 keys in 2 folders each), after 1 in the first round",
               c == 0 and thread_of(r) == [first, ("INBOX", 8, "<trip1@example.com>")]
               and len(searches) == (1 + 50) * 3 * 2, (r, len(searches)))
+    finally:
+        srv.stop()
+
+
+# --------------------------------------------------------------------------
+# Dry runs: every tool that changes or sends mail, or saves a file
+# --------------------------------------------------------------------------
+
+DRY_BODY = "the dry-run body text"
+
+# Each tool's dry run, on messages and folders that exist (a label must not be
+# a role folder), and the line its IMAP preview must hold; "smtp" and "file"
+# mark the previews of a send and of a download.
+DRY_RUNS = [
+    ("mail_mark_read", {}, "UID STORE 5 +FLAGS.SILENT (\\Seen)"),
+    ("mail_mark_unread", {}, "UID STORE 5 -FLAGS.SILENT (\\Seen)"),
+    ("mail_flag", {}, "UID STORE 5 +FLAGS.SILENT ($MailFlagBit2)"),
+    ("mail_unflag", {}, "UID STORE 5 -FLAGS.SILENT (\\Flagged)"),
+    ("mail_move", {}, 'UID MOVE 5 "Archive"'),
+    ("mail_label", {"label": "Work"}, 'UID MOVE 5 "Work"'),
+    ("mail_trash", {}, 'UID MOVE 5 "Deleted Messages"'),
+    ("mail_delete", {}, "UID EXPUNGE 5"),
+    ("mail_create_folder", {}, 'CREATE "Projects"'),
+    ("mail_rename_folder", {}, 'RENAME "Work" "Plans"'),
+    ("mail_save_draft", {"body": DRY_BODY}, 'APPEND "Drafts" (\\Draft \\Seen) <'),
+    ("mail_send", {"body": DRY_BODY, "attachments": [{"path": "report.txt"}]}, "smtp"),
+    ("mail_reply", {"body": DRY_BODY}, "smtp"),
+    ("mail_reply", {"body": DRY_BODY, "as_draft": True}, 'APPEND "Drafts" (\\Draft \\Seen) <'),
+    ("mail_forward", {"body": DRY_BODY}, "smtp"),
+    ("mail_forward", {"body": DRY_BODY, "as_draft": True}, 'APPEND "Drafts" (\\Draft \\Seen) <'),
+    ("mail_get_attachment", {"uid": FILES_UID}, "file"),
+]
+
+
+def attach_recorder(directory):
+    """A MAILBEND_ATTACH_HELPER that logs each call's argument count and first
+    argument, then runs mailbend-attach: 3 arguments read an attachment, 4
+    (count) reserve a send and 6 (save) write a download."""
+    calls = os.path.join(directory, "attach-calls")
+    recorder = os.path.join(directory, "attach-recorder")
+    pathlib.Path(recorder).write_text(
+        f'#!/bin/sh\nprintf "%s %s\\n" "$#" "$1" >> "{calls}"\nexec "{ROOT / "bin" / "mailbend-attach"}" "$@"\n')
+    os.chmod(recorder, 0o755)
+    return recorder, calls
+
+
+def dry_run_preview(r, want):
+    """Whether a dry run's result is the preview `want` describes."""
+    if not r.get("dry_run"):
+        return False
+    if want == "smtp":
+        smtp = r.get("smtp", {})
+        return (smtp.get("from") == FIX["user"] and smtp.get("rcpt") and smtp.get("sent_copy") is True
+                and smtp.get("data", "").startswith("<") and smtp["data"].endswith(" bytes>"))
+    if want == "file":
+        return r.get("file", {}).get("data") == f"<{len(ALL_BYTES)} bytes>"
+    return any(want in line for line in r.get("imap", []))
+
+
+def dry_runs(work):
+    root = os.path.join(os.path.realpath(work), "dry-runs")
+    attach_dir, dl, state = (os.path.join(root, name) for name in ("attach", "downloads", "state"))
+    for directory in (attach_dir, dl):
+        os.makedirs(directory)
+    pathlib.Path(attach_dir, "report.txt").write_text("quarterly numbers\n")
+    recorder, calls = attach_recorder(root)
+    env = {"MAILBEND_ATTACH_HELPER": recorder, "MAILBEND_ATTACH_DIR": attach_dir, "MAILBEND_DOWNLOAD_DIR": dl,
+           "MAILBEND_MAX_SENDS_PER_DAY": "5", "MAILBEND_STATE_DIR": state, "MAILBEND_SAVE_SENT": "1"}
+    srv = Server(work, fixture=download_fixture())
+    try:
+        dry_run_names = {name for name, _, _ in DRY_RUNS}
+        check("dry runs cover every tool that is not read-only",
+              dry_run_names == set(listed_tools(srv)) - set(READ_TOOLS) == set(MUTATING_CALLS), dry_run_names)
+        c, r = tool(srv, "mail_send", SEND, **env)
+        counter = pathlib.Path(state, "sends")
+        check("dry runs: a real send through the recorder counts it", c == 0 and counter.is_file(), r)
+        sends_before = counter.read_text()
+        pathlib.Path(calls).unlink()
+        changed, previews = [], []
+        for name, extra, want in DRY_RUNS:
+            before, log_start = srv.st(), len(srv.log_records())
+            c, r = tool(srv, name, {**MUTATING_CALLS[name], **extra, "dry_run": True}, **env)
+            if not (c == 0 and dry_run_preview(r, want)):
+                previews.append((name, extra, r))
+            text = json.dumps(r)
+            if DRY_BODY in text or "LOGIN" in text or "AUTH" in text:
+                previews.append((name, "echoes the body or a login", r))
+            new = srv.log_records()[log_start:]
+            writes = [rec["line"] for rec in new if rec["proto"] == "smtp"
+                      or any(cmd in rec["line"] for cmd in MUTATING_COMMANDS + (" SELECT ",))]
+            if srv.st() != before or writes:
+                changed.append((name, extra, writes))
+        check("dry runs: every tool returns its preview, without the message body or a login", not previews, previews)
+        check("dry runs: the server's mail and folders are unchanged and its log shows only read-only IMAP "
+              "(no command that changes mail or folders, and no SELECT) and no SMTP", not changed, changed)
+        c, r = tool(srv, "mail_send", {**MUTATING_CALLS["mail_send"], "dry_run": True}, **{**env, "MAILBEND_SAVE_SENT": "0"})
+        check("dry runs: a send without MAILBEND_SAVE_SENT shows no Sent copy",
+              c == 0 and r.get("smtp", {}).get("sent_copy") is False, r)
+        repeated = []
+        for name in ("mail_mark_read", "mail_send"):
+            args = json.dumps(MUTATING_CALLS[name])[:-1]
+            for first, second in (("false", "true"), ("true", "false")):
+                before, log_start = srv.st(), len(srv.log_records())
+                c, r = tool_text(srv, name, f'{args}, "dry_run": {first}, "dry_run": {second}}}', **env)
+                if (c == 0 or r.get("error") != '"dry_run" is given more than once'
+                        or srv.st() != before or len(srv.log_records()) != log_start):
+                    repeated.append((name, first, second, r))
+        check("a repeated dry_run is refused before connecting, whichever value comes first", not repeated, repeated)
+        check("dry runs: no file appears in the download directory", os.listdir(dl) == [], os.listdir(dl))
+        check("dry runs: the send counter is unchanged", counter.read_text() == sends_before)
+        recorded = pathlib.Path(calls).read_text().splitlines() if os.path.exists(calls) else []
+        check("dry runs: mailbend-attach only read attachments, with no count or save call",
+              recorded and all(line.split(" ")[0] == "3" for line in recorded), recorded)
+        refused = []
+        log_start = len(srv.log_records())
+        for name, args in MUTATING_CALLS.items():
+            c, r = tool(srv, name, {**args, "dry_run": True}, MAILBEND_READ_ONLY="1", **env)
+            if not (c != 0 and "MAILBEND_READ_ONLY" in r.get("error", "")):
+                refused.append((name, r))
+        check("dry runs: read-only mode still refuses them before connecting",
+              not refused and len(srv.log_records()) == log_start, refused)
     finally:
         srv.stop()
 

@@ -7,6 +7,7 @@
 # configuration.
 
 import Base
+import ./src/codec.bend as C
 import ./src/imap.bend as I
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
@@ -659,3 +660,19 @@ law label_creates_no_folder:
   for uidv: U32
   {Ops.mailbox_changes(Ops.plan_label(mbox, uids, label, move, uidplus, uidv)) ==
     [] : List<&2, I.Cmd>}
+
+# Dry runs
+# --------
+
+# A dry run shows a plan as its script, one line per command, but no message
+# it would append: an APPEND shows the size of the message instead.
+
+# LAW: for every mailbox, flags, message and tag, a dry run shows an APPEND
+# as its command with the size of its message, never the message
+law append_preview_hides_message:
+  for mbox: String
+  for flags: List<&2, I.Flag>
+  for msg: String
+  for n: U32
+  {I.preview.line(I.CAppend{mbox, flags, msg}, n) ==
+    I.tag(n) ++ " " ++ I.append_head(mbox, flags) ++ C.size_note(C.utf8_len(msg)) : String}

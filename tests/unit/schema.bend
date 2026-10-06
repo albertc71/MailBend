@@ -116,20 +116,20 @@ def main() -> IO(Unit):
 #|mail_get | readOnlyHint,idempotentHint | required uid | folder:string uid:integer max_bytes:integer
 #|mail_get_new | readOnlyHint,idempotentHint | required - | folder:string since_uid:integer uidvalidity:integer limit:integer
 #|mail_get_thread | readOnlyHint,idempotentHint | required uid | folder:string uid:integer
-#|mail_get_attachment | - | required uid,index | folder:string uid:integer index:integer filename:string
-#|mail_mark_read | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
-#|mail_mark_unread | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
-#|mail_flag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer colour:string[red|orange|yellow|green|blue|purple|grey]
-#|mail_unflag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
-#|mail_move | - | required uids,destination,uidvalidity | folder:string uids:array destination:string uidvalidity:integer
-#|mail_label | - | required uids,label,uidvalidity | folder:string uids:array label:string uidvalidity:integer
-#|mail_trash | - | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
-#|mail_delete | destructiveHint | required uids,uidvalidity,confirm | folder:string uids:array uidvalidity:integer confirm:string[permanently-delete]
-#|mail_create_folder | - | required name | name:string
-#|mail_rename_folder | - | required from,to | from:string to:string
-#|mail_save_draft | - | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array
-#|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array
-#|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean
-#|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean
-#|24136 characters
-#|hash 16470996
+#|mail_get_attachment | - | required uid,index | folder:string uid:integer index:integer filename:string dry_run:boolean
+#|mail_mark_read | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_mark_unread | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_flag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer colour:string[red|orange|yellow|green|blue|purple|grey] dry_run:boolean
+#|mail_unflag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_move | - | required uids,destination,uidvalidity | folder:string uids:array destination:string uidvalidity:integer dry_run:boolean
+#|mail_label | - | required uids,label,uidvalidity | folder:string uids:array label:string uidvalidity:integer dry_run:boolean
+#|mail_trash | - | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_delete | destructiveHint | required uids,uidvalidity,confirm | folder:string uids:array uidvalidity:integer confirm:string[permanently-delete] dry_run:boolean
+#|mail_create_folder | - | required name | name:string dry_run:boolean
+#|mail_rename_folder | - | required from,to | from:string to:string dry_run:boolean
+#|mail_save_draft | - | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
+#|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
+#|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
+#|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
+#|31441 characters
+#|hash 2589964722

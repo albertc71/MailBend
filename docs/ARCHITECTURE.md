@@ -37,7 +37,7 @@ flowchart TB
     json["src/json.bend<br/>strict JSON parser"]
     tools["src/tools.bend<br/>21 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>64 laws proven over the plans and the envelope"]
+    laws["LAWS.bend + PROOF.bend<br/>65 laws proven over the plans and the envelope"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
@@ -187,6 +187,7 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
 | Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
 | A thread holds only messages whose Message-ID, In-Reply-To or References name one of the IDs searched for, compared exactly after the substring `SEARCH HEADER`; never grouped by subject; at most two rounds | `src/thread.bend` (`is_linked`, `next_ids`, `thread_order`), `plan_thread_search`, `plan_thread_headers` | law `thread_plans_write_nothing`, unit tests (order, missing parents, cycles, shared IDs, long References), e2e case-only match, deleted reply, two-round bound, long References |
+| A dry run (`dry_run: true`) runs only the read-only checks the tool makes (the flag tools make none), then shows the IMAP lines, the SMTP sender, recipients and `sent_copy` intent, or file it would use, with messages and files as `<N bytes>`; it reserves no send and does not check the daily limit, saves no file and is refused in read-only mode | `preview_or_run` in `src/tools.bend` (every tool that is not read-only), `I.preview` | law `append_preview_hides_message`, unit tests, e2e (every such tool: server state and log, download directory, send counter, `mailbend-attach` calls) |
 | Folder roles resolve independently; uncertain targets never trigger guessed writes | `src/tools.bend` discovery and resolution, `src/ops.bend` discovery plans | local e2e partial-role, override, ambiguity and failed-discovery cases |
 
 ## Layers
@@ -345,10 +346,12 @@ These tests use the fake TLS server, not a live provider.
 - Saved drafts keep a `Bcc:` header (a mail client sends them later); sent
   mail never carries one, Bcc goes only into the SMTP envelope.
 - Every tool call (MCP or CLI) is checked against the tool's input schema
-  first: a value of the wrong type, an unknown argument name or a missing
-  required argument is refused, never read as absent or defaulted (so
-  `"as_draft": "true"` cannot fall back to sending, nor a reply go out with
-  no body).
+  first: a value of the wrong type, an unknown argument name, an argument
+  given more than once or a missing required argument is refused, never read
+  as absent or defaulted (so `"as_draft": "true"` cannot fall back to
+  sending, nor a reply go out with no body, and `"dry_run": false, "dry_run":
+  true` cannot run for real while a client that keeps the last member reads
+  a dry run).
 - The MCP server accepts request lines up to 8 MiB and answers malformed
   JSON with `-32700`, a malformed JSON-RPC envelope with `-32600`, and
   tool `arguments` that are not an object with `-32602`.
@@ -402,6 +405,8 @@ SMTP envelope in `src/smtp.bend`; `PROOF.bend` proves them, and
   removes mail (no plan deletes a folder);
 - a label is a move: `plan_label` is `plan_move`, so every move law covers it,
   and it changes no folder;
+- a dry run shows an `APPEND` with the size of its message, never the
+  message;
 - exactly the six read tools are read-only.
 
 The laws are about these pure plans, the envelope and their rendering. The native helpers,

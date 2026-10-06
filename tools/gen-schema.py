@@ -38,9 +38,12 @@ def hints(read_only=False, destructive=False, idempotent=False,
 
 
 def tool(name, description, annotations, properties=None, required=()):
-    """One tools/list entry."""
+    """One tools/list entry. Every tool that is not read-only takes dry_run."""
+    properties = dict(properties or {})
+    if not annotations["readOnlyHint"]:
+        properties["dry_run"] = DRY_RUN
     return {"name": name, "description": description,
-            "inputSchema": inputs(properties or {}, required),
+            "inputSchema": inputs(properties, required),
             "annotations": annotations}
 
 
@@ -117,6 +120,16 @@ COMPOSE = {
     "references": param("string", "References header value."),
     "attachments": ATTACHMENTS,
 }
+
+DRY_RUN = param(
+    "boolean",
+    "Only show what this call would do: return the IMAP commands, the SMTP "
+    "sender and recipients with sent_copy (whether MAILBEND_SAVE_SENT would "
+    "save a Sent copy), or the file it would use, with message and file "
+    "contents as <N bytes>. Nothing is changed, sent or saved. It is not a "
+    "full pre-check: marking and flagging make no connection, so a stale "
+    "uidvalidity fails only the real call, and a send does not check the "
+    "daily limit. Default false.")
 
 FLAG_COLOURS = ["red", "orange", "yellow", "green", "blue", "purple", "grey"]
 

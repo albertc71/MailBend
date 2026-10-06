@@ -649,3 +649,9 @@ def Laws.label_creates_no_folder(mbox, uids, label, move, uidplus, uidv):
           {==}
         case False{}:
           {==}
+
+# Dry runs
+# --------
+
+def Laws.append_preview_hides_message(mbox, flags, msg, n):
+  {==}

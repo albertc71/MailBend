@@ -1,7 +1,7 @@
 # The pure parts of the mail tools: switches, helper results, argument
-# parsing, role resolution, folder guards, flag and move results, composing,
-# the schema checks and reading threads. IO paths are left to the end-to-end
-# suite.
+# parsing, dry runs, role resolution, folder guards, flag and move results,
+# composing, the schema checks and reading threads. IO paths are left to the
+# end-to-end suite.
 
 import Base
 import ../../src/codec.bend as C
@@ -219,6 +219,30 @@ def check_runs() -> IO(Unit):
     IO.print(show_out(T.smtp_code(3, "", "mailbend-tls: tls failed")))
     IO.print(show_out(T.smtp_result(T.ProcRefused{"no path"})))
     IO.print(show_out(T.smtp_result(T.ProcOk{0, "250 sent\r\n", ""})))
+
+# Dry runs
+# --------
+
+# What a dry run returns for each kind of change: the IMAP lines (an APPEND
+# shows only its size), the SMTP envelope's sender and recipients with the
+# message's size and whether a Sent copy would be saved, or the file's path
+# and size; and the dry_run argument.
+def check_dry_runs() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(show_out(T.preview(T.ImapPreview{[
+      I.CCapability{},
+      I.CSelect{"INBOX"},
+      I.CExpect{I.uidv_line(7)},
+      I.CStore{[3], True{}, I.FDeleted{}},
+      I.CExpunge{[3]},
+      I.CAppend{"Drafts", [I.FDraft{}], "secret body\r\n"}
+    ]})))
+    IO.print(show_out(T.preview(T.SmtpPreview{"me@my.org", ["a@x.com", "b@y.com"],
+      "Subject: s\r\n\r\nsecret body\r\n", True{}})))
+    IO.print(show_out(T.preview(T.SmtpPreview{"me@my.org", ["a@x.com"], "", False{}})))
+    IO.print(show_out(T.preview(T.FilePreview{"/dl/all.bin", C.bytes_str([0, 200, 255])})))
+    IO.print(show_bool(T.dry_arg(json("{\"dry_run\":true}"))) ++ " " ++
+      show_bool(T.dry_arg(json("{\"dry_run\":false}"))) ++ " " ++ show_bool(T.dry_arg(json("{}"))))
 
 # Arguments
 # ---------
@@ -691,7 +715,7 @@ def check_folder_results() -> IO(Unit):
 # ---------
 
 def want(to: List<&2, String>, bcc: List<&2, String>, draft: Bool) -> T.Want:
-  T.Want{to, ["c@y.com"], bcc, "Subject", "Body", "<irt@x>", "<r@x>", [], draft}
+  T.Want{to, ["c@y.com"], bcc, "Subject", "Body", "<irt@x>", "<r@x>", [], draft, False{}}
 
 def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
   T.Stamp{date, token, day} = st
@@ -748,8 +772,8 @@ def check_compose() -> IO(Unit):
       show_out(T.sent_out(T.Partial{J.JNull{}}, "<m@x>", 2)))
     IO.print(problem(T.check_want(want(["a@x.com"], [], False{}), "bad")) ++
       problem(T.check_want(want(["nope"], [], False{}), "me@my.org")) ++
-      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], False{}}, "me@my.org")) ++
-      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], True{}}, "me@my.org")) ++
+      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], False{}, False{}}, "me@my.org")) ++
+      problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], True{}, False{}}, "me@my.org")) ++
       problem(T.check_want(want(["a@x.com"], [], False{}), "me@my.org")))
 
 # Replies and forwards
@@ -875,6 +899,9 @@ def check_schema() -> IO(Unit):
     IO.print(schema("mail_delete", "{\"uids\":[3],\"uidvalidity\":7}"))
     IO.print(schema("mail_reply",
       "{\"uid\":3,\"uidvalidity\":7,\"body\":\"b\",\"as_draft\":\"true\"}"))
+    IO.print(schema("mail_trash", "{\"uids\":[3],\"uidvalidity\":7,\"dry_run\":false,\"dry_run\":true}") ++
+      schema("mail_trash", "{\"dry_run\":true,\"uids\":[3],\"uidvalidity\":7,\"dry_run\":false}") ++
+      schema("mail_get", "{\"uid\":3,\"bogus\":1,\"bogus\":2}"))
     IO.print(schema("mail_send", "{\"to\":\"a@x\",\"subject\":\"s\",\"body\":\"b\"}"))
     IO.print(schema("mail_send", "{\"to\":[\"a@x\",1],\"subject\":\"s\",\"body\":\"b\"}"))
     IO.print(schema("mail_send", String.concat([
@@ -995,6 +1022,7 @@ def main() -> IO(Unit):
     check_switches()
     check_helper()
     check_runs()
+    check_dry_runs()
     check_arguments()
     check_roles()
     check_search()
@@ -1043,6 +1071,11 @@ def main() -> IO(Unit):
 #|err connection or TLS verification failed: tls failed
 #|err cannot run the TLS helper: no path
 #|ok "250 sent"
+#|ok {"dry_run":true,"imap":["a1 CAPABILITY","a2 SELECT \"INBOX\"","=EXPECT * OK [UIDVALIDITY 7]","a3 UID STORE 3 +FLAGS.SILENT (\\Deleted)","a4 UID EXPUNGE 3","a5 APPEND \"Drafts\" (\\Draft) <13 bytes>"]}
+#|ok {"dry_run":true,"smtp":{"from":"me@my.org","rcpt":["a@x.com","b@y.com"],"data":"<27 bytes>","sent_copy":true}}
+#|ok {"dry_run":true,"smtp":{"from":"me@my.org","rcpt":["a@x.com"],"data":"<0 bytes>","sent_copy":false}}
+#|ok {"dry_run":true,"file":{"path":"/dl/all.bin","data":"<3 bytes>"}}
+#|True False False
 #|v d d True False 7 1 Work INBOX
 #|1 50 200
 #|a@x||a@x,b@y||
@@ -1218,6 +1251,7 @@ def main() -> IO(Unit):
 #|["uidvalidity" is required: pass the value mail_search or mail_get returned with these UIDs, so stale UIDs can never change other messages]
 #|["confirm" is required: it must be exactly "permanently-delete"]
 #|["as_draft" must be true or false]
+#|["dry_run" is given more than once]["dry_run" is given more than once][unknown argument "bogus" for mail_get]
 #|[]
 #|["to" must be a string or an array of strings]
 #|[unknown argument "bogus" for mail_send attachments]

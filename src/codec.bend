@@ -32,6 +32,10 @@ def bytes_str(xs: List<&2, U32>) -> String:
 def byte_len(s: String) -> U32:
   U32.from_nat(String.length(s))
 
+# How a dry run shows `n` bytes of a message or file instead of the bytes.
+def size_note(n: U32) -> String:
+  "<" ++ U32.show(n) ++ " bytes>"
+
 # UTF-8 encoding
 # --------------
 

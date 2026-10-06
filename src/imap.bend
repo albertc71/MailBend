@@ -626,6 +626,10 @@ def items_str(xs: List<&2, Item>) -> String:
 def store_op(add: Bool) -> String:
   Bool.pick(String, add, "+FLAGS.SILENT (", "-FLAGS.SILENT (")
 
+# An APPEND up to its message: the mailbox and the flags.
+def append_head(m: String, fs: List<&2, Flag>) -> String:
+  "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") "
+
 # The wire form of one command, without tag and CRLF.
 def cmd_str(+c: Cmd) -> String:
   match c:
@@ -662,8 +666,7 @@ def cmd_str(+c: Cmd) -> String:
     case CUnsubscribe{m}:
       "UNSUBSCRIBE " ++ mailbox(m)
     case CAppend{m, fs, msg}:
-      "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") {" ++
-        U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
+      append_head(m, fs) ++ "{" ++ U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
     case CExpect{e}:
       e
     case CExpectWord{w}:
@@ -709,6 +712,25 @@ def script.go(cs: List<&2, Cmd>, +n: U32) -> String:
 
 def script(cs: List<&2, Cmd>) -> String:
   script.go(cs, 1)
+
+# A dry run's view of a plan: the script, one line per command, except that
+# an APPEND shows the size of its message instead of the message.
+def preview.line(c: Cmd, n: U32) -> String:
+  match c:
+    case CAppend{m, fs, msg}:
+      tag(n) ++ " " ++ append_head(m, fs) ++ C.size_note(C.utf8_len(msg))
+    case _:
+      script.line(c, n)
+
+def preview.go(cs: List<&2, Cmd>, +n: U32) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case +c <> t:
+      preview.line(c, n) <> preview.go(t, next_tag(c, n))
+
+def preview(cs: List<&2, Cmd>) -> List<&2, String>:
+  preview.go(cs, 1)
 
 # How many commands of a script carry a tag (expectations carry none).
 def tag_count(cs: List<&2, Cmd>) -> U32:

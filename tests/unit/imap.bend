@@ -366,6 +366,20 @@ def check_responses(+lines: List<&2, I.RLine>) -> IO(Unit):
       "[" ++ show_permanent(I.permanent_flags(I.frame(
         "* OK [PERMANENTFLAGS ()] x\r\n* OK [PERMANENTFLAGS (\\Seen)] y\r\n"))) ++ "]")
 
+# A dry run's view of a plan: the script's lines, except that an APPEND
+# shows the size of its message (in UTF-8 bytes) instead of the message.
+def check_preview() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(show_line_endings(String.join(I.preview([
+      I.CSelect{"INBOX"},
+      I.CExpect{I.uidv_line(7)},
+      I.CSearch{[I.KUids{[3]}]},
+      I.CStore{[3], True{}, I.FSeen{}},
+      I.CAppend{"Drafts", [I.FDraft{}, I.FSeen{}], "Hé\r\n"},
+      I.CCreate{"日本"}
+    ]), " | ")))
+    IO.print("[" ++ String.join(I.preview([]), " | ") ++ "] " ++ C.size_note(0))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(show_line_endings(I.script([I.CCapability{}, I.CExamine{"Café"}, I.CSearch{[I.KFrom{"josé"}, I.KUnseen{}]}, I.CFetch{[5, 7], [I.IUid{}, I.IFull{1000}]}])))
@@ -392,6 +406,7 @@ def main() -> IO(Unit):
     check_names_and_dates()
     check_framing()
     check_responses(I.frame(response_transcript()))
+    check_preview()
 
 #|a1 CAPABILITY\r\na2 EXAMINE "Caf&AOk-"\r\na3 UID SEARCH CHARSET UTF-8 FROM {5}\r\njosé UNSEEN\r\na4 UID FETCH 5,7 (UID BODY.PEEK[]<0.1000>)\r\n
 #|a1 UID STORE 3 +FLAGS.SILENT (\Seen)\r\na2 UID MOVE 3 "Deleted Messages"\r\na3 UID EXPUNGE 1,2\r\na4 APPEND "Drafts" (\Draft \Seen) {4}\r\nHi\r\n\r\na5 UID SEARCH SUBJECT "a\"b" UID 9:*\r\n
@@ -441,3 +456,5 @@ def main() -> IO(Unit):
 #|OK BAD NO [[PARSE] what] [] [] False True True False
 #|a2 bad [PARSE] what||TRYCREATE|A B|
 #|15 0 0 []
+#|a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 7] | a2 UID SEARCH UID 3 | a3 UID STORE 3 +FLAGS.SILENT (\Seen) | a4 APPEND "Drafts" (\Draft \Seen) <5 bytes> | a5 CREATE "&ZeVnLA-"
+#|[] <0 bytes>

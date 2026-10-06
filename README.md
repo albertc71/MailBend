@@ -34,6 +34,25 @@ never marks mail as read. Tools that change messages take the `uidvalidity`
 that came with the UIDs and report which UIDs were `changed` or `missing`. The safety rules are laws checked by the Bend
 compiler (see [Safety](#safety)).
 
+Every tool that changes or sends mail, or saves a file, also takes
+`dry_run: true`. It then runs only the read-only checks the tool makes before
+changing anything (such as folder discovery and the server's capabilities)
+and returns what it would do instead of doing it: the IMAP commands as the TLS
+helper would get them (`imap`), the SMTP sender and recipients (`smtp`), or
+the file it would save (`file`). Messages and files show only their size, as
+`<N bytes>`. A send's `smtp` also holds `sent_copy`, which says whether
+`MAILBEND_SAVE_SENT` would save a Sent copy; it states the intent, and the
+real send still skips the copy when the server has filed one itself. A dry
+run is not a full pre-check:
+
+- `mail_mark_read`, `mail_mark_unread`, `mail_flag` and `mail_unflag` make
+  no connection on a dry run, so a stale UIDVALIDITY is caught only by the
+  real run's check (the `=EXPECT` line in their preview);
+- a dry-run send checks `MAILBEND_ALLOWED_RECIPIENTS` but not the daily send
+  limit, and reserves no place in it.
+
+Read-only mode refuses a dry run as it refuses the tool.
+
 ## Install (Linux)
 
 Needs a C compiler, Rust 1.99+ (cargo and rustc), the system CA certificates,
