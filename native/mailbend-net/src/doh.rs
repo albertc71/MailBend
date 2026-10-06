@@ -4,16 +4,17 @@
 //! deadline. There is no fallback to system DNS for the name being looked
 //! up.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
+use mailbend_io::env::text_var;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use crate::NetError;
 use crate::connect::{BoundedStream, Deadline, connect_any, resolve_system};
 use crate::dns::{RecordType, build_query, parse_answer};
-use crate::http::{MAX_BODY, MAX_HEADER, parse_response};
+use crate::http::read_response;
 use crate::proxy::{Proxy, proxy_for};
 use crate::tls;
 use crate::url::{DohUrl, format_authority};
@@ -22,6 +23,10 @@ use crate::url::{DohUrl, format_authority};
 /// are the resolver's anycast addresses, never pinned mail addresses.
 const BOOTSTRAP_HOST: &str = "cloudflare-dns.com";
 const BOOTSTRAP_ADDRS: [Ipv4Addr; 2] = [Ipv4Addr::new(1, 1, 1, 1), Ipv4Addr::new(1, 0, 0, 1)];
+
+/// No DNS answer MailBend asks for comes near this; larger bodies are
+/// refused.
+const MAX_BODY: usize = 65535;
 
 type DohStream = StreamOwned<ClientConnection, BoundedStream>;
 
@@ -38,6 +43,16 @@ impl Resolver {
     pub fn from_env(url: DohUrl) -> Result<Resolver, NetError> {
         let proxy = proxy_for(&url.host)?;
         Ok(Resolver { url, proxy })
+    }
+
+    /// The resolver MAILBEND_DOH_URL names, if it is set and nonempty. The
+    /// error is a message for the operator: a bad URL or proxy setting.
+    pub fn from_setting() -> Result<Option<Resolver>, String> {
+        let Some(url) = text_var("MAILBEND_DOH_URL")? else {
+            return Ok(None);
+        };
+        let url = DohUrl::parse(&url).ok_or("MAILBEND_DOH_URL must be an HTTPS URL")?;
+        Resolver::from_env(url).map(Some).map_err(|e| e.to_string())
     }
 
     /// Looks up `name`'s IPv4 and IPv6 addresses (IPv4 first); an IP
@@ -117,7 +132,7 @@ impl Resolver {
             .and_then(|()| stream.write_all(query))
             .and_then(|()| stream.flush())
             .map_err(|_| NetError::Doh("cannot send the DNS query".to_string()))?;
-        read_response(&mut stream)
+        read_answer(&mut stream)
     }
 
     /// A connection to the resolver, directly or through the proxy.
@@ -135,41 +150,18 @@ impl Resolver {
 
 /// Reads the HTTP response and returns its body, which must come with
 /// status 200.
-fn read_response(stream: &mut DohStream) -> Result<Vec<u8>, NetError> {
-    let no_answer = || NetError::Doh("no answer from the resolver".to_string());
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        let (n, eof) = match stream.read(&mut chunk) {
-            Ok(0) => (0, true),
-            Ok(n) => (n, false),
-            // Many servers close without TLS close_notify; the response's
-            // own framing and the DNS checks decide whether it is complete.
-            Err(e) if e.kind() == ErrorKind::UnexpectedEof => (0, true),
-            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
-                return Err(NetError::TimedOut);
-            }
-            Err(_) => return Err(no_answer()),
-        };
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.len() > MAX_HEADER + MAX_BODY {
-            return Err(NetError::Doh(
-                "the resolver's answer is too long".to_string(),
-            ));
-        }
-        if let Some(response) = parse_response(&buf, eof)? {
-            if response.status != 200 {
-                return Err(NetError::Doh(format!(
-                    "the resolver answered HTTP {}",
-                    response.status
-                )));
-            }
-            return Ok(response.body);
-        }
-        if eof {
-            return Err(no_answer());
-        }
+fn read_answer(stream: &mut DohStream) -> Result<Vec<u8>, NetError> {
+    let response = read_response(stream, MAX_BODY).map_err(|e| match e {
+        NetError::Http(message) => NetError::Doh(format!("{message} from the resolver")),
+        e => e,
+    })?;
+    if response.status != 200 {
+        return Err(NetError::Doh(format!(
+            "the resolver answered HTTP {}",
+            response.status
+        )));
     }
+    Ok(response.body)
 }
 
 /// The resolver's own addresses: the fixed bootstrap for the default

@@ -98,6 +98,10 @@ def main() -> IO(Unit):
     IO.print(maybe_op(Ops.from_name("")))
     IO.print(String.join(Ops.read_only_names([Ops.OSend{}, Ops.OGetNew{}, Ops.OSearch{}]), ","))
     IO.print("[" ++ String.join(Ops.read_only_names([]), ",") ++ "]")
+    IO.print(String.join(Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}), ","))
+    IO.print(String.join(Ops.listed_names(Ops.all_ops(), True{}, True{}, True{}), ","))
+    IO.print(flag(Ops.needs_jev(Ops.OClassify{})) ++ flag(Ops.needs_jev(Ops.OGet{})) ++
+      flag(Ops.is_send(Ops.OSend{})) ++ flag(Ops.is_send(Ops.OReply{})))
     IO.print("reads")
     IO.print(wire(Ops.plan_probe()))
     IO.print(wire(Ops.plan_preflight("INBOX")))
@@ -115,6 +119,8 @@ def main() -> IO(Unit):
     IO.print(wire(Ops.plan_new.if(False{}, "INBOX", 3)))
     IO.print(wire(Ops.plan_headers("INBOX", [1, 2, 3])))
     IO.print(wire(Ops.plan_get("INBOX", 7, 1000)))
+    IO.print(wire(Ops.plan_classify("INBOX", [3, 4], False{}, 1000)))
+    IO.print(wire(Ops.plan_classify("Work", [5], True{}, 1000)))
     IO.print(wire(Ops.plan_thread_search(["INBOX", "Sent Messages"],
       [I.KHeader{"Message-ID", "<a@x>"}, I.KHeader{"References", "<a@x>"}])))
     IO.print("[" ++ wire(Ops.plan_thread_search([], [I.KAll{}])) ++ "]")
@@ -159,6 +165,7 @@ def main() -> IO(Unit):
     IO.print(classify([]))
     IO.print(classify(Ops.plan_probe()))
     IO.print(classify(Ops.plan_get("INBOX", 7, 1000)))
+    IO.print(classify(Ops.plan_classify("INBOX", [3], True{}, 1000)))
     IO.print(classify(mark(True{})))
     IO.print(classify(flag_plan(Some{I.ColBlue{}})))
     IO.print(classify(Ops.plan_unflag("INBOX", [5], 9)))
@@ -194,6 +201,8 @@ def main() -> IO(Unit):
     IO.print(flag(Ops.peek_safe("FLAGS")))
     IO.print(flag(Ops.peek_safe("INTERNALDATE")))
     IO.print(flag(Ops.peek_safe("RFC822.SIZE")))
+    IO.print(flag(Ops.peek_safe("BODYSTRUCTURE")))
+    IO.print(flag(Ops.peek_safe("BODY")))
     IO.print(flag(Ops.peek_safe("BODY.PEEK[]<0.10>")))
     IO.print(flag(Ops.peek_safe("BODY.PEEK[")))
     IO.print(flag(Ops.peek_safe("BODY[]")))
@@ -210,6 +219,7 @@ def main() -> IO(Unit):
 #|mail_get ro=True destructive=False back=mail_get
 #|mail_get_new ro=True destructive=False back=mail_get_new
 #|mail_get_thread ro=True destructive=False back=mail_get_thread
+#|mail_classify ro=True destructive=False back=mail_classify
 #|mail_get_attachment ro=False destructive=False back=mail_get_attachment
 #|mail_mark_read ro=False destructive=False back=mail_mark_read
 #|mail_mark_unread ro=False destructive=False back=mail_mark_unread
@@ -225,13 +235,16 @@ def main() -> IO(Unit):
 #|mail_send ro=False destructive=False back=mail_send
 #|mail_reply ro=False destructive=False back=mail_reply
 #|mail_forward ro=False destructive=False back=mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify
 #|mail_get
 #|mail_forward
 #|none
 #|none
 #|mail_get_new,mail_search
 #|[]
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify
+#|TrueFalseTrueFalse
 #|reads
 #|a1 CAPABILITY | a2 LIST "" "*"
 #|a1 CAPABILITY | a2 LIST "" "*" | a3 EXAMINE "INBOX"
@@ -247,12 +260,14 @@ def main() -> IO(Unit):
 #|a1 EXAMINE "INBOX"
 #|a1 EXAMINE "INBOX"
 #|a1 EXAMINE "INBOX" | a2 UID SEARCH UID 4:*
-#|a1 EXAMINE "INBOX" | a2 UID FETCH 1,2,3 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])
+#|a1 EXAMINE "INBOX" | a2 UID FETCH 1,2,3 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)])
 #|a1 EXAMINE "INBOX" | a2 UID FETCH 7 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[]<0.1000>)
+#|a1 CAPABILITY | a2 LIST "" "*" | a3 EXAMINE "INBOX" | a4 UID FETCH 3,4 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)] BODYSTRUCTURE)
+#|a1 CAPABILITY | a2 LIST "" "*" | a3 EXAMINE "Work" | a4 UID FETCH 5 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)] BODYSTRUCTURE BODY.PEEK[]<0.1000>)
 #|a1 EXAMINE "INBOX" | a2 UID SEARCH HEADER "Message-ID" "<a@x>" UNDELETED | a3 UID SEARCH HEADER "References" "<a@x>" UNDELETED | a4 EXAMINE "Sent Messages" | a5 UID SEARCH HEADER "Message-ID" "<a@x>" UNDELETED | a6 UID SEARCH HEADER "References" "<a@x>" UNDELETED
 #|[]
 #|a1 EXAMINE "INBOX"
-#|a1 EXAMINE "INBOX" | a2 UID FETCH 3 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)]) | a3 EXAMINE "Sent Messages" | a4 UID FETCH 1,2 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])
+#|a1 EXAMINE "INBOX" | a2 UID FETCH 3 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)]) | a3 EXAMINE "Sent Messages" | a4 UID FETCH 1,2 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)])
 #|[]
 #|changes
 #|a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 77] | a2 UID SEARCH UID 3,4 | a3 UID STORE 3,4 +FLAGS.SILENT (\Seen)
@@ -291,6 +306,7 @@ def main() -> IO(Unit):
 #|loses=False expunged=none copied=none marked=none pinned=False pinned_or_empty=True pin=[<empty>] uidplus=False uidplus_or_empty=True only_flags=True mail=[] folders=[]
 #|loses=False expunged=none copied=none marked=none pinned=False pinned_or_empty=False pin=[] uidplus=False uidplus_or_empty=False only_flags=True mail=[] folders=[]
 #|loses=False expunged=none copied=none marked=none pinned=False pinned_or_empty=False pin=[] uidplus=False uidplus_or_empty=False only_flags=True mail=[] folders=[]
+#|loses=False expunged=none copied=none marked=none pinned=False pinned_or_empty=False pin=[] uidplus=False uidplus_or_empty=False only_flags=True mail=[] folders=[]
 #|loses=False expunged=none copied=none marked=none pinned=True pinned_or_empty=True pin=[* OK [UIDVALIDITY 77]] uidplus=False uidplus_or_empty=False only_flags=False mail=[a1 UID STORE 3,4 +FLAGS.SILENT (\Seen)] folders=[]
 #|loses=False expunged=none copied=none marked=none pinned=True pinned_or_empty=True pin=[* OK [UIDVALIDITY 9]] uidplus=False uidplus_or_empty=False only_flags=True mail=[a1 UID STORE 5 +FLAGS.SILENT (\Flagged) | a2 UID STORE 5 -FLAGS.SILENT ($MailFlagBit0) | a3 UID STORE 5 -FLAGS.SILENT ($MailFlagBit1) | a4 UID STORE 5 +FLAGS.SILENT ($MailFlagBit2)] folders=[]
 #|loses=False expunged=none copied=none marked=none pinned=True pinned_or_empty=True pin=[* OK [UIDVALIDITY 9]] uidplus=False uidplus_or_empty=False only_flags=True mail=[a1 UID STORE 5 -FLAGS.SILENT (\Flagged) | a2 UID STORE 5 -FLAGS.SILENT ($MailFlagBit0) | a3 UID STORE 5 -FLAGS.SILENT ($MailFlagBit1) | a4 UID STORE 5 -FLAGS.SILENT ($MailFlagBit2)] folders=[]
@@ -326,6 +342,8 @@ def main() -> IO(Unit):
 #|True
 #|True
 #|True
+#|True
+#|False
 #|True
 #|True
 #|False

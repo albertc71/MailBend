@@ -1,0 +1,17 @@
+[package]
+name = "mailbend-typesafe"
+description = "Asks TypeSafe's Jev for MailBend: one verified HTTPS request to a fixed endpoint, with the key read from a file in a process that holds no mail password"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mailbend-io.workspace = true
+mailbend-net.workspace = true
+rustls.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

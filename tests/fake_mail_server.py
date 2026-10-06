@@ -9,6 +9,7 @@ Usage:
         [--drop-after COPY] [--drop-unanswered COPY] [--reject SUBSCRIBE]
         [--permanent-flags '\\Seen,\\Flagged' [--session-flags] | --no-permanent-flags]
         [--noisy-store] [--fetch-no-flags UID[,UID]] [--file-sent MAILBOX]
+        [--bodystructure real|omit|corrupt]
 
 Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
 127.0.0.1 with OS-assigned ports, prints one line
@@ -38,10 +39,18 @@ leaves FLAGS out of the FETCH answers for those UIDs. --file-sent MAILBOX
 appends every message accepted over SMTP to MAILBOX, seen, as a provider
 that files sent mail itself does.
 
+FETCH BODYSTRUCTURE answers a message's "bodystructure" fixture text when it
+has one, else the structure computed from its raw text (RFC 3501 7.4.2).
+--bodystructure omit leaves the item out of the answer, as a server that
+does not support it may; corrupt answers a malformed one.
+
 This file speaks just enough of IMAP4rev1 and ESMTP to drive the MailBend
 transport and Bend parser; it is not a general-purpose mail server.
 """
 import argparse
+import email
+import email.message
+import email.utils
 import base64
 import json
 import os
@@ -205,6 +214,7 @@ class State:
         self.fetch_no_flags = set()
         self.cut_goodbye = False
         self.file_sent = None
+        self.bodystructure = 'real'
         self.seen = {}
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
@@ -575,6 +585,49 @@ def normalize_fetch_items(raw_items):
     return out
 
 
+def structure_params(params):
+    """A BODYSTRUCTURE parameter list from (name, value) pairs; NIL for none."""
+    if not params:
+        return 'NIL'
+    items = []
+    for name, value in params:
+        if isinstance(value, tuple):
+            value = email.utils.collapse_rfc2231_value(value)
+        items += [imap_quote(name.upper()), imap_quote(str(value))]
+    return '(' + ' '.join(items) + ')'
+
+
+def structure_disposition(part):
+    """A part's body disposition, "(type (params))", or NIL."""
+    params = part.get_params(header='content-disposition')
+    if not params:
+        return 'NIL'
+    kind = params[0][0]
+    return '(' + imap_quote(kind.upper()) + ' ' + structure_params(params[1:]) + ')'
+
+
+def body_structure(part) -> str:
+    """The BODYSTRUCTURE of a parsed message or part, with extension data."""
+    if part.is_multipart():
+        subparts = ''.join(body_structure(p) for p in part.get_payload())
+        return '(' + subparts + ' ' + imap_quote(part.get_content_subtype().upper()) + ' ' + \
+            structure_params(part.get_params()[1:]) + ' NIL NIL NIL)'
+    maintype, subtype = part.get_content_maintype(), part.get_content_subtype()
+    payload = part.get_payload()
+    text = payload if isinstance(payload, str) else ''
+    encoding = (part.get('Content-Transfer-Encoding') or '7BIT').strip().upper()
+    params = part.get_params()[1:] if part.get('Content-Type') else [('charset', 'us-ascii')]
+    fields = [imap_quote(maintype.upper()), imap_quote(subtype.upper()), structure_params(params),
+              'NIL', 'NIL', imap_quote(encoding), str(len(text))]
+    if maintype == 'text':
+        fields.append(str(text.count('\n')))
+    elif maintype == 'message' and subtype == 'rfc822':
+        inner = payload[0] if isinstance(payload, list) and payload else email.message.Message()
+        fields += ['NIL', body_structure(inner), str(inner.as_string().count('\n'))]
+    fields += ['NIL', structure_disposition(part), 'NIL', 'NIL']
+    return '(' + ' '.join(fields) + ')'
+
+
 def render_section(spec: bytes, m: dict):
     """Returns (response_item_name, content, sets_seen) for one BODY[...]
     or BODY.PEEK[...] fetch item."""
@@ -936,6 +989,11 @@ class IMAPSession:
                     # A fixture may claim a larger size, as for a message
                     # too big to fetch whole.
                     parts.append(f'RFC822.SIZE {m.get("reported_size", len(m["raw"]))}')
+                elif word == 'BODYSTRUCTURE' and self.state.bodystructure == 'corrupt':
+                    parts.append('BODYSTRUCTURE ("TEXT")')
+                elif word == 'BODYSTRUCTURE' and self.state.bodystructure == 'real':
+                    structure = m.get('bodystructure') or body_structure(email.message_from_string(m['raw']))
+                    parts.append('BODYSTRUCTURE ' + structure)
             else:
                 name, content, sets_seen = render_section(spec, m)
                 if sets_seen and not self.readonly and '\\Seen' not in m['flags']:
@@ -1531,6 +1589,8 @@ def main():
     ap.add_argument('--cut-goodbye', action='store_true',
                     help='cut the LOGOUT and QUIT replies off mid-line, then close')
     ap.add_argument('--file-sent', help='append every message accepted over SMTP to this mailbox, seen')
+    ap.add_argument('--bodystructure', choices=['real', 'omit', 'corrupt'], default='real',
+                    help='answer FETCH BODYSTRUCTURE, leave it out, or answer a malformed one')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1553,6 +1613,7 @@ def main():
     state.fetch_no_flags = args.fetch_no_flags
     state.cut_goodbye = args.cut_goodbye
     state.file_sent = args.file_sent
+    state.bodystructure = args.bodystructure
     logger = Logger(args.log)
     caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)

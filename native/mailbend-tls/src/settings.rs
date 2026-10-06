@@ -6,10 +6,10 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use mailbend_io::env::text_var;
+use mailbend_io::env::{text_var, timeout};
 use mailbend_net::doh::Resolver;
-use mailbend_net::tls::server_name;
-use mailbend_net::url::{DohUrl, parse_port};
+use mailbend_net::tls::{ca_file_setting, server_name};
+use mailbend_net::url::parse_port;
 
 use crate::Exit;
 
@@ -96,18 +96,9 @@ impl Settings {
             })?),
             None => None,
         };
-        let doh = match text_setting("MAILBEND_DOH_URL")? {
-            Some(url) => {
-                let url = DohUrl::parse(&url)
-                    .ok_or_else(|| Exit::usage("MAILBEND_DOH_URL must be an HTTPS URL"))?;
-                Some(Resolver::from_env(url).map_err(|e| Exit::usage(e.to_string()))?)
-            }
-            None => None,
-        };
-        let timeout = parse_timeout(text_setting("MAILBEND_TIMEOUT_MS")?.as_deref());
-        let ca_file = std::env::var_os("MAILBEND_CA_FILE")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from);
+        let doh = Resolver::from_setting().map_err(Exit::usage)?;
+        let timeout = timeout().map_err(Exit::usage)?;
+        let ca_file = ca_file_setting();
         Ok(Settings {
             host,
             port,
@@ -121,46 +112,4 @@ impl Settings {
 
 fn text_setting(name: &str) -> Result<Option<String>, Exit> {
     text_var(name).map_err(Exit::usage)
-}
-
-/// MAILBEND_TIMEOUT_MS read like C's atoi: leading spaces, a sign and
-/// digits, anything after ignored; a missing or nonpositive value means 30
-/// seconds.
-fn parse_timeout(value: Option<&str>) -> Duration {
-    const DEFAULT_MS: u64 = 30_000;
-    let Some(s) = value.map(str::trim_start) else {
-        return Duration::from_millis(DEFAULT_MS);
-    };
-    let (negative, digits) = match s.as_bytes().first() {
-        Some(b'-') => (true, &s[1..]),
-        Some(b'+') => (false, &s[1..]),
-        _ => (false, s),
-    };
-    let end = digits
-        .bytes()
-        .position(|b| !b.is_ascii_digit())
-        .unwrap_or(digits.len());
-    let ms = match digits[..end].parse::<u64>() {
-        Ok(ms) if ms > 0 && !negative => ms.min(i32::MAX as u64),
-        _ => DEFAULT_MS,
-    };
-    Duration::from_millis(ms)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn timeouts_parse_like_atoi() {
-        let ms = |value| parse_timeout(value).as_millis();
-        assert_eq!(ms(None), 30_000);
-        assert_eq!(ms(Some("1500")), 1500);
-        assert_eq!(ms(Some("  250ms")), 250);
-        assert_eq!(ms(Some("+7")), 7);
-        assert_eq!(ms(Some("0")), 30_000);
-        assert_eq!(ms(Some("-5")), 30_000);
-        assert_eq!(ms(Some("x")), 30_000);
-        assert_eq!(ms(Some("99999999999")), u128::from(i32::MAX.unsigned_abs()));
-    }
 }

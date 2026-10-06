@@ -1,9 +1,9 @@
 # MailBend agent instructions
 
 MailBend is a small Linux-first IMAP/SMTP connector for AI agents, with
-iCloud Mail as the default and live-tested profile: a Bend 2 core plus two
-small native helpers, both in Rust (`native/mailbend-tls/` and
-`native/mailbend-attach/`).
+iCloud Mail as the default and live-tested profile: a Bend 2 core plus three
+small native helpers, all in Rust (`native/mailbend-tls/`,
+`native/mailbend-attach/` and `native/mailbend-typesafe/`).
 
 ## Native boundaries
 
@@ -17,6 +17,11 @@ Bend runtime cannot safely provide the required OS/protocol boundary.
 - `mailbend-attach`: credential-free, sandboxed local file access:
   attachment reads, attachment downloads and the daily send counter.
   It must not implement mail policy or network access.
+- `mailbend-typesafe`: transports Bend-built JSON to the fixed TypeSafe
+  endpoint over verified TLS and is the only reader of the TypeSafe key
+  file, after dropping inherited mail credentials. It must not read mail
+  credentials or make mail-policy decisions; Bend owns requests, answer
+  interpretation and agent-visible results.
 
 Bend remains authoritative for which operations run, command plans,
 rendering, response interpretation, MIME behavior, and agent-visible results.
@@ -24,7 +29,9 @@ rendering, response interpretation, MIME behavior, and agent-visible results.
 ## Constraints
 - Keep the core in Bend 2, and the native helpers within the boundaries above.
 - Never log, print, commit, persist, or return MAILBEND_APP_PASSWORD. Only
-  `mailbend-tls` reads it; the Bend core and `mailbend-attach` must not.
+  `mailbend-tls` reads it; the Bend core and the other helpers must not.
+- The same holds for the TypeSafe key: only `mailbend-typesafe` reads it,
+  from `MAILBEND_TYPESAFE_KEY_FILE`; keep it out of every other process.
 - TLS peer and hostname verification are mandatory; never add a way around it.
 - Read operations must not mutate message flags: EXAMINE, never SELECT; fetch
   bodies only with BODY.PEEK.

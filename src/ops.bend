@@ -15,6 +15,7 @@ type Op is Data:
   OGet{}
   OGetNew{}
   OGetThread{}
+  OClassify{}
   OGetAttachment{}
   OMarkRead{}
   OMarkUnread{}
@@ -33,7 +34,7 @@ type Op is Data:
 
 # Read-only operations never change the mailbox or send mail, and write
 # nothing anywhere: mail_get_attachment reads like mail_get but saves a file,
-# so it is not one.
+# so it is not one. mail_classify only asks Jev about messages.
 def is_read_only(op: Op) -> Bool:
   match op:
     case OProbe{}:
@@ -47,6 +48,8 @@ def is_read_only(op: Op) -> Bool:
     case OGetNew{}:
       True{}
     case OGetThread{}:
+      True{}
+    case OClassify{}:
       True{}
     case _:
       False{}
@@ -74,6 +77,8 @@ def name(op: Op) -> String:
       "mail_get_new"
     case OGetThread{}:
       "mail_get_thread"
+    case OClassify{}:
+      "mail_classify"
     case OGetAttachment{}:
       "mail_get_attachment"
     case OMarkRead{}:
@@ -114,6 +119,7 @@ def all_ops() -> List<&2, Op>:
     OGet{},
     OGetNew{},
     OGetThread{},
+    OClassify{},
     OGetAttachment{},
     OMarkRead{},
     OMarkUnread{},
@@ -146,6 +152,46 @@ def read_only_names(+ops: List<&2, Op>) -> List<&2, String>:
       []
     case op <> t:
       read_only_names.if(is_read_only(op), op, read_only_names(t))
+
+# Whether an operation consults TypeSafe's Jev, so it is listed and runs
+# only when MAILBEND_TYPESAFE is on.
+def needs_jev(op: Op) -> Bool:
+  match op:
+    case OClassify{}:
+      True{}
+    case _:
+      False{}
+
+# Whether an operation always sends mail (replies and forwards may not).
+def is_send(op: Op) -> Bool:
+  match op:
+    case OSend{}:
+      True{}
+    case _:
+      False{}
+
+# Whether a configuration lists `op`: read-only mode lists only the
+# read-only operations, drafts-only mode hides mail_send, and the Jev
+# operations need Jev on.
+def listed(+op: Op, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
+  Bool.not(ro && Bool.not(is_read_only(op))) && Bool.not(drafts && is_send(op)) &&
+    (jev || Bool.not(needs_jev(op)))
+
+def listed_names.if(keep: Bool, op: Op, rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      name(op) <> rest
+    case False{}:
+      rest
+
+# The names of the operations among `ops` that a configuration lists, in
+# order.
+def listed_names(ops: List<&2, Op>, +ro: Bool, +drafts: Bool, +jev: Bool) -> List<&2, String>:
+  match ops:
+    case Nil{}:
+      []
+    case +op <> t:
+      listed_names.if(listed(op, ro, drafts, jev), op, listed_names(t, ro, drafts, jev))
 
 # The first operation among `ops` named `n`. The list is short, so the
 # search simply walks all of it.
@@ -216,6 +262,21 @@ def plan_headers(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
     I.CExamine{mbox},
     I.CFetch{uids, [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]}
   ]
+
+# What mail_classify fetches of each message: its summary, its
+# BODYSTRUCTURE (for the attachments) and, for `body`, the message itself
+# cut at `max` bytes.
+def classify_items(body: Bool, max: U32) -> List<&2, I.Item>:
+  match body:
+    case True{}:
+      [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}, I.IFull{max}]
+    case False{}:
+      [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}]
+
+# Classifying: capabilities and folders (the category options), then the
+# messages of `mbox`, opened with EXAMINE.
+def plan_classify(mbox: String, uids: List<&2, U32>, body: Bool, max: U32) -> List<&2, I.Cmd>:
+  [I.CCapability{}, I.CList{}, I.CExamine{mbox}, I.CFetch{uids, classify_items(body, max)}]
 
 # One message in full, its body cut at `max` bytes.
 def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
@@ -564,10 +625,12 @@ def has_prefix(p: String, s: String) -> Bool:
           Char.is_eq(c, d) && has_prefix(pt, st)
 
 # Whether a rendered fetch item leaves \Seen alone: a BODY.PEEK section or
-# pure metadata (non-PEEK BODY[...] or RFC822/RFC822.TEXT would set \Seen).
+# pure metadata, BODYSTRUCTURE included (non-PEEK BODY[...] or
+# RFC822/RFC822.TEXT would set \Seen).
 def peek_safe(+s: String) -> Bool:
   has_prefix("BODY.PEEK[", s) || String.eq(s, "UID") || String.eq(s, "FLAGS")
     || String.eq(s, "INTERNALDATE") || String.eq(s, "RFC822.SIZE")
+    || String.eq(s, "BODYSTRUCTURE")
 
 # Whether a plan opens with the UIDVALIDITY guard (after any UIDPLUS check):
 # SELECT, then an expectation of the folder's UIDVALIDITY reply.

@@ -1,6 +1,6 @@
 [package]
 name = "mailbend-net"
-description = "Verified TLS, connection routing and DNS-over-HTTPS for MailBend's mailbend-tls"
+description = "Verified TLS, connection routing, HTTP responses and DNS-over-HTTPS for MailBend's mailbend-tls and mailbend-typesafe"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

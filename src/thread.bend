@@ -71,7 +71,7 @@ def first_id(ids: List<&2, String>) -> String:
       id
 
 def node(folder: String, uidv: Maybe<&2, U32>, +m: I.Msg) -> Node:
-  I.Msg{uid, flags, date, size, headers, body} = m
+  I.Msg{uid, flags, date, size, headers, body, _} = m
   +hs = M.headers(headers)
   Node{
     folder,
@@ -93,7 +93,7 @@ def node_folder(n: Node) -> String:
 
 def node_uid(n: Node) -> U32:
   Node{folder, uidv, msg, time, id, replies_to, refs} = n
-  I.Msg{uid, flags, date, size, headers, body} = msg
+  I.Msg{uid, flags, date, size, headers, body, _} = msg
   uid
 
 def node_time(n: Node) -> U32:

@@ -10,7 +10,7 @@ def ids(xs: List<&2, String>) -> String:
   "[" ++ String.join(xs, ",") ++ "]"
 
 def node(folder: String, uid: U32, date: String, headers: String) -> T.Node:
-  T.node(folder, Some{7}, I.Msg{uid, [], date, 0, headers, ""})
+  T.node(folder, Some{7}, I.Msg{uid, [], date, 0, headers, "", I.VNil{}})
 
 def placed_line(p: T.Placed) -> String:
   T.Placed{+n, parent} = p
@@ -59,7 +59,7 @@ def id_lengths(xs: List<&2, String>) -> String:
 # The node is built directly: the interpreter that runs the unit tests
 # overflows its stack parsing a header this long, unlike the compiled tool.
 def long_reply(n: Nat) -> T.Node:
-  T.Node{"INBOX", Some{7}, I.Msg{6, [], early(), 0, "", ""}, I.internal_seconds(early()),
+  T.Node{"INBOX", Some{7}, I.Msg{6, [], early(), 0, "", "", I.VNil{}}, I.internal_seconds(early()),
     "<z@x>", ["<a@x>"], many_refs(n, ["<a@x>"])}
 
 # A reply to <b@x>, which replies to <a@x>.

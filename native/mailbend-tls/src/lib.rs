@@ -18,6 +18,7 @@ mod settings;
 
 use std::io::Read;
 
+use mailbend_io::secret::refuse_typesafe_api_key;
 use mailbend_net::tls;
 use zeroize::Zeroizing;
 
@@ -32,7 +33,7 @@ pub use settings::Protocol;
 /// server, writing the server's transcript to stdout. Everything that can
 /// be checked locally is checked before connecting.
 pub fn run(protocol: Protocol) -> Result<Outcome, Exit> {
-    creds::refuse_typesafe_key()?;
+    refuse_typesafe_api_key().map_err(Exit::usage)?;
     let settings = Settings::from_env(protocol)?;
     let credentials = creds::load()?;
     let input = read_input()?;

@@ -13,6 +13,8 @@ check_readiness() {
     || fail "TLS helper cannot run; rerun setup-cloud.sh"
   [ -x "$root/bin/mailbend-attach" ] \
     || fail "attachment helper is missing; rerun setup-cloud.sh"
+  "$root/bin/mailbend-typesafe" --check >/dev/null 2>&1 \
+    || fail "TypeSafe helper cannot run; rerun setup-cloud.sh"
   [ -x "$root/bin/mailbend-core" ] \
     || fail "compiled core is missing; rerun setup-cloud.sh"
   "$root/scripts/mailbend" tools >/dev/null 2>&1 \

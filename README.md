@@ -15,6 +15,7 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_get` | Read one message: headers, text, attachment list | no |
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
 | `mail_get_thread` | The conversation of a message, oldest first, from its folder, INBOX and Sent: linked by Message-ID, In-Reply-To and References only (never by subject), each message with its folder, `uidvalidity` and `parent` | no |
+| `mail_classify` | Ask TypeSafe's Jev, for up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention; only with `MAILBEND_TYPESAFE` on (see [TypeSafe's Jev](#typesafes-jev)) | no |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file |
 | `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
 | `mail_flag` / `mail_unflag` | Add / remove `\Flagged`; `mail_flag` sets an Apple Mail `colour` (red, orange, yellow, green, blue, purple, grey) or, without one, keeps the current colour; `mail_unflag` clears the colour. The result lists the flags the server reported and, for a colour, `colour_kept` (`true`, `false` or `"unverified"`) | flags |
@@ -65,8 +66,9 @@ git clone https://github.com/albertc71/MailBend.git && cd MailBend
 scripts/install.sh --install-bend --install-rust
 ```
 
-`scripts/install.sh` builds `bin/mailbend-tls` and `bin/mailbend-attach`, checks the safety proofs with
-`bend PROOF.bend`, and compiles the core to `bin/mailbend-core`. With
+`scripts/install.sh` builds `bin/mailbend-tls`, `bin/mailbend-attach` and
+`bin/mailbend-typesafe`, checks the safety proofs with `bend PROOF.bend`,
+and compiles the core to `bin/mailbend-core`. With
 `--install-bend` and no `bend` on the `PATH`, it first runs
 `scripts/install-bend.sh`, which installs the Bend release tested in CI to
 `~/.bend` after checking the archive's sha256. That pinned release is Linux
@@ -132,6 +134,40 @@ The count is `sends` in the state directory: one line per send, created
 by `mailbend-attach` (directory mode 0700). No tool reads or changes it;
 deleting it resets the count, which is a local user action, not one the
 agent can take through MailBend.
+
+### TypeSafe's Jev
+
+`mail_classify` asks [TypeSafe](https://docs.typesafe.ai)'s Jev model about
+messages. It is off, hidden and refused unless you turn it on, and it
+changes nothing: no flag, no move, no folder. These settings are checked
+even when it is off, and any bad value fails every tool:
+
+| Setting | Effect |
+| --- | --- |
+| `MAILBEND_TYPESAFE` | `1`/`true` lists `mail_classify`; `0`/`false`/empty keeps it off. |
+| `MAILBEND_TYPESAFE_KEY_FILE` | Required when on: the absolute path of a file you own with mode 600 holding only the TypeSafe key, with the same rules as `MAILBEND_PASSWORD_FILE`. Only `mailbend-typesafe` reads it. |
+| `MAILBEND_TYPESAFE_CONTENT` | `headers` (the default) sends each message's UID, its decoded From, To, Cc, Subject, Date, List-Id, List-Unsubscribe, Auto-Submitted and Precedence headers, and its attachment names. `body` also sends up to 16 KB of its plain text. |
+| `MAILBEND_TYPESAFE_ZERO_RETENTION` | `1`/`true` is your statement that the TypeSafe account has a zero-retention plan; `body` content is refused without it. MailBend cannot check this statement. |
+
+Never put the key in `MAILBEND_TYPESAFE_API_KEY`: when that variable is set,
+even empty, every tool fails with a configuration error, so the key never
+reaches a process that holds the mail password.
+
+For each message, `mail_classify` returns `category` (the existing folder Jev
+chose among the selectable folders other than INBOX, the special folders and
+`To Delete`, or `null`) and a `jev` object: `status` (`checked`, or
+`unchecked` with `reasons` when the message's header facts alone exceed a
+request), the pinned `model`, the `content` sent, and `signals` such as
+`reply_needed`, `action_required`, `priority`, `suggested_action`, `keep`,
+`disposable` and `suspected_injection`. A missing or malformed answer reads
+as the cautious one. When no folder fits, `needs_new_category` is `true`:
+call again with `candidates` (new folder names, checked as
+`mail_create_folder` checks them) and a chosen one is returned as
+`new_category`. It is never created; create it with `mail_create_folder`.
+The result also lists `not_found` UIDs and, per request, its `messages`,
+`bytes` and TypeSafe's `input_tokens`. A request TypeSafe refuses is split
+once into halves; any other failure stops the call. The answers come from
+untrusted mail content.
 
 Other providers require compatible password-authenticated IMAP over implicit
 TLS and SMTP with STARTTLS. Set `MAILBEND_IMAP_HOST`, `MAILBEND_IMAP_PORT`,
@@ -311,6 +347,18 @@ passing them through, is in [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md).
   by device and inode so a symlink alias is refused too. It also refuses
   when it cannot find your home directory to check. A saved file is
   still untrusted content: open it with care.
+- **Jev sees only what you allow, and changes nothing.** `mail_classify`
+  reads with `EXAMINE`, `BODY.PEEK` and `BODYSTRUCTURE`, so messages stay
+  unread (proven: its plan contains no command that can change a mailbox).
+  It sends header facts and attachment names, and message text only with
+  `MAILBEND_TYPESAFE_CONTENT=body` and `MAILBEND_TYPESAFE_ZERO_RETENTION=1`
+  (proven: a headers-mode request holds no text). Requests go only to
+  `https://api.typesafe.ai/v1/systemone`, fixed in `mailbend-typesafe`,
+  over verified TLS. That helper reads the key from
+  `MAILBEND_TYPESAFE_KEY_FILE` and first re-executes itself with only its
+  own settings (the key file, time budget, DoH, CA file and HTTPS proxy), so
+  the key and the mail password are never in the same process; any copy of
+  the key in an answer is redacted.
 - **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
   test server; whoever sets it decides which servers are trusted, so never
   set it in production. `scripts/mailbend` prints a warning when it is set.
@@ -329,7 +377,7 @@ flowchart LR
   agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["21 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["22 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]
@@ -344,6 +392,9 @@ flowchart LR
   reader --> sends[("MAILBEND_STATE_DIR/sends")]
   core -- "save: name, file bytes" --> reader
   reader --> downloads[("MAILBEND_DOWNLOAD_DIR")]
+  core -- "Jev request on stdin" --> jev["mailbend-typesafe (Rust)<br/>no mail password,<br/>fixed endpoint"]
+  jev <--> typesafe[("TypeSafe HTTPS<br/>api.typesafe.ai:443")]
+  key[["MAILBEND_TYPESAFE_KEY_FILE"]] -. "read by this helper only" .-> jev
 ```
 
 Each tool call runs one or two short IMAP sessions (login, a few commands,
@@ -364,10 +415,12 @@ python3 tests/test-e2e.py    # every tool, CLI and MCP, against the local server
 
 `tests/fake_mail_server.py` is a small IMAP/SMTP server over TLS with a
 throwaway CA; it records every command and the mailbox state so the tests can
-check what really happened. Tool schemas are generated by
-`tools/gen-schema.py`. See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[AGENTS.md](AGENTS.md) for contributor rules, and [SECURITY.md](SECURITY.md)
-to report a vulnerability privately.
+check what really happened. `tests/fake_typesafe.py` plays TypeSafe behind a
+local proxy, checking each request's shape and size and recording it. Tool
+schemas are generated by `tools/gen-schema.py`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for
+contributor rules, and [SECURITY.md](SECURITY.md) to report a vulnerability
+privately.
 
 ## Not yet
 

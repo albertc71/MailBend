@@ -55,13 +55,15 @@ type Key is Data:
   KUids{uids: List<&2, U32>}
 
 # Fetch items. None of them can set \Seen: message content is only ever
-# fetched with BODY.PEEK.
+# fetched with BODY.PEEK, and BODYSTRUCTURE only describes the parts
+# (RFC 3501 6.4.5).
 type Item is Data:
   IUid{}
   IFlags{}
   IDate{}
   ISize{}
   IHeaders{}
+  IStructure{}
   IFull{max: U32}
 
 type Cmd is Data:
@@ -595,9 +597,11 @@ def search_args(+ks: List<&2, Key>) -> String:
       Bool.pick(String, List.all(~&2, ~Key, ~key_plain, ks), "", "CHARSET UTF-8 ") ++
         keys_str(ks)
 
-# The header fields fetched for message summaries.
+# The header fields fetched for message summaries, and the list and
+# auto-reply fields Jev may see.
 def header_fields() -> String:
-  "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES"
+  "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID " ++
+    "LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE"
 
 def item_str(i: Item) -> String:
   match i:
@@ -611,6 +615,8 @@ def item_str(i: Item) -> String:
       "RFC822.SIZE"
     case IHeaders{}:
       "BODY.PEEK[HEADER.FIELDS (" ++ header_fields() ++ ")]"
+    case IStructure{}:
+      "BODYSTRUCTURE"
     case IFull{max}:
       "BODY.PEEK[]<0." ++ U32.show(max) ++ ">"
 
@@ -1484,7 +1490,8 @@ def ok_code(lines: List<&2, RLine>, name: String) -> Maybe<&2, U32>:
 # Fetched messages
 # ----------------
 
-# A FETCH response for one message.
+# A FETCH response for one message. `structure` is its BODYSTRUCTURE, NIL
+# when the response has none.
 type Msg is Data:
   Msg{
     uid: U32,
@@ -1492,7 +1499,8 @@ type Msg is Data:
     date: String,
     size: U32,
     headers: String,
-    body: String
+    body: String,
+    structure: Value
   }
 
 # The Msg field a FETCH item with a non-list value sets, if any.
@@ -1505,7 +1513,7 @@ type Field is Data:
   FieldNone{}
 
 def msg_empty() -> Msg:
-  Msg{0, [], "", 0, "", ""}
+  Msg{0, [], "", 0, "", "", VNil{}}
 
 # The field an upper-cased item name sets. Every branch is a constant, so
 # Bool.pick building all of them costs nothing.
@@ -1520,31 +1528,42 @@ def field_of(+k: String) -> Field:
 # Sets a field from an item's text; a number that does not read is 0.
 def msg_scalar(f: Field, s: String, m: Msg) -> Msg:
   match f m:
-    case FieldUid{} Msg{_, flags, date, size, headers, body}:
-      Msg{Maybe.default(&2, U32, U32.read(s), 0), flags, date, size, headers, body}
-    case FieldDate{} Msg{uid, flags, _, size, headers, body}:
-      Msg{uid, flags, s, size, headers, body}
-    case FieldSize{} Msg{uid, flags, date, _, headers, body}:
-      Msg{uid, flags, date, Maybe.default(&2, U32, U32.read(s), 0), headers, body}
-    case FieldHeaders{} Msg{uid, flags, date, size, _, body}:
-      Msg{uid, flags, date, size, s, body}
-    case FieldBody{} Msg{uid, flags, date, size, headers, _}:
-      Msg{uid, flags, date, size, headers, s}
+    case FieldUid{} Msg{_, flags, date, size, headers, body, st}:
+      Msg{Maybe.default(&2, U32, U32.read(s), 0), flags, date, size, headers, body, st}
+    case FieldDate{} Msg{uid, flags, _, size, headers, body, st}:
+      Msg{uid, flags, s, size, headers, body, st}
+    case FieldSize{} Msg{uid, flags, date, _, headers, body, st}:
+      Msg{uid, flags, date, Maybe.default(&2, U32, U32.read(s), 0), headers, body, st}
+    case FieldHeaders{} Msg{uid, flags, date, size, _, body, st}:
+      Msg{uid, flags, date, size, s, body, st}
+    case FieldBody{} Msg{uid, flags, date, size, headers, _, st}:
+      Msg{uid, flags, date, size, headers, s, st}
     case FieldNone{} _:
       m
 
-def msg_flags(is_flags: Bool, xs: List<&2, Value>, m: Msg) -> Msg:
-  match is_flags m:
-    case True{} Msg{uid, _, date, size, headers, body}:
-      Msg{uid, Value.texts(xs), date, size, headers, body}
-    case False{} _:
+# Sets the field a list value names: FLAGS, or the BODYSTRUCTURE list
+# `whole` whose items are `xs`. Any other list sets nothing.
+def msg_list(
+  is_flags: Bool,
+  is_structure: Bool,
+  xs: List<&2, Value>,
+  whole: Value,
+  m: Msg
+) -> Msg:
+  match is_flags is_structure m:
+    case True{} _ Msg{uid, _, date, size, headers, body, st}:
+      Msg{uid, Value.texts(xs), date, size, headers, body, st}
+    case False{} True{} Msg{uid, flags, date, size, headers, body, _}:
+      Msg{uid, flags, date, size, headers, body, whole}
+    case False{} False{} _:
       m
 
-# Sets the field one FETCH item names: a list value can only be FLAGS.
+# Sets the field one FETCH item names.
 def msg_set(m: Msg, k: String, v: Value) -> Msg:
   match v:
-    case VList{xs}:
-      msg_flags(String.eq(String.to_upper(k), "FLAGS"), xs, m)
+    case VList{+xs}:
+      +key = String.to_upper(k)
+      msg_list(String.eq(key, "FLAGS"), String.eq(key, "BODYSTRUCTURE"), xs, VList{xs}, m)
     case _:
       msg_scalar(field_of(String.to_upper(k)), Value.text(v), m)
 
@@ -1627,6 +1646,148 @@ def fetched(lines: List<&2, RLine>) -> List<&2, Msg>:
 # only a sequence number, so its message has UID 0, which no request has.
 def flag_fetches(lines: List<&2, RLine>) -> List<&2, Msg>:
   fetches(lines, True{})
+
+# Body structure
+# --------------
+
+# One single part of a BODYSTRUCTURE, as the Content-Type and
+# Content-Disposition values it describes (parameter values quoted), so the
+# MIME code reads it like a part's own header fields.
+type BodyPart is Data:
+  BodyPart{ct: String, cd: String}
+
+# Where a BODYSTRUCTURE walk stands: the parts still to read, depth first,
+# and the single parts found (reversed); or a malformed structure.
+type Walk is Data:
+  Walking{todo: List<&2, Value>, found: List<&2, BodyPart>}
+  WalkBad{}
+
+# Item `n` of a list, or NIL.
+def nth(vs: List<&2, Value>, n: Nat) -> Value:
+  Maybe.default(&2, Value, List.get(&2, Value, vs, n), VNil{})
+
+# A parameter value as a quoted string: '"' and '\' escaped.
+def quoted(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'"', t}:
+      "\\\"" ++ quoted(t)
+    case SCon{'\\', t}:
+      "\\\\" ++ quoted(t)
+    case SCon{c, t}:
+      SCon{c, quoted(t)}
+
+# "; key=\"value\"" for each key and value of a parameter list.
+def param_pairs(vs: List<&2, Value>) -> String:
+  match vs:
+    case k <> v <> t:
+      "; " ++ Value.text(k) ++ "=\"" ++ quoted(Value.text(v)) ++ "\"" ++ param_pairs(t)
+    case _:
+      ""
+
+# The parameters of a "(key value ...)" list; none for NIL.
+def params_text(v: Value) -> String:
+  match v:
+    case VList{xs}:
+      param_pairs(xs)
+    case _:
+      ""
+
+# A body disposition, "(type (params))", as a header value; "" for NIL.
+def disposition_text(v: Value) -> String:
+  match v:
+    case VList{+xs}:
+      Value.text(nth(xs, 0n)) ++ params_text(nth(xs, 1n))
+    case _:
+      ""
+
+# Where a single part's disposition is (RFC 3501 7.4.2): after the line
+# count of a text part, after the envelope, body and line count of a
+# message/rfc822 part, else after the seven basic fields and the MD5.
+def disposition_at(+mime: String) -> Nat:
+  Bool.pick(Nat, String.starts_with(mime, "text/"), 9n,
+    Bool.pick(Nat, String.eq(mime, "message/rfc822"), 11n, 8n))
+
+def single_part.if(ok: Bool, +mime: String, +xs: List<&2, Value>) -> Maybe<&2, BodyPart>:
+  match ok:
+    case True{}:
+      cd = disposition_text(nth(xs, disposition_at(mime)))
+      Some{BodyPart{mime ++ params_text(nth(xs, 2n)), cd}}
+    case False{}:
+      None{}
+
+# A single part from its fields; None when its type or subtype is missing.
+def single_part(+xs: List<&2, Value>) -> Maybe<&2, BodyPart>:
+  +typ = String.to_lower(Value.text(nth(xs, 0n)))
+  +sub = String.to_lower(Value.text(nth(xs, 1n)))
+  ok = Bool.not(String.is_empty(typ) || String.is_empty(sub))
+  single_part.if(ok, typ ++ "/" ++ sub, xs)
+
+# The leading lists of a multipart's fields: its parts (the subtype and any
+# extension data follow them).
+def subparts(xs: List<&2, Value>) -> List<&2, Value>:
+  match xs:
+    case VList{ys} <> t:
+      VList{ys} <> subparts(t)
+    case _:
+      []
+
+def is_multipart(xs: List<&2, Value>) -> Bool:
+  match xs:
+    case VList{ys} <> t:
+      True{}
+    case _:
+      False{}
+
+def body_parts.put(
+  m: Maybe<&2, BodyPart>,
+  todo: List<&2, Value>,
+  found: List<&2, BodyPart>
+) -> Walk:
+  match m:
+    case Some{p}:
+      Walking{todo, p <> found}
+    case None{}:
+      WalkBad{}
+
+def body_parts.if(
+  multi: Bool,
+  xs: List<&2, Value>,
+  todo: List<&2, Value>,
+  found: List<&2, BodyPart>
+) -> Walk:
+  match multi:
+    case True{}:
+      Walking{List.append(&2, Value, subparts(xs), todo), found}
+    case False{}:
+      body_parts.put(single_part(xs), todo, found)
+
+# One part read: a multipart puts its parts first in line; anything but a
+# list is malformed.
+def body_parts.step(v: Value, todo: List<&2, Value>, found: List<&2, BodyPart>) -> Walk:
+  match v:
+    case VList{+xs}:
+      body_parts.if(is_multipart(xs), xs, todo, found)
+    case _:
+      WalkBad{}
+
+# `fuel` bounds the parts read: a server could nest them without end.
+def body_parts.go(fuel: Nat, w: Walk) -> Maybe<&2, List<&2, BodyPart>>:
+  match fuel w:
+    case _ WalkBad{}:
+      None{}
+    case _ Walking{Nil{}, found}:
+      Some{List.reverse(&2, BodyPart, found)}
+    case 0n _:
+      None{}
+    case 1n+f Walking{v <> todo, found}:
+      body_parts.go(f, body_parts.step(v, todo, found))
+
+# The single parts of a BODYSTRUCTURE, in order; None when it is missing
+# (NIL), malformed or has more than 128 parts and levels.
+def body_parts(structure: Value) -> Maybe<&2, List<&2, BodyPart>>:
+  body_parts.go(128n, Walking{[structure], []})
 
 # Tagged replies
 # --------------

@@ -88,6 +88,7 @@ name = "mailbend-io"
 version = "0.1.0"
 dependencies = [
  "nix",
+ "zeroize",
 ]
 
 [[package]]
@@ -108,6 +109,16 @@ dependencies = [
  "mailbend-io",
  "mailbend-net",
  "nix",
+ "rustls",
+ "zeroize",
+]
+
+[[package]]
+name = "mailbend-typesafe"
+version = "0.1.0"
+dependencies = [
+ "mailbend-io",
+ "mailbend-net",
  "rustls",
  "zeroize",
 ]

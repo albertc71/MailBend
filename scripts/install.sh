@@ -1,8 +1,10 @@
 #!/usr/bin/env sh
 # Builds MailBend in place:
-#   bin/mailbend-tls     the TLS helper (Rust, rustls)
-#   bin/mailbend-attach  the attachment helper (Rust, no credentials)
-#   bin/mailbend-core    the Bend core, compiled (needs clang 14+)
+#   bin/mailbend-tls       the TLS helper (Rust, rustls)
+#   bin/mailbend-attach    the attachment helper (Rust, no credentials)
+#   bin/mailbend-typesafe  the TypeSafe helper (Rust, rustls; only it reads
+#                          the TypeSafe key)
+#   bin/mailbend-core      the Bend core, compiled (needs clang 14+)
 # and checks the safety proofs. Pass --install-bend to install the pinned,
 # checksum-verified Bend release (scripts/install-bend.sh) when it is missing,
 # and --install-rust to install Rust 1.99 with a checksum-verified rustup
@@ -67,13 +69,15 @@ fi
 command -v cc >/dev/null 2>&1 || fail "a C compiler is needed (apt-get install build-essential)"
 
 mkdir -p bin
-say "building bin/mailbend-tls and bin/mailbend-attach ($rustc_version)"
+say "building bin/mailbend-tls, bin/mailbend-attach and bin/mailbend-typesafe ($rustc_version)"
 # Build from native/: rustup finds rust-toolchain.toml from the working
 # directory, not from --manifest-path.
-(CDPATH= cd native && "$cargo" build --release --locked --quiet -p mailbend-tls -p mailbend-attach)
+(CDPATH= cd native && "$cargo" build --release --locked --quiet -p mailbend-tls -p mailbend-attach -p mailbend-typesafe)
 cp native/target/release/mailbend-tls bin/mailbend-tls
 cp native/target/release/mailbend-attach bin/mailbend-attach
+cp native/target/release/mailbend-typesafe bin/mailbend-typesafe
 bin/mailbend-tls --check || fail "the built TLS helper cannot run"
+bin/mailbend-typesafe --check || fail "the built TypeSafe helper cannot run"
 
 say "checking the safety laws (bend PROOF.bend)"
 bend PROOF.bend

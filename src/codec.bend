@@ -75,13 +75,17 @@ def utf8_encode(s: String) -> String:
       +n = u(c)
       utf8_encode.put(utf8_width(n), n, utf8_encode(t))
 
-# Number of UTF-8 bytes the text takes on the wire.
-def utf8_len(s: String) -> U32:
+def utf8_len.go(s: String, acc: U32) -> U32:
   match s:
     case SNil{}:
-      0
+      acc
     case SCon{c, t}:
-      (utf8_width(u(c)) + utf8_len(t) : U32)
+      utf8_len.go(t, (acc + utf8_width(u(c)) : U32))
+
+# Number of UTF-8 bytes the text takes on the wire, counted in a loop: a
+# message to append may run to megabytes.
+def utf8_len(s: String) -> U32:
+  utf8_len.go(s, 0)
 
 # UTF-8 decoding
 # --------------

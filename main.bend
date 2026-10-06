@@ -14,7 +14,7 @@ import ./src/schema.bend as Schema
 def version() -> String:
   "0.1.0"
 
-# The tools this session offers: the schema less what a mode switch hides.
+# The tools this session offers: the schema less what the configuration hides.
 def offered_tools() -> IO(J.Json):
   schema = Maybe.default(&2, J.Json, J.parse(Schema.tool_defs()), J.arr([]))
   T.offered_tools(schema)

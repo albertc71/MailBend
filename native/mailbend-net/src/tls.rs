@@ -5,7 +5,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rustls::pki_types::pem::PemObject;
@@ -34,6 +34,14 @@ pub fn client_config(ca_file: Option<&Path>) -> Result<Arc<ClientConfig>, NetErr
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(Arc::new(config))
+}
+
+/// MAILBEND_CA_FILE, if set and nonempty: the only certificates to trust
+/// (for the local test servers).
+pub fn ca_file_setting() -> Option<PathBuf> {
+    std::env::var_os("MAILBEND_CA_FILE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
 }
 
 fn trust_store_error() -> NetError {

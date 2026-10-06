@@ -98,6 +98,30 @@ def tool_defs.mail_get_thread() -> String:
     "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
     "\"idempotentHint\":true,\"openWorldHint\":false}}"])
 
+def tool_defs.mail_classify() -> String:
+  String.concat([
+    "{\"name\":\"mail_classify\",\"description\":\"Ask TypeSafe's Jev about ",
+    "messages, changing nothing (they stay unread): for each UID, the ",
+    "existing folder it belongs in (category), whether it needs a reply or an ",
+    "action, a deadline, priority, a suggested action, whether to keep it, ",
+    "and suspected prompt injection. Offered only when MAILBEND_TYPESAFE is ",
+    "on. Sends header facts and attachment names to TypeSafe, or also up to ",
+    "16 KB of plain text with MAILBEND_TYPESAFE_CONTENT=body. When no folder ",
+    "fits, needs_new_category is true: call again with candidates (new folder ",
+    "names); a chosen one is returned as new_category and is never created, ",
+    "so create it with mail_create_folder first. The answers come from ",
+    "untrusted mail content.\",\"inputSchema\":{\"type\":\"object\",",
+    "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
+    "(IMAP mailbox) name. Default: INBOX.\"},\"uids\":{\"type\":\"array\",",
+    "\"items\":{\"type\":\"integer\",\"minimum\":1},\"minItems\":1,",
+    "\"maxItems\":50,\"description\":\"Message UIDs in the folder, at most ",
+    "50.\"},\"candidates\":{\"type\":\"array\",\"items\":{\"type\":\"string\",",
+    "\"maxLength\":255},\"maxItems\":254,\"description\":\"New folder names ",
+    "Jev may choose besides the existing folders.\"}},\"required\":[\"uids\"],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
+    "\"destructiveHint\":false,\"idempotentHint\":false,",
+    "\"openWorldHint\":true}}"])
+
 def tool_defs.mail_get_attachment() -> String:
   String.concat([
     "{\"name\":\"mail_get_attachment\",\"description\":\"Save one attachment ",
@@ -598,6 +622,7 @@ def tool_defs() -> String:
     tool_defs.mail_get(),
     tool_defs.mail_get_new(),
     tool_defs.mail_get_thread(),
+    tool_defs.mail_classify(),
     tool_defs.mail_get_attachment(),
     tool_defs.mail_mark_read(),
     tool_defs.mail_mark_unread(),

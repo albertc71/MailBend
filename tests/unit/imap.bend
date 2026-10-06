@@ -50,7 +50,7 @@ def show_messages(messages: List<&2, I.Msg>) -> String:
   match messages:
     case Nil{}:
       ""
-    case I.Msg{uid, flags, date, size, headers, body} <> rest:
+    case I.Msg{uid, flags, date, size, headers, body, _} <> rest:
       U32.show(uid) ++ " " ++ String.join(flags, ",") ++ " " ++ date ++ " " ++ U32.show(size) ++ " [" ++ show_line_endings(body) ++ "];" ++ show_messages(rest)
 
 def show_uids(uids: List<&2, U32>) -> String:
@@ -226,7 +226,7 @@ def check_rendering() -> IO(Unit):
       I.CSearch{[]}, I.CSearch{[I.KHeader{"X-Tag", "Ünï"}]},
       I.CFetch{[], [I.IFlags{}]}, I.CAppend{"Sent", [], ""}])))
     IO.print(show_items([I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{},
-      I.IHeaders{}, I.IFull{0}]))
+      I.IHeaders{}, I.IStructure{}, I.IFull{0}]))
     IO.print(show_flag_names(every_flag()))
     IO.print(I.cmd_str(I.CExpect{"* OK [UIDVALIDITY 7]"}) ++ "|" ++
       I.cmd_str(I.CExpectWord{"UIDPLUS"}) ++ "|" ++ I.cmd_str(I.CExamine{"Café"}))
@@ -301,7 +301,7 @@ def check_framing() -> IO(Unit):
 # ---------
 
 def show_message(m: I.Msg) -> String:
-  I.Msg{uid, flags, date, size, headers, body} = m
+  I.Msg{uid, flags, date, size, headers, body, _} = m
   U32.show(uid) ++ "|" ++ String.join(flags, ",") ++ "|" ++ date ++ "|" ++
     U32.show(size) ++ "|" ++ show_text(headers) ++ "|" ++ show_text(body)
 
@@ -366,6 +366,57 @@ def check_responses(+lines: List<&2, I.RLine>) -> IO(Unit):
       "[" ++ show_permanent(I.permanent_flags(I.frame(
         "* OK [PERMANENTFLAGS ()] x\r\n* OK [PERMANENTFLAGS (\\Seen)] y\r\n"))) ++ "]")
 
+# Body structure
+# --------------
+
+def show_part_list(ps: List<&2, I.BodyPart>) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case I.BodyPart{ct, cd} <> t:
+      "[" ++ ct ++ " | " ++ cd ++ "]" ++ show_part_list(t)
+
+def show_parts(m: Maybe<&2, List<&2, I.BodyPart>>) -> String:
+  match m:
+    case Some{ps}:
+      "parts " ++ show_part_list(ps)
+    case None{}:
+      "unknown"
+
+def show_structures(ms: List<&2, I.Msg>) -> String:
+  match ms:
+    case Nil{}:
+      ""
+    case I.Msg{uid, flags, date, size, headers, body, structure} <> t:
+      U32.show(uid) ++ " " ++ show_parts(I.body_parts(structure)) ++ "\n" ++ show_structures(t)
+
+# A single text part, a mixed message with an attachment, a forwarded
+# message (read as one part, not walked into), and four structures read as
+# unknown: absent, NIL, without a subtype, and nested past the bound.
+def structure_transcript() -> String:
+  String.concat([
+    "* 1 FETCH (UID 1 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"utf-8\") NIL NIL ",
+    "\"7BIT\" 12 1 NIL NIL NIL NIL))\r\n",
+    "* 2 FETCH (UID 2 BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"utf-8\") NIL NIL ",
+    "\"7BIT\" 10 1 NIL NIL NIL NIL)(\"APPLICATION\" \"PDF\" (\"NAME\" \"a \\\"q\\\".pdf\") ",
+    "NIL NIL \"BASE64\" 100 NIL (\"ATTACHMENT\" (\"FILENAME\" \"a.pdf\")) NIL NIL) ",
+    "\"MIXED\" (\"BOUNDARY\" \"b\") NIL NIL NIL))\r\n",
+    "* 3 FETCH (UID 3 BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" NIL NIL NIL \"7BIT\" 1 1)",
+    "(\"MESSAGE\" \"RFC822\" NIL NIL NIL \"7BIT\" 50 (NIL \"Fwd\" NIL NIL NIL NIL NIL NIL ",
+    "NIL NIL) ((\"TEXT\" \"PLAIN\" NIL NIL NIL \"7BIT\" 1 1)(\"IMAGE\" \"PNG\" NIL NIL NIL ",
+    "\"BASE64\" 9 NIL (\"INLINE\" (\"FILENAME\" \"p.png\")) NIL NIL) \"MIXED\") 5 NIL ",
+    "(\"ATTACHMENT\" NIL) NIL NIL) \"MIXED\"))\r\n",
+    "* 4 FETCH (UID 4 FLAGS ())\r\n",
+    "* 5 FETCH (UID 5 BODYSTRUCTURE NIL)\r\n",
+    "* 6 FETCH (UID 6 BODYSTRUCTURE ((\"TEXT\") \"MIXED\"))\r\n",
+    "* 7 FETCH (UID 7 BODYSTRUCTURE ",
+    String.repeat("(", 130n), "\"TEXT\" \"PLAIN\"", String.repeat(" \"MIXED\")", 130n),
+    ")\r\n"])
+
+def check_structure() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(show_structures(I.fetched(I.frame(structure_transcript()))))
+
 # A dry run's view of a plan: the script's lines, except that an APPEND
 # shows the size of its message (in UTF-8 bytes) instead of the message.
 def check_preview() -> IO(Unit):
@@ -407,6 +458,7 @@ def main() -> IO(Unit):
     check_framing()
     check_responses(I.frame(response_transcript()))
     check_preview()
+    check_structure()
 
 #|a1 CAPABILITY\r\na2 EXAMINE "Caf&AOk-"\r\na3 UID SEARCH CHARSET UTF-8 FROM {5}\r\njosé UNSEEN\r\na4 UID FETCH 5,7 (UID BODY.PEEK[]<0.1000>)\r\n
 #|a1 UID STORE 3 +FLAGS.SILENT (\Seen)\r\na2 UID MOVE 3 "Deleted Messages"\r\na3 UID EXPUNGE 1,2\r\na4 APPEND "Drafts" (\Draft \Seen) {4}\r\nHi\r\n\r\na5 UID SEARCH SUBJECT "a\"b" UID 9:*\r\n
@@ -434,7 +486,7 @@ def main() -> IO(Unit):
 #|none:00000000;none:00000000;none:00000000;none:00000000;none:00000000;select:10000000;none:00000000;none:00000000;mail:11000010;mail:11000000;mail:11000000;copy:11001000;mail:11000000;expunge:11010100;folder:10100000;folder:10100000;folder:10100000;folder:10100000;mail:11000000;none:00000001;none:00000001;
 #|000 000 100 111 111
 #|a1 LIST "" "*"\r\na2 LIST "" "*" RETURN (SPECIAL-USE)\r\na3 LSUB "" "*"\r\n=EXPECT-WORD MOVE\r\na4 UID COPY 1,2,3 "Work"\r\na5 UID SEARCH ALL TO "a b" CC "c" BODY "d\\e" TEXT "t" SINCE 1-Feb-2026 BEFORE 2-Feb-2026 SEEN FLAGGED UNFLAGGED\r\na6 UID SEARCH ALL\r\na7 UID SEARCH CHARSET UTF-8 HEADER "X-Tag" {5}\r\nÜnï\r\na8 UID FETCH  (FLAGS)\r\na9 APPEND "Sent" () {0}\r\n\r\n
-#|UID;FLAGS;INTERNALDATE;RFC822.SIZE;BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)];BODY.PEEK[]<0.0>;
+#|UID;FLAGS;INTERNALDATE;RFC822.SIZE;BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)];BODYSTRUCTURE;BODY.PEEK[]<0.0>;
 #|\Seen;\Deleted;\Draft;\Flagged;\Answered;$MailFlagBit0;$MailFlagBit1;$MailFlagBit2;
 #|* OK [UIDVALIDITY 7]|UIDPLUS|EXAMINE "Caf&AOk-"
 #|0 0 1 1 2 0
@@ -458,3 +510,11 @@ def main() -> IO(Unit):
 #|15 0 0 []
 #|a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 7] | a2 UID SEARCH UID 3 | a3 UID STORE 3 +FLAGS.SILENT (\Seen) | a4 APPEND "Drafts" (\Draft \Seen) <5 bytes> | a5 CREATE "&ZeVnLA-"
 #|[] <0 bytes>
+#|1 parts [text/plain; CHARSET="utf-8" | ]
+#|2 parts [text/plain; CHARSET="utf-8" | ][application/pdf; NAME="a \"q\".pdf" | ATTACHMENT; FILENAME="a.pdf"]
+#|3 parts [text/plain | ][message/rfc822 | ATTACHMENT]
+#|4 unknown
+#|5 unknown
+#|6 unknown
+#|7 unknown
+#|

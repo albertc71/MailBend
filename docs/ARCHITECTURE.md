@@ -21,9 +21,11 @@ and passed a live iCloud retest; see [cloud validation](CLOUD_AGENT.md).
 
 The Bend core decides everything (which commands run, how they are
 rendered, what the replies mean). `mailbend-tls` is the only code that
-touches the password and the network; `mailbend-attach`, which holds no
+touches the password and the mail servers; `mailbend-attach`, which holds no
 credentials, is the only code that opens attachment files, writes downloaded
-attachments or opens the send counter.
+attachments or opens the send counter; `mailbend-typesafe`, which never holds
+the password, is the only code that reads the TypeSafe key and reaches
+TypeSafe.
 
 ```mermaid
 flowchart TB
@@ -35,12 +37,13 @@ flowchart TB
     direction TB
     main["main.bend<br/>MCP JSON-RPC server and CLI<br/>8 MiB line cap, envelope check"]
     json["src/json.bend<br/>strict JSON parser"]
-    tools["src/tools.bend<br/>21 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
+    tools["src/tools.bend<br/>22 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>65 laws proven over the plans and the envelope"]
+    laws["LAWS.bend + PROOF.bend<br/>69 laws proven over the plans, the envelope and Jev requests"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
+    jevb["src/jev.bend<br/>Jev facts, questions, requests, answers"]
   end
 
   subgraph helper["mailbend-tls (Rust, rustls): the only reader of the password"]
@@ -55,11 +58,17 @@ flowchart TB
     save["save: a new file in the download directory<br/>apart from the attachment directory,<br/>not where files may be run<br/>O_TMPFILE, then linkat: never replaces"]
   end
 
+  subgraph typesafe["mailbend-typesafe (Rust): the only reader of the TypeSafe key"]
+    ask["re-executes with an allow-listed environment<br/>(no mail password)<br/>one POST to the fixed endpoint, verified TLS<br/>key redacted from answers"]
+  end
+
   imapsrv[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
   smtpsrv[("SMTP STARTTLS required<br/>default smtp.mail.me.com:587")]
   files[("MAILBEND_ATTACH_DIR<br/>attachments off without it")]
   sends[("MAILBEND_STATE_DIR/sends<br/>daily send count")]
   downloads[("MAILBEND_DOWNLOAD_DIR<br/>downloads off without it")]
+  tsapi[("TypeSafe HTTPS<br/>api.typesafe.ai/v1/systemone")]
+  tskey[["MAILBEND_TYPESAFE_KEY_FILE"]]
 
   agent -- "JSON-RPC lines on stdio" --> main
   cli --> main
@@ -84,7 +93,12 @@ flowchart TB
   attach --> sends
   tools -- "save: name, file bytes on stdin" --> save
   save --> downloads
+  tools --> jevb
+  tools -- "request JSON (built by jev.bend) on stdin" --> ask
+  ask -- "answer JSON on stdout" --> tools
+  ask <--> tsapi
   env -. "read by the helper only" .-> tls
+  tskey -. "read by this helper only" .-> ask
 ```
 
 The password is in the environment of both processes (the core starts the
@@ -177,7 +191,10 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
 | Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
 | No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
-| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_six`, e2e (all 15 mutating tools, switch values, tool lists) |
+| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; `mail_classify` is refused and hidden unless `MAILBEND_TYPESAFE` is on; unclear switch values fail | `src/tools.bend` (`config`, `gated`, `offered_tools`), `Ops.listed` | laws `read_only_tools_are_exactly_seven`, `tools_listed_per_config`, e2e (all 15 mutating tools, switch values, tool lists with Jev off and on) |
+| The TypeSafe key never shares a process with the mail password: it is read only from `MAILBEND_TYPESAFE_KEY_FILE` by `mailbend-typesafe`, which re-executes with an allow-listed environment; `MAILBEND_TYPESAFE_API_KEY` set fails every tool; the key is redacted from answers | `native/mailbend-typesafe` (`environment`, `settings`, `api`), `mailbend-io` `secret`, `config` in `src/tools.bend`, `mailbend-tls` refusal | Rust tests (allow-list, redaction, exit codes), e2e (`/proc/<pid>/environ` of the helper, key in the environment, echoed key, output scan) |
+| Jev gets header facts and attachment names, and message text only with `MAILBEND_TYPESAFE_CONTENT=body` and `MAILBEND_TYPESAFE_ZERO_RETENTION=1`; `mail_classify` changes nothing and creates no folder | `src/jev.bend` (`state_of`), `plan_classify` (`EXAMINE`, `BODY.PEEK`, `BODYSTRUCTURE`) | laws `headers_state_has_no_body`, `classify_writes_nothing`, `fetch_items_never_set_seen`; unit tests; e2e recorded requests, server log and state |
+| A missing or malformed Jev answer reads as the cautious one; a refused request is split once, any other failure stops the call | `src/jev.bend` (bands, picks), `ask_batch` in `src/tools.bend` | law `missing_answer_is_cautious`, unit tests, e2e against `tests/fake_typesafe.py` (401, 422, 429, 529, timeout, malformed, split, later-batch failure) |
 | With an allowlist, a message goes only when every envelope recipient is allowed; the envelope has no other source | `S.outbound` in `src/smtp.bend`, `send_with` in `src/tools.bend` | laws `allowlist_refuses_unlisted`, `no_allowlist_is_unchanged`, CI grep for other envelope callers, unit and e2e allowlist cases |
 | The daily send limit is reserved before SMTP and fails closed; no tool reads or changes the count | `mailbend-attach count` (`flock`, openat2), `reserve` in `src/tools.bend` | Rust tests (two concurrent processes), e2e at, below and over the limit |
 | A Sent copy is one `APPEND` to the resolved Sent folder, made only when a read-only search finds no copy; a failed copy does not fail the send | `plan_sent_copy`, `sent_copy` in `src/tools.bend` | law `sent_copy_only_appends`, e2e with and without server filing |
@@ -194,7 +211,8 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 
 ```text
 main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
-src/tools.bend       the 21 tools: arguments, sessions, results
+src/tools.bend       the 22 tools: arguments, sessions, results
+src/jev.bend         TypeSafe's Jev: message facts, questions, requests and typed answers
 src/thread.bend      which messages form a thread, and their order and parents
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
@@ -205,6 +223,7 @@ src/json.bend        JSON values, parser and serializer
 src/schema.bend      MCP tool schemas (generated by tools/gen-schema.py)
 native/mailbend-tls/   verified TLS, login, lock-step command execution (Rust)
 native/mailbend-attach/  safe attachment reads and downloads, the send counter (Rust, no credentials)
+native/mailbend-typesafe/  the TypeSafe request, with the key from its file (Rust, no mail password)
 LAWS.bend / PROOF.bend safety laws and their proofs
 ```
 
@@ -247,6 +266,7 @@ environment. Setting both is refused.
 | delete | confirmation word, then `CAPABILITY` + `=EXPECT-WORD UIDPLUS`, the guard, `\Deleted` + `UID EXPUNGE` of exactly those UIDs; else refused |
 | save draft / reply-as-draft / forward-as-draft | `APPEND` to the resolved Drafts folder with `(\Draft \Seen)` |
 | send / reply / forward | MIME composition + SMTP via STARTTLS |
+| classify | `CAPABILITY` + `LIST` (the folders to choose among), then `EXAMINE` + `UID FETCH (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (...)] BODYSTRUCTURE)`, with `BODY.PEEK[]<0.max>` too in body mode; then requests to TypeSafe through `mailbend-typesafe` |
 
 ### Folder discovery and resolution
 
@@ -407,7 +427,15 @@ SMTP envelope in `src/smtp.bend`; `PROOF.bend` proves them, and
   and it changes no folder;
 - a dry run shows an `APPEND` with the size of its message, never the
   message;
-- exactly the six read tools are read-only.
+- exactly the seven read tools (the six reads and `mail_classify`) are
+  read-only, and each combination of read-only, drafts-only and Jev lists
+  exactly its tools;
+- the classify plan contains no command that can change a mailbox;
+- a headers-mode Jev request holds the UID, header fields and attachment
+  names only, never message text;
+- a missing Jev answer is the cautious one: an unknown band that counts as
+  keep and as suspected injection, no suggested action, and no folder
+  chosen.
 
 The laws are about these pure plans, the envelope and their rendering. The native helpers,
 TLS, MIME parsing, the agent's choices and the runtime configuration are

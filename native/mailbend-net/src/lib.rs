@@ -1,6 +1,7 @@
-//! The network code used by `mailbend-tls`: the one verified TLS
-//! configuration, TCP connections under a single deadline, and the
-//! DNS-over-HTTPS client with its parsers.
+//! The network code used by `mailbend-tls` and `mailbend-typesafe`: the one
+//! verified TLS configuration, TCP connections under a single deadline, the
+//! proxy tunnel, HTTP response reading, and the DNS-over-HTTPS client with
+//! its parsers.
 
 pub mod connect;
 pub mod dns;

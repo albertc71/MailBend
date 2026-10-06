@@ -13,6 +13,8 @@ pub enum NetError {
     Connect(String),
     /// The DoH exchange failed: the request, or the resolver's HTTP response.
     Doh(String),
+    /// An HTTP response was missing, malformed or too long.
+    Http(String),
     /// The proxy setting is unusable or the proxy refused the tunnel.
     Proxy(String),
     /// The trust store, the TLS session or the handshake failed.
@@ -26,6 +28,7 @@ impl fmt::Display for NetError {
             NetError::Dns(message)
             | NetError::Connect(message)
             | NetError::Doh(message)
+            | NetError::Http(message)
             | NetError::Proxy(message)
             | NetError::Tls(message) => f.write_str(message),
         }

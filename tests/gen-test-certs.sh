@@ -10,6 +10,8 @@
 #   wronghost.pem / -key.pem      SAN=DNS:not-localhost.invalid, CA-signed, valid
 #   expired.pem / -key.pem        SAN=DNS:localhost, CA-signed, validity in the past
 #   selfsigned.pem / -key.pem     SAN=DNS:localhost, NOT CA-signed
+#   typesafe.pem / -key.pem       SAN=DNS:api.typesafe.ai, CA-signed, for the fake
+#                                 TypeSafe service (tests/fake_typesafe.py)
 set -eu
 
 outdir="${1:?usage: gen-test-certs.sh OUTDIR}"
@@ -43,6 +45,7 @@ gen_leaf server "DNS:localhost,DNS:mailbend.test" 2
 gen_leaf ip-address "IP:127.0.0.1,IP:::1" 2
 gen_leaf wronghost "DNS:not-localhost.invalid" 2
 gen_leaf expired "DNS:localhost" -1
+gen_leaf typesafe "DNS:api.typesafe.ai" 2
 
 # self-signed (not CA-signed at all)
 gen_key selfsigned-key.pem

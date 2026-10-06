@@ -11,6 +11,7 @@ import ../../src/mime.bend as M
 import ../../src/ops.bend as Ops
 import ../../src/schema.bend as Schema
 import ../../src/tools.bend as T
+import ../../src/jev.bend as Jev
 import ../../src/thread.bend as Th
 
 # Showing values
@@ -58,12 +59,27 @@ def show_flag(f: T.Flag) -> String:
     case T.FlagBad{m}:
       "bad " ++ m
 
-def show_mode(m: T.Mode) -> String:
-  match m:
-    case T.Mode{ro, drafts}:
-      "mode " ++ Bool.show(ro) ++ " " ++ Bool.show(drafts)
-    case T.ModeBad{m}:
+def show_switch(s: Jev.Switch) -> String:
+  match s:
+    case Jev.Off{}:
+      "off"
+    case Jev.On{c}:
+      Jev.content_name(c)
+
+def show_config(c: T.Config) -> String:
+  match c:
+    case T.Config{ro, drafts, jev}:
+      "config " ++ Bool.show(ro) ++ " " ++ Bool.show(drafts) ++ " " ++ show_switch(jev)
+    case T.ConfigBad{m}:
       "bad " ++ m
+
+# The configuration of the read-only and drafts-only switches alone.
+def switches(r: T.Flag, d: T.Flag) -> String:
+  show_config(T.config.put(T.config_of(r, d, False{}, T.FlagOff{}, "", T.FlagOff{}, "")))
+
+# The configuration of the TypeSafe settings alone.
+def typesafe(key_set: Bool, t: T.Flag, content: String, zr: T.Flag, key: String) -> String:
+  show_config(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, key_set, t, content, zr, key)))
 
 def show_proc(p: T.Proc) -> String:
   match p:
@@ -78,7 +94,7 @@ def show_msgs(ms: List<&2, I.Msg>) -> String:
   match ms:
     case Nil{}:
       ""
-    case I.Msg{uid, flags, date, size, headers, body} <> t:
+    case I.Msg{uid, flags, date, size, headers, body, _} <> t:
       U32.show(uid) ++ " " ++ show_msgs(t)
 
 def show_change(c: T.FolderChange) -> String:
@@ -109,6 +125,20 @@ def show_uids(u: T.Uids()) -> String:
   match u:
     case Done{xs}:
       "uids " ++ show_u32s(xs)
+    case Fail{m}:
+      "error " ++ m
+
+def show_str(r: Result<&2, &2, String, String>) -> String:
+  match r:
+    case Done{x}:
+      "ok " ++ x
+    case Fail{m}:
+      "error " ++ m
+
+def show_names(r: Result<&2, &2, String, List<&2, String>>) -> String:
+  match r:
+    case Done{xs}:
+      "names " ++ String.join(xs, ",")
     case Fail{m}:
       "error " ++ m
 
@@ -160,11 +190,25 @@ def check_switches() -> IO(Unit):
       show_flag(T.flag_value("X", "yes")),
       show_flag(T.flag_value("X", " 1"))], "|"))
     IO.print(String.join([
-      show_mode(T.mode_of(T.FlagOn{}, T.FlagOff{})),
-      show_mode(T.mode_of(T.FlagOff{}, T.FlagOn{})),
-      show_mode(T.mode_of(T.FlagBad{"r"}, T.FlagBad{"d"})),
-      show_mode(T.mode_of(T.FlagOn{}, T.FlagBad{"d"})),
-      show_mode(T.mode_of(T.FlagOff{}, T.FlagOff{}))], "|"))
+      switches(T.FlagOn{}, T.FlagOff{}),
+      switches(T.FlagOff{}, T.FlagOn{}),
+      switches(T.FlagBad{"r"}, T.FlagBad{"d"}),
+      switches(T.FlagOn{}, T.FlagBad{"d"}),
+      switches(T.FlagOff{}, T.FlagOff{})], "|"))
+    IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, T.FlagOn{}, "Headers", T.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, T.FlagOn{}, "BODY", T.FlagOn{}, "/k"))
+    IO.print(typesafe(False{}, T.FlagOff{}, "body", T.FlagOn{}, ""))
+    IO.print(typesafe(True{}, T.FlagOff{}, "", T.FlagOff{}, ""))
+    IO.print(typesafe(True{}, T.FlagOn{}, "", T.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, T.FlagOn{}, "body", T.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, T.FlagOff{}, "body", T.FlagOff{}, ""))
+    IO.print(typesafe(False{}, T.FlagOff{}, "full", T.FlagOff{}, ""))
+    IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, "k"))
+    IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, ""))
+    IO.print(typesafe(False{}, T.FlagBad{"t"}, "", T.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, T.FlagOff{}, "", T.FlagBad{"z"}, ""))
+    IO.print(show_bool(T.is_set(Done{""})) ++ " " ++ show_bool(T.is_set(Fail{(2, "unset")})))
 
 def check_helper() -> IO(Unit):
   do IO<Unit>:
@@ -186,6 +230,8 @@ def check_helper() -> IO(Unit):
     IO.print(T.strip_prefix("mailbend-tls: x", "mailbend-tls: ") ++ "|" ++
       T.strip_prefix("y", "mailbend-tls: "))
     IO.print(T.helper_msg("mailbend-tls: first\nsecond\n") ++ "|" ++ T.helper_msg("  plain  "))
+    IO.print(show_str(T.helper_path("/bin/x", "MAILBEND_X", "x")) ++ "|" ++
+      show_str(T.helper_path("bin/x", "MAILBEND_X", "x")))
     IO.print(T.helper_error(1, "e1"))
     IO.print(T.helper_error(2, "e2"))
     IO.print(T.helper_error(3, "e3"))
@@ -354,7 +400,7 @@ def html_message() -> String:
     "<p>Hi &amp; bye</p>\r\n"])
 
 def message(uid: U32, +body: String) -> I.Msg:
-  I.Msg{uid, ["\\Seen"], "1-Feb-2026 10:00:00 +0000", 300, body, body}
+  I.Msg{uid, ["\\Seen"], "1-Feb-2026 10:00:00 +0000", 300, body, body, I.VNil{}}
 
 def headers_transcript(uidv: U32) -> String:
   String.concat([
@@ -835,6 +881,10 @@ def tool_names(ts: J.Json) -> String:
 def tool_defs() -> J.Json:
   json(Schema.tool_defs())
 
+# Whether a configuration lists the tool named `n`.
+def listed(n: String, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
+  T.key_in(n, Ops.listed_names(Ops.all_ops(), ro, drafts, jev))
+
 def check_dispatch() -> IO(Unit):
   do IO<Unit>:
     IO.print(String.join([
@@ -843,21 +893,29 @@ def check_dispatch() -> IO(Unit):
       show_bool(T.sends(Ops.OReply{}, json("{\"as_draft\":true}"))),
       show_bool(T.sends(Ops.OForward{}, json("{\"as_draft\":false}"))),
       show_bool(T.sends(Ops.OSaveDraft{}, json("{}")))], " "))
-    IO.print(problem(T.refusal(Ops.OGet{}, json("{}"), True{}, True{})) ++
-      problem(T.refusal(Ops.OTrash{}, json("{}"), True{}, False{})) ++
-      problem(T.refusal(Ops.OForward{}, json("{}"), False{}, True{})) ++
-      problem(T.refusal(Ops.OForward{}, json("{\"as_draft\":true}"), False{}, True{})) ++
-      problem(T.refusal(Ops.OSend{}, json("{}"), True{}, True{})))
-    IO.print(show_bool(T.offered("mail_get", True{}, False{})) ++ " " ++
-      show_bool(T.offered("mail_trash", True{}, False{})) ++ " " ++
-      show_bool(T.offered("mail_send", False{}, True{})) ++ " " ++
-      show_bool(T.offered("mail_reply", False{}, True{})) ++ " " ++
+    IO.print(problem(T.refusal(Ops.OGet{}, json("{}"), True{}, True{}, False{})) ++
+      problem(T.refusal(Ops.OTrash{}, json("{}"), True{}, False{}, True{})) ++
+      problem(T.refusal(Ops.OForward{}, json("{}"), False{}, True{}, True{})) ++
+      problem(T.refusal(Ops.OForward{}, json("{\"as_draft\":true}"), False{}, True{}, False{})) ++
+      problem(T.refusal(Ops.OSend{}, json("{}"), True{}, True{}, True{})))
+    IO.print(problem(T.refusal(Ops.OClassify{}, json("{}"), False{}, False{}, False{})) ++
+      problem(T.refusal(Ops.OClassify{}, json("{}"), True{}, True{}, True{})))
+    IO.print(show_bool(listed("mail_get", True{}, False{}, False{})) ++ " " ++
+      show_bool(listed("mail_trash", True{}, False{}, False{})) ++ " " ++
+      show_bool(listed("mail_send", False{}, True{}, False{})) ++ " " ++
+      show_bool(listed("mail_reply", False{}, True{}, False{})) ++ " " ++
+      show_bool(listed("mail_classify", False{}, False{}, False{})) ++ " " ++
+      show_bool(listed("mail_classify", True{}, False{}, True{})) ++ " " ++
+      show_bool(listed("mail_nope", False{}, False{}, True{})) ++ " " ++
       show_bool(T.key_in("b", ["a", "b"])) ++ " " ++ show_bool(T.key_in("b", [])))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Mode{False{}, False{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Mode{True{}, False{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Mode{False{}, True{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.ModeBad{"x"})))
-    IO.print(J.show(T.offered_for(J.str("x"), T.Mode{True{}, True{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, False{}, Jev.Off{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.Off{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, True{}, Jev.Off{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.ConfigBad{"x"})))
+    IO.print(J.show(T.offered_for(J.str("x"), T.Config{True{}, True{}, Jev.Off{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(),
+      T.Config{False{}, False{}, Jev.On{Jev.Headers{}}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.On{Jev.Body{}}})))
 
 # Arguments checked against the schema
 # ------------------------------------
@@ -926,7 +984,7 @@ def sends(save: String, allow: String, max: String, dir: String) -> String:
   show_sends(T.sending_of(save, allow, max, dir, "", "/home/u"))
 
 def header_msg(headers: String) -> I.Msg:
-  I.Msg{1, [], "", 0, headers, ""}
+  I.Msg{1, [], "", 0, headers, "", I.VNil{}}
 
 def check_sending() -> IO(Unit):
   do IO<Unit>:
@@ -1008,7 +1066,8 @@ def check_thread() -> IO(Unit):
     IO.print(show_session(search_found([T.Found{"INBOX", None{}, [], []}])))
     IO.print(show_session(T.session_found(Fail{"down"}, thread_search_plan(), [])))
     IO.print(show_wants(T.thread_wants(T.thread_found(thread_search_plan(),
-      I.frame(thread_search_transcript())), [Th.node("INBOX", Some{7}, I.Msg{4, [], "", 0, "", ""})])))
+      I.frame(thread_search_transcript())),
+      [Th.node("INBOX", Some{7}, I.Msg{4, [], "", 0, "", "", I.VNil{}})])))
     IO.print(show_found(T.thread_found(Ops.plan_thread_headers([Ops.FolderUids{"INBOX", [4, 5]}]),
       I.frame(headers_transcript(7)))))
     IO.print(show_out(T.thread_out(Done{T.Threading{[], [], [
@@ -1016,6 +1075,97 @@ def check_thread() -> IO(Unit):
       Th.node("Sent", None{}, header_msg("Message-ID: <a@x>\r\n"))], []}},
       ["INBOX", "Sent"], "INBOX", 1)))
     IO.print(show_out(T.thread_out(Fail{"down"}, ["INBOX"], "INBOX", 1)))
+
+# mail_classify
+# -------------
+
+def show_asked(a: T.Asked) -> String:
+  match a:
+    case T.AskAnswered{body}:
+      "answered " ++ body
+    case T.AskRefused{m}:
+      "refused " ++ m
+    case T.AskFailed{m}:
+      "failed " ++ m
+
+def asked(code: U32, out: String, err: String) -> String:
+  show_asked(T.asked(T.ProcOk{code, out, err}))
+
+def show_tally(t: T.Tally()) -> String:
+  match t:
+    case Done{T.Progress{ms, reqs}}:
+      "progress " ++ J.show(J.arr(ms)) ++ " " ++ J.show(J.arr(reqs))
+    case Fail{m}:
+      "stopped " ++ m
+
+def many_uids(n: Nat) -> List<&2, U32>:
+  match n:
+    case Zero{}:
+      []
+    case Succ{+k}:
+      U32.from_nat(n) <> many_uids(k)
+
+def many_names(n: Nat) -> List<&2, String>:
+  match n:
+    case Zero{}:
+      []
+    case Succ{+k}:
+      ("F" ++ Nat.show(n)) <> many_names(k)
+
+def classify_msg(uid: U32) -> I.Msg:
+  I.Msg{uid, [], "", 0, "", "", I.VNil{}}
+
+def asking() -> T.Asking:
+  T.Asking{Jev.Headers{}, [], "none", ["Work", "none"]}
+
+def check_classify() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(show_uids(T.classify_uids(Done{[5, 3, 5, 1]})) ++ "|" ++
+      show_uids(T.classify_uids(Done{many_uids(50n)})) ++ "|" ++
+      show_uids(T.classify_uids(Done{many_uids(51n)})) ++ "|" ++
+      show_uids(T.classify_uids(Fail{"no uids"})))
+    IO.print(show_names(T.classify_candidates(["Ideas", "Ideas/2026"])))
+    IO.print(show_names(T.classify_candidates(["Ideas", ""])))
+    IO.print(show_names(T.classify_candidates(["Ideas", "a\tb"])))
+    IO.print(show_names(T.classify_candidates(many_names(255n))))
+    IO.print(String.join(T.category_names(guard(), guarded_folders()), ","))
+    IO.print(String.join(T.canonical_names(guard(), ["inbox/Kids", "Ideas"]), ","))
+    IO.print(problem(T.candidates_problem(guard(), ["Ideas", "Work/New", "INBOX/Kids"], [])))
+    IO.print(problem(T.candidates_problem(guard(), ["Work"], [])))
+    IO.print(problem(T.candidates_problem(guard(), ["Ideas", "Ideas"], [])))
+    IO.print(problem(T.candidates_problem(guard(), ["Bin/Old"], [])))
+    IO.print(problem(T.candidates_problem(guard(), ["Nope/New"], [])))
+    IO.print(problem(T.options_problem(254n)) ++ problem(T.options_problem(255n)))
+    IO.print(problem(T.room_problem(True{})) ++ problem(T.room_problem(False{})))
+    IO.print(show_u32s(T.msg_uids(T.first_uids(T.oldest_first([classify_msg(3), classify_msg(1),
+      classify_msg(3), classify_msg(2)]), 0))))
+    IO.print(asked(0, "{\"answers\":{}}", ""))
+    IO.print(asked(8, "{\"detail\":\"bad question\"}",
+      "mailbend-typesafe: TypeSafe refused the request (HTTP 422)\n"))
+    IO.print(asked(8, "{\"detail\":[{\"loc\":[\"body\"],\"msg\":\"bad\"}]}",
+      "mailbend-typesafe: TypeSafe refused the request (HTTP 422)\n"))
+    IO.print(asked(8, "  not json  ", "mailbend-typesafe: TypeSafe refused the request (HTTP 400)"))
+    IO.print(Nat.show(String.length(T.refusal_detail(String.repeat("x", 1500n)))))
+    IO.print(asked(2, "", "mailbend-typesafe: MAILBEND_TYPESAFE_KEY_FILE is not set\n"))
+    IO.print(asked(3, "", "mailbend-typesafe: cannot reach api.typesafe.ai (system DNS; refused)"))
+    IO.print(asked(7, "{\"detail\":\"bad key\"}",
+      "mailbend-typesafe: TypeSafe rejected the key (HTTP 401)"))
+    IO.print(asked(9, "", "mailbend-typesafe: TypeSafe timed out, after retries"))
+    IO.print(asked(6, "", "mailbend-typesafe: internal error"))
+    IO.print(asked(137, "", ""))
+    IO.print(show_asked(T.asked(T.ProcRefused{"no such file"})))
+    IO.print(J.show(T.request_json(2n, 100, None{})) ++ " " ++
+      J.show(T.request_json(1n, 9, Some{7})))
+    IO.print(show_tally(T.answered(T.AskAnswered{"not json"}, [], 10, asking(),
+      T.Progress{[], []})))
+    IO.print(show_tally(T.answered(T.AskRefused{"no"}, [], 10, asking(), T.Progress{[], []})))
+    IO.print(show_tally(T.answered(T.AskAnswered{"{\"answers\":{}}"}, [], 10, asking(),
+      T.Progress{[J.num(1)], []})))
+    IO.print(show_out(T.classify_out(Done{T.progress_add(T.progress_add(T.Progress{[], []},
+      [J.num(1), J.num(2)], [J.str("r1")]), [J.num(3)], [J.str("r2")])},
+      [J.kv("folder", J.str("INBOX"))], [9])))
+    IO.print(show_out(T.classify_out(Fail{"stopped"}, [], [])))
+    IO.print(T.jev_off("mail_classify"))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -1039,16 +1189,32 @@ def main() -> IO(Unit):
     check_schema()
     check_sending()
     check_thread()
+    check_classify()
 
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
-#|mode True False|mode False True|bad r|bad d|mode False False
+#|config True False off|config False True off|bad r|bad d|config False False off
+#|config False False headers
+#|config False False headers
+#|config False False body
+#|config False False off
+#|bad MAILBEND_TYPESAFE_API_KEY must not be set: put the TypeSafe key in a file readable only by you and set MAILBEND_TYPESAFE_KEY_FILE to its absolute path
+#|bad MAILBEND_TYPESAFE_API_KEY must not be set: put the TypeSafe key in a file readable only by you and set MAILBEND_TYPESAFE_KEY_FILE to its absolute path
+#|bad MAILBEND_TYPESAFE_CONTENT=body sends message text to TypeSafe and needs MAILBEND_TYPESAFE_ZERO_RETENTION=1, the operator's statement that the TypeSafe account has a zero-retention plan
+#|bad MAILBEND_TYPESAFE_CONTENT=body sends message text to TypeSafe and needs MAILBEND_TYPESAFE_ZERO_RETENTION=1, the operator's statement that the TypeSafe account has a zero-retention plan
+#|bad MAILBEND_TYPESAFE_CONTENT must be headers, body or empty
+#|bad MAILBEND_TYPESAFE_KEY_FILE must be the absolute path of the TypeSafe key file when MAILBEND_TYPESAFE is on
+#|bad MAILBEND_TYPESAFE_KEY_FILE must be the absolute path of the TypeSafe key file when MAILBEND_TYPESAFE is on
+#|bad t
+#|bad z
+#|True False
 #|True True False True False
 #|ok 0 out err|refused no such file|fail 110 timed out
 #|[] refused lost
 #|False True False True
 #|x|y
 #|second | mailbend-tls: first|plain
+#|ok /bin/x|error MAILBEND_X must be the absolute path of x (scripts/mailbend sets it)
 #|mail server error: e1
 #|configuration error: e2
 #|connection or TLS verification failed: e3
@@ -1232,12 +1398,15 @@ def main() -> IO(Unit):
 #|ok {"a":1,"quoted_original_truncated":true,"quoted_bytes":10,"original_bytes":20} | err x | ok "s"
 #|True True False True False
 #|[][mail_trash is disabled: MAILBEND_READ_ONLY is set][mail_forward would send mail, which MAILBEND_DRAFTS_ONLY forbids: use mail_save_draft, or as_draft for a reply or forward][][mail_send is disabled: MAILBEND_READ_ONLY is set]
-#|True False False True True False
+#|[mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off][]
+#|True False False True False True False True False
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
 #|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
 #|"x"
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify
 #|True True False True False False
 #|True True False True True True False True False True False
 #|true or false|an integer|a string|an object|a string or an array of strings|an array of objects
@@ -1284,3 +1453,37 @@ def main() -> IO(Unit):
 #|INBOX 7 [] 2 | 
 #|ok {"folder":"INBOX","uid":1,"searched":["INBOX","Sent"],"messages":[{"folder":"INBOX","uidvalidity":7,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<b@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":"<a@x>"},{"folder":"Sent","uidvalidity":null,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<a@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":null}]}
 #|err down
+#|uids 1 3 5 |uids 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 |error mail_classify takes at most 50 UIDs per call|error no uids
+#|names Ideas,Ideas/2026
+#|error candidate "": a folder name cannot be empty
+#|error candidate "a	b": a folder name cannot contain control characters
+#|error Jev chooses among at most 254 folders and candidates (TypeSafe takes 255 options, and one is "none"); there are 255
+#|Work,Work/Sub,Team/Sub,Projects,Mail
+#|INBOX/Kids,Ideas
+#|[]
+#|[candidate "Work": a folder named "Work" already exists]
+#|[candidate "Ideas" is listed twice]
+#|[candidate "Bin/Old": "Bin/Old" is, or lies inside, a folder MailBend relies on: INBOX, Drafts, Sent, Trash, Junk, Archive (also under their usual names), To Delete, and any folder configured for one of those roles or advertised with any special-use role]
+#|[candidate "Nope/New": the parent folder "Nope" does not exist; create it first]
+#|[][Jev chooses among at most 254 folders and candidates (TypeSafe takes 255 options, and one is "none"); there are 255]
+#|[][the folder and candidate names are too long for one TypeSafe question: pass fewer or shorter candidates]
+#|1 2 3 
+#|answered {"answers":{}}
+#|refused TypeSafe refused the request (HTTP 422): bad question
+#|refused TypeSafe refused the request (HTTP 422): [{"loc":["body"],"msg":"bad"}]
+#|refused TypeSafe refused the request (HTTP 400): not json
+#|1000
+#|failed configuration error: MAILBEND_TYPESAFE_KEY_FILE is not set
+#|failed cannot reach TypeSafe: cannot reach api.typesafe.ai (system DNS; refused)
+#|failed check MAILBEND_TYPESAFE_KEY_FILE: TypeSafe rejected the key (HTTP 401)
+#|failed try again later: TypeSafe timed out, after retries
+#|failed TypeSafe error: internal error
+#|failed the TypeSafe helper was killed by a signal: 
+#|failed cannot run the TypeSafe helper: no such file
+#|{"messages":2,"bytes":100,"input_tokens":null} {"messages":1,"bytes":9,"input_tokens":7}
+#|stopped TypeSafe's answer is not the JSON MailBend asked for
+#|stopped no
+#|progress [1] [{"messages":0,"bytes":10,"input_tokens":null}]
+#|ok {"folder":"INBOX","messages":[1,2,3],"not_found":[9],"requests":["r1","r2"]}
+#|err stopped
+#|mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off

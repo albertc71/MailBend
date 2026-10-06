@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["mailbend-attach", "mailbend-io", "mailbend-net", "mailbend-tls"]
+members = ["mailbend-attach", "mailbend-io", "mailbend-net", "mailbend-tls", "mailbend-typesafe"]
 exclude = ["fuzz"]
 
 [workspace.package]

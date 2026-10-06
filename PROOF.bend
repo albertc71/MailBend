@@ -10,6 +10,7 @@
 import Base
 import ./LAWS.bend as Laws
 import ./src/imap.bend as I
+import ./src/jev.bend as Jev
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 
@@ -31,8 +32,15 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_six():
+def Laws.read_only_tools_are_exactly_seven():
   {==}
+
+def Laws.tools_listed_per_config(drafts):
+  match drafts:
+    case True{}:
+      ({==}, {==}, {==}, {==}, {==}, {==})
+    case False{}:
+      ({==}, {==}, {==}, {==}, {==}, {==})
 
 # Read plans
 # ----------
@@ -113,6 +121,13 @@ def Laws.thread_plans_write_nothing(folders, keys, found):
     {Bool.or(_, I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
   thread_headers_write_nothing(found)
 
+def Laws.classify_writes_nothing(mbox, uids, body, max):
+  match body:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
 # Read rendering
 # --------------
 
@@ -137,6 +152,8 @@ def Laws.fetch_items_never_set_seen(item):
     case I.ISize{}:
       {==}
     case I.IHeaders{}:
+      {==}
+    case I.IStructure{}:
       {==}
     case I.IFull{max}:
       {==}
@@ -655,3 +672,12 @@ def Laws.label_creates_no_folder(mbox, uids, label, move, uidplus, uidv):
 
 def Laws.append_preview_hides_message(mbox, flags, msg, n):
   {==}
+
+# Jev
+# ---
+
+def Laws.headers_state_has_no_body(uid, fields, flags, date, size, atts, body, text):
+  {==}
+
+def Laws.missing_answer_is_cautious(key, candidates, none):
+  ({==}, {==}, {==}, {==}, {==}, {==})

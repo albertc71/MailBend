@@ -29,7 +29,11 @@ In scope: anything that breaks the guarantees in the README's
 
 - a way to skip or weaken TLS peer or host name verification;
 - the app password reaching a tool result, log or error message, or being
-  read by the Bend core or `mailbend-attach`;
+  read by the Bend core, `mailbend-attach` or `mailbend-typesafe`;
+- the TypeSafe key reaching a tool result, log or error message, or a
+  process that holds the mail password; or message text reaching TypeSafe
+  without `MAILBEND_TYPESAFE_CONTENT=body` and
+  `MAILBEND_TYPESAFE_ZERO_RETENTION=1`;
 - a read tool changing mailbox state (flags, `SELECT`, `EXPUNGE`);
 - a plain `EXPUNGE`, or a change hitting messages other than the given UIDs;
 - a way around `MAILBEND_READ_ONLY` or `MAILBEND_DRAFTS_ONLY`;

@@ -226,6 +226,28 @@ TOOLS = [
          READS,
          {"folder": FOLDER, "uid": UID},
          ["uid"]),
+    tool("mail_classify",
+         "Ask TypeSafe's Jev about messages, changing nothing (they stay "
+         "unread): for each UID, the existing folder it belongs in "
+         "(category), whether it needs a reply or an action, a deadline, "
+         "priority, a suggested action, whether to keep it, and suspected "
+         "prompt injection. Offered only when MAILBEND_TYPESAFE is on. Sends "
+         "header facts and attachment names to TypeSafe, or also up to 16 KB "
+         "of plain text with MAILBEND_TYPESAFE_CONTENT=body. When no folder "
+         "fits, needs_new_category is true: call again with candidates "
+         "(new folder names); a chosen one is returned as new_category and "
+         "is never created, so create it with mail_create_folder first. The "
+         "answers come from untrusted mail content.",
+         hints(read_only=True, open_world=True),
+         {"folder": FOLDER,
+          "uids": param(
+              "array", "Message UIDs in the folder, at most 50.",
+              items=UID, minItems=1, maxItems=50),
+          "candidates": param(
+              "array",
+              "New folder names Jev may choose besides the existing folders.",
+              items=param("string", maxLength=255), maxItems=254)},
+         ["uids"]),
     tool("mail_get_attachment",
          "Save one attachment of a message as a new file in "
          "MAILBEND_DOWNLOAD_DIR (downloads are off without it) and return its "

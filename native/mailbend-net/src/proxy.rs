@@ -1,5 +1,6 @@
-//! The HTTP proxy the DoH resolver connection may use, chosen like curl
-//! chooses one for HTTPS. Mail connections never use a proxy.
+//! The HTTP proxy that HTTPS connections (the DoH resolver, the TypeSafe
+//! API) may use, chosen like curl chooses one for HTTPS. Mail connections
+//! never use a proxy.
 
 use std::io::{Read, Write};
 
@@ -71,9 +72,10 @@ impl Proxy {
         let reply = read_reply_head(&mut sock)?;
         let accepted = reply.starts_with(b"HTTP/1.") && reply.get(8..10) == Some(&b" 2"[..]);
         if !accepted {
-            return Err(NetError::Proxy(
-                "proxy refused the resolver connection".to_string(),
-            ));
+            let target = format_authority(host, port, None);
+            return Err(NetError::Proxy(format!(
+                "proxy refused the tunnel to {target}"
+            )));
         }
         Ok(sock)
     }

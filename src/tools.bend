@@ -11,6 +11,7 @@ import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
+import ./jev.bend as Jev
 
 # Results
 # =======
@@ -110,11 +111,12 @@ def env_or(name: String, d: String) -> IO(String):
 # Safety switches
 # ---------------
 
-# The safety switches. A value that is not clearly on or off is refused
-# rather than read as off: MAILBEND_READ_ONLY=yes must not leave writes on.
-type Mode is Data:
-  Mode{read_only: Bool, drafts_only: Bool}
-  ModeBad{msg: String}
+# The switches every tool depends on. A value that is not clearly on or off
+# is refused rather than read as off: MAILBEND_READ_ONLY=yes must not leave
+# writes on. ConfigBad fails every tool.
+type Config is Data:
+  Config{read_only: Bool, drafts_only: Bool, jev: Jev.Switch}
+  ConfigBad{msg: String}
 
 type Flag is Data:
   FlagOn{}
@@ -141,34 +143,115 @@ def flag(+name: String) -> IO(Flag):
     v : String <- env_or(name, "")
     return flag_value(name, v)
 
-def mode_drafts(ro: Bool, f: Flag) -> Mode:
+def flag_on(f: Flag) -> Result<&2, &2, String, Bool>:
   match f:
     case FlagOn{}:
-      Mode{ro, True{}}
+      Done{True{}}
     case FlagOff{}:
-      Mode{ro, False{}}
+      Done{False{}}
     case FlagBad{m}:
-      ModeBad{m}
+      Fail{m}
 
-def mode_of(r: Flag, d: Flag) -> Mode:
+# The TypeSafe key is read only from its file, by mailbend-typesafe: in an
+# environment variable it would reach every helper, mailbend-tls included.
+def api_key_problem(set: Bool) -> String:
+  Bool.pick(String, set,
+    "MAILBEND_TYPESAFE_API_KEY must not be set: put the TypeSafe key in a file readable only " ++
+      "by you and set MAILBEND_TYPESAFE_KEY_FILE to its absolute path",
+    "")
+
+def content_of.if(headers: Bool, body: Bool) -> Result<&2, &2, String, Jev.Content>:
+  match headers body:
+    case True{} _:
+      Done{Jev.Headers{}}
+    case False{} True{}:
+      Done{Jev.Body{}}
+    case False{} False{}:
+      Fail{"MAILBEND_TYPESAFE_CONTENT must be headers, body or empty"}
+
+# MAILBEND_TYPESAFE_CONTENT: what Jev may see, headers (the default) or body.
+def content_of(+v: String) -> Result<&2, &2, String, Jev.Content>:
+  +low = String.to_lower(v)
+  content_of.if(String.is_empty(v) || String.eq(low, "headers"), String.eq(low, "body"))
+
+# Body content sends message text to TypeSafe, so it needs the operator's
+# MAILBEND_TYPESAFE_ZERO_RETENTION=1 (MailBend cannot verify the plan).
+def attested(c: Jev.Content, zero_retention: Bool) -> Result<&2, &2, String, Jev.Content>:
+  match c zero_retention:
+    case Jev.Headers{} _:
+      Done{Jev.Headers{}}
+    case Jev.Body{} True{}:
+      Done{Jev.Body{}}
+    case Jev.Body{} False{}:
+      Fail{"MAILBEND_TYPESAFE_CONTENT=body sends message text to TypeSafe and needs " ++
+        "MAILBEND_TYPESAFE_ZERO_RETENTION=1, the operator's statement that the TypeSafe " ++
+        "account has a zero-retention plan"}
+
+# Jev on needs the absolute path of the key file (which only
+# mailbend-typesafe reads).
+def jev_switch(on: Bool, c: Jev.Content, absolute: Bool) -> Result<&2, &2, String, Jev.Switch>:
+  match on absolute:
+    case False{} _:
+      Done{Jev.Off{}}
+    case True{} True{}:
+      Done{Jev.On{c}}
+    case True{} False{}:
+      Fail{"MAILBEND_TYPESAFE_KEY_FILE must be the absolute path of the TypeSafe key file " ++
+        "when MAILBEND_TYPESAFE is on"}
+
+# The switches, checked in this order; the first bad value fails every tool,
+# including a TypeSafe setting while Jev is off.
+def config_of(
+  read_only: Flag,
+  drafts_only: Flag,
+  api_key_set: Bool,
+  typesafe: Flag,
+  content: String,
+  zero_retention: Flag,
+  key_file: String
+) -> Result<&2, &2, String, Config>:
+  do Result<&2, &2, String, Config>:
+    ro : Bool <- flag_on(read_only)
+    drafts : Bool <- flag_on(drafts_only)
+    key_ok : Unit <- checked(api_key_problem(api_key_set))
+    on : Bool <- flag_on(typesafe)
+    wanted : Jev.Content <- content_of(content)
+    zr : Bool <- flag_on(zero_retention)
+    c : Jev.Content <- attested(wanted, zr)
+    jev : Jev.Switch <- jev_switch(on, c, String.starts_with(key_file, "/"))
+    return Config{ro, drafts, jev}
+
+def config.put(r: Result<&2, &2, String, Config>) -> Config:
   match r:
-    case FlagOn{}:
-      mode_drafts(True{}, d)
-    case FlagOff{}:
-      mode_drafts(False{}, d)
-    case FlagBad{m}:
-      ModeBad{m}
+    case Done{c}:
+      c
+    case Fail{m}:
+      ConfigBad{m}
+
+# Whether a variable is set at all, even to "".
+def is_set(r: Result<&1, &1, U32 & String, String>) -> Bool:
+  match r:
+    case Done{v}:
+      True{}
+    case Fail{e}:
+      False{}
 
 # MAILBEND_READ_ONLY=1 refuses every tool that could change the mailbox or
 # send mail, for trying MailBend safely against a real account.
 # MAILBEND_DRAFTS_ONLY=1 still allows changes but refuses to send: mail_send,
 # and replies or forwards without as_draft, so a person reviews every
-# outgoing message in Drafts first.
-def mode() -> IO(Mode):
-  do IO<Mode>:
+# outgoing message in Drafts first. MAILBEND_TYPESAFE=1 turns on the tools
+# that consult TypeSafe's Jev.
+def config() -> IO(Config):
+  do IO<Config>:
     r : Flag <- flag("MAILBEND_READ_ONLY")
     d : Flag <- flag("MAILBEND_DRAFTS_ONLY")
-    return mode_of(r, d)
+    key : Result<&1, &1, U32 & String, String> <- IO.get_env("MAILBEND_TYPESAFE_API_KEY")
+    t : Flag <- flag("MAILBEND_TYPESAFE")
+    c : String <- env_or("MAILBEND_TYPESAFE_CONTENT", "")
+    z : Flag <- flag("MAILBEND_TYPESAFE_ZERO_RETENTION")
+    k : String <- env_or("MAILBEND_TYPESAFE_KEY_FILE", "")
+    return config.put(config_of(r, d, is_set(key), t, c, z, k))
 
 # Send settings
 # -------------
@@ -182,15 +265,6 @@ type Sending is Data:
 
 def Sends() -> Data:
   Result<&2, &2, String, Sending>
-
-def flag_on(f: Flag) -> Result<&2, &2, String, Bool>:
-  match f:
-    case FlagOn{}:
-      Done{True{}}
-    case FlagOff{}:
-      Done{False{}}
-    case FlagBad{m}:
-      Fail{m}
 
 # A bare address, or "@" and a domain (written as the domain of an address).
 def allow_entry_ok(+entry: String) -> Bool:
@@ -345,6 +419,19 @@ def proc_failure(p: Proc) -> String:
     case ProcFail{code, m}:
       m
 
+# Every helper is started only from an absolute path, which
+# scripts/mailbend sets, never from a path relative to the working
+# directory.
+def helper_refusal(variable: String, program: String) -> String:
+  variable ++ " must be the absolute path of " ++ program ++ " (scripts/mailbend sets it)"
+
+def helper_path(+path: String, variable: String, program: String) -> Result<&2, &2, String, String>:
+  match path:
+    case SCon{'/', t}:
+      Done{path}
+    case _:
+      Fail{helper_refusal(variable, program)}
+
 # A helper run may print up to 128 MiB and take up to five minutes.
 def run_helper(path: String, mode: String, input: String) -> IO(Proc):
   do IO<Proc>:
@@ -352,17 +439,14 @@ def run_helper(path: String, mode: String, input: String) -> IO(Proc):
       Process.run(path, [mode], input, 134217728, 300000)
     return proc_of(r)
 
-# The helper gets the password through the environment, so it is only ever
-# started from an absolute MAILBEND_TLS_HELPER path (scripts/mailbend sets
-# it), never from a path relative to the working directory.
+# The helper gets the password through the environment, which makes the
+# absolute path all the more important.
 def helper_at(+path: String, mode: String, input: String) -> IO(Proc):
   match path:
     case SCon{'/', t}:
       run_helper(path, mode, input)
     case _:
-      IO.pure(Proc, ProcRefused{
-        "MAILBEND_TLS_HELPER must be the absolute path of mailbend-tls " ++
-          "(scripts/mailbend sets it)"})
+      IO.pure(Proc, ProcRefused{helper_refusal("MAILBEND_TLS_HELPER", "mailbend-tls")})
 
 def helper(mode: String, input: String) -> IO(Proc):
   do IO<Proc>:
@@ -382,10 +466,14 @@ def strip_prefix.if(has: Bool, s: String, p: String) -> String:
 def strip_prefix(+s: String, +p: String) -> String:
   strip_prefix.if(String.starts_with(s, p), s, p)
 
-# The helper's own message (its stderr never holds credentials).
-def helper_msg(err: String) -> String:
+# A helper's own message, from its stderr (which never holds credentials):
+# its lines, last first, without the program's `prefix`.
+def stderr_msg(err: String, prefix: String) -> String:
   lines = List.reverse(&2, String, String.lines(String.trim(err)))
-  strip_prefix(String.trim(String.join(lines, " | ")), "mailbend-tls: ")
+  strip_prefix(String.trim(String.join(lines, " | ")), prefix)
+
+def helper_msg(err: String) -> String:
+  stderr_msg(err, "mailbend-tls: ")
 
 # Process.run reports a helper killed by a signal as exit status 128 plus the
 # signal; mailbend-tls itself exits with at most 6.
@@ -1015,7 +1103,7 @@ def hdr_text(hs: List<&2, M.Hdr>, name: String) -> String:
   M.decode_header(M.header(hs, name))
 
 def summary_kvs(m: I.Msg) -> List<&2, J.Json>:
-  I.Msg{uid, +flags, date, size, headers, body} = m
+  I.Msg{uid, +flags, date, size, headers, body, _} = m
   +hs = M.headers(headers)
   [
     J.kv("uid", J.num(uid)),
@@ -1043,7 +1131,7 @@ def summaries(ms: List<&2, I.Msg>) -> List<&2, J.Json>:
       summary(m) <> summaries(t)
 
 def msg_uid(m: I.Msg) -> U32:
-  I.Msg{uid, flags, date, size, headers, body} = m
+  I.Msg{uid, flags, date, size, headers, body, _} = m
   uid
 
 def newest_first(ms: List<&2, I.Msg>) -> List<&2, I.Msg>:
@@ -1325,7 +1413,7 @@ def get_json(
   +hs: List<&2, M.Hdr>,
   +p: M.Parts
 ) -> Out:
-  I.Msg{uid, +flags, date, +size, headers, body} = m
+  I.Msg{uid, +flags, date, +size, headers, body, _} = m
   M.Parts{_, html, atts} = p
   ok_obj([
     J.kv("folder", J.str(folder)),
@@ -1351,7 +1439,7 @@ def get_json(
   ])
 
 def msg_body(m: I.Msg) -> String:
-  I.Msg{uid, flags, date, size, headers, body} = m
+  I.Msg{uid, flags, date, size, headers, body, _} = m
   body
 
 # The headers of a whole message.
@@ -1983,7 +2071,7 @@ def last_flags(
   match ms:
     case Nil{}:
       last
-    case I.Msg{u, flags, date, size, headers, body} <> t:
+    case I.Msg{u, flags, date, size, headers, body, _} <> t:
       last_flags(t, uid,
         Bool.pick(Maybe<&2, List<&2, String>>, U32.is_eq(u, uid), Some{flags}, last))
 
@@ -3272,11 +3360,6 @@ def pure_att(a: Attachment()) -> IO(Attachment()):
 def attach_msg(err: String) -> String:
   strip_prefix(helper_msg(err), "mailbend-attach: ")
 
-# Like the TLS helper, mailbend-attach is only started from an absolute path.
-def attach_helper_refusal() -> String:
-  "MAILBEND_ATTACH_HELPER must be the absolute path of mailbend-attach " ++
-    "(scripts/mailbend sets it)"
-
 def att_proc(p: Proc, name: String, ctype: String) -> Attachment():
   match p:
     case ProcOk{code, out, err}:
@@ -3315,7 +3398,7 @@ def att_at(
     case SCon{'/', t}:
       att_read(helper, dir, path, name, ctype, budget)
     case _:
-      pure_att(Fail{attach_helper_refusal()})
+      pure_att(Fail{helper_refusal("MAILBEND_ATTACH_HELPER", "mailbend-attach")})
 
 # Attachments come only from MAILBEND_ATTACH_DIR and are off without it: an
 # agent tricked by a message must not mail out files such as
@@ -3620,7 +3703,7 @@ def sent_copy.run(+sent: String, msg: String) -> IO(String):
     return sent_copy.fin(r, sent)
 
 def msg_id(m: I.Msg) -> String:
-  I.Msg{uid, flags, date, size, headers, body} = m
+  I.Msg{uid, flags, date, size, headers, body, _} = m
   String.trim(M.header(M.headers(headers), "message-id"))
 
 def has_msg_id(ms: List<&2, I.Msg>, +msgid: String) -> Bool:
@@ -3733,7 +3816,7 @@ def reserve.run(helper: String, dir: String, +limit: U32, day: String) -> IO(Str
           Process.run(helper, ["count", dir, U32.show(limit), day], "", 4096, 60000)
         return reservation(proc_of(r), limit)
     case _:
-      pure_str(attach_helper_refusal())
+      pure_str(helper_refusal("MAILBEND_ATTACH_HELPER", "mailbend-attach"))
 
 def reserve.dir(+dir: String, limit: U32, day: String) -> IO(String):
   match dir:
@@ -4052,7 +4135,7 @@ def orig_msg(ms: List<&2, I.Msg>, +args: J.Json, mode: U32, max: U32, me: String
       pure_out(Err{
         "no message with UID " ++ U32.show(u32_arg(args, "uid", 0)) ++ " in " ++
           folder_arg(args)})
-    case I.Msg{uid, flags, date, +size, headers, body} <> t:
+    case I.Msg{uid, flags, date, +size, headers, body, _} <> t:
       respond_to(U32.is_eq(mode, 0), U32.is_gt(size, max), size, body, args, me)
 
 def orig_found.if(
@@ -4122,13 +4205,6 @@ def download_dir(+dir: String) -> Result<&2, &2, String, String>:
     case _:
       Fail{"configuration error: MAILBEND_DOWNLOAD_DIR must be an absolute path"}
 
-def attach_helper(+path: String) -> Result<&2, &2, String, String>:
-  match path:
-    case SCon{'/', t}:
-      Done{path}
-    case _:
-      Fail{attach_helper_refusal()}
-
 def downloads_of(
   dir: String,
   attach_dir: String,
@@ -4137,7 +4213,7 @@ def downloads_of(
 ) -> Result<&2, &2, String, Downloads>:
   do Result<&2, &2, String, Downloads>:
     d : String <- download_dir(dir)
-    h : String <- attach_helper(helper)
+    h : String <- helper_path(helper, "MAILBEND_ATTACH_HELPER", "mailbend-attach")
     return Downloads{d, attach_dir, path, h}
 
 def downloads() -> IO(Result<&2, &2, String, Downloads>):
@@ -4194,7 +4270,7 @@ def whole_body(ms: List<&2, I.Msg>, uid: U32, folder: String) -> Result<&2, &2, 
     case Nil{}:
       Fail{no_message(uid, folder)}
     case m <> t:
-      I.Msg{id, flags, date, size, headers, +body} = m
+      I.Msg{id, flags, date, size, headers, +body, _} = m
       +max = max_attachment()
       whole_body.if(U32.is_gt(size, max) || U32.is_ge(C.byte_len(body), max), body)
 
@@ -4301,13 +4377,473 @@ def t_get_attachment(+args: J.Json) -> IO(Out):
     s : Result<&2, &2, String, Downloads> <- downloads()
     download(download_request(s, args))
 
+# Classifying with Jev
+# ====================
+
+# Asking Jev
+# ----------
+
+def jev_off(name: String) -> String:
+  name ++ " is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off"
+
+# How one TypeSafe request ended: its answer; TypeSafe refused it (the
+# helper exits with 8), which a smaller request may cure; or any other
+# failure.
+type Asked is Data:
+  AskAnswered{body: String}
+  AskRefused{msg: String}
+  AskFailed{msg: String}
+
+def refusal_detail.put(m: Maybe<&2, J.Json>, out: String) -> String:
+  match m:
+    case Some{J.JStr{s}}:
+      s
+    case Some{d}:
+      J.show(d)
+    case None{}:
+      out
+
+# TypeSafe's reason for a refusal: the "detail" of its answer (as JSON
+# unless it is text), else the answer itself, cut to 1000 characters.
+def refusal_detail(+out: String) -> String:
+  detail = Maybe.bind(&2, J.Json, J.Json, J.parse(out), j => J.get(j, "detail"))
+  String.take(String.trim(refusal_detail.put(detail, out)), 1000n)
+
+# What the exit status of mailbend-typesafe means, as the start of its
+# error.
+def typesafe_cause(code: U32) -> String:
+  match code:
+    case 2:
+      "configuration error: "
+    case 3:
+      "cannot reach TypeSafe: "
+    case 7:
+      "check MAILBEND_TYPESAFE_KEY_FILE: "
+    case 9:
+      "try again later: "
+    case _:
+      Bool.pick(String, signalled(code), "the TypeSafe helper was killed by a signal: ",
+        "TypeSafe error: ")
+
+def typesafe_msg(err: String) -> String:
+  stderr_msg(err, "mailbend-typesafe: ")
+
+def asked_code(code: U32, out: String, err: String) -> Asked:
+  match code:
+    case 0:
+      AskAnswered{out}
+    case 8:
+      AskRefused{typesafe_msg(err) ++ ": " ++ refusal_detail(out)}
+    case _:
+      AskFailed{typesafe_cause(code) ++ typesafe_msg(err)}
+
+def asked(p: Proc) -> Asked:
+  match p:
+    case ProcOk{code, out, err}:
+      asked_code(code, out, err)
+    case _:
+      AskFailed{"cannot run the TypeSafe helper: " ++ proc_failure(p)}
+
+# The helper may print up to 8 MiB (it caps TypeSafe's answer at 4 MiB) and
+# take up to five minutes (it retries an overloaded service twice). It is
+# not run_helper, whose 128 MiB cap is for mail: this cap is a second guard.
+def typesafe_run(path: Result<&2, &2, String, String>, body: String) -> IO(Proc):
+  match path:
+    case Done{p}:
+      do IO<Proc>:
+        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+          Process.run(p, ["ask"], body, 8388608, 300000)
+        return proc_of(r)
+    case Fail{m}:
+      IO.pure(Proc, ProcRefused{m})
+
+# Sends one request through mailbend-typesafe, the only program that reads
+# the TypeSafe key.
+def ask_jev(body: String) -> IO(Asked):
+  do IO<Asked>:
+    path : String <- env_or("MAILBEND_TYPESAFE_HELPER", "")
+    p : Proc <- typesafe_run(
+      helper_path(path, "MAILBEND_TYPESAFE_HELPER", "mailbend-typesafe"), body)
+    return asked(p)
+
+# Requests in turn
+# ----------------
+
+# What the requests have given so far: the message results and a report of
+# each request, newest first.
+type Progress is Data:
+  Progress{messages: List<&2, J.Json>, requests: List<&2, J.Json>}
+
+# The progress, or why the call stopped.
+def Tally() -> Data:
+  Result<&2, &2, String, Progress>
+
+def progress_add(p: Progress, ms: List<&2, J.Json>, requests: List<&2, J.Json>) -> Progress:
+  Progress{done, reqs} = p
+  Progress{List.append(&2, J.Json, List.reverse(&2, J.Json, ms), done),
+    List.append(&2, J.Json, requests, reqs)}
+
+# What reading an answer needs: the content sent, the caller's candidates,
+# the none key, and every option key Jev may choose.
+type Asking is Data:
+  Asking{
+    content: Jev.Content,
+    candidates: List<&2, String>,
+    none: String,
+    keys: List<&2, String>
+  }
+
+def asking_content(a: Asking) -> Jev.Content:
+  Asking{c, cands, none, keys} = a
+  c
+
+def asking_keys(a: Asking) -> List<&2, String>:
+  Asking{c, cands, none, keys} = a
+  keys
+
+# A request's report: its messages, its size in bytes (MailBend's token
+# estimate) and the input tokens TypeSafe counted, when it says.
+def request_json(n: Nat, bytes: U32, tokens: Maybe<&2, U32>) -> J.Json:
+  J.obj([
+    J.kv("messages", J.num(U32.from_nat(n))),
+    J.kv("bytes", J.num(bytes)),
+    J.kv("input_tokens", maybe_num(tokens))
+  ])
+
+def answered.put(r: Maybe<&2, Jev.Reply>, n: Nat, bytes: U32, a: Asking, p: Progress) -> Tally():
+  match r:
+    case None{}:
+      Fail{"TypeSafe's answer is not the JSON MailBend asked for"}
+    case Some{Jev.Reply{xs, tokens}}:
+      Asking{c, cands, none, keys} = a
+      Done{progress_add(p, Jev.checked_jsons(xs, c, cands, none),
+        [request_json(n, bytes, tokens)])}
+
+# One request's outcome added to the progress; any failure stops the call.
+def answered(r: Asked, +es: List<&2, Jev.Entry>, bytes: U32, +a: Asking, p: Progress) -> Tally():
+  match r:
+    case AskAnswered{body}:
+      answered.put(Jev.reply(body, es, asking_keys(a)), List.length(&2, Jev.Entry, es), bytes,
+        a, p)
+    case AskRefused{m}:
+      Fail{m}
+    case AskFailed{m}:
+      Fail{m}
+
+# Sends the request for `es`, unless the call has already stopped.
+def ask_once(+es: List<&2, Jev.Entry>, a: Asking, t: Tally()) -> IO(Tally()):
+  match t:
+    case Fail{m}:
+      IO.pure(Tally(), Fail{m})
+    case Done{p}:
+      +body = Jev.request_body(es)
+      do IO<Tally()>:
+        r : Asked <- ask_jev(body)
+        return answered(r, es, C.utf8_len(body), a, p)
+
+# A refused request split once into halves, each asked on its own; a
+# refusal of either stops the call.
+def ask_halves(+es: List<&2, Jev.Entry>, +a: Asking, p: Progress) -> IO(Tally()):
+  +half = Nat.div(List.length(&2, Jev.Entry, es), 2n)
+  start : Tally() = Done{p}
+  do IO<Tally()>:
+    first : Tally() <- ask_once(List.take(&2, Jev.Entry, es, half), a, start)
+    ask_once(List.drop(&2, Jev.Entry, es, half), a, first)
+
+def ask_batch.if(split: Bool, m: String, es: List<&2, Jev.Entry>, a: Asking, p: Progress)
+  -> IO(Tally()):
+  match split:
+    case True{}:
+      ask_halves(es, a, p)
+    case False{}:
+      IO.pure(Tally(), Fail{m})
+
+def ask_batch.put(r: Asked, +es: List<&2, Jev.Entry>, a: Asking, bytes: U32, p: Progress)
+  -> IO(Tally()):
+  match r:
+    case AskRefused{m}:
+      ask_batch.if(Nat.is_gt(List.length(&2, Jev.Entry, es), 1n), m, es, a, p)
+    case _:
+      IO.pure(Tally(), answered(r, es, bytes, a, p))
+
+# TypeSafe's 422 is a general validation error, so a refused request of two
+# or more messages is split once, in case it was too large; a refusal of a
+# half, or of a single message, stops the call with TypeSafe's reason.
+def ask_batch(+es: List<&2, Jev.Entry>, a: Asking, p: Progress) -> IO(Tally()):
+  +body = Jev.request_body(es)
+  do IO<Tally()>:
+    r : Asked <- ask_jev(body)
+    ask_batch.put(r, es, a, C.utf8_len(body), p)
+
+def ask_step.put(s: Jev.Step, a: Asking, p: Progress) -> IO(Tally()):
+  match s:
+    case Jev.Skip{f}:
+      IO.pure(Tally(), Done{progress_add(p, [Jev.unchecked_json(f, asking_content(a))], [])})
+    case Jev.Ask{es}:
+      ask_batch(es, a, p)
+
+def ask_step(s: Jev.Step, a: Asking, t: Tally()) -> IO(Tally()):
+  match t:
+    case Fail{m}:
+      IO.pure(Tally(), Fail{m})
+    case Done{p}:
+      ask_step.put(s, a, p)
+
+# Takes the steps in order; once the call has stopped, no further request
+# is sent.
+def ask_steps(ss: List<&2, Jev.Step>, +a: Asking, t: Tally()) -> IO(Tally()):
+  match ss:
+    case Nil{}:
+      IO.pure(Tally(), t)
+    case s <> rest:
+      do IO<Tally()>:
+        next : Tally() <- ask_step(s, a, t)
+        ask_steps(rest, a, next)
+
+# mail_classify
+# -------------
+
+# The most UIDs one call asks about.
+def classify_limit() -> U32:
+  50
+
+# In body mode each message is fetched up to this many bytes, of which Jev
+# sees at most Jev.max_text bytes of plain text.
+def classify_max() -> U32:
+  262144
+
+# TypeSafe's choice takes at most 255 options, and one is the none key.
+def option_limit() -> U32:
+  254
+
+# The arguments of a call: the folder, its UIDs (each once, ascending) and
+# the caller's candidate folder names.
+type Classify is Data:
+  Classify{folder: String, uids: List<&2, U32>, candidates: List<&2, String>}
+
+def classify_uids.if(over: Bool, us: List<&2, U32>) -> Uids():
+  match over:
+    case True{}:
+      Fail{"mail_classify takes at most " ++ U32.show(classify_limit()) ++ " UIDs per call"}
+    case False{}:
+      Done{asc(unseen(us, []))}
+
+def classify_uids(u: Uids()) -> Uids():
+  match u:
+    case Fail{m}:
+      Fail{m}
+    case Done{+us}:
+      classify_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(classify_limit())), us)
+
+def options_problem(+n: Nat) -> String:
+  Bool.pick(String, Nat.is_gt(n, U32.to_nat(option_limit())),
+    "Jev chooses among at most " ++ U32.show(option_limit()) ++ " folders and candidates " ++
+      "(TypeSafe takes 255 options, and one is \"none\"); there are " ++ Nat.show(n),
+    "")
+
+def candidate_note(c: String, +problem: String) -> String:
+  Bool.pick(String, String.is_empty(problem), "", "candidate \"" ++ c ++ "\": " ++ problem)
+
+def raw_candidates_problem(cs: List<&2, String>) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case +c <> t:
+      first_of(candidate_note(c, raw_name_problem(c)), raw_candidates_problem(t))
+
+# The count is checked first, so an overlong list is refused before its
+# names are.
+def classify_candidates(+cs: List<&2, String>) -> Result<&2, &2, String, List<&2, String>>:
+  do Result<&2, &2, String, List<&2, String>>:
+    counted : Unit <- checked(options_problem(List.length(&2, String, cs)))
+    named : Unit <- checked(raw_candidates_problem(cs))
+    return cs
+
+def classify_request(+args: J.Json) -> Result<&2, &2, String, Classify>:
+  do Result<&2, &2, String, Classify>:
+    uids : List<&2, U32> <- classify_uids(uids_arg(args))
+    cands : List<&2, String> <- classify_candidates(strs_arg(args, "candidates"))
+    return Classify{folder_arg(args), uids, cands}
+
+# The folders a message can be filed in: those that can be selected and
+# are none MailBend relies on, nor inside one (as for mail_label).
+def category_names(+g: Guard, fs: List<&2, I.Folder>) -> List<&2, String>:
+  match fs:
+    case Nil{}:
+      []
+    case I.Folder{+name, d, attrs} <> t:
+      List.filter.put(String, name, category_names(g, t),
+        selectable(attrs) && Bool.not(reserved_target(g, name)))
+
+def canonical_names(+g: Guard, cs: List<&2, String>) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case c <> t:
+      canonical_name(g, c) <> canonical_names(g, t)
+
+# The category question holds every folder and candidate name, and must
+# leave room for a message beside it in one TypeSafe request.
+def room_problem(fits: Bool) -> String:
+  Bool.pick(String, fits, "",
+    "the folder and candidate names are too long for one TypeSafe question: pass fewer or " ++
+      "shorter candidates")
+
+# A candidate is a folder the caller could create: each must pass the
+# checks of mail_create_folder, and appear once.
+def candidates_problem(+g: Guard, cs: List<&2, String>, +seen: List<&2, String>) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case +c <> t:
+      first_of(
+        Bool.pick(String, List.contains(~String, ~String.eq, seen, c),
+          "candidate \"" ++ c ++ "\" is listed twice", candidate_note(c, target_problem(g, c))),
+        candidates_problem(g, t, c <> seen))
+
+# `ms` in UID order, each UID once (a server may answer twice).
+def first_uids(ms: List<&2, I.Msg>, prev: U32) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      +u = msg_uid(m)
+      List.filter.put(I.Msg, m, first_uids(t, u), Bool.not(U32.is_eq(u, prev)))
+
+def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      msg_uid(m) <> msg_uids(t)
+
+def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max)} <> fetched_list(t, max)
+
+def classify_out(t: Tally(), head: List<&2, J.Json>, not_found: List<&2, U32>) -> Out:
+  match t:
+    case Fail{m}:
+      Err{m}
+    case Done{Progress{ms, reqs}}:
+      ok_obj(List.append(&2, J.Json, head, [
+        J.kv("messages", J.arr(List.reverse(&2, J.Json, ms))),
+        J.kv("not_found", uids_json(not_found)),
+        J.kv("requests", J.arr(List.reverse(&2, J.Json, reqs)))
+      ]))
+
+# Asks Jev about the messages found, choosing among `names` (the folders,
+# then the candidates) with the options `opts`.
+def classify_ask(
+  +c: Jev.Content,
+  names: List<&2, String>,
+  opts: Jev.Options,
+  +cands: List<&2, String>,
+  ms: List<&2, I.Msg>,
+  head: List<&2, J.Json>,
+  not_found: List<&2, U32>
+) -> IO(Out):
+  Jev.Options{json, +none} = opts
+  a : Asking = Asking{c, cands, none, List.append(&2, String, names, [none])}
+  steps : List<&2, Jev.Step> = Jev.requests(c, fetched_list(ms, classify_max()),
+    Jev.Options{json, none})
+  start : Tally() = Done{Progress{[], []}}
+  do IO<Out>:
+    t : Tally() <- ask_steps(steps, a, start)
+    return classify_out(t, head, not_found)
+
+def classify_folders.if(
+  problem: String,
+  c: Jev.Content,
+  names: List<&2, String>,
+  opts: Jev.Options,
+  cands: List<&2, String>,
+  ms: List<&2, I.Msg>,
+  head: List<&2, J.Json>,
+  not_found: List<&2, U32>
+) -> IO(Out):
+  match problem:
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+    case SNil{}:
+      classify_ask(c, names, opts, cands, ms, head, not_found)
+
+# The options come from the folders LIST gave in the same session as the
+# fetch; the candidates are checked against them.
+def classify_folders(
+  f: Fs(),
+  +lines: List<&2, I.RLine>,
+  folder: String,
+  +uids: List<&2, U32>,
+  cands: List<&2, String>,
+  +c: Jev.Content
+) -> IO(Out):
+  match f:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{folders}:
+      +g = guard_for(folders)
+      +cats = List.sort(~String, ~(a => b => String.is_le(a, b)), category_names(g, guard_fs(g)))
+      +canon = canonical_names(g, cands)
+      +ms = first_uids(oldest_first(requested(I.fetched(lines), uids)), 0)
+      head : List<&2, J.Json> = [
+        J.kv("folder", J.str(folder)),
+        J.kv("uidvalidity", maybe_num(I.ok_code(lines, "UIDVALIDITY"))),
+        J.kv("content", J.str(Jev.content_name(c))),
+        J.kv("categories", J.strs(cats)),
+        J.kv("candidates", J.strs(canon))
+      ]
+      +names = List.append(&2, String, cats, canon)
+      +opts = Jev.options_for(names)
+      problem = first_of(
+        first_of(options_problem(List.length(&2, String, names)), candidates_problem(g, canon, [])),
+        room_problem(Jev.leaves_room(c, opts)))
+      classify_folders.if(problem, c, names, opts, canon, ms, head, minus(uids, msg_uids(ms)))
+
+def classify_found(
+  r: Run(),
+  folder: String,
+  uids: List<&2, U32>,
+  cands: List<&2, String>,
+  c: Jev.Content
+) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{+lines}:
+      do IO<Out>:
+        f : Fs() <- folders_io(lines)
+        classify_folders(f, lines, folder, uids, cands, c)
+
+def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{Classify{+folder, +uids, cands}}:
+      do IO<Out>:
+        run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), classify_max()))
+        classify_found(run, folder, uids, cands, c)
+
+# mail_classify changes nothing: one session examines the folder and
+# fetches the messages' facts with BODY.PEEK, and Jev's answers are
+# reported, never acted on.
+def t_classify(+args: J.Json, jev: Jev.Switch) -> IO(Out):
+  match jev:
+    case Jev.On{c}:
+      classify_run(classify_request(args), c)
+    case Jev.Off{}:
+      pure_out(Err{jev_off("mail_classify")})
+
 # Dispatch
 # ========
 
 # Running a tool
 # --------------
 
-def run_op(op: Ops.Op, args: J.Json) -> IO(Out):
+def run_op(op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
   match op:
     case Ops.OProbe{}:
       t_probe(args)
@@ -4321,6 +4857,8 @@ def run_op(op: Ops.Op, args: J.Json) -> IO(Out):
       t_get_new(args)
     case Ops.OGetThread{}:
       t_get_thread(args)
+    case Ops.OClassify{}:
+      t_classify(args, jev)
     case Ops.OGetAttachment{}:
       t_get_attachment(args)
     case Ops.OMarkRead{}:
@@ -4364,26 +4902,28 @@ def sends(op: Ops.Op, args: J.Json) -> Bool:
     case _:
       False{}
 
-def refusal(+op: Ops.Op, args: J.Json, ro: Bool, drafts: Bool) -> String:
+def refusal(+op: Ops.Op, args: J.Json, ro: Bool, drafts: Bool, jev: Bool) -> String:
   Bool.pick(String, ro && Bool.not(Ops.is_read_only(op)),
     Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
     Bool.pick(String, drafts && sends(op, args),
       Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
         "mail_save_draft, or as_draft for a reply or forward",
-      ""))
+      Bool.pick(String, Bool.not(jev) && Ops.needs_jev(op),
+        jev_off(Ops.name(op)),
+        "")))
 
-def gated.if(problem: String, op: Ops.Op, args: J.Json) -> IO(Out):
+def gated.if(problem: String, op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
-      run_op(op, args)
+      run_op(op, args, jev)
 
-def gated(+op: Ops.Op, +args: J.Json, m: Mode) -> IO(Out):
-  match m:
-    case Mode{ro, drafts}:
-      gated.if(refusal(op, args, ro, drafts), op, args)
-    case ModeBad{msg}:
+def gated(+op: Ops.Op, +args: J.Json, c: Config) -> IO(Out):
+  match c:
+    case Config{ro, drafts, +jev}:
+      gated.if(refusal(op, args, ro, drafts, Jev.is_on(jev)), op, args, jev)
+    case ConfigBad{msg}:
       pure_out(Err{"configuration error: " ++ msg})
 
 def call_op(m: Maybe<&2, Ops.Op>, name: String, args: J.Json) -> IO(Out):
@@ -4392,19 +4932,16 @@ def call_op(m: Maybe<&2, Ops.Op>, name: String, args: J.Json) -> IO(Out):
       pure_out(Err{"unknown tool: " ++ name})
     case Some{op}:
       do IO<Out>:
-        md : Mode <- mode()
-        gated(op, args, md)
+        c : Config <- config()
+        gated(op, args, c)
 
 # The tools offered
 # -----------------
 
-# Read-only mode lists only the read-only tools (also when a switch is
-# misconfigured, since every call then fails); drafts-only mode hides
-# mail_send. Hidden tools are refused anyway if called.
-
-def offered(+n: String, ro: Bool, drafts: Bool) -> Bool:
-  Bool.not(ro && Bool.not(key_in(n, Ops.read_only_names(Ops.all_ops())))) &&
-    Bool.not(drafts && String.eq(n, "mail_send"))
+# The configuration decides the tools listed (Ops.listed_names): read-only
+# mode lists only the read-only tools, also when a switch is misconfigured,
+# since every call then fails; drafts-only mode hides mail_send; the Jev
+# tools need Jev on. Hidden tools are refused anyway if called.
 
 def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
   match keep:
@@ -4413,33 +4950,33 @@ def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
     case False{}:
       rest
 
-def offered_items(ts: J.Json, +ro: Bool, +drafts: Bool) -> J.Json:
+def offered_items(ts: J.Json, +names: List<&2, String>) -> J.Json:
   match ts:
     case J.JCons{+t, rest}:
-      offered_items.if(offered(str_arg(t, "name", ""), ro, drafts), t,
-        offered_items(rest, ro, drafts))
+      offered_items.if(key_in(str_arg(t, "name", ""), names), t, offered_items(rest, names))
     case _:
       J.JEnd{}
 
-def offered_in(ts: J.Json, ro: Bool, drafts: Bool) -> J.Json:
+# The tool definitions in `ts` (a JSON array) named in `names`.
+def offered_in(ts: J.Json, names: List<&2, String>) -> J.Json:
   match ts:
     case J.JArr{xs}:
-      J.JArr{offered_items(xs, ro, drafts)}
+      J.JArr{offered_items(xs, names)}
     case _:
       ts
 
-def offered_for(ts: J.Json, m: Mode) -> J.Json:
-  match m:
-    case Mode{ro, drafts}:
-      offered_in(ts, ro, drafts)
-    case ModeBad{msg}:
-      offered_in(ts, True{}, False{})
+def offered_for(ts: J.Json, c: Config) -> J.Json:
+  match c:
+    case Config{ro, drafts, jev}:
+      offered_in(ts, Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev)))
+    case ConfigBad{msg}:
+      offered_in(ts, Ops.listed_names(Ops.all_ops(), True{}, False{}, False{}))
 
 # The tool definitions `ts` (a JSON array) that this configuration offers.
 def offered_tools(ts: J.Json) -> IO(J.Json):
   do IO<J.Json>:
-    md : Mode <- mode()
-    return offered_for(ts, md)
+    c : Config <- config()
+    return offered_for(ts, c)
 
 # Arguments checked against the tool's input schema
 # -------------------------------------------------

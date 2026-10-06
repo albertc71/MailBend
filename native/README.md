@@ -1,6 +1,6 @@
-# Native boundary: mailbend-tls and mailbend-attach
+# Native boundary: mailbend-tls, mailbend-attach and mailbend-typesafe
 
-MailBend has two small native programs:
+MailBend has three small native programs:
 
 - `mailbend-tls/` (Rust): sockets, TLS and login, the only code that reads the
   password. Which commands to send, and what the answers mean, is decided
@@ -12,9 +12,14 @@ MailBend has two small native programs:
   files, and keeps the daily send counter. It holds no credentials: it first
   re-executes itself with an empty environment (so even
   `/proc/self/environ` is empty) and opens no connection.
+- `mailbend-typesafe/` (Rust): carries one request from the Bend core to
+  TypeSafe's Jev and its answer back, and is the only code that reads the
+  TypeSafe key. It never holds the mail password: it re-executes itself
+  with an allow-listed environment first. What to ask, and what the answer
+  means, is decided by the core.
 
 ```sh
-(cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach)
+(cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe)
 ```
 
 The Rust workspace (`native/Cargo.toml`) pins Rust 1.99, its MSRV, in
@@ -23,17 +28,22 @@ up. Our crates forbid `unsafe` code, and `native/deny.toml` bans OpenSSL,
 native-tls and other TLS stacks from the dependency tree.
 `mailbend-attach` depends only on `nix` and the local, network-free
 `mailbend-io` crate (environment settings, `openat2` helpers, stderr reports
-and the byte encoding shared with the core).
+and the byte encoding shared with the core). `mailbend-typesafe` reuses
+`mailbend-net` for TLS, DoH and the proxy, and `mailbend-io` for its
+settings and the key file.
 Tests run with `cargo test --locked`.
 
 ## Layout
 
 - `mailbend-io/`: `env` (environment settings), `fs` (`openat2` helpers),
-  `report` (stderr reports) and `transcript` (the byte encoding of what the
-  helpers and the core pass each other); no network, shared by both programs.
+  `secret` (the mail password and TypeSafe key files, and the refusal of a
+  key in the environment), `report` (stderr reports) and `transcript` (the
+  byte encoding of what the helpers and the core pass each other); no
+  network, shared by all three programs.
 - `mailbend-net/`: `connect` (deadline, system DNS, address fallback),
-  `tls` (the one verified client configuration), and the DoH client:
-  `doh` built on `dns`, `http`, `url` and `proxy`.
+  `tls` (the one verified client configuration), `http` (bounded HTTP/1.1
+  responses), `proxy` (HTTP `CONNECT`), and the DoH client: `doh` built on
+  `dns`, `http`, `url` and `proxy`.
 - `mailbend-tls/`: the binary is a thin `main.rs` over the library.
   `settings`, `creds` and `route` are read and checked before connecting;
   `connection` owns the socket and the transcript; `imap/` and `smtp/` each
@@ -41,6 +51,10 @@ Tests run with `cargo test --locked`.
   (`response`, `reply`) and the `session` that drives them.
 - `mailbend-attach/`: the attachment reader, the download writer (`save`)
   and the send counter.
+- `mailbend-typesafe/`: `environment` (the allow-listed re-execution),
+  `settings` (key, request, time budget and route, checked before
+  connecting), `api` (the fixed endpoint, retries, redaction) and `exit`
+  (the exit statuses).
 - `fuzz/`: one cargo-fuzz target per parser (its own workspace, nightly).
 
 ## Contract
@@ -53,6 +67,8 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
 mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
                                             < the file's bytes
+mailbend-typesafe ask   < Jev request JSON   > TypeSafe's answer JSON
+mailbend-typesafe --check  # credential-free local runtime check; no network
 ```
 
 - **TLS**: rustls (ring provider), TLS 1.2+, peer certificate required,
@@ -190,3 +206,39 @@ mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
   (at most 120 MiB after encoding).
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
+
+## TypeSafe (`mailbend-typesafe ask`)
+
+- **Environment**: if `MAILBEND_TYPESAFE_API_KEY` is set (even empty) it
+  exits 2. Otherwise it re-executes itself with only
+  `MAILBEND_TYPESAFE_KEY_FILE`, `MAILBEND_TIMEOUT_MS`, `MAILBEND_DOH_URL`,
+  `MAILBEND_CA_FILE`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`,
+  `ALL_PROXY`, `no_proxy` and `NO_PROXY`, so `/proc/<pid>/environ` holds no
+  mail password or other setting.
+- **Key**: read from `MAILBEND_TYPESAFE_KEY_FILE` with the same rules as
+  `MAILBEND_PASSWORD_FILE` (absolute, a regular file owned by the user, not
+  readable by group or others, no symlink in any component); it must be one
+  line of at least 8 characters of RFC 6750's Bearer token grammar (letters,
+  digits and `. _ ~ + / -`, then optional `=` padding). It is kept in a
+  buffer wiped on drop, sent only as the `Authorization: Bearer` header,
+  never formatted into a message, and every copy of it in an answer, also
+  the JSON spelling with `\/` for `/`, is replaced by `[redacted]`.
+- **Request**: stdin, nonempty UTF-8 of at most 1 MiB, sent unchanged as
+  `POST /v1/systemone` to `api.typesafe.ai:443`; host, port and path are
+  constants. The `User-Agent` is `mailbend`.
+- **Route and TLS**: through an `http://` proxy from `https_proxy`,
+  `HTTPS_PROXY`, `all_proxy` or `ALL_PROXY`, the first set (HTTP `CONNECT`,
+  unless `no_proxy` or `NO_PROXY` lists the host), else the DoH resolver of
+  `MAILBEND_DOH_URL`, else system DNS; then the same verified TLS as the
+  mail helper (`MAILBEND_CA_FILE` replaces the trust store). Each attempt
+  has `MAILBEND_TIMEOUT_MS` from connecting to the end of the answer, whose
+  size is capped at 4 MiB.
+- **Retries**: HTTP 429 and 5xx answers, and timeouts, are tried again after
+  1 s and 2 s (three attempts at most); nothing else is retried.
+- **Output**: a 2xx answer on stdout, exit 0. A refusal's answer (TypeSafe's
+  reason) is written to stdout too, redacted, with the exit status; the
+  reason for any failure is on stderr.
+- **Exit status**: 0 answered, 2 key file, input or setting problem, 3
+  cannot reach TypeSafe (connect, proxy or TLS), 6 unexpected answer, 7 key
+  rejected (401, 403), 8 request refused (400, 413, 422), 9 overloaded or
+  timed out after the retries.

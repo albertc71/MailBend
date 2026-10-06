@@ -1,23 +1,29 @@
 # MailBend: the safety laws. Each is a claim about the pure command plans
-# in src/ops.bend, which are the only way the tools build IMAP commands, or
+# in src/ops.bend, which are the only way the tools build IMAP commands;
 # about the SMTP envelope in src/smtp.bend, which is built only by
-# S.outbound. PROOF.bend proves every law; `bend PROOF.bend` is the gate.
-# The laws cover these plans, the envelope and their rendering only, not
-# the native helpers, TLS, MIME parsing, agent behaviour or the runtime
-# configuration.
+# S.outbound; about the tools each configuration lists; or about what
+# src/jev.bend sends to TypeSafe and how it reads a missing answer.
+# PROOF.bend proves every law; `bend PROOF.bend` is the gate. The laws
+# cover these values and their rendering only, not the native helpers, TLS,
+# MIME parsing, agent behaviour or how the configuration is read.
 
 import Base
 import ./src/codec.bend as C
+import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/mime.bend as M
+import ./src/jev.bend as Jev
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly six tools
+# Reading is read-only, and permanent deletion is not. Exactly seven tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
+# mail_classify only asks TypeSafe about messages, and is listed only when
+# MAILBEND_TYPESAFE is on.
 
 # LAW: mail_get is read-only
 law read_is_read_only:
@@ -39,12 +45,48 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these six, in this order
-law read_only_tools_are_exactly_six:
+# LAW: the read-only tools are exactly these seven, in this order
+law read_only_tools_are_exactly_seven:
   {Ops.read_only_names(Ops.all_ops()) ==
     ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
-      "mail_get_thread"]
+      "mail_get_thread", "mail_classify"]
     : List<&2, String>}
+
+# LAW: the tools each configuration lists: with Jev on, every tool; with it
+# off, all but mail_classify; drafts-only mode hides mail_send; read-only
+# mode lists only the read-only tools, whatever drafts-only says
+law tools_listed_per_config:
+  for drafts: Bool
+  ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+       "mail_get_thread", "mail_classify", "mail_get_attachment", "mail_mark_read",
+       "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash",
+       "mail_delete", "mail_create_folder", "mail_rename_folder", "mail_save_draft",
+       "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
+   {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+       "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
+       "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
+       "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_send",
+       "mail_reply", "mail_forward"] : List<&2, String>} &
+   {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+       "mail_get_thread", "mail_classify", "mail_get_attachment", "mail_mark_read",
+       "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash",
+       "mail_delete", "mail_create_folder", "mail_rename_folder", "mail_save_draft",
+       "mail_reply", "mail_forward"] : List<&2, String>} &
+   {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+       "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
+       "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
+       "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_reply",
+       "mail_forward"] : List<&2, String>} &
+   {Ops.listed_names(Ops.all_ops(), True{}, drafts, True{}) ==
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+       "mail_get_thread", "mail_classify"] : List<&2, String>} &
+   {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+       "mail_get_thread"] : List<&2, String>})
 
 # Read plans
 # ----------
@@ -108,6 +150,15 @@ law thread_plans_write_nothing:
   {Bool.or(
     I.any_writes(Ops.plan_thread_search(folders, keys)),
     I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
+
+# LAW: for every mailbox, UIDs, content and size limit, the classify plan
+# writes nothing
+law classify_writes_nothing:
+  for mbox: String
+  for uids: List<&2, U32>
+  for body: Bool
+  for max: U32
+  {I.any_writes(Ops.plan_classify(mbox, uids, body, max)) == False{} : Bool}
 
 # Read rendering
 # --------------
@@ -676,3 +727,44 @@ law append_preview_hides_message:
   for n: U32
   {I.preview.line(I.CAppend{mbox, flags, msg}, n) ==
     I.tag(n) ++ " " ++ I.append_head(mbox, flags) ++ C.size_note(C.utf8_len(msg)) : String}
+
+# Jev
+# ---
+
+# In headers mode a message's state, what TypeSafe sees of it, is its UID,
+# its fact fields and its attachment names: never its text, flags, date or
+# size. A missing or malformed answer is read as the cautious one: keep the
+# message, flag it as a suspected injection, suggest nothing, and file it
+# nowhere.
+
+# LAW: for every message and text, the headers-mode state is the header
+# facts alone
+law headers_state_has_no_body:
+  for uid: U32
+  for fields: List<&2, M.Hdr>
+  for flags: List<&2, String>
+  for date: String
+  for size: U32
+  for atts: Jev.Attachments
+  for body: Jev.Completeness
+  for text: String
+  {Jev.state_of(Jev.Headers{}, Jev.Facts{uid, fields, flags, date, size, atts, body}, text) ==
+    J.obj(J.kv("uid", J.num(uid)) <>
+      List.append(&2, J.Json, Jev.field_kvs(fields),
+        [J.kv("attachments", Jev.attachments_json(atts))]))
+    : J.Json}
+
+# LAW: a missing answer keeps the message and flags it (Jev.suspects reads
+# both), suggests nothing and files it nowhere, whatever the key,
+# candidates and none key
+law missing_answer_is_cautious:
+  for key: String
+  for candidates: List<&2, String>
+  for none: String
+  ({Jev.noul_band(J.JNull{}) == Jev.Missing{} : Jev.Band} &
+   {Jev.suspects(Jev.Missing{}) == True{} : Bool} &
+   {Jev.suggestion(Jev.NoPick{}) == "none" : String} &
+   {Jev.suggestion(Jev.Picked{key, Jev.Missing{}}) == "none" : String} &
+   {Jev.category_of(Jev.NoPick{}, candidates, none) == Jev.Uncategorised{} : Jev.Category} &
+   {Jev.category_of(Jev.Picked{key, Jev.Missing{}}, candidates, none) == Jev.NeedsNew{}
+     : Jev.Category})
