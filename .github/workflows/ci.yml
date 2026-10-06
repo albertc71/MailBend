@@ -117,10 +117,15 @@ jobs:
             exit 1
           fi
 
-      - name: Dependency policy (cargo-deny)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # Installed directly, so cargo-deny reads the workspace with the Rust
+      # installed above (cargo-deny-action runs its own Rust 1.85 container).
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
-          manifest-path: native/Cargo.toml
+          tool: cargo-deny@0.20.2
+
+      - name: Dependency policy (cargo-deny)
+        run: cargo deny --log-level warn --all-features check
 
   fuzz:
     runs-on: ubuntu-24.04
