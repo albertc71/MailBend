@@ -3090,43 +3090,6 @@ def fresh(xs: List<&2, String>, +seen: List<&2, String>) -> List<&2, String>:
       List.filter.put(String, x,
         fresh(t, Bool.pick(List<&2, String>, repeated, seen, k <> seen)), Bool.not(repeated))
 
-def addr_push(cur: String, +acc: List<&2, String>) -> List<&2, String>:
-  +a = String.trim(String.reverse(cur))
-  Bool.pick(List<&2, String>, String.is_empty(a), acc, a <> acc)
-
-def addr_split(
-  s: String,
-  +cur: String,
-  +q: Bool,
-  +depth: U32,
-  +esc: Bool,
-  +ang: Bool,
-  +acc: List<&2, String>
-) -> List<&2, String>:
-  match s:
-    case SNil{}:
-      List.reverse(&2, String, addr_push(cur, acc))
-    case SCon{+c, t}:
-      +top = Bool.not(esc) && Bool.not(q) && U32.is_zero(depth)
-      +cut = top && (Char.is_eq(c, ',') || Char.is_eq(c, ';'))
-      label = top && Bool.not(ang) && Char.is_eq(c, ':')
-      open = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, '(')
-      close = Bool.not(esc) && Bool.not(q) && Char.is_eq(c, ')') && Bool.not(U32.is_zero(depth))
-      addr_split(t, Bool.pick(String, cut || label, "", SCon{c, cur}),
-        Bool.pick(Bool, Bool.not(esc) && U32.is_zero(depth) && Char.is_eq(c, '"'), Bool.not(q), q),
-        Bool.pick(U32, open, (depth + 1 : U32), Bool.pick(U32, close, (depth - 1 : U32), depth)),
-        Bool.not(esc) && (q || Bool.not(U32.is_zero(depth))) && Char.is_eq(c, '\\'),
-        Bool.pick(Bool, top && Char.is_eq(c, '<'), True{},
-          Bool.pick(Bool, top && Char.is_eq(c, '>'), False{}, ang)),
-        Bool.pick(List<&2, String>, cut, addr_push(cur, acc), acc))
-
-# Splits a header address list at commas outside quoted strings and
-# "(comments)", honouring "\\" escapes in both. Groups ("Team: a@x, b@y;")
-# give their members only; the label and an empty group
-# ("undisclosed-recipients:;") give nothing.
-def addr_list(s: String) -> List<&2, String>:
-  addr_split(s, "", False{}, 0, False{}, False{}, [])
-
 def decoded(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
@@ -3137,7 +3100,7 @@ def decoded(xs: List<&2, String>) -> List<&2, String>:
 # The addresses of a header, split before RFC 2047 decoding (a decoded name
 # may contain commas).
 def hdr_addrs(hs: List<&2, M.Hdr>, name: String) -> List<&2, String>:
-  decoded(addr_list(M.header(hs, name)))
+  decoded(M.addr_list(M.header(hs, name)))
 
 def reply_to(+hs: List<&2, M.Hdr>) -> List<&2, String>:
   hdr_addrs(hs, Bool.pick(String, String.is_empty(M.header(hs, "reply-to")), "from", "reply-to"))
