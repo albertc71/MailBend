@@ -59,17 +59,13 @@ def strs(xs: List<&2, String>) -> Json:
 # Serialization
 # -------------
 
-# The lower-case hex digit for n, below 16.
-def hex_digit(+n: U32) -> Char:
-  Char.from_u32((n + Bool.pick(U32, U32.is_lt(n, 10), 48, 87) : U32))
-
 # A control character (code u below U+0020) becomes \u00XX; any other c
 # stays as it is.
 def esc_char.if(ctrl: Bool, +u: U32, c: Char) -> String:
   match ctrl:
     case True{}:
-      "\\u00" ++ SCon{hex_digit((u >> 4n : U32)),
-        SCon{hex_digit((u .&. 15 : U32)), SNil{}}}
+      "\\u00" ++ SCon{C.hex_low((u >> 4n : U32)),
+        SCon{C.hex_low((u .&. 15 : U32)), SNil{}}}
     case False{}:
       SCon{c, SNil{}}
 
@@ -339,89 +335,61 @@ def lex.norm(c: Char, toks: List<&2, Tok>) -> Lexer:
 # Strings
 # -------
 
-# The reversed string acc, with U+FFFD for a pending lone high surrogate.
-def flush_hi(+acc: String, hi: U32) -> String:
-  Bool.pick(String, U32.is_zero(hi), acc, SCon{Char.from_u32(65533), acc})
+# Appends c to the reversed string acc, after U+FFFD for a pending lone high
+# surrogate `hi` (0 for none).
+def lex.put(c: Char, acc: String, hi: U32) -> LexState:
+  LStr{SCon{c, C.utf16_unpaired(hi, acc)}, 0}
 
-# Appends c to the string, after any pending lone high surrogate.
-def put(c: Char, acc: String, hi: U32) -> LexState:
-  LStr{SCon{c, flush_hi(acc, hi)}, 0}
-
-# A lone surrogate code becomes U+FFFD.
-def safe_scalar(+code: U32) -> U32:
-  Bool.pick(U32, C.between(code, 55296, 57343), 65533, code)
-
-# A low surrogate completes the pending high one; any other unit stands
-# alone.
-def uni_low(paired: Bool, acc: String, hi: U32, code: U32) -> LexState:
-  match paired:
-    case True{}:
-      scalar = (65536 + (hi - 55296) * 1024 + (code - 56320) : U32)
-      LStr{SCon{Char.from_u32(scalar), acc}, 0}
-    case False{}:
-      put(Char.from_u32(safe_scalar(code)), acc, hi)
-
-# A high surrogate waits for its low half.
-def uni_high(high: Bool, acc: String, +hi: U32, +code: U32) -> LexState:
-  match high:
-    case True{}:
-      LStr{flush_hi(acc, hi), code}
-    case False{}:
-      paired = C.between(code, 56320, 57343) && Bool.not(U32.is_zero(hi))
-      uni_low(paired, acc, hi, code)
-
-# A complete \u escape: one UTF-16 code unit.
-def uni_unit(acc: String, hi: U32, +code: U32) -> LexState:
-  uni_high(C.between(code, 55296, 56319), acc, hi, code)
-
-# The value of c as a hex digit, if it is one.
-def hex_val(+c: Char) -> Maybe<&2, U32>:
-  +u = Char.to_u32(c)
-  Bool.pick(Maybe<&2, U32>, Char.is_digit(c), Some{(u - 48 : U32)},
-    Bool.pick(Maybe<&2, U32>, C.between(u, 97, 102), Some{(u - 87 : U32)},
-      Bool.pick(Maybe<&2, U32>, C.between(u, 65, 70), Some{(u - 55 : U32)},
-        None{})))
+# A complete \u escape: one UTF-16 code unit. A high surrogate waits for
+# its low half.
+def lex.uni.unit(acc: String, hi: U32, +code: U32) -> LexState:
+  LStr{C.utf16_unit(code, hi, acc), Bool.pick(U32, C.utf16_high(code), code, 0)}
 
 # Counts down the n digits of a \u escape; code already holds this one.
-def uni_digit(n: Nat, acc: String, hi: U32, code: U32) -> LexState:
+def lex.uni.digit(n: Nat, acc: String, hi: U32, code: U32) -> LexState:
   match n:
     case 1n+0n:
-      uni_unit(acc, hi, code)
+      lex.uni.unit(acc, hi, code)
     case 1n+p:
       LUni{acc, hi, p, code}
     case 0n:
       LStr{acc, hi}
 
-# \u takes exactly four hex digits; anything else rejects the input.
-def lex.uni(
-  digit: Maybe<&2, U32>, n: Nat, acc: String, hi: U32, code: U32
+# `digit` says whether d is the value of a hex digit; \u takes exactly
+# four, and anything else rejects the input.
+def lex.uni.if(
+  digit: Bool, d: U32, n: Nat, acc: String, hi: U32, code: U32
 ) -> LexState:
   match digit:
-    case Some{d}:
-      uni_digit(n, acc, hi, (code * 16 + d : U32))
-    case None{}:
+    case True{}:
+      lex.uni.digit(n, acc, hi, (code * 16 + d : U32))
+    case False{}:
       LErr{}
+
+def lex.uni(c: Char, n: Nat, acc: String, hi: U32, code: U32) -> LexState:
+  +d = C.hex_val(c)
+  lex.uni.if(U32.is_lt(d, 16), d, n, acc, hi, code)
 
 def lex.esc(c: Char, acc: String, hi: U32) -> LexState:
   match c:
     case 'u':
       LUni{acc, hi, 4n, 0}
     case 'n':
-      put('\n', acc, hi)
+      lex.put('\n', acc, hi)
     case 't':
-      put('\t', acc, hi)
+      lex.put('\t', acc, hi)
     case 'r':
-      put('\r', acc, hi)
+      lex.put('\r', acc, hi)
     case 'b':
-      put(Char.from_u32(8), acc, hi)
+      lex.put(Char.from_u32(8), acc, hi)
     case 'f':
-      put(Char.from_u32(12), acc, hi)
+      lex.put(Char.from_u32(12), acc, hi)
     case '"':
-      put(c, acc, hi)
+      lex.put(c, acc, hi)
     case '\\':
-      put(c, acc, hi)
+      lex.put(c, acc, hi)
     case '/':
-      put(c, acc, hi)
+      lex.put(c, acc, hi)
     case _:
       LErr{}
 
@@ -431,12 +399,12 @@ def lex.str.if(ctrl: Bool, c: Char, acc: String, hi: U32) -> LexState:
     case True{}:
       LErr{}
     case False{}:
-      put(c, acc, hi)
+      lex.put(c, acc, hi)
 
 def lex.str(+c: Char, acc: String, hi: U32, toks: List<&2, Tok>) -> Lexer:
   match c:
     case '"':
-      Lexer{LNorm{}, TStr{String.reverse(flush_hi(acc, hi))} <> toks}
+      Lexer{LNorm{}, TStr{String.reverse(C.utf16_unpaired(hi, acc))} <> toks}
     case '\\':
       Lexer{LEsc{acc, hi}, toks}
     case _:
@@ -482,7 +450,7 @@ def lex.step(c: Char, lx: Lexer) -> Lexer:
     case Lexer{LEsc{acc, hi}, toks}:
       Lexer{lex.esc(c, acc, hi), toks}
     case Lexer{LUni{acc, hi, n, code}, toks}:
-      Lexer{lex.uni(hex_val(c), n, acc, hi, code), toks}
+      Lexer{lex.uni(c, n, acc, hi, code), toks}
     case Lexer{LNum{acc}, toks}:
       lex.num(c, acc, toks)
     case Lexer{LWord{acc}, toks}:

@@ -17,6 +17,21 @@ def between(+x: U32, lo: U32, hi: U32) -> Bool:
 def repl() -> Char:
   chr(65533)
 
+# Byte strings
+# ------------
+
+# The byte string of these byte values.
+def bytes_str(xs: List<&2, U32>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case x <> t:
+      SCon{chr(x), bytes_str(t)}
+
+# The number of bytes in a byte string.
+def byte_len(s: String) -> U32:
+  U32.from_nat(String.length(s))
+
 # UTF-8 encoding
 # --------------
 
@@ -167,6 +182,47 @@ def utf8_decode.fin(st: Utf8State) -> String:
 # UTF-8 bytes to text. Invalid sequences decode to U+FFFD.
 def utf8_decode(bytes: String) -> String:
   utf8_decode.fin(utf8_decode.go(bytes, Utf8State{0, 0, 0, ""}))
+
+# UTF-16 decoding
+# ---------------
+
+# Whether UTF-16 unit n is a high surrogate, the first half of a pair.
+def utf16_high(n: U32) -> Bool:
+  between(n, 55296, 56319)
+
+# The reversed text `out` with U+FFFD for the unpaired high surrogate `hi`,
+# if any (0 is none).
+def utf16_unpaired(hi: U32, +out: String) -> String:
+  Bool.pick(String, U32.is_zero(hi), out, SCon{repl(), out})
+
+def utf16_unit.char.if(bad: Bool, n: U32, out: String) -> String:
+  match bad:
+    case True{}:
+      SCon{repl(), out}
+    case False{}:
+      SCon{chr(n), out}
+
+def utf16_unit.low.if(pair: Bool, +n: U32, hi: U32, out: String) -> String:
+  match pair:
+    case True{}:
+      SCon{chr((65536 + (hi - 55296) * 1024 + (n - 56320) : U32)), out}
+    case False{}:
+      utf16_unit.char.if(between(n, 55296, 57343), n, utf16_unpaired(hi, out))
+
+def utf16_unit.high.if(high: Bool, +n: U32, +hi: U32, out: String) -> String:
+  match high:
+    case True{}:
+      utf16_unpaired(hi, out)
+    case False{}:
+      utf16_unit.low.if(between(n, 56320, 57343) && Bool.not(U32.is_zero(hi)),
+        n, hi, out)
+
+# The reversed text `out` after UTF-16 unit n, given the pending high
+# surrogate `hi` (0 for none). A low surrogate completes `hi`, and a lone
+# surrogate becomes U+FFFD. A high surrogate n only settles an older `hi`:
+# the caller keeps n pending (see utf16_high).
+def utf16_unit(+n: U32, hi: U32, out: String) -> String:
+  utf16_unit.high.if(utf16_high(n), n, hi, out)
 
 # Other charsets
 # --------------
@@ -376,8 +432,8 @@ def wrap76(s: String, +col: U32) -> String:
       Bool.pick(String, full, "\r\n", "")
         ++ SCon{c, wrap76(t, Bool.pick(U32, full, 1, (col + 1 : U32)))}
 
-# Quoted-printable
-# ----------------
+# Hex digits
+# ----------
 
 # The value of hex digit c, either case; 16 marks a char that is not one.
 def hex_val(c: Char) -> U32:
@@ -389,6 +445,25 @@ def hex_val(c: Char) -> U32:
 # The upper-case hex digit for n in 0..15.
 def hex_up(+n: U32) -> Char:
   chr(Bool.pick(U32, U32.is_lt(n, 10), (n + 48 : U32), (n + 55 : U32)))
+
+# The lower-case hex digit for n in 0..15.
+def hex_low(+n: U32) -> Char:
+  chr(Bool.pick(U32, U32.is_lt(n, 10), (n + 48 : U32), (n + 87 : U32)))
+
+# The low k hex digits of n, lower case, in front of `rest`.
+def hex8.go(k: Nat, +n: U32, rest: String) -> String:
+  match k:
+    case 0n:
+      rest
+    case 1n+p:
+      hex8.go(p, (n >> 4n : U32), SCon{hex_low((n .&. 15 : U32)), rest})
+
+# n as eight lower-case hex digits.
+def hex8(n: U32) -> String:
+  hex8.go(8n, n, "")
+
+# Quoted-printable
+# ----------------
 
 # The byte an "=XX" escape stands for, in front of `rest`; when the digits
 # are not hex (`ok` is false), the escape text `orig` is kept as it is.

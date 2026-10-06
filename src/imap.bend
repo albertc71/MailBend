@@ -338,46 +338,16 @@ def mutf7_encode.fin(st: Utf7Encoder) -> String:
 def mutf7_encode(name: String) -> String:
   mutf7_encode.fin(mutf7_encode.go(name, Utf7Encoder{"", ""}))
 
-# `out` with U+FFFD for the unpaired high surrogate `hi`, if any (0 is none).
-def utf16_decode.unpaired(hi: U32, +out: String) -> String:
-  Bool.pick(String, U32.is_zero(hi), out, SCon{C.repl(), out})
-
-def utf16_decode.char(bad: Bool, n: U32, out: String) -> String:
-  match bad:
-    case True{}:
-      SCon{C.repl(), out}
-    case False{}:
-      SCon{C.chr(n), out}
-
-def utf16_decode.low(pair: Bool, +n: U32, hi: U32, out: String) -> String:
-  match pair:
-    case True{}:
-      SCon{C.chr((65536 + (hi - 55296) * 1024 + (n - 56320) : U32)), out}
-    case False{}:
-      utf16_decode.char(C.between(n, 55296, 57343), n,
-        utf16_decode.unpaired(hi, out))
-
-# Output for the UTF-16 unit `n` given a pending high surrogate `hi` (or 0);
-# `high` says `n` is itself a high surrogate.
-def utf16_decode.unit(high: Bool, +n: U32, +hi: U32, out: String) -> String:
-  match high:
-    case True{}:
-      utf16_decode.unpaired(hi, out)
-    case False{}:
-      utf16_decode.low(C.between(n, 56320, 57343) && Bool.not(U32.is_zero(hi)),
-        n, hi, out)
-
 # UTF-16BE bytes to text; `hi` is a pending high surrogate or 0, `out` the
 # reversed text so far. A trailing odd byte is dropped.
 def utf16_decode(bytes: String, hi: U32, out: String) -> String:
   match bytes:
     case SCon{a, SCon{b, t}}:
       +n = ((C.u(a) << 8n) .|. C.u(b) : U32)
-      +high = C.between(n, 55296, 56319)
-      utf16_decode(t, Bool.pick(U32, high, n, 0),
-        utf16_decode.unit(high, n, hi, out))
+      utf16_decode(t, Bool.pick(U32, C.utf16_high(n), n, 0),
+        C.utf16_unit(n, hi, out))
     case _:
-      String.reverse(utf16_decode.unpaired(hi, out))
+      String.reverse(C.utf16_unpaired(hi, out))
 
 # `out` with a closed "&...-" run: "&-" is a literal "&", anything else is
 # base64 of UTF-16BE.
@@ -1351,7 +1321,7 @@ def has_attr.lowered(attrs: List<&2, String>, +want: String) -> Bool:
     case attr <> rest:
       String.eq(String.to_lower(attr), want) || has_attr.lowered(rest, want)
 
-# Whether a folder's attributes include `a`, in any case.
+# Whether folder attributes or message flags include `a`, in any case.
 def has_attr(attrs: List<&2, String>, a: String) -> Bool:
   has_attr.lowered(attrs, String.to_lower(a))
 

@@ -290,9 +290,6 @@ def too_long() -> String:
 def pending(parts: List<&2, String>) -> String:
   String.concat(List.reverse(&2, String, parts))
 
-def byte_length(s: String) -> U32:
-  U32.from_nat(String.length(s))
-
 # All pieces but the last: the lines a chunk completes.
 def complete_lines(+ls: List<&2, String>) -> List<&2, String>:
   List.take(&2, String, ls, Nat.sub(List.length(&2, String, ls), 1n))
@@ -330,7 +327,7 @@ def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32) -> IO(Unit):
             handle_line(pending(parts))
             File.close(f)
         case h <> t:
-          serve.chunk(f, String.split(T.bytes_str(xs), '\n'), parts, n)
+          serve.chunk(f, String.split(C.bytes_str(xs), '\n'), parts, n)
 
 # `pieces` is the chunk split at its newlines. Its first piece ends the
 # unfinished line, which is refused once it is longer than the cap.
@@ -342,7 +339,7 @@ def serve.chunk(
     case Nil{}:
       serve(f, parts, n)
     case +p <> rest:
-      +length = (n + byte_length(p) : U32)
+      +length = (n + C.byte_len(p) : U32)
       serve.chunk.if(f, rest, p <> parts, length, U32.is_gt(length, line_cap()))
 
 @unsafe
@@ -370,7 +367,7 @@ def serve.rest(
         handle_line(pending(parts))
         handle_lines(complete_lines(rest))
         +unfinished : String = last_line(rest)
-        serve(f, [unfinished], byte_length(unfinished))
+        serve(f, [unfinished], C.byte_len(unfinished))
 
 def mcp() -> IO(Unit):
   do IO<Unit>:

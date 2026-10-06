@@ -821,9 +821,6 @@ def folders_json(fs: List<&2, I.Folder>) -> List<&2, J.Json>:
 # Message summaries
 # -----------------
 
-def has_flag(flags: List<&2, String>, f: String) -> Bool:
-  I.has_attr(flags, f)
-
 def hdr_text(hs: List<&2, M.Hdr>, name: String) -> String:
   M.decode_header(M.header(hs, name))
 
@@ -841,8 +838,8 @@ def summary(m: I.Msg) -> J.Json:
     J.kv("internal_date", J.str(date)),
     J.kv("size", J.num(size)),
     J.kv("flags", J.strs(flags)),
-    J.kv("seen", J.bool(has_flag(flags, "\\Seen"))),
-    J.kv("flagged", J.bool(has_flag(flags, "\\Flagged")))
+    J.kv("seen", J.bool(I.has_attr(flags, "\\Seen"))),
+    J.kv("flagged", J.bool(I.has_attr(flags, "\\Flagged")))
   ])
 
 def summaries(ms: List<&2, I.Msg>) -> List<&2, J.Json>:
@@ -1134,7 +1131,7 @@ def get_json(
     J.kv("uid", J.num(uid)),
     J.kv("uidvalidity", maybe_num(uidv)),
     J.kv("flags", J.strs(flags)),
-    J.kv("seen", J.bool(has_flag(flags, "\\Seen"))),
+    J.kv("seen", J.bool(I.has_attr(flags, "\\Seen"))),
     J.kv("internal_date", J.str(date)),
     J.kv("size", J.num(size)),
     J.kv("truncated", J.bool(U32.is_gt(size, max))),
@@ -1481,13 +1478,13 @@ def observed_json(os: List<&2, Observed>) -> List<&2, J.Json>:
 
 # Whether a message has a colour bit exactly when the colour sets it.
 def bit_shown(flags: List<&2, String>, want: Bool, f: I.Flag) -> Bool:
-  Bool.not(Bool.xor(want, has_flag(flags, I.flag_name(f))))
+  Bool.not(Bool.xor(want, I.has_attr(flags, I.flag_name(f))))
 
 # Whether a message's flags show the colour: Apple Mail reads it from
 # $MailFlagBit0..2 while \Flagged is set.
 def shows_colour(+flags: List<&2, String>, bits: I.Bits) -> Bool:
   I.Bits{b0, b1, b2} = bits
-  (has_flag(flags, "\\Flagged") && bit_shown(flags, b0, I.FColourBit0{}) &&
+  (I.has_attr(flags, "\\Flagged") && bit_shown(flags, b0, I.FColourBit0{}) &&
     bit_shown(flags, b1, I.FColourBit1{}) && bit_shown(flags, b2, I.FColourBit2{}))
 
 # The UIDs whose reported flags do not show the colour.
@@ -1510,15 +1507,15 @@ def any_unobserved(os: List<&2, Observed>) -> Bool:
       True{}
 
 def keyword_permanent(ps: List<&2, String>, any: Bool, f: I.Flag) -> Bool:
-  any || has_flag(ps, I.flag_name(f))
+  any || I.has_attr(ps, I.flag_name(f))
 
 # Whether PERMANENTFLAGS `ps` lets every flag a colour stores last beyond
 # this session: \Flagged must be listed, and each colour keyword listed or
 # covered by \* (any new keyword). A cleared bit counts too: clearing a
 # session-only keyword may not last either.
 def colour_permanent(+ps: List<&2, String>) -> Bool:
-  +any = has_flag(ps, "\\*")
-  (has_flag(ps, "\\Flagged") && keyword_permanent(ps, any, I.FColourBit0{}) &&
+  +any = I.has_attr(ps, "\\*")
+  (I.has_attr(ps, "\\Flagged") && keyword_permanent(ps, any, I.FColourBit0{}) &&
     keyword_permanent(ps, any, I.FColourBit1{}) && keyword_permanent(ps, any, I.FColourBit2{}))
 
 # Whether the colour's changes are known to last only for this session (not
@@ -1906,13 +1903,8 @@ def move_caps(
     case Done{+lines}:
       move_caps.run(uidv_problem(lines, uidv), I.caps(lines), folder, uids, dest, uidv)
 
-# Whether two names denote the same mailbox; INBOX is case-insensitive in
-# IMAP, other names are compared as given.
-def same_mailbox(a: String, b: String) -> Bool:
-  I.same_name(a, b)
-
 def move_request(uidv: U32, folder: String, +dest: String) -> String:
-  Bool.pick(String, String.is_empty(dest) || same_mailbox(dest, folder),
+  Bool.pick(String, String.is_empty(dest) || I.same_name(dest, folder),
     "\"destination\" must name a different folder",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
@@ -1970,7 +1962,7 @@ def trash_to(
     case None{}:
       pure_out(Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
     case Some{+t}:
-      trash_into(same_mailbox(t, folder), t, caps, folder, uids, uidv)
+      trash_into(I.same_name(t, folder), t, caps, folder, uids, uidv)
 
 def trash_fs(
   f: Fs(),
@@ -2136,13 +2128,6 @@ def reserved_note() -> String:
 def is_inbox(name: String) -> Bool:
   I.same_name(name, "INBOX")
 
-def name_if(keep: Bool, name: String, rest: List<&2, String>) -> List<&2, String>:
-  match keep:
-    case True{}:
-      name <> rest
-    case False{}:
-      rest
-
 def maybe_name(m: Maybe<&2, String>, rest: List<&2, String>) -> List<&2, String>:
   match m:
     case Some{n}:
@@ -2156,7 +2141,7 @@ def advertised_names(fs: List<&2, I.Folder>) -> List<&2, String>:
     case Nil{}:
       []
     case I.Folder{name, d, attrs} <> t:
-      name_if(recognized_role(attrs), name, advertised_names(t))
+      List.filter.put(String, name, advertised_names(t), recognized_role(attrs))
 
 # Kept by hand: List.map takes only affine lists.
 def lowered(xs: List<&2, String>) -> List<&2, String>:
@@ -2433,7 +2418,7 @@ def subscribed_tree(
     case I.Folder{+name, d, attrs} <> t:
       moves = at_or_inside(delim, root, name) && Bool.not(I.has_attr(attrs, "\\NonExistent")) &&
         Maybe.is_some(&2, String, I.named(subs, name))
-      name_if(moves, name, subscribed_tree(delim, root, t, subs))
+      List.filter.put(String, name, subscribed_tree(delim, root, t, subs), moves)
 
 def change_plan(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange) -> List<&2, I.Cmd>:
   match c:
@@ -2629,7 +2614,7 @@ def label_asked(
         label_found(r, folder, uids, label, uidv)
 
 def label_request(uidv: U32, folder: String, +label: String) -> String:
-  Bool.pick(String, String.is_empty(label) || same_mailbox(label, folder),
+  Bool.pick(String, String.is_empty(label) || I.same_name(label, folder),
     "\"label\" must name a folder other than the one the messages are in",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
@@ -2648,13 +2633,6 @@ def t_label(+args: J.Json) -> IO(Out):
 
 # Attachments
 # -----------
-
-def bytes_str(xs: List<&2, U32>) -> String:
-  match xs:
-    case Nil{}:
-      ""
-    case x <> t:
-      SCon{C.chr(x), bytes_str(t)}
 
 def basename(+path: String) -> String:
   Maybe.default(&2, String, List.last(&2, String, String.split(path, '/')), path)
@@ -2787,18 +2765,10 @@ def att_one(+a: J.Json, budget: U32) -> IO(Attachment()):
 def max_attachments() -> U32:
   32
 
-# Bytes in a byte string (one char per byte), counted in a U32.
-def byte_count(s: String, n: U32) -> U32:
-  match s:
-    case SNil{}:
-      n
-    case SCon{c, t}:
-      byte_count(t, (n + 1 : U32))
-
 def att_size(a: Attachment()) -> U32:
   match a:
     case Done{M.Attach{n, c, data}}:
-      byte_count(data, 0)
+      C.byte_len(data)
     case Fail{m}:
       0
 
@@ -2885,21 +2855,6 @@ type Want is Data:
     draft: Bool
   }
 
-def hexd(+n: U32) -> String:
-  SCon{C.chr(Bool.pick(U32, U32.is_lt(n, 10), (n + 48 : U32), (n + 87 : U32))), SNil{}}
-
-def hex8(+n: U32) -> String:
-  String.concat([
-    hexd((n >> 28n : U32)),
-    hexd(((n >> 24n) .&. 15 : U32)),
-    hexd(((n >> 20n) .&. 15 : U32)),
-    hexd(((n >> 16n) .&. 15 : U32)),
-    hexd(((n >> 12n) .&. 15 : U32)),
-    hexd(((n >> 8n) .&. 15 : U32)),
-    hexd(((n >> 4n) .&. 15 : U32)),
-    hexd((n .&. 15 : U32))
-  ])
-
 def secs_of(p: Proc) -> U32:
   match p:
     case ProcOk{code, out, err}:
@@ -2915,7 +2870,7 @@ def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
       0
 
 def stamp_of(+secs: U32, a: U32, b: U32) -> Stamp:
-  Stamp{M.rfc5322_date(secs), hex8(secs) ++ "." ++ hex8(a) ++ hex8(b)}
+  Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b)}
 
 def stamp() -> IO(Stamp):
   do IO<Stamp>:
@@ -3260,7 +3215,7 @@ def fwd_note(+hs: List<&2, M.Hdr>) -> String:
 def fwd_want(+hs: List<&2, M.Hdr>, +raw: String, +args: J.Json) -> IO(Out):
   do IO<Out>:
     rs : List<&2, Attachment()> <-
-      atts_read_within(attachments_arg(args), (max_attachment() - byte_count(raw, 0) : U32))
+      atts_read_within(attachments_arg(args), (max_attachment() - C.byte_len(raw) : U32))
     with_atts(atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
       prefixed("Fwd:", hdr_text(hs, "subject")),
@@ -3277,7 +3232,7 @@ def respond_to(
 ) -> IO(Out):
   match reply:
     case True{}:
-      reply_want(body_headers(body), M.parts(body), too_big, byte_count(body, 0), size, args, me)
+      reply_want(body_headers(body), M.parts(body), too_big, C.byte_len(body), size, args, me)
     case False{}:
       match too_big:
         case True{}:

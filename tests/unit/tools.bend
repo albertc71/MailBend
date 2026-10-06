@@ -552,8 +552,8 @@ def check_moves() -> IO(Unit):
     IO.print("[" ++ T.respond_request(json("{\"uid\":3,\"uidvalidity\":7}")) ++ "] " ++
       T.respond_request(json("{\"uidvalidity\":7}")) ++ " | " ++
       T.respond_request(json("{\"uid\":3}")))
-    IO.print(show_bool(T.same_mailbox("Inbox", "INBOX")) ++ " " ++
-      show_bool(T.same_mailbox("work", "Work")))
+    IO.print(show_bool(I.same_name("Inbox", "INBOX")) ++ " " ++
+      show_bool(I.same_name("work", "Work")))
 
 # Folder creation, renaming and labels
 # ------------------------------------
@@ -610,7 +610,7 @@ def check_guard() -> IO(Unit):
       T.canonical_name(guard(), "Work/inbox") ++ " " ++ T.canonical_name(guard(), "inbox") ++
       " " ++ T.canonical_name(flat_guard(), "inbox"))
     IO.print(problem(T.raw_name_problem("")) ++
-      problem(T.raw_name_problem(T.bytes_str([97, 1]))) ++ problem(T.raw_name_problem("ok")))
+      problem(T.raw_name_problem(C.bytes_str([97, 1]))) ++ problem(T.raw_name_problem("ok")))
     IO.print(problem(T.shape_problem(flat_guard(), "a/b")) ++
       problem(T.shape_problem(flat_guard(), "a.b")) ++
       problem(T.shape_problem(flat_guard(), "ab")) ++
@@ -703,7 +703,7 @@ def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
 
 def check_compose() -> IO(Unit):
   do IO<Unit>:
-    IO.print(T.bytes_str([72, 105]) ++ " " ++ T.basename("/a/b/c.txt") ++ " " ++
+    IO.print(C.bytes_str([72, 105]) ++ " " ++ T.basename("/a/b/c.txt") ++ " " ++
       T.basename("c") ++ " [" ++ T.basename("/a/") ++ "]")
     IO.print(String.join([
       T.ext_type("a.PDF"), T.ext_type("a.txt"), T.ext_type("a.md"), T.ext_type("a.log"),
@@ -715,7 +715,7 @@ def check_compose() -> IO(Unit):
         "b")) ++
       " | " ++ show_att(T.att_proc(T.ProcRefused{"no path"}, "a", "b")) ++ " | " ++
       show_att(T.att_proc(T.ProcFail{110, "timed out"}, "a", "b")))
-    IO.print(U32.show(T.byte_count("héllo", 0)) ++ " " ++
+    IO.print(U32.show(C.byte_len("héllo")) ++ " " ++
       U32.show(T.att_size(Done{M.Attach{"a", "b", "xyz"}})) ++ " " ++
       U32.show(T.att_size(Fail{"x"})) ++ " " ++
       show_bool(T.att_ok(Done{M.Attach{"a", "b", ""}})) ++ " " ++
@@ -726,8 +726,9 @@ def check_compose() -> IO(Unit):
       Fail{"not read"}])))
     IO.print(show_atts(T.atts_cons(M.Attach{"f", "message/rfc822", "raw"}, T.atts_collect([]))) ++
       " | " ++ show_atts(T.atts_cons(M.Attach{"f", "t", "raw"}, Fail{"bad"})))
-    IO.print(T.hexd(0) ++ T.hexd(9) ++ T.hexd(10) ++ T.hexd(15) ++ " " ++ T.hex8(0) ++ " " ++
-      T.hex8(3735928559) ++ " " ++ T.hex8(4294967295) ++ " " ++ T.hex8(305419896))
+    IO.print(SCon{C.hex_low(0), SCon{C.hex_low(9), SCon{C.hex_low(10), SCon{C.hex_low(15),
+      SNil{}}}}} ++ " " ++ C.hex8(0) ++ " " ++
+      C.hex8(3735928559) ++ " " ++ C.hex8(4294967295) ++ " " ++ C.hex8(305419896))
     IO.print(U32.show(T.secs_of(T.ProcOk{0, " 1700000000\n", ""})) ++ " " ++
       U32.show(T.secs_of(T.ProcOk{0, "x", ""})) ++ " " ++
       U32.show(T.secs_of(T.ProcRefused{"x"})) ++
