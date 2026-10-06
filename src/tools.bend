@@ -726,18 +726,38 @@ def merge_attrs(xs: List<&2, String>, +ys: List<&2, String>) -> List<&2, String>
     case +x <> t:
       merge_attrs(t, Bool.pick(List<&2, String>, I.has_attr(ys, x), ys, x <> ys))
 
-# `fs` with `entry`'s attributes added to the folder of the same name, or
-# with `entry` appended when there is none.
-def merge_folder(fs: List<&2, I.Folder>, +entry: I.Folder) -> List<&2, I.Folder>:
+# Whether the first folder of `fs` has `entry`'s name.
+def merge_folder.same(fs: List<&2, I.Folder>, entry: I.Folder) -> Bool:
   match fs:
     case Nil{}:
+      False{}
+    case I.Folder{name, d, a} <> t:
+      I.Folder{other, e, extra} = entry
+      I.same_name(name, other)
+
+# Folder `f` with `entry`'s attributes added.
+def merge_folder.into(f: I.Folder, entry: I.Folder) -> I.Folder:
+  I.Folder{name, delimiter, attrs} = f
+  I.Folder{other, d, extra} = entry
+  I.Folder{name, delimiter, merge_attrs(extra, attrs)}
+
+# `same` says whether the first folder of `fs` has `entry`'s name. A match,
+# not a Bool.pick, so the walk stops at that folder and only it merges.
+def merge_folder.go(
+  fs: List<&2, I.Folder>, +entry: I.Folder, same: Bool
+) -> List<&2, I.Folder>:
+  match fs same:
+    case Nil{} _:
       [entry]
-    case I.Folder{+name, delimiter, +attrs} <> +t:
-      I.Folder{other, d, extra} = entry
-      +same = I.same_name(name, other)
-      attrs_now = Bool.pick(List<&2, String>, same, merge_attrs(extra, attrs), attrs)
-      +head = {I.Folder{name, delimiter, attrs_now} : I.Folder}
-      Bool.pick(List<&2, I.Folder>, same, head <> t, head <> merge_folder(t, entry))
+    case f <> t True{}:
+      merge_folder.into(f, entry) <> t
+    case f <> +t False{}:
+      f <> merge_folder.go(t, entry, merge_folder.same(t, entry))
+
+# `fs` with `entry`'s attributes added to the folder of the same name, or
+# with `entry` appended when there is none.
+def merge_folder(+fs: List<&2, I.Folder>, +entry: I.Folder) -> List<&2, I.Folder>:
+  merge_folder.go(fs, entry, merge_folder.same(fs, entry))
 
 def merge_folders(extra: List<&2, I.Folder>, ordinary: List<&2, I.Folder>) -> List<&2, I.Folder>:
   match extra:
