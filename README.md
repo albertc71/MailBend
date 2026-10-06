@@ -39,7 +39,7 @@ server](#use). Details of the install are [below](#install-linux).
   is no daemon and no database, only an optional send-count file.
 - **Live-tested on iCloud.** Reading, moving, deleting, drafts and sending
   [passed on a real iCloud account](docs/CLOUD_AGENT.md#live-icloud-record)
-  with the earlier helpers; the current Rust helpers have passed part of the
+  with the earlier helpers, and the current Rust helpers have passed the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-checklist).
 
 Limits: Linux only, password login only (no OAuth); see
@@ -155,7 +155,7 @@ off, and leaves drafts and reads alone:
 | `MAILBEND_ALLOWED_RECIPIENTS` | Comma-separated exact addresses and `@domain` entries (that domain only, not its subdomains), compared case-insensitively. A message with any other recipient (To, Cc, Bcc, or the original's To and Cc in a reply-all) is refused whole, and with an allowlist an address containing `%`, `!` or `:` is refused too. Unset or empty: no allowlist. |
 | `MAILBEND_MAX_SENDS_PER_DAY` | A positive number of sends per UTC day. Each send is counted before it is handed to SMTP, so one that then fails or times out still counts, and a count that cannot be read or written refuses the send. Unset: no limit. |
 | `MAILBEND_STATE_DIR` | An absolute path for the send count. Default: `$XDG_STATE_HOME/mailbend`, else `~/.local/state/mailbend`. |
-| `MAILBEND_SAVE_SENT` | `1`/`true` appends each sent message (with its Bcc header, as a draft keeps it) to the resolved Sent folder, marked seen, unless the server already filed it there; the result reports `sent_copy`, and a failed copy does not fail the send. Default off. |
+| `MAILBEND_SAVE_SENT` | `1`/`true` appends each sent message (with its Bcc header, as a draft keeps it) to the resolved Sent folder, marked seen, unless the server already filed it there; the result reports `sent_copy`, and a failed copy does not fail the send. Default off; iCloud does not file SMTP-sent mail in Sent, so set it to `1` there. |
 
 The count is `sends` in the state directory: one line per send, created
 by `mailbend-attach` (directory mode 0700). No tool reads or changes it;
@@ -429,16 +429,12 @@ privately.
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS; no OAuth, no
   implicit SMTPS.
-- Only iCloud has been live-tested. With the current Rust helpers, only
-  `mail_probe` (system DNS, DoH and `MAILBEND_IMAP_CONNECT_IP`), a send to
-  yourself and `mail_classify` in headers mode have passed. Everything else
-  is unverified with them until the
-  [live checklist](docs/CLOUD_AGENT.md#live-icloud-checklist) is run:
-  reading, moving, deleting and drafts (which passed with the earlier
-  helpers), folders and labels, flag colours, Sent copies, the send limit,
-  downloads, threads, and Jev's notes, blocks and triage. Whether iCloud
-  files SMTP-sent mail in Sent by itself is among them, so
-  `MAILBEND_SAVE_SENT` stays off by default.
+- Only iCloud has been live-tested, with the
+  [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
+  there: IPv6, how folders and flag colours look in Apple Mail and on
+  iCloud.com, and Jev's body-mode triage moving old mail into `To Delete`.
+- iCloud does not file SMTP-sent mail in Sent, and `MAILBEND_SAVE_SENT` is
+  off by default, so set it to `1` on iCloud to keep a Sent copy.
 - No watcher: nothing monitors the mailbox with IDLE or polling.
   `mail_get_new` provides the checkpoint an agent needs to poll.
 - Each character of a fetched message is a separate value in memory, so

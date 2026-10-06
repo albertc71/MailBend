@@ -325,10 +325,32 @@ in the intended Drafts mailbox without sending it.
 
 **Current Rust helpers.** On 2026-10-05, `mail_probe` passed with system
 DNS, with DoH and with `MAILBEND_IMAP_CONNECT_IP`, and an SMTP send to self
-passed. On 2026-10-06, `mail_classify` asked the real Jev in headers mode
-about INBOX messages; it changed nothing and the messages stayed unread.
-Everything else is unverified with these helpers until the
-[checklist](#live-icloud-checklist) below is run.
+passed. On 2026-10-06 the whole [checklist](#live-icloud-checklist) below
+was run with the Rust `mailbend-tls`, `mailbend-attach` and
+`mailbend-typesafe` (Jev `jev-1.13.0`), on disposable messages sent to the
+account's own address and on test folders:
+
+| Item | Result | Observed |
+| --- | --- | --- |
+| 1. TLS helper | pass | `tls_verified: true` with system DNS, DoH and `MAILBEND_IMAP_CONNECT_IP`; SMTP STARTTLS send to self accepted. IPv6 not tested: the network had no IPv6 route and no AAAA answer for `imap.mail.me.com`. CAPABILITY has IDLE, UIDPLUS, CONDSTORE, QRESYNC, ESEARCH and LIST-STATUS, but neither MOVE nor SPECIAL-USE; LIST still marks `Sent Messages` `\Sent` and `Deleted Messages` `\Trash`. Drafts, Junk and Archive resolve by name |
+| 2. Delimiter | pass | `/`; INBOX is listed with `\Noinferiors` |
+| 3. Create | pass | `MailBend Test` and `MailBend Test/Nested` created and subscribed. iCloud also accepted `INBOX/MailBend Test` in spite of `\Noinferiors` (MailBend allows children of INBOX by design). Visibility on iCloud.com and in Apple Mail: left to the user |
+| 4. Rename | pass | `MailBend Test` renamed with its subfolder and renamed back, with subscriptions following. Renaming a role folder, or the parent of one (`MAILBEND_ARCHIVE_FOLDER=MailBend Test/Nested`), was refused before any change, as was creating inside a role folder or `To Delete` |
+| 5. Thread search | pass | `UID SEARCH HEADER Message-ID` finds the message. A message marked `\Deleted` and not expunged **is** returned by `mail_search` (with `\Deleted` in its flags), by the header search and by `mail_get_thread` |
+| 6. Labels | pass | `UID COPY + UID EXPUNGE`: one copy in the label folder, none left in INBOX; `mail_move` back gave one copy in INBOX (new UID) and none in the label |
+| 7. Flag colours | pass (server) | PERMANENTFLAGS includes `$MailFlagBit0`–`2` and `\*`; `colour_kept: true` for all seven colours. Bits: red none, orange 0, yellow 1, green 0+1, blue 2, purple 0+2, grey 1+2; `mail_unflag` cleared `\Flagged` and every bit. Colours shown in Apple Mail: left to the user |
+| 8. Sent copies | iCloud does not file | No Sent copy of either SMTP send after several minutes (subject and Message-ID searches). With `MAILBEND_SAVE_SENT=1`, a reply was appended once to `Sent Messages`, marked `\Seen` (`sent_copy: "saved to Sent Messages"`) |
+| 9. Downloads | pass | A 1024-byte attachment holding every byte value came back byte for byte (same sha256), saved with mode 600; the message stayed unread |
+| 10. Threads | pass | From the original, the delivered reply and the reply's Sent copy, `mail_get_thread` searched INBOX and `Sent Messages` and returned the same three messages |
+| 11. Jev, headers | pass | `mail_classify` on 20 and on 50 INBOX messages: all `checked`, flags unchanged, no request refused. A reply with a stranger in Bcc and a send of personal data to a stranger were blocked (`recipients: high`); a send to self proceeded. A permanent delete of a junk test message proceeded (every keep answer low). With TypeSafe unreachable (proxy on a closed port) or the key rejected (HTTP 401), a send was blocked and `mail_search` returned its messages `unchecked`. `mail_triage` filed one test message into the only folder Jev chose with high confidence (0.79), left the others (Jev's 0.56 for another folder reads as mid), and moved nothing into `To Delete` |
+| 11. Jev, body | pass, partial | Refused without `MAILBEND_TYPESAFE_ZERO_RETENTION=1`. With it, the fresh test messages were `keep` with the veto "less than 30 days old" (and "has attachments"), so nothing went to `To Delete`; that move could not be shown with fresh mail. Body mode was used only on test messages, so a large body-mode batch is not tested |
+| 11. Request size | recorded | Headers-mode requests of 18 messages were about 58,200–58,450 bytes for 16,814–16,926 input tokens (about 3.45 bytes per token) |
+| 12. Send limit | pass | With `MAILBEND_MAX_SENDS_PER_DAY=2`, the third send was refused with nothing sent. After trashing the delivered copies and the only Sent copy (the reply's; iCloud kept none of the two counted sends), a send was still refused |
+
+The test folders `MailBend Test`, `MailBend Test/Nested`,
+`MailBend live check` (created as `INBOX/MailBend Test`) and `To Delete`
+remain, because no MailBend tool deletes a folder. Every test message was
+permanently deleted.
 
 For another provider or localised/nested folders, follow the
 [server and folder configuration](../README.md#configure). Inspect
@@ -346,16 +368,16 @@ successful probe alone does not establish every iCloud operation's behaviour.
 A small `max_bytes` can truncate a fetched message before its body and return
 an empty body; increase the budget when needed. SMTP delivery does not
 guarantee a Sent copy: MailBend appends one only with `MAILBEND_SAVE_SENT=1`,
-after checking that the server did not file the message itself. Whether
-iCloud files SMTP-sent mail on its own is unverified (item 8 below), so the
-setting stays off by default.
+after checking that the server did not file the message itself. iCloud does
+not file SMTP-sent mail on its own (item 8 above), so set
+`MAILBEND_SAVE_SENT=1` on iCloud to keep a Sent copy.
 
 ## Live iCloud checklist
 
-The features below pass the local tests against the fake servers but are
-unverified on iCloud with the current helpers until this list is run on a
-real account; what has passed so far is in the [record](#live-icloud-record)
-above. Use disposable messages and folders, start with
+Run this list on a real account after a change to a helper or to how a
+feature talks to the server; the last run is in the
+[record](#live-icloud-record) above, with what it left for a person to
+check. Use disposable messages and folders, start with
 `MAILBEND_READ_ONLY=1` where an item only reads, and record pass or fail
 with the value observed.
 
