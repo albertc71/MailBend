@@ -1633,7 +1633,8 @@ def store_changes(
     case Nil{}:
       []
     case I.CStore{u, add, f} <> t:
-      store_changes.if(store_is(which, lines, n), add, f, store_changes(t, (n + 1 : U32), lines, which))
+      store_changes.if(store_is(which, lines, n), add, f,
+        store_changes(t, (n + 1 : U32), lines, which))
     case c <> t:
       store_changes(t, Bool.pick(U32, I.is_expect(c), n, (n + 1 : U32)), lines, which)
 
@@ -3449,7 +3450,8 @@ def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
 def offered_items(ts: J.Json, +ro: Bool, +drafts: Bool) -> J.Json:
   match ts:
     case J.JCons{+t, rest}:
-      offered_items.if(offered(str_arg(t, "name", ""), ro, drafts), t, offered_items(rest, ro, drafts))
+      offered_items.if(offered(str_arg(t, "name", ""), ro, drafts), t,
+        offered_items(rest, ro, drafts))
     case _:
       J.JEnd{}
 
