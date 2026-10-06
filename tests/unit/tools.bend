@@ -101,29 +101,29 @@ def json(s: String) -> J.Json:
 # The internal success-or-error wrappers
 # --------------------------------------
 
-def show_uids(u: T.Uids) -> String:
+def show_uids(u: T.Uids()) -> String:
   match u:
-    case T.UidsOk{xs}:
+    case Done{xs}:
       "uids " ++ show_u32s(xs)
-    case T.UidsErr{m}:
+    case Fail{m}:
       "error " ++ m
 
-def show_keys(k: T.Keys) -> String:
+def show_keys(k: T.Keys()) -> String:
   match k:
-    case T.KeysOk{keys}:
+    case Done{keys}:
       show_line_endings(I.script([I.CSearch{keys}]))
-    case T.KeysErr{m}:
+    case Fail{m}:
       "error " ++ m
 
 def show_attach(a: M.Attach) -> String:
   M.Attach{name, ctype, data} = a
   name ++ "|" ++ ctype ++ "|" ++ data
 
-def show_att(a: T.AttR) -> String:
+def show_att(a: T.Attachment()) -> String:
   match a:
-    case T.AttOk{x}:
+    case Done{x}:
       "att " ++ show_attach(x)
-    case T.AttErr{m}:
+    case Fail{m}:
       "error " ++ m
 
 def show_attaches(xs: List<&2, M.Attach>) -> String:
@@ -133,11 +133,11 @@ def show_attaches(xs: List<&2, M.Attach>) -> String:
     case Con{x, t}:
       show_attach(x) ++ ";" ++ show_attaches(t)
 
-def show_atts(a: T.Atts) -> String:
+def show_atts(a: T.Attachments()) -> String:
   match a:
-    case T.AttsOk{xs}:
+    case Done{xs}:
       "atts " ++ show_attaches(xs)
-    case T.AttsErr{m}:
+    case Fail{m}:
       "error " ++ m
 
 # Environment switches and the TLS helper
@@ -714,16 +714,16 @@ def check_compose() -> IO(Unit):
       " | " ++ show_att(T.att_proc(T.ProcRefused{"no path"}, "a", "b")) ++ " | " ++
       show_att(T.att_proc(T.ProcFail{110, "timed out"}, "a", "b")))
     IO.print(U32.show(T.byte_count("héllo", 0)) ++ " " ++
-      U32.show(T.att_size(T.AttOk{M.Attach{"a", "b", "xyz"}})) ++ " " ++
-      U32.show(T.att_size(T.AttErr{"x"})) ++ " " ++
-      show_bool(T.att_ok(T.AttOk{M.Attach{"a", "b", ""}})) ++ " " ++
-      show_bool(T.att_ok(T.AttErr{"x"})))
-    IO.print(show_atts(T.atts_collect([T.AttOk{M.Attach{"a", "t", "1"}},
-      T.AttOk{M.Attach{"b", "t", "2"}}])))
-    IO.print(show_atts(T.atts_collect([T.AttOk{M.Attach{"a", "t", "1"}}, T.AttErr{"first"},
-      T.AttErr{"not read"}])))
+      U32.show(T.att_size(Done{M.Attach{"a", "b", "xyz"}})) ++ " " ++
+      U32.show(T.att_size(Fail{"x"})) ++ " " ++
+      show_bool(T.att_ok(Done{M.Attach{"a", "b", ""}})) ++ " " ++
+      show_bool(T.att_ok(Fail{"x"})))
+    IO.print(show_atts(T.atts_collect([Done{M.Attach{"a", "t", "1"}},
+      Done{M.Attach{"b", "t", "2"}}])))
+    IO.print(show_atts(T.atts_collect([Done{M.Attach{"a", "t", "1"}}, Fail{"first"},
+      Fail{"not read"}])))
     IO.print(show_atts(T.atts_cons(M.Attach{"f", "message/rfc822", "raw"}, T.atts_collect([]))) ++
-      " | " ++ show_atts(T.atts_cons(M.Attach{"f", "t", "raw"}, T.AttsErr{"bad"})))
+      " | " ++ show_atts(T.atts_cons(M.Attach{"f", "t", "raw"}, Fail{"bad"})))
     IO.print(T.hexd(0) ++ T.hexd(9) ++ T.hexd(10) ++ T.hexd(15) ++ " " ++ T.hex8(0) ++ " " ++
       T.hex8(3735928559) ++ " " ++ T.hex8(4294967295) ++ " " ++ T.hex8(305419896))
     IO.print(U32.show(T.secs_of(T.ProcOk{0, " 1700000000\n", ""})) ++ " " ++
