@@ -115,6 +115,13 @@ def main() -> IO(Unit):
     IO.print(wire(Ops.plan_new.if(False{}, "INBOX", 3)))
     IO.print(wire(Ops.plan_headers("INBOX", [1, 2, 3])))
     IO.print(wire(Ops.plan_get("INBOX", 7, 1000)))
+    IO.print(wire(Ops.plan_thread_search(["INBOX", "Sent Messages"],
+      [I.KHeader{"Message-ID", "<a@x>"}, I.KHeader{"References", "<a@x>"}])))
+    IO.print("[" ++ wire(Ops.plan_thread_search([], [I.KAll{}])) ++ "]")
+    IO.print(wire(Ops.plan_thread_search(["INBOX"], [])))
+    IO.print(wire(Ops.plan_thread_headers(
+      [Ops.FolderUids{"INBOX", [3]}, Ops.FolderUids{"Sent Messages", [1, 2]}])))
+    IO.print("[" ++ wire(Ops.plan_thread_headers([])) ++ "]")
     IO.print("changes")
     IO.print(wire(mark(True{})))
     IO.print(wire(mark(False{})))
@@ -202,6 +209,7 @@ def main() -> IO(Unit):
 #|mail_search ro=True destructive=False back=mail_search
 #|mail_get ro=True destructive=False back=mail_get
 #|mail_get_new ro=True destructive=False back=mail_get_new
+#|mail_get_thread ro=True destructive=False back=mail_get_thread
 #|mail_get_attachment ro=False destructive=False back=mail_get_attachment
 #|mail_mark_read ro=False destructive=False back=mail_mark_read
 #|mail_mark_unread ro=False destructive=False back=mail_mark_unread
@@ -217,7 +225,7 @@ def main() -> IO(Unit):
 #|mail_send ro=False destructive=False back=mail_send
 #|mail_reply ro=False destructive=False back=mail_reply
 #|mail_forward ro=False destructive=False back=mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
 #|mail_get
 #|mail_forward
 #|none
@@ -241,6 +249,11 @@ def main() -> IO(Unit):
 #|a1 EXAMINE "INBOX" | a2 UID SEARCH UID 4:*
 #|a1 EXAMINE "INBOX" | a2 UID FETCH 1,2,3 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])
 #|a1 EXAMINE "INBOX" | a2 UID FETCH 7 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[]<0.1000>)
+#|a1 EXAMINE "INBOX" | a2 UID SEARCH HEADER "Message-ID" "<a@x>" UNDELETED | a3 UID SEARCH HEADER "References" "<a@x>" UNDELETED | a4 EXAMINE "Sent Messages" | a5 UID SEARCH HEADER "Message-ID" "<a@x>" UNDELETED | a6 UID SEARCH HEADER "References" "<a@x>" UNDELETED
+#|[]
+#|a1 EXAMINE "INBOX"
+#|a1 EXAMINE "INBOX" | a2 UID FETCH 3 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)]) | a3 EXAMINE "Sent Messages" | a4 UID FETCH 1,2 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])
+#|[]
 #|changes
 #|a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 77] | a2 UID SEARCH UID 3,4 | a3 UID STORE 3,4 +FLAGS.SILENT (\Seen)
 #|a1 SELECT "INBOX" | =EXPECT * OK [UIDVALIDITY 77] | a2 UID SEARCH UID 3,4 | a3 UID STORE 3,4 -FLAGS.SILENT (\Seen)

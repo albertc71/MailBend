@@ -14,6 +14,7 @@ does verified TLS. MailBend exposes mail as MCP tools (stdio) and as a CLI.
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no |
 | `mail_get` | Read one message: headers, text, attachment list | no |
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no |
+| `mail_get_thread` | The conversation of a message, oldest first, from its folder, INBOX and Sent: linked by Message-ID, In-Reply-To and References only (never by subject), each message with its folder, `uidvalidity` and `parent` | no |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file |
 | `mail_mark_read` / `mail_mark_unread` | Add / remove `\Seen` | flags |
 | `mail_flag` / `mail_unflag` | Add / remove `\Flagged`; `mail_flag` sets an Apple Mail `colour` (red, orange, yellow, green, blue, purple, grey) or, without one, keeps the current colour; `mail_unflag` clears the colour. The result lists the flags the server reported and, for a colour, `colour_kept` (`true`, `false` or `"unverified"`) | flags |
@@ -309,7 +310,7 @@ flowchart LR
   agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["20 tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["21 tools"] --> plans["command plans<br/>(safety laws proven)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]

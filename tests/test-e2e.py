@@ -30,7 +30,8 @@ SEND_SETTINGS = ("MAILBEND_SAVE_SENT", "MAILBEND_ALLOWED_RECIPIENTS", "MAILBEND_
                  "MAILBEND_STATE_DIR")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 20
+TOOL_COUNT = 21
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_get_thread"]
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -161,6 +162,7 @@ def run_all(work):
     flag_tools(work)
     send_safety(work)
     downloads(work)
+    threads(work)
 
 
 def reads(srv):
@@ -527,7 +529,7 @@ def mcp(srv):
     check(f"mcp: tools/list has all {TOOL_COUNT} tools with schemas", len(tools) == TOOL_COUNT and all("inputSchema" in t for t in tools), names)
     ann = {t["name"]: t.get("annotations", {}) for t in tools}
     check("mcp: read tools are marked read-only, delete destructive",
-          all(ann[n]["readOnlyHint"] for n in ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"])
+          all(ann[n]["readOnlyHint"] for n in READ_TOOLS)
           and ann["mail_delete"]["destructiveHint"] and not ann["mail_trash"]["destructiveHint"], ann)
     call = by_id.get(3, {}).get("result", {})
     payload = json.loads(call.get("content", [{}])[0].get("text", "{}"))
@@ -657,15 +659,15 @@ def read_only(srv):
         unclear.append(("sure", "drafts", r))
     check("unrecognized switch values fail every tool instead of reading as off", not unclear and srv.st() == before, unclear)
 
-    read_tools = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"]
     check(f"tools lists all {TOOL_COUNT} tools by default", len(listed_tools(srv)) == TOOL_COUNT)
-    check("read-only mode lists only the 5 read tools", listed_tools(srv, MAILBEND_READ_ONLY="1") == read_tools)
-    check("a misconfigured switch lists only the read tools", listed_tools(srv, MAILBEND_READ_ONLY="yes") == read_tools)
+    check(f"read-only mode lists only the {len(READ_TOOLS)} read tools",
+          listed_tools(srv, MAILBEND_READ_ONLY="1") == READ_TOOLS)
+    check("a misconfigured switch lists only the read tools", listed_tools(srv, MAILBEND_READ_ONLY="yes") == READ_TOOLS)
     names = listed_tools(srv, MAILBEND_DRAFTS_ONLY="1")
     check("drafts-only mode hides mail_send", len(names) == TOOL_COUNT - 1 and "mail_send" not in names and "mail_reply" in names, names)
     res, code = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], MAILBEND_READ_ONLY="1")
     names = [t["name"] for t in res[0].get("result", {}).get("tools", [])] if res else []
-    check("mcp: tools/list in read-only mode offers only the read tools", names == read_tools, res)
+    check("mcp: tools/list in read-only mode offers only the read tools", names == READ_TOOLS, res)
 
     sent_before = len(srv.st().get("sent", []))
     refused = []
@@ -1530,7 +1532,7 @@ def send_settings(srv):
     check("drafts-only mode still hides and refuses mail_send with the send settings on",
           "mail_send" not in names and c != 0 and "MAILBEND_DRAFTS_ONLY" in r.get("error", ""), (names, r))
     check("read-only mode still lists only the read tools with the send settings on",
-          len(listed_tools(srv, MAILBEND_READ_ONLY="1", **on)) == 5)
+          listed_tools(srv, MAILBEND_READ_ONLY="1", **on) == READ_TOOLS)
 
 
 def allowlist(srv):
@@ -1878,6 +1880,119 @@ def killed_download(root):
         helper.wait()
         helper.stdin.close()
     check("a helper killed mid-write leaves no file behind", os.listdir(dl) == [], os.listdir(dl))
+
+
+def thread_message(uid, internaldate, headers, sender="alice@example.com", flags=()):
+    return {"uid": uid, "flags": list(flags), "internaldate": internaldate,
+            "raw": headers + f"From: {sender}\r\nTo: tester@example.com\r\nSubject: Trip plans\r\n"
+                   "Content-Type: text/plain\r\n\r\nText.\r\n"}
+
+
+def thread_fixture():
+    """A thread across INBOX and Sent: Alice's message (INBOX 7), my reply
+    (Sent 1, dated in another zone), her answer (INBOX 8), which names only my
+    reply, and an answer to hers (INBOX 12), which names only hers. Beside
+    them: a message with the same subject and no link (9), one whose
+    References differ from the first message's ID only in case (10: a HEADER
+    search matches it, the exact comparison does not), and a deleted reply
+    (11)."""
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"] += [
+        thread_message(7, "01-Oct-2026 09:00:00 +0000", "Message-ID: <trip1@example.com>\r\n"),
+        thread_message(8, "01-Oct-2026 11:00:00 +0000",
+                       "Message-ID: <trip3@example.com>\r\nIn-Reply-To: <trip2@example.com>\r\n"
+                       "References: <trip2@example.com>\r\n"),
+        thread_message(9, "01-Oct-2026 12:00:00 +0000", "Message-ID: <other@example.com>\r\n"),
+        thread_message(10, "01-Oct-2026 12:30:00 +0000",
+                       "Message-ID: <case@example.com>\r\nReferences: <TRIP1@EXAMPLE.COM>\r\n"),
+        thread_message(11, "01-Oct-2026 13:00:00 +0000",
+                       "Message-ID: <gone@example.com>\r\nIn-Reply-To: <trip1@example.com>\r\n",
+                       flags=["\\Deleted"]),
+        thread_message(12, "01-Oct-2026 14:00:00 +0000",
+                       "Message-ID: <trip4@example.com>\r\nReferences: <trip3@example.com>\r\n"),
+    ]
+    fixture["mailboxes"]["Sent Messages"]["messages"] = [
+        thread_message(1, "01-Oct-2026 12:00:00 +0200",
+                       "Message-ID: <trip2@example.com>\r\nIn-Reply-To: <trip1@example.com>\r\n"
+                       "References: <trip1@example.com>\r\n", sender="tester@example.com"),
+    ]
+    return fixture
+
+
+def long_references_fixture(junk):
+    """Alice's message (INBOX 7) and a reply to it (INBOX 8) whose References
+    name `junk` IDs that no message has before hers."""
+    refs = " ".join(f"<junk{i}@example.com>" for i in range(junk))
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"] += [
+        thread_message(7, "01-Oct-2026 09:00:00 +0000", "Message-ID: <trip1@example.com>\r\n"),
+        thread_message(8, "01-Oct-2026 10:00:00 +0000",
+                       "Message-ID: <long@example.com>\r\nIn-Reply-To: <trip1@example.com>\r\n"
+                       f"References: {refs} <trip1@example.com>\r\n"),
+    ]
+    return fixture
+
+
+def thread_of(r):
+    return [(m.get("folder"), m.get("uid"), m.get("parent")) for m in r.get("messages", [])]
+
+
+def fetched_uids(line):
+    return line.split(" UID FETCH ")[1].split(" ")[0].split(",")
+
+
+def threads(work):
+    first = ("INBOX", 7, None)
+    reply = ("Sent Messages", 1, "<trip1@example.com>")
+    answer = ("INBOX", 8, "<trip2@example.com>")
+    fourth = ("INBOX", 12, "<trip3@example.com>")
+    srv = Server(work, fixture=thread_fixture())
+    try:
+        before, log_start = srv.st(), len(srv.log_lines())
+        c, r = tool(srv, "mail_get_thread", {"uid": 7})
+        check("thread: from the first message, two rounds reach the reply in Sent and the answer to it, "
+              "oldest first, and stop before INBOX 12",
+              c == 0 and thread_of(r) == [first, reply, answer], r)
+        check("thread: the folders searched and each message's uidvalidity are reported",
+              r.get("searched") == ["INBOX", "Sent Messages"] and r.get("folder") == "INBOX" and r.get("uid") == 7
+              and [m.get("uidvalidity") for m in r.get("messages", [])] == [1700000001, 1700000004, 1700000001], r)
+        check("thread: each message carries its summary",
+              [m.get("subject") for m in r.get("messages", [])] == ["Trip plans"] * 3
+              and r["messages"][1].get("message_id") == "<trip2@example.com>", r)
+        c, r = tool(srv, "mail_get_thread", {"uid": 8})
+        check("thread: from a later message, its ancestors and the answer to it are found",
+              c == 0 and thread_of(r) == [first, reply, answer, fourth], r)
+        c, r = tool(srv, "mail_get_thread", {"uid": 9})
+        check("thread: a message with no links is its own thread, whatever its subject",
+              c == 0 and thread_of(r) == [("INBOX", 9, None)], r)
+        c, r = tool(srv, "mail_get_thread", {"folder": "Sent Messages", "uid": 1}, MAILBEND_READ_ONLY="1")
+        check("thread: allowed in read-only mode; from Sent, INBOX is searched too, so the message it answers "
+              "and the answers to it are found",
+              c == 0 and r.get("searched") == ["Sent Messages", "INBOX"]
+              and thread_of(r) == [first, reply, answer, fourth], r)
+        c, r = tool(srv, "mail_get_thread", {"uid": 99})
+        check("thread: a missing UID is an error", c != 0 and "no message with UID 99" in r.get("error", ""), r)
+        log = srv.log_lines()[log_start:]
+        searches = [line for line in log if " UID SEARCH " in line]
+        check("thread: every search is a HEADER search of undeleted messages",
+              searches and all(" HEADER " in line and line.endswith(" UNDELETED") for line in searches), searches[:3])
+        check("thread: a message that matches a search only by case is fetched (the exact lists above leave it out)",
+              any("10" in fetched_uids(line) for line in log if " UID FETCH " in line), log)
+        check("thread: reads change nothing (EXAMINE only, no flag stored)",
+              srv.st() == before and not any(" SELECT " in line or " STORE " in line for line in log), log)
+    finally:
+        srv.stop()
+    srv = Server(work, fixture=long_references_fixture(3000))
+    try:
+        log_start = len(srv.log_lines())
+        c, r = tool(srv, "mail_get_thread", {"uid": 7})
+        searches = [line for line in srv.log_lines()[log_start:] if " UID SEARCH " in line]
+        check("thread: a reply naming 3000 unknown IDs in References is read; its round searches only 50 IDs "
+              "(3 keys in 2 folders each), after 1 in the first round",
+              c == 0 and thread_of(r) == [first, ("INBOX", 8, "<trip1@example.com>")]
+              and len(searches) == (1 + 50) * 3 * 2, (r, len(searches)))
+    finally:
+        srv.stop()
 
 
 if __name__ == "__main__":

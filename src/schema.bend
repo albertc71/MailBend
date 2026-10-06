@@ -81,6 +81,23 @@ def tool_defs.mail_get_new() -> String:
     "\"destructiveHint\":false,\"idempotentHint\":true,",
     "\"openWorldHint\":false}}"])
 
+def tool_defs.mail_get_thread() -> String:
+  String.concat([
+    "{\"name\":\"mail_get_thread\",\"description\":\"Read the conversation a ",
+    "message belongs to, oldest first (by INTERNALDATE, then UID): the ",
+    "messages in its folder, INBOX and the resolved Sent folder that are ",
+    "linked to it by Message-ID, In-Reply-To and References, each with its ",
+    "folder, uidvalidity and parent (the Message-ID of the message it answers ",
+    "in the thread, or null). Messages are never grouped by subject. Two ",
+    "rounds of linked IDs are searched, at most 50 IDs each, so a long thread ",
+    "can be cut short; searched lists the folders. Changes nothing: messages ",
+    "stay unread.\",\"inputSchema\":{\"type\":\"object\",",
+    "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
+    "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
+    "\"minimum\":1}},\"required\":[\"uid\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
+    "\"idempotentHint\":true,\"openWorldHint\":false}}"])
+
 def tool_defs.mail_get_attachment() -> String:
   String.concat([
     "{\"name\":\"mail_get_attachment\",\"description\":\"Save one attachment ",
@@ -475,6 +492,7 @@ def tool_defs() -> String:
     tool_defs.mail_search(),
     tool_defs.mail_get(),
     tool_defs.mail_get_new(),
+    tool_defs.mail_get_thread(),
     tool_defs.mail_get_attachment(),
     tool_defs.mail_mark_read(),
     tool_defs.mail_mark_unread(),

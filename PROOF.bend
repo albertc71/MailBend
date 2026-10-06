@@ -31,7 +31,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_five():
+def Laws.read_only_tools_are_exactly_six():
   {==}
 
 # Read plans
@@ -73,6 +73,45 @@ def get_new_writes_nothing.if(at_end: Bool, -mbox: String, -since: U32)
 
 def Laws.get_new_writes_nothing(mbox, since):
   get_new_writes_nothing.if(U32.is_eq(since, Ops.max_uid()), mbox, since)
+
+# The thread plans are lists over folders and keys, so their law rests on
+# lemmas by induction over those lists: the searches add no write to what
+# follows them, so neither plan writes anything.
+
+def thread_searches_add_no_write(keys: List<&2, I.Key>, -rest: List<&2, I.Cmd>)
+  -> {I.any_writes(Ops.thread_searches(keys, rest)) == I.any_writes(rest) : Bool}:
+  match keys:
+    case Nil{}:
+      {==}
+    case k <> t:
+      thread_searches_add_no_write(t, rest)
+
+def thread_search_writes_nothing(folders: List<&2, String>, +keys: List<&2, I.Key>)
+  -> {I.any_writes(Ops.plan_thread_search(folders, keys)) == False{} : Bool}:
+  match folders:
+    case Nil{}:
+      {==}
+    case mbox <> t:
+      Equal.trans(Bool,
+        I.any_writes(Ops.thread_searches(keys, Ops.plan_thread_search(t, keys))),
+        I.any_writes(Ops.plan_thread_search(t, keys)),
+        False{},
+        thread_searches_add_no_write(keys, Ops.plan_thread_search(t, keys)),
+        thread_search_writes_nothing(t, keys))
+
+def thread_headers_write_nothing(found: List<&2, Ops.FolderUids>)
+  -> {I.any_writes(Ops.plan_thread_headers(found)) == False{} : Bool}:
+  match found:
+    case Nil{}:
+      {==}
+    case Ops.FolderUids{mbox, uids} <> t:
+      thread_headers_write_nothing(t)
+
+def Laws.thread_plans_write_nothing(folders, keys, found):
+  %Equal.sym(Bool, I.any_writes(Ops.plan_thread_search(folders, keys)), False{},
+    thread_search_writes_nothing(folders, keys)) :
+    {Bool.or(_, I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
+  thread_headers_write_nothing(found)
 
 # Read rendering
 # --------------

@@ -10,6 +10,7 @@ import ./mime.bend as M
 import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
+import ./thread.bend as T
 
 # Results
 # =======
@@ -962,10 +963,10 @@ def folders_json(fs: List<&2, I.Folder>) -> List<&2, J.Json>:
 def hdr_text(hs: List<&2, M.Hdr>, name: String) -> String:
   M.decode_header(M.header(hs, name))
 
-def summary(m: I.Msg) -> J.Json:
+def summary_kvs(m: I.Msg) -> List<&2, J.Json>:
   I.Msg{uid, +flags, date, size, headers, body} = m
   +hs = M.headers(headers)
-  J.obj([
+  [
     J.kv("uid", J.num(uid)),
     J.kv("date", J.str(hdr_text(hs, "date"))),
     J.kv("from", J.str(hdr_text(hs, "from"))),
@@ -978,7 +979,10 @@ def summary(m: I.Msg) -> J.Json:
     J.kv("flags", J.strs(flags)),
     J.kv("seen", J.bool(I.has_attr(flags, "\\Seen"))),
     J.kv("flagged", J.bool(I.has_attr(flags, "\\Flagged")))
-  ])
+  ]
+
+def summary(m: I.Msg) -> J.Json:
+  J.obj(summary_kvs(m))
 
 def summaries(ms: List<&2, I.Msg>) -> List<&2, J.Json>:
   match ms:
@@ -1017,6 +1021,14 @@ def requested(ms: List<&2, I.Msg>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
       []
     case +m <> t:
       List.filter.put(I.Msg, m, requested(t, uids), uid_in(msg_uid(m), uids))
+
+# The UIDs of `us` that are not in `seen`, each once, in order.
+def unseen(us: List<&2, U32>, +seen: List<&2, U32>) -> List<&2, U32>:
+  match us:
+    case Nil{}:
+      []
+    case +u <> t:
+      List.filter.put(U32, u, unseen(t, u <> seen), Bool.not(uid_in(u, seen)))
 
 def uidv_is(have: Maybe<&2, U32>, want: U32) -> Bool:
   match have:
@@ -1486,6 +1498,319 @@ def t_get_new.if(problem: String, +args: J.Json) -> IO(Out):
 
 def t_get_new(+args: J.Json) -> IO(Out):
   t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
+
+# mail_get_thread
+# ---------------
+
+# A conversation is read without changing anything: the message's summary,
+# the folders (to resolve Sent), then two rounds. A round searches the
+# message's folder, INBOX and the Sent folder, in one session, for the IDs
+# the thread names so far (thread.bend). A second session fetches the summaries
+# of the UIDs not seen yet, and only the messages whose headers name one of
+# those IDs exactly are kept, since SEARCH HEADER matches substrings. There
+# is no third round, so a long thread can be cut short.
+
+# What a session found in each folder it opened, in plan order: the
+# UIDVALIDITY its EXAMINE reported, the UIDs its searches found and the
+# messages its fetches returned.
+type Found is Data:
+  Found{folder: String, uidv: Maybe<&2, U32>, uids: List<&2, U32>, msgs: List<&2, I.Msg>}
+
+# Where a thread read stands: the IDs to search for next, those searched
+# for already, the messages kept, and what each session found in each
+# folder (for the UIDVALIDITY it reported).
+type Threading is Data:
+  Threading{
+    ids: List<&2, String>,
+    searched: List<&2, String>,
+    nodes: List<&2, T.Node>,
+    opened: List<&2, Found>
+  }
+
+# A thread read so far, or why it failed.
+def Thread() -> Data:
+  Result<&2, &2, String, Threading>
+
+# Command `c`'s replies `rs` added to what its folder found: an EXAMINE
+# opens the next folder, and a fetch keeps only the UIDs it asked for.
+def thread_found.step(
+  c: I.Cmd, rs: List<&2, I.RLine>, acc: List<&2, Found>
+) -> List<&2, Found>:
+  match c acc:
+    case I.CExamine{mbox} _:
+      Found{mbox, I.ok_code(rs, "UIDVALIDITY"), [], []} <> acc
+    case I.CSearch{_} Found{f, v, us, ms} <> t:
+      Found{f, v, List.append(&2, U32, us, I.search_uids(rs)), ms} <> t
+    case I.CFetch{uids, _} Found{f, v, us, ms} <> t:
+      Found{f, v, us, List.append(&2, I.Msg, ms, requested(I.fetched(rs), uids))} <> t
+    case _ _:
+      acc
+
+def thread_found.go(
+  cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +n: U32, acc: List<&2, Found>
+) -> List<&2, Found>:
+  match cs:
+    case Nil{}:
+      List.reverse(&2, Found, acc)
+    case +c <> t:
+      thread_found.go(t, lines, I.next_tag(c, n),
+        thread_found.step(c, I.replies(lines, n), acc))
+
+# What the session that ran `plan` found, folder by folder.
+def thread_found(plan: List<&2, I.Cmd>, lines: List<&2, I.RLine>) -> List<&2, Found>:
+  thread_found.go(plan, lines, 1, [])
+
+# Whether `before` has the folder `mbox` with another UIDVALIDITY.
+def uidv_moved(before: List<&2, Found>, +mbox: String, +uidv: Maybe<&2, U32>) -> Bool:
+  match before:
+    case Nil{}:
+      False{}
+    case Found{f, v, us, ms} <> t:
+      (String.eq(f, mbox) && Bool.not(same_uidv(v, uidv))) || uidv_moved(t, mbox, uidv)
+
+# Whether a folder of `fs` reports another UIDVALIDITY than before, so
+# that its UIDs may now name other messages.
+def any_uidv_moved(fs: List<&2, Found>, +before: List<&2, Found>) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case Found{f, v, us, ms} <> t:
+      uidv_moved(before, f, v) || any_uidv_moved(t, before)
+
+def thread_moved_msg() -> String:
+  "a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name " ++
+    "other messages: read the thread again"
+
+def session_found.if(moved: Bool, fs: List<&2, Found>) -> Result<&2, &2, String, List<&2, Found>>:
+  match moved:
+    case True{}:
+      Fail{thread_moved_msg()}
+    case False{}:
+      Done{fs}
+
+# What a session found, unless it failed or a folder reported another
+# UIDVALIDITY than in an earlier session (`before`).
+def session_found(
+  r: Run(), plan: List<&2, I.Cmd>, before: List<&2, Found>
+) -> Result<&2, &2, String, List<&2, Found>>:
+  match r:
+    case Fail{m}:
+      Fail{m}
+    case Done{lines}:
+      +fs = thread_found(plan, lines)
+      session_found.if(any_uidv_moved(fs, before), fs)
+
+# The UIDs of the kept messages in `mbox`.
+def kept_uids(ns: List<&2, T.Node>, +mbox: String) -> List<&2, U32>:
+  match ns:
+    case Nil{}:
+      []
+    case +n <> t:
+      List.filter.put(U32, T.node_uid(n), kept_uids(t, mbox), String.eq(T.node_folder(n), mbox))
+
+def thread_wants.put(
+  mbox: String, uids: List<&2, U32>, rest: List<&2, Ops.FolderUids>
+) -> List<&2, Ops.FolderUids>:
+  match uids:
+    case Nil{}:
+      rest
+    case h <> t:
+      Ops.FolderUids{mbox, h <> t} <> rest
+
+# The UIDs each folder's searches found that no kept message has, each
+# once; a folder with none is left out.
+def thread_wants(fs: List<&2, Found>, +ns: List<&2, T.Node>) -> List<&2, Ops.FolderUids>:
+  match fs:
+    case Nil{}:
+      []
+    case Found{+f, v, us, ms} <> t:
+      thread_wants.put(f, unseen(us, kept_uids(ns, f)), thread_wants(t, ns))
+
+def msg_nodes(+mbox: String, +uidv: Maybe<&2, U32>, ms: List<&2, I.Msg>) -> List<&2, T.Node>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      T.node(mbox, uidv, m) <> msg_nodes(mbox, uidv, t)
+
+def found_nodes(fs: List<&2, Found>) -> List<&2, T.Node>:
+  match fs:
+    case Nil{}:
+      []
+    case Found{f, v, us, ms} <> t:
+      List.append(&2, T.Node, msg_nodes(f, v, ms), found_nodes(t))
+
+# A round's end, once its fetch found `fs`: the messages that name one of
+# the round's IDs are kept, and the IDs they name are searched for next.
+def thread_grown(st: Threading, +fs: List<&2, Found>) -> Threading:
+  Threading{+ids, searched, nodes, opened} = st
+  +kept = T.linked(found_nodes(fs), ids)
+  +done = List.append(&2, String, searched, ids)
+  Threading{
+    T.next_ids(kept, done),
+    done,
+    List.append(&2, T.Node, nodes, kept),
+    List.append(&2, Found, opened, fs)
+  }
+
+def thread_fetch.put(found: Result<&2, &2, String, List<&2, Found>>, st: Threading) -> Thread():
+  match found:
+    case Fail{m}:
+      Fail{m}
+    case Done{fs}:
+      Done{thread_grown(st, fs)}
+
+# Fetches the summaries of the UIDs a round wants and keeps the linked
+# messages. When it wants none, the round ends there.
+def thread_fetch(wants: List<&2, Ops.FolderUids>, st: Threading) -> IO(Thread()):
+  match wants st:
+    case Nil{} _:
+      IO.pure(Thread(), Done{thread_grown(st, [])})
+    case h <> t Threading{ids, searched, nodes, +opened}:
+      +plan = Ops.plan_thread_headers(h <> t)
+      do IO<Thread()>:
+        r : Run() <- imap_run(plan)
+        return thread_fetch.put(session_found(r, plan, opened),
+          Threading{ids, searched, nodes, opened})
+
+def thread_round.put(found: Result<&2, &2, String, List<&2, Found>>, st: Threading) -> IO(Thread()):
+  match found:
+    case Fail{m}:
+      IO.pure(Thread(), Fail{m})
+    case Done{+fs}:
+      Threading{ids, searched, +nodes, opened} = st
+      thread_fetch(thread_wants(fs, nodes),
+        Threading{ids, searched, nodes, List.append(&2, Found, opened, fs)})
+
+# One round: every folder searched for the IDs, then what is new fetched. A
+# read with no IDs left to search for does nothing.
+def thread_round(g: Thread(), folders: List<&2, String>) -> IO(Thread()):
+  match g:
+    case Fail{m}:
+      IO.pure(Thread(), Fail{m})
+    case Done{Threading{Nil{}, searched, nodes, opened}}:
+      IO.pure(Thread(), Done{Threading{[], searched, nodes, opened}})
+    case Done{Threading{+ids, searched, nodes, +opened}}:
+      +plan = Ops.plan_thread_search(folders, T.search_keys(ids))
+      do IO<Thread()>:
+        r : Run() <- imap_run(plan)
+        thread_round.put(session_found(r, plan, opened), Threading{ids, searched, nodes, opened})
+
+# A message's parent as JSON: its Message-ID, or null for none.
+def parent_json(id: String) -> J.Json:
+  match id:
+    case SNil{}:
+      J.JNull{}
+    case SCon{h, t}:
+      J.str(SCon{h, t})
+
+def placed_json(p: T.Placed) -> J.Json:
+  T.Placed{n, parent} = p
+  T.Node{folder, uidv, msg, time, id, replies_to, refs} = n
+  J.obj(List.concat(&2, J.Json, [
+    [J.kv("folder", J.str(folder)), J.kv("uidvalidity", maybe_num(uidv))],
+    summary_kvs(msg),
+    [J.kv("parent", parent_json(parent))]
+  ]))
+
+def placed_jsons(ps: List<&2, T.Placed>) -> List<&2, J.Json>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      placed_json(p) <> placed_jsons(t)
+
+def thread_out(g: Thread(), folders: List<&2, String>, mbox: String, uid: U32) -> Out:
+  match g:
+    case Fail{m}:
+      Err{m}
+    case Done{Threading{ids, searched, nodes, opened}}:
+      ok_obj([
+        J.kv("folder", J.str(mbox)),
+        J.kv("uid", J.num(uid)),
+        J.kv("searched", J.strs(folders)),
+        J.kv("messages", J.arr(placed_jsons(T.thread_order(nodes))))
+      ])
+
+# Whether the folder names `fs` include `f`.
+def lists_folder(fs: List<&2, String>, +f: String) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case x <> t:
+      I.same_name(x, f) || lists_folder(t, f)
+
+# `fs`, then the folder `f` unless `fs` lists it.
+def folder_added(+fs: List<&2, String>, +f: String) -> List<&2, String>:
+  List.append(&2, String, fs, List.filter.put(String, f, [], Bool.not(lists_folder(fs, f))))
+
+def thread_folders.put(fs: List<&2, String>, sent: Maybe<&2, String>) -> List<&2, String>:
+  match sent:
+    case None{}:
+      fs
+    case Some{s}:
+      folder_added(fs, s)
+
+# The folders a thread is searched in, each once: the message's own, INBOX,
+# where answers arrive, and the Sent folder when it resolves.
+def thread_folders(mbox: String, sent: Maybe<&2, String>) -> List<&2, String>:
+  thread_folders.put(folder_added([mbox], "INBOX"), sent)
+
+def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32) -> IO(Out):
+  match f:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+      +folders = thread_folders(mbox, sent)
+      do IO<Out>:
+        one : Thread() <- thread_round(Done{st}, folders)
+        two : Thread() <- thread_round(one, folders)
+        return thread_out(two, folders, mbox, uid)
+
+def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{lines}:
+      do IO<Out>:
+        f : Fs() <- folders_io(lines)
+        thread_rounds(f, st, mbox, uid)
+
+# A read that starts at the message `start`, which its session found in
+# `mbox`: the IDs it names are searched for first.
+def first_threading(+start: T.Node, mbox: String, uidv: Maybe<&2, U32>) -> Threading:
+  Threading{T.next_ids([start], []), [], [start], [Found{mbox, uidv, [], []}]}
+
+def thread_start.put(
+  ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32
+) -> IO(Out):
+  match ms:
+    case Nil{}:
+      pure_out(Err{no_message(uid, mbox)})
+    case m <> t:
+      do IO<Out>:
+        r : Run() <- imap_run(Ops.plan_probe())
+        thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid)
+
+def thread_start(r: Run(), mbox: String, +uid: U32) -> IO(Out):
+  match r:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{+lines}:
+      thread_start.put(with_uid(I.fetched(lines), uid), I.ok_code(lines, "UIDVALIDITY"), mbox,
+        uid)
+
+def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String) -> IO(Out):
+  match u:
+    case Done{+uid}:
+      do IO<Out>:
+        r : Run() <- imap_run(Ops.plan_headers(mbox, [uid]))
+        thread_start(r, mbox, uid)
+    case Fail{m}:
+      pure_out(Err{m})
+
+def t_get_thread(+args: J.Json) -> IO(Out):
+  thread_uid(single_uid(uids_arg(args), "mail_get_thread"), folder_arg(args))
 
 # Changing mail
 # =============
@@ -3854,6 +4179,8 @@ def run_op(op: Ops.Op, args: J.Json) -> IO(Out):
       t_get(args)
     case Ops.OGetNew{}:
       t_get_new(args)
+    case Ops.OGetThread{}:
+      t_get_thread(args)
     case Ops.OGetAttachment{}:
       t_get_attachment(args)
     case Ops.OMarkRead{}:

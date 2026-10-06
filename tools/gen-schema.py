@@ -200,6 +200,19 @@ TOOLS = [
               "set. If it changed, the checkpoint restarts at 0.",
               minimum=0),
           "limit": param("integer", "Default 50.", minimum=1, maximum=500)}),
+    tool("mail_get_thread",
+         "Read the conversation a message belongs to, oldest first (by "
+         "INTERNALDATE, then UID): the messages in its folder, INBOX and "
+         "the resolved Sent folder that are linked to it by Message-ID, "
+         "In-Reply-To and References, each with its folder, uidvalidity and "
+         "parent (the Message-ID of the message it answers in the thread, "
+         "or null). Messages are never grouped by subject. Two rounds of "
+         "linked IDs are searched, at most 50 IDs each, so a long thread "
+         "can be cut short; searched lists the folders. Changes nothing: "
+         "messages stay unread.",
+         READS,
+         {"folder": FOLDER, "uid": UID},
+         ["uid"]),
     tool("mail_get_attachment",
          "Save one attachment of a message as a new file in "
          "MAILBEND_DOWNLOAD_DIR (downloads are off without it) and return its "

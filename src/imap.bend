@@ -777,6 +777,77 @@ def imap_date.parts(ps: List<&2, String>) -> Maybe<&2, String>:
 def imap_date(iso: String) -> Maybe<&2, String>:
   imap_date.parts(String.split(iso, '-'))
 
+# A number of a date, 0 when it does not read.
+def date_num(s: String) -> U32:
+  Maybe.default(&2, U32, U32.read(s), 0)
+
+# The number of the month abbreviated `name`, from month `k` down to 1; 0
+# when none is. Each step is one short comparison.
+def month_number.go(+k: Nat, +name: String) -> U32:
+  match k:
+    case 0n:
+      0
+    case 1n+p:
+      +m = (U32.from_nat(p) + 1 : U32)
+      Bool.pick(U32, String.eq(C.month_name(m), name), m, month_number.go(p, name))
+
+def month_number(name: String) -> U32:
+  month_number.go(12n, name)
+
+# Days from 1970-01-01 to a civil date (days-from-civil, H. Hinnant), the
+# inverse of mime.bend's civil. The year starts in March, so leap days come
+# last, and every step stays unsigned for dates from 1970 on.
+def days_from_civil(y: U32, +m: U32, d: U32) -> U32:
+  +early = U32.is_le(m, 2)
+  +yy = (y - Bool.to_u32(early) : U32)
+  +era = (yy / 400 : U32)
+  +yoe = (yy - era * 400 : U32)
+  mp = Bool.pick(U32, early, (m + 9 : U32), (m - 3 : U32))
+  doy = ((153 * mp + 2) / 5 + d - 1 : U32)
+  doe = (yoe * 365 + yoe / 4 - yoe / 100 + doy : U32)
+  (era * 146097 + doe - 719468 : U32)
+
+# A "+hhmm" or "-hhmm" zone's offset in seconds.
+def zone_seconds(hhmm: String) -> U32:
+  +n = date_num(hhmm)
+  ((n / 100) * 3600 + (n % 100) * 60 : U32)
+
+# Local seconds in `zone` as seconds in UTC.
+def utc(local: U32, zone: String) -> U32:
+  match zone:
+    case SCon{'+', t}:
+      (local - zone_seconds(t) : U32)
+    case SCon{'-', t}:
+      (local + zone_seconds(t) : U32)
+    case _:
+      local
+
+# The seconds in UTC of a date's day ("dd-Mon-yyyy"), time ("hh:mm:ss") and
+# zone, split into their fields.
+def civil_seconds(
+  dmy: List<&2, String>, hms: List<&2, String>, zone: String
+) -> U32:
+  match dmy hms:
+    case d <> mon <> y <> Nil{} h <> mi <> s <> Nil{}:
+      days = days_from_civil(date_num(y), month_number(mon), date_num(d))
+      utc((days * 86400 + date_num(h) * 3600 + date_num(mi) * 60 + date_num(s) : U32),
+        zone)
+    case _ _:
+      0
+
+def internal_seconds.put(ps: List<&2, String>) -> U32:
+  match ps:
+    case dmy <> hms <> zone <> Nil{}:
+      civil_seconds(String.split(dmy, '-'), String.split(hms, ':'), zone)
+    case _:
+      0
+
+# An INTERNALDATE ("dd-Mon-yyyy hh:mm:ss +zzzz", RFC 3501) in seconds since
+# the epoch, so that dates in different zones compare; 0 when it does not
+# read. The server sets it, unlike the Date header, which the sender writes.
+def internal_seconds(date: String) -> U32:
+  internal_seconds.put(String.split(String.trim(date), ' '))
+
 # Transcript framing
 # ------------------
 

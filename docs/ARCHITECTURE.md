@@ -35,9 +35,9 @@ flowchart TB
     direction TB
     main["main.bend<br/>MCP JSON-RPC server and CLI<br/>8 MiB line cap, envelope check"]
     json["src/json.bend<br/>strict JSON parser"]
-    tools["src/tools.bend<br/>20 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
+    tools["src/tools.bend<br/>21 tools: arguments, sessions, results<br/>MAILBEND_READ_ONLY gate"]
     ops["src/ops.bend<br/>plan_* command plans<br/>the only way to build IMAP commands"]
-    laws["LAWS.bend + PROOF.bend<br/>63 laws proven over the plans and the envelope"]
+    laws["LAWS.bend + PROOF.bend<br/>64 laws proven over the plans and the envelope"]
     imap["src/imap.bend<br/>render script, parse transcript"]
     mime["src/mime.bend + src/codec.bend<br/>parse and compose MIME"]
     smtp["src/smtp.bend<br/>SMTP envelope, dot-stuffing"]
@@ -177,7 +177,7 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
 | Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
 | No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
-| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_five`, e2e (all 15 mutating tools, switch values, tool lists) |
+| Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; unclear switch values fail | `src/tools.bend` (`mode`, `gated`, `offered_tools`) | law `read_only_tools_are_exactly_six`, e2e (all 15 mutating tools, switch values, tool lists) |
 | With an allowlist, a message goes only when every envelope recipient is allowed; the envelope has no other source | `S.outbound` in `src/smtp.bend`, `send_with` in `src/tools.bend` | laws `allowlist_refuses_unlisted`, `no_allowlist_is_unchanged`, CI grep for other envelope callers, unit and e2e allowlist cases |
 | The daily send limit is reserved before SMTP and fails closed; no tool reads or changes the count | `mailbend-attach count` (`flock`, openat2), `reserve` in `src/tools.bend` | Rust tests (two concurrent processes), e2e at, below and over the limit |
 | A Sent copy is one `APPEND` to the resolved Sent folder, made only when a read-only search finds no copy; a failed copy does not fail the send | `plan_sent_copy`, `sent_copy` in `src/tools.bend` | law `sent_copy_only_appends`, e2e with and without server filing |
@@ -186,13 +186,15 @@ session; without UIDPLUS as well, there is no plan and nothing is sent.
 | Downloads are new files (mode 0600, never replacing one) only in a dedicated `MAILBEND_DOWNLOAD_DIR`, apart from `MAILBEND_ATTACH_DIR` and from directories whose files may be run; never in read-only mode | `mailbend-attach save` (`O_TMPFILE` + `linkat`, device and inode lineage, `PATH` entries), `local_name` in `src/mime.bend`, law `download_is_not_read_only` | Rust tests, e2e (every byte, existing file, names, overlap and alias, `~/.config`, `autostart`, `.ssh`, `PATH` and alias, killed helper, truncated fetch) |
 | Message content cannot spoof a server reply | literals as raw bytes (helper and core) | transport and unit tests |
 | Malformed MCP input is refused | `src/json.bend`, `main.bend` | unit tests, e2e MCP session |
+| A thread holds only messages whose Message-ID, In-Reply-To or References name one of the IDs searched for, compared exactly after the substring `SEARCH HEADER`; never grouped by subject; at most two rounds | `src/thread.bend` (`is_linked`, `next_ids`, `thread_order`), `plan_thread_search`, `plan_thread_headers` | law `thread_plans_write_nothing`, unit tests (order, missing parents, cycles, shared IDs, long References), e2e case-only match, deleted reply, two-round bound, long References |
 | Folder roles resolve independently; uncertain targets never trigger guessed writes | `src/tools.bend` discovery and resolution, `src/ops.bend` discovery plans | local e2e partial-role, override, ambiguity and failed-discovery cases |
 
 ## Layers
 
 ```text
 main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
-src/tools.bend       the 20 tools: arguments, sessions, results
+src/tools.bend       the 21 tools: arguments, sessions, results
+src/thread.bend      which messages form a thread, and their order and parents
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
 src/mime.bend        message parsing (headers, RFC 2047/2231, multipart) and composition
@@ -322,6 +324,20 @@ These tests use the fake TLS server, not a live provider.
   an argument, because the helper drops its environment.
 - A `mail_get_new` checkpoint is a UID with its UIDVALIDITY: `since_uid`
   without `uidvalidity` is refused.
+- `mail_get_thread` searches the message's folder, INBOX and the resolved
+  Sent folder (each once; Sent is left out when it does not resolve) for
+  the IDs the thread names (`UID SEARCH HEADER ... UNDELETED`, one session
+  for every folder), fetches the summaries of the new UIDs, and keeps a
+  message only when its own ID, In-Reply-To or References name one of those
+  IDs exactly. It runs two such rounds at most, 50 IDs each, and only the
+  last 50 References of a message count, so a long header costs no more.
+  An ID that is not plain ASCII or is longer than 998 bytes is not searched
+  for, so that no server refuses a search. The read fails when a folder's
+  UIDVALIDITY changes between its sessions. Messages are ordered by
+  INTERNALDATE (set by the server) and then UID; a message's parent is the
+  one its In-Reply-To names, else the last one its References names. A
+  cycle of parents in broken headers is cut at its newest message, and a
+  message whose Message-ID another message also has gets no parent.
 - Replies read the first 256 KB of the original. The result reports
   `quoted_original_truncated`, `quoted_bytes` and `original_bytes`, and a
   larger original also gets a note in the quote that it may be incomplete,
@@ -347,8 +363,9 @@ SMTP envelope in `src/smtp.bend`; `PROOF.bend` proves them, and
 `bend PROOF.bend` fails if any stops holding:
 
 - `Read`/`Search` are read-only, `Delete` is not, `Trash` is not destructive;
-- the probe, preflight, folder, roles, search, summary, read and new-mail plans
-  contain no command that can change a mailbox, for all arguments;
+- the probe, preflight, folder, roles, search, summary, read, new-mail and
+  thread plans contain no command that can change a mailbox, for all
+  arguments;
 - rendered read scripts start with `EXAMINE`, and every fetch item renders as
   `BODY.PEEK[...]` or metadata;
 - marking read/unread never marks `\Deleted` or expunges;
@@ -385,7 +402,7 @@ SMTP envelope in `src/smtp.bend`; `PROOF.bend` proves them, and
   removes mail (no plan deletes a folder);
 - a label is a move: `plan_label` is `plan_move`, so every move law covers it,
   and it changes no folder;
-- exactly the five read tools are read-only.
+- exactly the six read tools are read-only.
 
 The laws are about these pure plans, the envelope and their rendering. The native helpers,
 TLS, MIME parsing, the agent's choices and the runtime configuration are

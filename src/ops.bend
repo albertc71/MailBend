@@ -14,6 +14,7 @@ type Op is Data:
   OSearch{}
   OGet{}
   OGetNew{}
+  OGetThread{}
   OGetAttachment{}
   OMarkRead{}
   OMarkUnread{}
@@ -45,6 +46,8 @@ def is_read_only(op: Op) -> Bool:
       True{}
     case OGetNew{}:
       True{}
+    case OGetThread{}:
+      True{}
     case _:
       False{}
 
@@ -69,6 +72,8 @@ def name(op: Op) -> String:
       "mail_get"
     case OGetNew{}:
       "mail_get_new"
+    case OGetThread{}:
+      "mail_get_thread"
     case OGetAttachment{}:
       "mail_get_attachment"
     case OMarkRead{}:
@@ -108,6 +113,7 @@ def all_ops() -> List<&2, Op>:
     OSearch{},
     OGet{},
     OGetNew{},
+    OGetThread{},
     OGetAttachment{},
     OMarkRead{},
     OMarkUnread{},
@@ -217,6 +223,38 @@ def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
     I.CExamine{mbox},
     I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
   ]
+
+# A conversation is read in sessions of several folders each: one searches
+# every folder for the thread's message IDs, the next fetches the summaries
+# of what it found.
+
+# One UID SEARCH per key, each for undeleted messages only, then `rest`.
+def thread_searches(keys: List<&2, I.Key>, rest: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  match keys:
+    case Nil{}:
+      rest
+    case k <> t:
+      I.CSearch{[k, I.KUndeleted{}]} <> thread_searches(t, rest)
+
+# Each folder opened with EXAMINE, then searched once per key.
+def plan_thread_search(folders: List<&2, String>, +keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
+  match folders:
+    case Nil{}:
+      []
+    case mbox <> t:
+      I.CExamine{mbox} <> thread_searches(keys, plan_thread_search(t, keys))
+
+# The UIDs to fetch in one folder.
+type FolderUids is Data:
+  FolderUids{mbox: String, uids: List<&2, U32>}
+
+# The summaries of the UIDs in each folder, as plan_headers fetches them.
+def plan_thread_headers(found: List<&2, FolderUids>) -> List<&2, I.Cmd>:
+  match found:
+    case Nil{}:
+      []
+    case FolderUids{mbox, uids} <> t:
+      List.append(&2, I.Cmd, plan_headers(mbox, uids), plan_thread_headers(t))
 
 # Change plans
 # ------------

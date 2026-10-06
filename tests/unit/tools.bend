@@ -1,6 +1,7 @@
 # The pure parts of the mail tools: switches, helper results, argument
-# parsing, role resolution, folder guards, flag and move results, composing
-# and the schema checks. IO paths are left to the end-to-end suite.
+# parsing, role resolution, folder guards, flag and move results, composing,
+# the schema checks and reading threads. IO paths are left to the end-to-end
+# suite.
 
 import Base
 import ../../src/codec.bend as C
@@ -10,6 +11,7 @@ import ../../src/mime.bend as M
 import ../../src/ops.bend as Ops
 import ../../src/schema.bend as Schema
 import ../../src/tools.bend as T
+import ../../src/thread.bend as Th
 
 # Showing values
 # --------------
@@ -928,6 +930,66 @@ def check_sending() -> IO(Unit):
       show_bool(T.has_msg_id([], "<a@x>"))], " "))
     IO.print(T.sent_copy.fin(Done{[]}, "Sent") ++ " | " ++ T.sent_copy.fin(Fail{"no"}, "Sent"))
 
+# Threads
+# -------
+
+# Two keys in each of two folders: INBOX finds 4 2, then 2 9; Sent finds
+# nothing, then 1.
+def thread_search_plan() -> List<&2, I.Cmd>:
+  Ops.plan_thread_search(["INBOX", "Sent"], [I.KAll{}, I.KSeen{}])
+
+def thread_search_transcript() -> String:
+  String.concat([
+    "* OK [UIDVALIDITY 7] ok\r\na1 OK\r\n* SEARCH 4 2\r\na2 OK\r\n* SEARCH 2 9\r\na3 OK\r\n",
+    "* OK [UIDVALIDITY 8] ok\r\na4 OK\r\n* SEARCH\r\na5 OK\r\n* SEARCH 1\r\na6 OK\r\n"])
+
+def show_found(fs: List<&2, T.Found>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case T.Found{f, v, us, ms} <> t:
+      f ++ " " ++ J.show(T.maybe_num(v)) ++ " [" ++ show_u32s(us) ++ "] "
+        ++ Nat.show(List.length(&2, I.Msg, ms)) ++ " | " ++ show_found(t)
+
+def show_session(r: Result<&2, &2, String, List<&2, T.Found>>) -> String:
+  match r:
+    case Fail{m}:
+      "err " ++ m
+    case Done{fs}:
+      show_found(fs)
+
+def show_wants(ws: List<&2, Ops.FolderUids>) -> String:
+  match ws:
+    case Nil{}:
+      ""
+    case Ops.FolderUids{f, us} <> t:
+      f ++ " [" ++ show_u32s(us) ++ "] | " ++ show_wants(t)
+
+def search_found(before: List<&2, T.Found>) -> Result<&2, &2, String, List<&2, T.Found>>:
+  T.session_found(Done{I.frame(thread_search_transcript())}, thread_search_plan(), before)
+
+def check_thread() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent Messages"}), ",") ++ " | " ++
+      String.join(T.thread_folders("Sent Messages", Some{"Sent Messages"}), ",") ++ " | " ++
+      String.join(T.thread_folders("inbox", Some{"INBOX"}), ",") ++ " | " ++
+      String.join(T.thread_folders("INBOX", None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", None{}), ","))
+    IO.print(show_session(search_found([])))
+    IO.print(show_session(search_found([T.Found{"INBOX", Some{7}, [], []}])))
+    IO.print(show_session(search_found([T.Found{"Sent", Some{9}, [], []}])))
+    IO.print(show_session(search_found([T.Found{"INBOX", None{}, [], []}])))
+    IO.print(show_session(T.session_found(Fail{"down"}, thread_search_plan(), [])))
+    IO.print(show_wants(T.thread_wants(T.thread_found(thread_search_plan(),
+      I.frame(thread_search_transcript())), [Th.node("INBOX", Some{7}, I.Msg{4, [], "", 0, "", ""})])))
+    IO.print(show_found(T.thread_found(Ops.plan_thread_headers([Ops.FolderUids{"INBOX", [4, 5]}]),
+      I.frame(headers_transcript(7)))))
+    IO.print(show_out(T.thread_out(Done{T.Threading{[], [], [
+      Th.node("INBOX", Some{7}, header_msg("Message-ID: <b@x>\r\nIn-Reply-To: <a@x>\r\n")),
+      Th.node("Sent", None{}, header_msg("Message-ID: <a@x>\r\n"))], []}},
+      ["INBOX", "Sent"], "INBOX", 1)))
+    IO.print(show_out(T.thread_out(Fail{"down"}, ["INBOX"], "INBOX", 1)))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     check_switches()
@@ -948,6 +1010,7 @@ def main() -> IO(Unit):
     check_dispatch()
     check_schema()
     check_sending()
+    check_thread()
 
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
@@ -1137,10 +1200,10 @@ def main() -> IO(Unit):
 #|True True False True False
 #|[][mail_trash is disabled: MAILBEND_READ_ONLY is set][mail_forward would send mail, which MAILBEND_DRAFTS_ONLY forbids: use mail_save_draft, or as_draft for a reply or forward][][mail_send is disabled: MAILBEND_READ_ONLY is set]
 #|True False False True True False
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread
 #|"x"
 #|True True False True False False
 #|True True False True True True False True False True False
@@ -1177,3 +1240,13 @@ def main() -> IO(Unit):
 #|MAILBEND_ALLOWED_RECIPIENTS does not allow sending to a@x.com, b%c@y.com; nothing was sent
 #|True False True False
 #|saved to Sent | failed or unconfirmed (check Sent before saving again): no
+#|INBOX,Sent Messages | Sent Messages,INBOX | inbox | INBOX | Archive,INBOX
+#|INBOX 7 [4 2 2 9 ] 0 | Sent 8 [1 ] 0 | 
+#|INBOX 7 [4 2 2 9 ] 0 | Sent 8 [1 ] 0 | 
+#|err a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name other messages: read the thread again
+#|err a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name other messages: read the thread again
+#|err down
+#|INBOX [2 9 ] | Sent [1 ] | 
+#|INBOX 7 [] 2 | 
+#|ok {"folder":"INBOX","uid":1,"searched":["INBOX","Sent"],"messages":[{"folder":"INBOX","uidvalidity":7,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<b@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":"<a@x>"},{"folder":"Sent","uidvalidity":null,"uid":1,"date":"","from":"","to":"","cc":"","subject":"","message_id":"<a@x>","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"parent":null}]}
+#|err down

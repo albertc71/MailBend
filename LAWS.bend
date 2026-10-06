@@ -14,7 +14,7 @@ import ./src/smtp.bend as S
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly five tools
+# Reading is read-only, and permanent deletion is not. Exactly six tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
 
@@ -38,10 +38,11 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these five, in this order
-law read_only_tools_are_exactly_five:
+# LAW: the read-only tools are exactly these six, in this order
+law read_only_tools_are_exactly_six:
   {Ops.read_only_names(Ops.all_ops()) ==
-    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new"]
+    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      "mail_get_thread"]
     : List<&2, String>}
 
 # Read plans
@@ -96,6 +97,16 @@ law get_new_writes_nothing:
   for mbox: String
   for since: U32
   {I.any_writes(Ops.plan_new(mbox, since)) == False{} : Bool}
+
+# LAW: for every folder list, key list and UIDs per folder, the plans that
+# read a thread write nothing
+law thread_plans_write_nothing:
+  for folders: List<&2, String>
+  for keys: List<&2, I.Key>
+  for found: List<&2, Ops.FolderUids>
+  {Bool.or(
+    I.any_writes(Ops.plan_thread_search(folders, keys)),
+    I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
 
 # Read rendering
 # --------------
