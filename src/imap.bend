@@ -799,7 +799,7 @@ def imap_date.if(ok: Bool, y: String, m: U32, d: U32) -> Maybe<&2, String>:
 
 # The date when the year has four digits, the month is 1-12 and the day 1-31.
 def imap_date.check(+y: String, +m: U32, +d: U32) -> Maybe<&2, String>:
-  +ok = C.between(m, 1, 12) && C.between(d, 1, 31) &&
+  ok = C.between(m, 1, 12) && C.between(d, 1, 31) &&
     Nat.is_eq(String.length(y), 4n) && all_digits(y)
   imap_date.if(ok, y, m, d)
 
@@ -1378,7 +1378,7 @@ def special(fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
-    case Con{Folder{name, d, +attrs}, t}:
+    case Con{Folder{name, d, attrs}, t}:
       Bool.pick(Maybe<&2, String>, has_attr(attrs, attr), Some{name},
         special(t, attr))
 
@@ -1644,7 +1644,7 @@ def after_line(lines: List<&2, RLine>, +p: String, hit: Bool) -> List<&2, RLine>
       []
     case Con{l, t} True{}:
       l <> t
-    case Con{RLine{+text, lits}, t} False{}:
+    case Con{RLine{text, lits}, t} False{}:
       after_line(t, p, String.starts_with(text, p))
 
 # The untagged ("* ") lines before the first that starts with `p`. `hit`

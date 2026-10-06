@@ -1173,9 +1173,9 @@ def civil(days: U32) -> String:
   +yoe = ((doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 : U32)
   +doy = (doe - (365 * yoe + yoe / 4 - yoe / 100) : U32)
   +mp = ((5 * doy + 2) / 153 : U32)
-  +d = (doy - (153 * mp + 2) / 5 + 1 : U32)
+  d = (doy - (153 * mp + 2) / 5 + 1 : U32)
   +m = Bool.pick(U32, U32.is_lt(mp, 10), (mp + 3 : U32), (mp - 9 : U32))
-  +y = (yoe + era * 400 + Bool.to_u32(U32.is_le(m, 2)) : U32)
+  y = (yoe + era * 400 + Bool.to_u32(U32.is_le(m, 2)) : U32)
   U32.show(d) ++ " " ++ C.month_name(m) ++ " " ++ U32.show(y)
 
 # Seconds since the epoch to an RFC 5322 date in UTC.
