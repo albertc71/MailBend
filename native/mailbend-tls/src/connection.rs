@@ -2,7 +2,7 @@
 //! plain socket (SMTP before STARTTLS) or the verified TLS stream, and the
 //! transcript of what the server sent, written to stdout.
 
-use std::io::{self, BufWriter, Read, Stdout, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Stdout, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
@@ -22,15 +22,24 @@ enum Transport {
     Closed,
 }
 
-impl Transport {
+impl Read for Transport {
+    /// A peer that resets the connection, or closes it without a TLS
+    /// close_notify, ends the stream like a clean close: the IMAP and SMTP
+    /// framing already catch a cut-off reply.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
+        let read = match self {
             Transport::Plain(sock) => sock.read(buf),
             Transport::Tls(stream) => stream.read(buf),
             Transport::Closed => Ok(0),
+        };
+        match read {
+            Err(e) if is_closed(&e) => Ok(0),
+            read => read,
         }
     }
+}
 
+impl Transport {
     fn send(&mut self, bytes: &[u8]) -> io::Result<()> {
         match self {
             Transport::Plain(sock) => sock.write_all(bytes).and_then(|()| sock.flush()),
@@ -69,21 +78,14 @@ impl Transcript {
 }
 
 pub struct Connection {
-    transport: Transport,
-    buf: Box<[u8]>,
-    /// The unread bytes are `buf[pos..len]`.
-    pos: usize,
-    len: usize,
+    reader: BufReader<Transport>,
     transcript: Transcript,
 }
 
 impl Connection {
     pub fn new(sock: TcpStream) -> Self {
         Connection {
-            transport: Transport::Plain(sock),
-            buf: vec![0; READ_BUFFER].into_boxed_slice(),
-            pos: 0,
-            len: 0,
+            reader: BufReader::with_capacity(READ_BUFFER, Transport::Plain(sock)),
             transcript: Transcript {
                 out: BufWriter::with_capacity(1 << 16, std::io::stdout()),
                 total: 0,
@@ -97,16 +99,16 @@ impl Connection {
     /// the server sent before the handshake would otherwise be read as if
     /// it had been protected.
     pub fn start_tls(&mut self, config: &Arc<ClientConfig>, host: &str) -> Result<(), Exit> {
-        if self.pos != self.len {
+        if !self.reader.buffer().is_empty() {
             return Err(Exit::protocol("server sent data before the TLS handshake"));
         }
-        let Transport::Plain(sock) = std::mem::replace(&mut self.transport, Transport::Closed)
+        let Transport::Plain(sock) = std::mem::replace(self.reader.get_mut(), Transport::Closed)
         else {
             return Err(Exit::protocol("TLS already started"));
         };
         // The socket's timeouts bound the handshake.
         let stream = tls::connect(config, host, sock)?;
-        self.transport = Transport::Tls(Box::new(stream));
+        *self.reader.get_mut() = Transport::Tls(Box::new(stream));
         Ok(())
     }
 
@@ -128,69 +130,62 @@ impl Connection {
         let _ignored = self.transcript.out.flush();
     }
 
-    /// Whether unread bytes are buffered, reading more if none are. False
-    /// at the end of the stream, on a timeout or on a read error.
-    fn fill(&mut self) -> bool {
-        if self.pos < self.len {
-            return true;
-        }
-        match self.transport.read(&mut self.buf) {
-            Ok(n) if n > 0 => {
-                (self.pos, self.len) = (0, n);
-                true
-            }
-            _ => false,
-        }
-    }
-
     /// One line including its LF, or `None` at the end of the stream.
     pub fn read_line(&mut self) -> Result<Option<Vec<u8>>, Exit> {
         let mut line = Vec::with_capacity(256);
-        loop {
-            if !self.fill() {
-                if line.is_empty() {
-                    return Ok(None);
-                }
-                return Err(Exit::protocol(
-                    "connection closed mid-line or read timed out",
-                ));
-            }
-            let available = &self.buf[self.pos..self.len];
-            let (take, complete) = match available.iter().position(|&b| b == b'\n') {
-                Some(i) => (i + 1, true),
-                None => (available.len(), false),
-            };
-            if line.len() + take >= MAX_LINE {
-                return Err(Exit::protocol("server line exceeds the line limit"));
-            }
-            line.extend_from_slice(&available[..take]);
-            self.pos += take;
-            if complete {
-                return Ok(Some(line));
-            }
+        (&mut self.reader)
+            .take(MAX_LINE as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|e| read_failed(&e))?;
+        if line.len() >= MAX_LINE {
+            return Err(Exit::protocol("server line exceeds the line limit"));
+        }
+        match line.last() {
+            None => Ok(None),
+            Some(b'\n') => Ok(Some(line)),
+            Some(_) => Err(Exit::protocol("connection closed mid-line")),
         }
     }
 
     /// Copies exactly `n` server bytes (an IMAP literal) to the transcript.
     pub fn pass_bytes(&mut self, mut n: u64) -> Result<(), Exit> {
         while n > 0 {
-            if !self.fill() {
-                return Err(Exit::protocol(
-                    "connection closed inside a literal or read timed out",
-                ));
+            let available = self.reader.fill_buf().map_err(|e| read_failed(&e))?;
+            if available.is_empty() {
+                return Err(Exit::protocol("connection closed inside a literal"));
             }
-            let take = (self.len - self.pos).min(usize::try_from(n).unwrap_or(usize::MAX));
-            self.transcript
-                .record(&self.buf[self.pos..self.pos + take])?;
-            self.pos += take;
+            let take = available
+                .len()
+                .min(usize::try_from(n).unwrap_or(usize::MAX));
+            self.transcript.record(&available[..take])?;
+            self.reader.consume(take);
             n -= take as u64;
         }
         Ok(())
     }
 
     pub fn write(&mut self, bytes: &[u8]) -> Result<(), Exit> {
-        self.transport
+        self.reader
+            .get_mut()
             .send(bytes)
             .map_err(|_| Exit::protocol("write to server failed or timed out"))
+    }
+}
+
+fn is_closed(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
+    )
+}
+
+fn read_failed(e: &io::Error) -> Exit {
+    if matches!(
+        e.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) {
+        Exit::protocol("read from server timed out")
+    } else {
+        Exit::protocol("read from server failed")
     }
 }
