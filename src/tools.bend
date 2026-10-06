@@ -368,7 +368,7 @@ def smtp_run(envelope: String) -> IO(Out):
 # Arguments
 # ---------
 
-def str_arg(+args: J.Json, +key: String, +d: String) -> String:
+def str_arg(args: J.Json, key: String, d: String) -> String:
   Maybe.default(&2, String, J.as_str(J.get(args, key)), d)
 
 def bool_arg(args: J.Json, key: String, d: Bool) -> Bool:
@@ -988,7 +988,7 @@ def flag_keys(+args: J.Json) -> List<&2, I.Key>:
     Bool.pick(List<&2, I.Key>, bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])
   ])
 
-def date_key_of(m: Maybe<&2, String>, +name: String) -> Keys():
+def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
   match m:
     case Some{+d}:
       Done{Bool.pick(List<&2, I.Key>, String.eq(name, "since"), [I.KSince{d}], [I.KBefore{d}])}
@@ -1055,8 +1055,8 @@ def search_headers(
 def search_fetch(
   +uids: List<&2, U32>,
   +folder: String,
-  +uidv: Maybe<&2, U32>,
-  +total: U32
+  uidv: Maybe<&2, U32>,
+  total: U32
 ) -> IO(Out):
   match uids:
     case Nil{}:
@@ -1250,8 +1250,8 @@ def new_headers(
 def new_fetch(
   +uids: List<&2, U32>,
   +folder: String,
-  +uidv: U32,
-  +since: U32,
+  uidv: U32,
+  since: U32,
   more: Bool
 ) -> IO(Out):
   match uids:
@@ -1264,9 +1264,9 @@ def new_fetch(
 
 def new_reset(
   changed: Bool,
-  +uidv: U32,
+  uidv: U32,
   +uids: List<&2, U32>,
-  +folder: String,
+  folder: String,
   since: U32,
   +limit: U32
 ) -> IO(Out):
@@ -1805,11 +1805,11 @@ def partial_out(reason: String, +folder: String, +dest: String, move: Bool) -> O
 
 def moved_out.if(
   cut: Bool,
-  +r: Run(),
+  r: Run(),
   +folder: String,
   uids: List<&2, U32>,
-  +dest: String,
-  +move: Bool
+  dest: String,
+  move: Bool
 ) -> Out:
   match cut:
     case True{}:
@@ -2390,7 +2390,7 @@ def change_problem(g: Guard, c: FolderChange) -> String:
     case FolderRename{from, to}:
       rename_problem(g, from, to)
 
-def change_canonical(+g: Guard, c: FolderChange) -> FolderChange:
+def change_canonical(g: Guard, c: FolderChange) -> FolderChange:
   match c:
     case FolderCreate{name}:
       FolderCreate{canonical_name(g, name)}
@@ -2475,9 +2475,9 @@ def folder_unanswered(+p: Proc) -> Bool:
 
 def folder_out.if(
   changed: Bool,
-  +p: Proc,
+  p: Proc,
   +plan: List<&2, I.Cmd>,
-  +c: FolderChange,
+  c: FolderChange,
   +reason: String
 ) -> Out:
   match changed:
@@ -2627,7 +2627,7 @@ def t_label(+args: J.Json) -> IO(Out):
 # Attachments
 # -----------
 
-def bytes_str(+xs: List<&2, U32>) -> String:
+def bytes_str(xs: List<&2, U32>) -> String:
   match xs:
     case Nil{}:
       ""
@@ -2766,7 +2766,7 @@ def max_attachments() -> U32:
   32
 
 # Bytes in a byte string (one char per byte), counted in a U32.
-def byte_count(s: String, +n: U32) -> U32:
+def byte_count(s: String, n: U32) -> U32:
   match s:
     case SNil{}:
       n
@@ -3147,7 +3147,7 @@ def addr_split(
 # "(comments)", honouring "\\" escapes in both. Groups ("Team: a@x, b@y;")
 # give their members only; the label and an empty group
 # ("undisclosed-recipients:;") give nothing.
-def addr_list(+s: String) -> List<&2, String>:
+def addr_list(s: String) -> List<&2, String>:
   addr_split(s, "", False{}, 0, False{}, False{}, [])
 
 def decoded(xs: List<&2, String>) -> List<&2, String>:
@@ -3450,7 +3450,7 @@ def offered_for(ts: J.Json, m: Mode) -> J.Json:
       offered_in(ts, True{}, False{})
 
 # The tool definitions `ts` (a JSON array) that this configuration offers.
-def offered_tools(+ts: J.Json) -> IO(J.Json):
+def offered_tools(ts: J.Json) -> IO(J.Json):
   do IO<J.Json>:
     md : Mode <- mode()
     return offered_for(ts, md)
@@ -3502,7 +3502,7 @@ def int_raw(+s: String) -> Bool:
     case _:
       digits(s)
 
-def prim_ok(+want: String, v: J.Json) -> Bool:
+def prim_ok(want: String, v: J.Json) -> Bool:
   match v:
     case J.JStr{x}:
       String.eq(want, "string")
@@ -3525,7 +3525,7 @@ def items_all(+want: String, xs: J.Json) -> Bool:
       True{}
 
 # Address lists also take one address as a plain string.
-def value_ok(+want: String, +item: String, +v: J.Json) -> Bool:
+def value_ok(+want: String, item: String, +v: J.Json) -> Bool:
   match v:
     case J.JArr{xs}:
       String.eq(want, "array") && items_all(item, xs)
@@ -3548,7 +3548,7 @@ def want_of(s: J.Json) -> String:
 def item_of(s: J.Json) -> String:
   str_arg(Maybe.default(&2, J.Json, J.get(s, "items"), J.JNull{}), "type", "")
 
-def prop_problem(p: Maybe<&2, J.Json>, +k: String, v: J.Json, tool: String) -> String:
+def prop_problem(p: Maybe<&2, J.Json>, k: String, v: J.Json, tool: String) -> String:
   match p:
     case None{}:
       "unknown argument \"" ++ k ++ "\" for " ++ tool

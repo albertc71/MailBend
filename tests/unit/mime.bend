@@ -66,7 +66,7 @@ def attachment_draft() -> M.Draft:
   M.Draft{"Tester <tester@example.com>", ["José Q <jose@example.com>", "b@example.com"], [], [], "Résumé attached", "Line one\nligne deux é\n", "Sun, 27 Sep 2026 03:19:30 +0000", "<1@example.com>", "", "", [M.Attach{"notes.txt", "text/plain", "hello"}]}
 
 # Whether a message is 7-bit: printable ASCII, tabs and CRLF only.
-def crlf_plain(+s: String) -> Bool:
+def crlf_plain(s: String) -> Bool:
   C.is_plain(String.concat(String.split(String.concat(String.split(s, '\r')), '\n')))
 
 def roundtrip(+m: String) -> IO(Unit):
@@ -87,7 +87,7 @@ def long_name() -> String:
   String.repeat("é", 120n) ++ ".pdf"
 
 # The longest line (between CRLFs) in a string.
-def max_line(+s: String, +cur: U32, +best: U32) -> U32:
+def max_line(s: String, cur: U32, best: U32) -> U32:
   match s:
     case SNil{}:
       U32.max(cur, best)
