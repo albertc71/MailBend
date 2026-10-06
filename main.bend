@@ -390,7 +390,7 @@ def fail_with(j: J.Json) -> IO(Unit):
 
 # The JSON result always goes to stdout; a failed or part-way tool also exits
 # with 1.
-def print_out(+o: T.Out) -> IO(Unit):
+def print_out(o: T.Out) -> IO(Unit):
   match o:
     case T.Ok{j}:
       IO.print(J.show(j))

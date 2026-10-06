@@ -292,7 +292,7 @@ def utf16be(+n: U32) -> String:
   utf16be.if(U32.is_lt(n, 65536), n)
 
 # `out` with the pending run, if any, closed as "&<base64>-".
-def mutf7_encode.flush(out: String, +run: String) -> String:
+def mutf7_encode.flush(out: String, run: String) -> String:
   match run:
     case SNil{}:
       out
@@ -300,7 +300,7 @@ def mutf7_encode.flush(out: String, +run: String) -> String:
       String.reverse("&" ++ C.b64_encode(String.reverse(run), True{}) ++ "-") ++ out
 
 # A printable ASCII character, reversed: "&" is escaped as "&-".
-def mutf7_encode.ascii(+c: Char) -> String:
+def mutf7_encode.ascii(c: Char) -> String:
   match c:
     case '&':
       "-&"
@@ -381,7 +381,7 @@ def utf16_decode(bytes: String, hi: U32, out: String) -> String:
 
 # `out` with a closed "&...-" run: "&-" is a literal "&", anything else is
 # base64 of UTF-16BE.
-def mutf7_decode.close(+b64: String, out: String) -> String:
+def mutf7_decode.close(b64: String, out: String) -> String:
   match b64:
     case SNil{}:
       SCon{'&', out}
@@ -389,14 +389,14 @@ def mutf7_decode.close(+b64: String, out: String) -> String:
       String.reverse(utf16_decode(C.b64_decode(String.reverse(b64)), 0, "")) ++
         out
 
-def mutf7_decode.shifted(+c: Char, out: String, b64: String) -> Utf7Decoder:
+def mutf7_decode.shifted(c: Char, out: String, b64: String) -> Utf7Decoder:
   match c:
     case '-':
       Utf7Decoder{mutf7_decode.close(b64, out), "", False{}}
     case _:
       Utf7Decoder{out, SCon{c, b64}, True{}}
 
-def mutf7_decode.plain(+c: Char, out: String, b64: String) -> Utf7Decoder:
+def mutf7_decode.plain(c: Char, out: String, b64: String) -> Utf7Decoder:
   match c:
     case '&':
       Utf7Decoder{out, "", True{}}
@@ -721,7 +721,7 @@ def next_tag(c: Cmd, +n: U32) -> U32:
   Bool.pick(U32, is_expect(c), n, (n + 1 : U32))
 
 # One script line: a tagged command, or an expectation after its keyword.
-def script.line(+c: Cmd, n: U32) -> String:
+def script.line(c: Cmd, n: U32) -> String:
   match c:
     case CExpect{e}:
       "=EXPECT " ++ e
@@ -867,7 +867,7 @@ def lit_of(star: Bool, rev: String) -> LitHit:
     case False{}:
       LitNone{}
 
-def strip_crlf(+rev: String) -> String:
+def strip_crlf(rev: String) -> String:
   match rev:
     case SCon{'\n', SCon{'\r', t}}:
       t
@@ -964,7 +964,7 @@ def frame.go(s: String, f: Framer) -> Framer:
 
 # The finished lines, with an unterminated last line kept.
 def frame.last(
-  +line: String,
+  line: String,
   lits: List<&2, String>,
   lines: List<&2, RLine>
 ) -> List<&2, RLine>:
@@ -1022,7 +1022,7 @@ def tokens.push(
       [[v]]
 
 def tokens.close(
-  +stack: List<&2, List<&2, Value>>
+  stack: List<&2, List<&2, Value>>
 ) -> List<&2, List<&2, Value>>:
   match stack:
     case top <> up <> rest:
@@ -1083,7 +1083,7 @@ def tokens.plain(
 
 # A character of an atom outside "[...]": a space or parenthesis ends it.
 def tokens.atom_top(
-  +c: Char,
+  c: Char,
   acc: String,
   stack: List<&2, List<&2, Value>>,
   lits: List<&2, String>
@@ -1129,7 +1129,7 @@ def tokens.atom(
       tokens.atom_char(U32.is_zero(depth), c, acc, depth, stack, lits)
 
 def tokens.quoted(
-  +c: Char,
+  c: Char,
   acc: String,
   stack: List<&2, List<&2, Value>>,
   lits: List<&2, String>
@@ -1455,7 +1455,7 @@ def field_of(+k: String) -> Field:
             FieldNone{})))))
 
 # Sets a field from an item's text; a number that does not read is 0.
-def msg_scalar(f: Field, s: String, +m: Msg) -> Msg:
+def msg_scalar(f: Field, s: String, m: Msg) -> Msg:
   match f m:
     case FieldUid{} Msg{_, flags, date, size, headers, body}:
       Msg{Maybe.default(&2, U32, U32.read(s), 0), flags, date, size, headers, body}
@@ -1470,7 +1470,7 @@ def msg_scalar(f: Field, s: String, +m: Msg) -> Msg:
     case FieldNone{} _:
       m
 
-def msg_flags(is_flags: Bool, xs: List<&2, Value>, +m: Msg) -> Msg:
+def msg_flags(is_flags: Bool, xs: List<&2, Value>, m: Msg) -> Msg:
   match is_flags m:
     case True{} Msg{uid, _, date, size, headers, body}:
       Msg{uid, Value.texts(xs), date, size, headers, body}
@@ -1478,7 +1478,7 @@ def msg_flags(is_flags: Bool, xs: List<&2, Value>, +m: Msg) -> Msg:
       m
 
 # Sets the field one FETCH item names: a list value can only be FLAGS.
-def msg_set(m: Msg, k: String, +v: Value) -> Msg:
+def msg_set(m: Msg, k: String, v: Value) -> Msg:
   match v:
     case VList{xs}:
       msg_flags(String.eq(String.to_upper(k), "FLAGS"), xs, m)

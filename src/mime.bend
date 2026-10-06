@@ -572,7 +572,7 @@ def cut_push(
 # part and opens the next, the closing boundary (`close`) finishes it and
 # ends the body, and any other line joins the open part. Lines after the
 # closing boundary are ignored.
-def cut_line.put(+line: String, +c: Cut, close: Bool, open: Bool) -> Cut:
+def cut_line.put(line: String, +c: Cut, close: Bool, open: Bool) -> Cut:
   match c:
     case Cut{cur, parts, inside, done}:
       match done close open:
@@ -617,7 +617,7 @@ def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
 # Walks nested multiparts up to `depth` levels. A single part reads as a
 # leaf and a multipart as its subparts; the side not taken is empty, which
 # merge ignores, so each part is parsed once and nothing is built twice.
-def walk(+depth: Nat, +parts: List<&2, String>) -> Parts:
+def walk(+depth: Nat, parts: List<&2, String>) -> Parts:
   match depth:
     case 0n:
       no_parts()
@@ -644,7 +644,7 @@ def parts(msg: String) -> Parts:
 
 # One character of HTML: '<' opens a tag, '>' closes it and leaves a space,
 # and other characters are kept outside tags. A '>' outside a tag is kept.
-def html_text.step(+c: Char, +st: Strip) -> Strip:
+def html_text.step(c: Char, +st: Strip) -> Strip:
   match c:
     case '<':
       Strip{out, tag} = st
@@ -1073,7 +1073,7 @@ def att_part.raw(data: String, rfc822: Bool) -> Bool:
     case False{}:
       False{}
 
-def att_part(+b: String, +a: Attach) -> String:
+def att_part(b: String, +a: Attach) -> String:
   Attach{name, ctype, data} = a
   +safe = safe_ctype(ctype)
   raw = att_part.raw(data, String.eq(safe, "message/rfc822"))
@@ -1095,7 +1095,7 @@ def text_part(text: String) -> String:
     ++ "Content-Transfer-Encoding: quoted-printable\r\n\r\n"
     ++ C.qp_encode(C.utf8_encode(crlf_lines(text)), 0)
 
-def body_section(+b: String, text: String, +atts: List<&2, Attach>) -> String:
+def body_section(+b: String, text: String, atts: List<&2, Attach>) -> String:
   match atts:
     case Nil{}:
       text_part(text)

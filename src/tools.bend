@@ -254,7 +254,7 @@ def signalled(code: U32) -> Bool:
   U32.is_gt(code, 128)
 
 # What a helper's exit status means, as the start of its error.
-def helper_cause(+code: U32) -> String:
+def helper_cause(code: U32) -> String:
   match code:
     case 2:
       "configuration error: "
@@ -284,7 +284,7 @@ def imap_refusal(stale: Bool, lines: List<&2, I.RLine>) -> String:
 
 # A session's reply lines, or why it failed: the helper exits with 5 when
 # the server refused a command.
-def imap_code(+code: U32, lines: List<&2, I.RLine>, err: String) -> Run():
+def imap_code(code: U32, lines: List<&2, I.RLine>, err: String) -> Run():
   match code:
     case 0:
       Done{lines}
@@ -293,7 +293,7 @@ def imap_code(+code: U32, lines: List<&2, I.RLine>, err: String) -> Run():
     case _:
       Fail{helper_error(code, err)}
 
-def imap_result(+p: Proc) -> Run():
+def imap_result(p: Proc) -> Run():
   match p:
     case ProcOk{code, out, err}:
       imap_code(code, I.frame(out), err)
@@ -342,7 +342,7 @@ def ok_at(lines: List<&2, I.RLine>, n: U32) -> Bool:
 
 # The server's queue confirmation, or why it refused the message: the helper
 # exits with 5 when it did.
-def smtp_code(+code: U32, out: String, err: String) -> Out:
+def smtp_code(code: U32, out: String, err: String) -> Out:
   match code:
     case 0:
       Ok{J.str(S.last_ok(String.lines(out), ""))}
@@ -351,7 +351,7 @@ def smtp_code(+code: U32, out: String, err: String) -> Out:
     case _:
       Err{helper_error(code, err)}
 
-def smtp_result(+p: Proc) -> Out:
+def smtp_result(p: Proc) -> Out:
   match p:
     case ProcOk{code, out, err}:
       smtp_code(code, out, err)
@@ -2026,7 +2026,7 @@ def trash_uids(u: Uids(), folder: String, +uidv: U32) -> IO(Out):
 def t_trash(+args: J.Json) -> IO(Out):
   trash_uids(uids_arg(args), folder_arg(args), uidv_arg(args))
 
-def delete_plan(+plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) -> IO(Out):
+def delete_plan(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) -> IO(Out):
   match plan:
     case Nil{}:
       pure_out(Err{
@@ -2698,7 +2698,7 @@ def max_attachment() -> U32:
 def pure_att(a: Attachment()) -> IO(Attachment()):
   IO.pure(Attachment(), a)
 
-def att_proc(+p: Proc, name: String, ctype: String) -> Attachment():
+def att_proc(p: Proc, name: String, ctype: String) -> Attachment():
   match p:
     case ProcOk{code, out, err}:
       match code:
@@ -2725,7 +2725,7 @@ def att_read(
     return att_proc(proc_of(r), name, ctype)
 
 def att_at(
-  +helper: String,
+  helper: String,
   dir: String,
   path: String,
   name: String,
@@ -2748,7 +2748,7 @@ def att_at(
 # the opened descriptor itself, so a path swapped mid-way cannot redirect
 # the read.
 def att_dir(
-  +dir: String,
+  dir: String,
   path: String,
   name: String,
   ctype: String,
@@ -3196,7 +3196,7 @@ def cut_note(cut: Bool) -> String:
     "")
 
 # Adds fields to a successful result object.
-def with_fields(+o: Out, extra: List<&2, J.Json>) -> Out:
+def with_fields(o: Out, extra: List<&2, J.Json>) -> Out:
   match o:
     case Ok{J.JObj{items}}:
       Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
@@ -3455,7 +3455,7 @@ def offered_items(ts: J.Json, +ro: Bool, +drafts: Bool) -> J.Json:
     case _:
       J.JEnd{}
 
-def offered_in(+ts: J.Json, ro: Bool, drafts: Bool) -> J.Json:
+def offered_in(ts: J.Json, ro: Bool, drafts: Bool) -> J.Json:
   match ts:
     case J.JArr{xs}:
       J.JArr{offered_items(xs, ro, drafts)}
@@ -3508,7 +3508,7 @@ def input_of(m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
 def tool_input(name: String) -> Maybe<&2, J.Json>:
   input_of(tool_named(array_items(J.parse(Schema.tool_defs())), name))
 
-def int_raw(+s: String) -> Bool:
+def int_raw(s: String) -> Bool:
   match s:
     case SCon{'-', t}:
       C.all_digits(t)
@@ -3538,7 +3538,7 @@ def items_all(+want: String, xs: J.Json) -> Bool:
       True{}
 
 # Address lists also take one address as a plain string.
-def value_ok(+want: String, item: String, +v: J.Json) -> Bool:
+def value_ok(+want: String, item: String, v: J.Json) -> Bool:
   match v:
     case J.JArr{xs}:
       String.eq(want, "array") && items_all(item, xs)

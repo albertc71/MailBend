@@ -317,7 +317,7 @@ def norm_other(+c: Char, +toks: List<&2, Tok>) -> Lexer:
       Bool.pick(Lexer, is_ws(c), Lexer{LNorm{}, toks},
         Lexer{LNorm{}, TBad{} <> toks})))
 
-def lex.norm(+c: Char, toks: List<&2, Tok>) -> Lexer:
+def lex.norm(c: Char, toks: List<&2, Tok>) -> Lexer:
   match c:
     case '{':
       Lexer{LNorm{}, TLBrace{} <> toks}
@@ -402,7 +402,7 @@ def lex.uni(
     case None{}:
       LErr{}
 
-def lex.esc(+c: Char, acc: String, hi: U32) -> LexState:
+def lex.esc(c: Char, acc: String, hi: U32) -> LexState:
   match c:
     case 'u':
       LUni{acc, hi, 4n, 0}
@@ -583,7 +583,7 @@ def close_obj(
 
 # A string is a key where an object expects one, else a value.
 def key_or_value(
-  s: String, +stack: List<&2, Frame>, done: Maybe<&2, Json>
+  s: String, stack: List<&2, Frame>, done: Maybe<&2, Json>
 ) -> Maybe<&2, Builder>:
   match stack:
     case FObj{rev, _, NeedOpen{}} <> rest:

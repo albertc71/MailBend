@@ -554,7 +554,7 @@ def checks_uidplus(cs: List<&2, I.Cmd>) -> Bool:
       False{}
 
 # Checks UIDPLUS, or no plan at all (a refused operation sends nothing).
-def checks_uidplus_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
+def checks_uidplus_or_empty(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       True{}
@@ -562,7 +562,7 @@ def checks_uidplus_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
       checks_uidplus(cs)
 
 # Pinned, or no plan at all (a refused operation sends nothing).
-def pinned_or_empty(+cs: List<&2, I.Cmd>) -> Bool:
+def pinned_or_empty(cs: List<&2, I.Cmd>) -> Bool:
   match cs:
     case Nil{}:
       True{}
