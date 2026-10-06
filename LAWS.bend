@@ -10,6 +10,7 @@ import ./src/ops.bend as Ops
 
 # Tool classes
 # ------------
+
 # Reading is read-only, and permanent deletion is not. Exactly five tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail or send it.
@@ -38,6 +39,7 @@ law read_only_tools_are_exactly_five:
 
 # Read plans
 # ----------
+
 # Read plans open mailboxes with EXAMINE, fetch with BODY.PEEK and never
 # change anything: for every mailbox, UID, size, key list and checkpoint.
 
@@ -90,6 +92,7 @@ law get_new_writes_nothing:
 
 # Read rendering
 # --------------
+
 # What reaches the wire: read plans open the folder with EXAMINE, and every
 # fetch item renders as BODY.PEEK or metadata, so no read can set \Seen.
 
@@ -120,6 +123,7 @@ law fetch_items_never_set_seen:
 
 # Marking and flagging
 # --------------------
+
 # Marking read/unread only touches \Seen. Flagging and unflagging touch only
 # \Flagged and the colour bits. Neither marks \Deleted or expunges. Each
 # flag law states the flag plan (with or without a colour), then the unflag
@@ -196,6 +200,7 @@ law unflag_clears_flag_and_colour:
 
 # Moving, trashing and deleting
 # -----------------------------
+
 # Moving and trashing never lose mail: whatever the server capabilities, no
 # message is expunged before it has been copied.
 #
@@ -371,6 +376,7 @@ law copy_move_checks_uidplus:
 
 # UIDVALIDITY pinning
 # -------------------
+
 # Every change to existing messages is pinned to the folder's UIDVALIDITY in
 # the same session (SELECT, then the expectation the helper enforces), so
 # UIDs read before the folder was recreated can never touch other messages.
@@ -493,6 +499,7 @@ law draft_never_removes:
 
 # Folders
 # -------
+
 # Folder plans change folders and nothing else: CREATE then SUBSCRIBE, or
 # RENAME, then a SUBSCRIBE of each moved folder's new name, then an
 # UNSUBSCRIBE of each old name; no message command, and never anything that
@@ -569,6 +576,7 @@ law folder_plans_destroy_nothing:
 
 # Labels
 # ------
+
 # A label is a move: the very same plan, so the move laws above (never loses
 # mail, expunges only the copied UIDs, changes exactly those commands, pinned
 # to the caller's UIDVALIDITY) cover labels, and labelling creates no folder.

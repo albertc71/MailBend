@@ -150,6 +150,7 @@ def from_name(n: String) -> Maybe<&2, Op>:
 
 # Read plans
 # ----------
+
 # Reads open folders with EXAMINE (read-only) and fetch only with PEEK.
 
 # Capabilities and folders.
@@ -369,6 +370,7 @@ def plan_draft(drafts: String, msg: String) -> List<&2, I.Cmd>:
 
 # Folder plans
 # ------------
+
 # Folder plans touch no message. Each starts with CAPABILITY, which changes
 # nothing: once it is answered, a session that dies before the change is
 # answered may have made it, and one that dies earlier has not. There is no
@@ -417,6 +419,7 @@ def plan_rename(
 
 # Plan classifiers
 # ----------------
+
 # What the laws say about plans, as computations over their commands.
 
 # Whether a plan expunges before it has copied anything: the first command

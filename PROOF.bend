@@ -100,6 +100,7 @@ def Laws.fetch_items_never_set_seen(item):
 
 # Marking and flagging
 # --------------------
+
 # A flag law with a colour goes through a .fin lemma that matches the
 # colour's bits, I.colour_bits(c), as a parameter: plan_flag_bits builds
 # one store from each bit.
@@ -171,6 +172,7 @@ def Laws.unflag_clears_flag_and_colour(mbox, uids, uidv):
 
 # Moving, trashing and deleting
 # -----------------------------
+
 # A move or trash plan branches on MOVE, then on UIDPLUS: the proofs match
 # both. A delete plan branches on whether the confirmation matches, so each
 # of its laws goes through a .if lemma that takes that verdict.
@@ -398,6 +400,7 @@ def Laws.draft_never_removes(drafts, msg):
 
 # Folders
 # -------
+
 # A rename plan's subscriptions run over the moved folders, so its laws
 # rest on lemmas about subscribe_moved and unsubscribe_old, each by
 # induction over that list: they change only folders, change no mail and
