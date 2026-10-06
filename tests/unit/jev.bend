@@ -43,6 +43,25 @@ def two_parts(sub: String, second: String) -> String:
     "Content-Type: text/plain\r\n\r\nfirst\r\n--b\r\nContent-Type: " ++ second ++
     "\r\n\r\nsecond\r\n--b--\r\n"
 
+# A multipart/alternative message: a text/plain part, then its HTML version
+# with an inline image, in a multipart/related.
+def alternative_related() -> String:
+  "Content-Type: multipart/alternative; boundary=\"a\"\r\n\r\n--a\r\n" ++
+    "Content-Type: text/plain\r\n\r\nfirst\r\n--a\r\n" ++
+    "Content-Type: multipart/related; boundary=\"r\"\r\n\r\n--r\r\n" ++
+    "Content-Type: text/html\r\n\r\n<p>first</p>\r\n--r\r\n" ++
+    "Content-Type: image/png\r\n\r\npng\r\n--r--\r\n--a--\r\n"
+
+# A multipart message nested `n` levels deep around one text/plain part.
+def nested(+n: Nat) -> String:
+  match n:
+    case 0n:
+      "Content-Type: text/plain\r\n\r\ndeep"
+    case 1n+p:
+      +b = "b" ++ Nat.show(1n+p)
+      "Content-Type: multipart/mixed; boundary=" ++ b ++ "\r\n\r\n--" ++ b ++ "\r\n" ++
+        nested(p) ++ "\r\n--" ++ b ++ "--"
+
 def msg(uid: U32, size: U32, body: String, structure: I.Value) -> I.Msg:
   I.Msg{uid, ["\\Seen"], "1-Oct-2026 09:00:00 +0000", size, headers(), body, structure}
 
@@ -75,6 +94,10 @@ def check_facts() -> IO(Unit):
       1000)))
     IO.print(show_text(Jev.text_of(msg(8, 300, two_parts("alternative", "text/html"), I.VNil{}),
       1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 300, two_parts("mixed", "text/html"), I.VNil{}),
+      1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 300, alternative_related(), I.VNil{}), 1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 300, nested(8n), I.VNil{}), 1000)))
     IO.print(Nat.show(String.length(Jev.escaped_prefix("aé\"b", 4))) ++ " " ++
       Jev.escaped_prefix("aé\"b", 3) ++ " [" ++ Jev.escaped_prefix("\"x", 1) ++ "] " ++
       Jev.escaped_prefix("abc", 99))
@@ -566,6 +589,9 @@ def main() -> IO(Unit):
 #|] partial
 #|[first] partial
 #|[first] complete
+#|[first] partial
+#|[first] complete
+#|[] partial
 #|2 aé [] abc
 #|10
 #|none___ none

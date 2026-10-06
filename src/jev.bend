@@ -197,12 +197,17 @@ def text_of.fin(kept: M.Parts & Bool, cut: Bool) -> Text:
   (p, left_out) = kept
   text_of.put(plain_text(M.readable_text(p)), cut || left_out)
 
+def text_of.go(walk: List<&2, M.Leaf> & Bool & Bool & Bool & Bool, fetch_cut: Bool) -> Text:
+  (ls, nest_cut, text, html, apart) = walk
+  text_of.fin(M.parts_kept(ls), fetch_cut || nest_cut || apart)
+
 # The text of a message fetched whole up to `max` bytes: Partial when the
-# fetch cut it, a second text part was left out (see M.parts_kept), the cap
-# shortened it or a part did not decode.
+# fetch cut it, parts nested past M.multipart_limit, a second text part
+# (see M.parts_kept) or an HTML part apart from the text (see M.leaves.fin)
+# were left out, the cap shortened it or a part did not decode.
 def text_of(m: I.Msg, max: U32) -> Text:
   I.Msg{uid, flags, date, size, headers, body, structure} = m
-  text_of.fin(M.parts_kept(M.message_leaves(body)), U32.is_gt(size, max))
+  text_of.go(M.message_leaves.run(body), U32.is_gt(size, max))
 
 def escaped_prefix.if(fits: Bool, c: Char, acc: String) -> String:
   match fits:

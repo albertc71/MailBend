@@ -566,13 +566,21 @@ def leaf(l: Leaf) -> Parts:
   Leaf{+hs, body} = l
   leaf.content(part_kind(hs), leaf_bytes(hs, body))
 
-# A single part as a leaf; a multipart is no leaf itself.
-def leaves.one(hs: List<&2, Hdr>, body: String, single: Bool) -> List<&2, Leaf>:
+def leaves.kind(l: Leaf, k: PartKind) -> List<&2, Leaf> & Bool & Bool:
+  PartKind{ct, +typ, name, file} = k
+  +inline = Bool.not(file)
+  ([l], inline && String.eq(typ, "text/plain"), inline && String.eq(typ, "text/html"))
+
+# A single part as a leaf, with whether it reads as text/plain and as
+# text/html; a multipart is no leaf itself.
+def leaves.one(
+  +hs: List<&2, Hdr>, body: String, single: Bool
+) -> List<&2, Leaf> & Bool & Bool:
   match single:
     case True{}:
-      [Leaf{hs, body}]
+      leaves.kind(Leaf{hs, body}, part_kind(hs))
     case False{}:
-      []
+      ([], False{}, False{})
 
 # Multipart
 # ---------
@@ -647,41 +655,65 @@ def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
 def multipart_limit() -> Nat:
   8n
 
-# A part's own leaf, then those of its subparts and of the parts after it,
-# each with whether the bound left any out.
+# A part's own leaf, then those of its subparts and of the parts after it.
+# Each comes with whether the bound left a part out, whether it holds a
+# text/plain and a text/html part, and whether such a text and HTML lie
+# apart: in different parts of a multipart that is not an `alt`ernative,
+# whose parts are versions of one text.
 def leaves.fin(
-  one: List<&2, Leaf>,
-  inner: List<&2, Leaf> & Bool,
-  more: List<&2, Leaf> & Bool
-) -> List<&2, Leaf> & Bool:
-  (a, a_cut) = inner
-  (b, b_cut) = more
-  (List.concat(&2, Leaf, [one, a, b]), a_cut || b_cut)
+  alt: Bool,
+  one: List<&2, Leaf> & Bool & Bool,
+  inner: List<&2, Leaf> & Bool & Bool & Bool & Bool,
+  more: List<&2, Leaf> & Bool & Bool & Bool & Bool
+) -> List<&2, Leaf> & Bool & Bool & Bool & Bool:
+  (l, l_text, l_html) = one
+  (a, a_cut, a_text, a_html, a_apart) = inner
+  (b, b_cut, +b_text, +b_html, b_apart) = more
+  +text = l_text || a_text
+  +html = l_html || a_html
+  apart = Bool.not(alt) && ((text && b_html) || (html && b_text))
+  (List.concat(&2, Leaf, [l, a, b]), a_cut || b_cut, text || b_text, html || b_html,
+    a_apart || b_apart || apart)
 
 # The single parts of `parts`, in order, walking nested multiparts up to
-# `depth` levels, and whether the bound left any part out. A single part
-# is a leaf and a multipart gives its subparts; the side not taken is
-# empty, so each part is parsed once.
-def leaves(+depth: Nat, parts: List<&2, String>) -> List<&2, Leaf> & Bool:
+# `depth` levels, with what leaves.fin tells of them; `alt` says `parts`
+# are those of a multipart/alternative. A single part is a leaf and a
+# multipart gives its subparts; the side not taken is empty, so each part
+# is parsed once.
+def leaves(
+  +depth: Nat, +alt: Bool, parts: List<&2, String>
+) -> List<&2, Leaf> & Bool & Bool & Bool & Bool:
   match depth:
     case 0n:
-      ([], Bool.not(List.is_empty(&2, String, parts)))
+      ([], Bool.not(List.is_empty(&2, String, parts)), False{}, False{}, False{})
     case 1n+p:
       match parts:
         case Nil{}:
-          ([], False{})
+          ([], False{}, False{}, False{}, False{})
         case part <> rest:
           +entity = split(part)
           +hs = headers(head_of(entity))
           +body = body_of(entity)
           +b = boundary(hs)
           +single = String.is_empty(b)
-          leaves.fin(leaves.one(hs, body, single), leaves(p, subparts(body, b, single)),
-            leaves(1n+p, rest))
+          inner_alt = String.eq(main_value(header(hs, "content-type")), "multipart/alternative")
+          leaves.fin(alt, leaves.one(hs, body, single),
+            leaves(p, inner_alt, subparts(body, b, single)), leaves(1n+p, alt, rest))
+
+# A message's single parts, whether multipart_limit left any out, whether
+# it holds a text/plain and a text/html part, and whether those lie apart.
+def message_leaves.run(msg: String) -> List<&2, Leaf> & Bool & Bool & Bool & Bool:
+  leaves(multipart_limit(), False{}, [msg])
+
+def message_leaves.cut.fin(
+  w: List<&2, Leaf> & Bool & Bool & Bool & Bool
+) -> List<&2, Leaf> & Bool:
+  (ls, cut, text, html, apart) = w
+  (ls, cut)
 
 # A message's single parts, and whether multipart_limit left any out.
 def message_leaves.cut(msg: String) -> List<&2, Leaf> & Bool:
-  leaves(multipart_limit(), [msg])
+  message_leaves.cut.fin(message_leaves.run(msg))
 
 def message_leaves(msg: String) -> List<&2, Leaf>:
   Pair.fst(List<&2, Leaf>, Bool, message_leaves.cut(msg))
@@ -700,8 +732,8 @@ def parts_kept.fin(+a: Parts, rest: Parts & Bool) -> Parts & Bool:
 
 # The readable content of single parts, and whether it left out a second
 # text/plain part, or a second text/html part, that holds text. A text and
-# an HTML part are read as versions of one text (as multipart/alternative
-# sends them), so the HTML one left out beside a text is not counted.
+# an HTML part are read here as versions of one text (as multipart/alternative
+# sends them); leaves.fin tells when they lie apart instead.
 def parts_kept(ls: List<&2, Leaf>) -> Parts & Bool:
   match ls:
     case Nil{}:
