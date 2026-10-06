@@ -51,7 +51,7 @@ pub fn run(
         None => return Err(Exit::protocol("server refused the connection")),
     }
     let outcome = run_commands(conn, commands)?;
-    logout(conn)?;
+    logout(conn);
     Ok(outcome)
 }
 
@@ -191,16 +191,16 @@ fn pass_literals(conn: &mut Connection, mut line: Vec<u8>) -> Result<(), Exit> {
     Ok(())
 }
 
-/// LOGOUT is best effort: the commands' outcome is already known (after an
-/// APPEND, reporting a failure here could lead to a duplicate draft).
-fn logout(conn: &mut Connection) -> Result<(), Exit> {
-    if conn.write_best_effort(&[LOGOUT_TAG, b" LOGOUT\r\n"].concat()) {
-        while let Some(line) = conn.read_line()? {
-            conn.emit(&line)?;
-            if tagged_status(&line, LOGOUT_TAG).is_some() {
-                break;
-            }
+/// LOGOUT is best effort, and its failure is silent: the commands' outcome
+/// is already known (after an APPEND, reporting a failure here could lead
+/// to a duplicate draft).
+fn logout(conn: &mut Connection) {
+    if conn.write(&[LOGOUT_TAG, b" LOGOUT\r\n"].concat()).is_err() {
+        return;
+    }
+    while let Ok(Some(line)) = conn.read_line() {
+        if conn.emit(&line).is_err() || tagged_status(&line, LOGOUT_TAG).is_some() {
+            break;
         }
     }
-    Ok(())
 }

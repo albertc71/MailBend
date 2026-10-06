@@ -201,6 +201,7 @@ class State:
         self.session_flags = False
         self.noisy_store = False
         self.fetch_no_flags = set()
+        self.cut_goodbye = False
         self.seen = {}
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
@@ -841,6 +842,10 @@ class IMAPSession:
             self.send(f'{tag} NO [AUTHENTICATIONFAILED] invalid credentials\r\n')
 
     def cmd_logout(self, tag):
+        if self.state.cut_goodbye:
+            self.send('* BYE by')
+            self.done = True
+            return
         self.send('* BYE fake logging out\r\n')
         self.send(f'{tag} OK LOGOUT completed\r\n')
         self.done = True
@@ -1344,7 +1349,7 @@ class SMTPSession:
         elif verb_up == 'NOOP':
             self.send('250 2.0.0 OK\r\n')
         elif verb_up == 'QUIT':
-            self.send('221 2.0.0 Bye\r\n')
+            self.send('221 2.0' if self.state.cut_goodbye else '221 2.0.0 Bye\r\n')
             return False
         else:
             self.send('500 5.5.1 unrecognized command\r\n')
@@ -1513,6 +1518,8 @@ def main():
                     help='answer every STORE with FETCH updates and repeat FETCH answers')
     ap.add_argument('--fetch-no-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
+    ap.add_argument('--cut-goodbye', action='store_true',
+                    help='cut the LOGOUT and QUIT replies off mid-line, then close')
     args = ap.parse_args()
 
     with open(args.fixture, encoding='utf-8') as f:
@@ -1533,6 +1540,7 @@ def main():
     state.session_flags = args.session_flags
     state.noisy_store = args.noisy_store
     state.fetch_no_flags = args.fetch_no_flags
+    state.cut_goodbye = args.cut_goodbye
     logger = Logger(args.log)
     caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)

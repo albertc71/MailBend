@@ -41,7 +41,7 @@ pub fn run(
     let rejected_with = send_envelope(conn, steps)?;
     // After 421 the server has already closed the connection.
     if rejected_with != Some(SERVICE_CLOSING) {
-        quit(conn)?;
+        quit(conn);
     }
     Ok(match rejected_with {
         None => Outcome::Completed,
@@ -185,18 +185,18 @@ fn send_envelope(conn: &mut Connection, steps: &[Step<'_>]) -> Result<Option<u16
     Ok(None)
 }
 
-/// QUIT is best effort: a failed QUIT must not turn the outcome into a
-/// transport error.
-fn quit(conn: &mut Connection) -> Result<(), Exit> {
-    if conn.write_best_effort(b"QUIT\r\n") {
-        while let Some(line) = conn.read_line()? {
-            conn.emit(&line)?;
-            if !parse_line(&line).is_ok_and(|reply| reply.more) {
-                break;
-            }
+/// QUIT is best effort, and its failure is silent: the server may already
+/// have accepted the message, so a failed QUIT must not turn the outcome
+/// into a transport error.
+fn quit(conn: &mut Connection) {
+    if conn.write(b"QUIT\r\n").is_err() {
+        return;
+    }
+    while let Ok(Some(line)) = conn.read_line() {
+        if conn.emit(&line).is_err() || !parse_line(&line).is_ok_and(|reply| reply.more) {
+            break;
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]

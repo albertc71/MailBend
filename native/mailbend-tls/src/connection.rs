@@ -193,11 +193,4 @@ impl Connection {
             .send(bytes)
             .map_err(|_| Exit::protocol("write to server failed or timed out"))
     }
-
-    /// Like `write`, but reports failure instead of stopping: for the
-    /// closing LOGOUT and QUIT, which must not replace the outcome of the
-    /// commands that already ran with a transport error.
-    pub fn write_best_effort(&mut self, bytes: &[u8]) -> bool {
-        self.transport.send(bytes).is_ok()
-    }
 }
