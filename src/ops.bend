@@ -465,32 +465,16 @@ def marked_deleted(cs: List<&2, I.Cmd>) -> Maybe<&2, List<&2, U32>>:
     case _ <> t:
       marked_deleted(t)
 
-# `c` before `rest` when `keep` holds, else just `rest`.
-def cmd_if(keep: Bool, c: I.Cmd, rest: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
-  match keep:
-    case True{}:
-      c <> rest
-    case False{}:
-      rest
-
 # The commands of a plan that change mail (store, copy, move, expunge,
 # append), in order. Unlike the first-match helpers above, it keeps every
 # such command, so a law about it also binds any second or later one.
-def mail_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
-  match cs:
-    case Nil{}:
-      []
-    case c <> t:
-      cmd_if(I.changes_mail(I.effect(c)), c, mail_changes(t))
+def mail_changes(cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  List.filter(~I.Cmd, ~(c => I.changes_mail(I.effect(c))), cs)
 
 # The commands of a plan that change folders (create, rename, subscribe,
 # unsubscribe), in order.
-def mailbox_changes(+cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
-  match cs:
-    case Nil{}:
-      []
-    case c <> t:
-      cmd_if(I.changes_mailbox(I.effect(c)), c, mailbox_changes(t))
+def mailbox_changes(cs: List<&2, I.Cmd>) -> List<&2, I.Cmd>:
+  List.filter(~I.Cmd, ~(c => I.changes_mailbox(I.effect(c))), cs)
 
 # Whether a flag is \Flagged or one of the colour bits.
 def is_flag_or_colour(f: I.Flag) -> Bool:
