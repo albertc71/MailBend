@@ -39,6 +39,24 @@ python3 tests/test-e2e.py
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`.
 
+## Bend style
+
+The Bend files follow `bend guide` and Base (`bend base`). In particular:
+
+- A file opens with a short comment saying what it is, then a blank line,
+  then its imports. Sections are a title underlined with `-` (or `=` for a
+  group of sections), with a blank line above and below.
+- Lists are matched as `Nil{}` and `h <> t`.
+- Write `+` only on a value that is used more than once on some path.
+- A helper is named after the def it serves, with a dotted suffix for its
+  role: `.go` for the loop, `.step` for one step of it, `.fin` for the
+  result from its final state, `.if` for a branch on a computed Bool or
+  check, `.put` for a branch on another computed value, `.run` for the IO
+  work once the checks pass, or a noun for any other part.
+- Arguments are built before the call, so `Bool.pick`, `&&` and `||` build
+  both sides. Where a side is costly or recursive, pass the test to a
+  helper that matches it.
+
 Use [Conventional Commits](https://www.conventionalcommits.org/) messages
 (`fix:`, `feat:`, `docs:`, ...). By contributing you agree that your work is
 licensed under the [MIT License](LICENSE).
