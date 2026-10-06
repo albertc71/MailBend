@@ -142,6 +142,7 @@ def run_all(work):
         mutations(srv)
         compose(srv)
         mcp(srv)
+        cli_front_end(srv)
         read_only(srv)
         failures(srv, work)
     finally:
@@ -473,15 +474,19 @@ def compose(srv):
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
 
-def mcp_session(srv, requests, **env):
+def mcp_bytes(srv, data, **env):
     p = subprocess.Popen([LAUNCHER, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          env=srv.env(**env))
-    # raw bytes: a string request may carry lone surrogates standing for invalid UTF-8 bytes
-    lines = [json.dumps(r) if not isinstance(r, str) else r for r in requests]
-    out, err = p.communicate(b"\n".join(l.encode("utf-8", "surrogateescape") for l in lines) + b"\n", timeout=180)
+    out, err = p.communicate(data, timeout=180)
     out, err = out.decode("utf-8"), err.decode("utf-8", "replace")
     outputs.extend([out, err])
     return [json.loads(l) for l in out.splitlines() if l.strip()], p.returncode
+
+
+def mcp_session(srv, requests, **env):
+    # raw bytes: a string request may carry lone surrogates standing for invalid UTF-8 bytes
+    lines = [json.dumps(r) if not isinstance(r, str) else r for r in requests]
+    return mcp_bytes(srv, b"\n".join(l.encode("utf-8", "surrogateescape") for l in lines) + b"\n", **env)
 
 
 def mcp(srv):
@@ -530,6 +535,65 @@ def mcp(srv):
     check("mcp: malformed envelopes answered with -32600", by_id.get(8, {}).get("error", {}).get("code") == -32600
           and any(r.get("id") is None and r.get("error", {}).get("code") == -32600 for r in res), res)
     check("mcp: exits cleanly when stdin closes", code == 0, code)
+    mcp_framing(srv)
+
+
+def ping(i):
+    return json.dumps({"jsonrpc": "2.0", "id": i, "method": "ping"}).encode()
+
+
+def unknown_method(i, name):
+    return json.dumps({"jsonrpc": "2.0", "id": i, "method": name}, ensure_ascii=False).encode()
+
+
+def mcp_framing(srv):
+    res, code = mcp_bytes(srv, ping(1) + b"\n\n  \r\n" + ping(2))
+    check("mcp: blank lines are skipped and a last line without a newline is answered",
+          [r.get("id") for r in res] == [1, 2] and code == 0, res)
+    res, code = mcp_bytes(srv, b"")
+    check("mcp: empty stdin ends the session without an answer", res == [] and code == 0, (res, code))
+    res, code = mcp_bytes(srv, b"\n".join([ping(1), ping(2), ping(3)]) + b"\n")
+    check("mcp: requests in one read are answered in order", [r.get("id") for r in res] == [1, 2, 3], res)
+    # Lines longer than one 64 KiB read, whose two-byte characters straddle a read boundary
+    # at either parity, are joined and decoded whole.
+    names = ["x" + "é" * 50000, "xy" + "é" * 50000]
+    res, _ = mcp_bytes(srv, b"\n".join(unknown_method(i, n) for i, n in enumerate(names)) + b"\n")
+    check("mcp: a long line spanning reads is decoded whole",
+          [r.get("error", {}).get("message") for r in res] == ["method not found: " + n for n in names], len(res))
+    big = json.dumps({"jsonrpc": "2.0", "id": 3, "method": "ping", "pad": "a" * (8 * 1024 * 1024)}).encode()
+    res, code = mcp_bytes(srv, ping(1) + b"\n" + big + b"\n" + ping(2) + b"\n")
+    check("mcp: a line over 8 MiB is refused and ends the session",
+          len(res) == 2 and res[0].get("id") == 1 and res[1].get("id") is None
+          and res[1].get("error", {}).get("code") == -32600
+          and res[1]["error"].get("message") == "request line longer than 8 MiB; closing" and code == 0, (res, code))
+
+
+def cli(srv, *args):
+    p = subprocess.run([LAUNCHER, *args], capture_output=True, text=True, env=srv.env(), timeout=120)
+    outputs.extend([p.stdout, p.stderr])
+    return p
+
+
+USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments]"
+
+
+def cli_front_end(srv):
+    p = cli(srv, "version")
+    check("cli: version", p.returncode == 0 and p.stdout == "mailbend 0.1.0\n", (p.returncode, p.stdout))
+    for args in [(), ("help",), ("tools", "x"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
+        p = cli(srv, *args)
+        check(f"cli: {list(args)} prints the usage and exits 2",
+              p.returncode == 2 and USAGE in p.stderr and p.stdout == "", (p.returncode, p.stdout, p.stderr))
+    p = cli(srv, "call", "mail_probe", "{not json")
+    check("cli: arguments that are not JSON exit 2", p.returncode == 2 and p.stdout == ""
+          and "the arguments are not valid JSON" in p.stderr, (p.returncode, p.stdout, p.stderr))
+    p = cli(srv, "call", "nope")
+    check("cli: a failed tool prints its JSON error and exits 1", p.returncode == 1
+          and json.loads(p.stdout) == {"error": "unknown tool: nope"}
+          and "mailbend: the tool failed" in p.stderr, (p.returncode, p.stdout, p.stderr))
+    p = cli(srv, "call", "mail_probe")
+    check("cli: call without arguments runs the tool with none", p.returncode == 0
+          and json.loads(p.stdout).get("ok") is True, (p.returncode, p.stdout))
 
 
 MUTATING_CALLS = {
