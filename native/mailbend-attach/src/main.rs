@@ -30,7 +30,7 @@ use mailbend_io::report::report;
 use mailbend_io::transcript::encode_bytes;
 use nix::errno::Errno;
 use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, ResolveFlag};
-use nix::sys::stat::{fstat, fstatat};
+use nix::sys::stat::{FileStat, fstat, fstatat};
 use nix::sys::statfs::{PROC_SUPER_MAGIC, SYSFS_MAGIC, fstatfs};
 use nix::unistd::{Uid, User};
 
@@ -87,8 +87,8 @@ fn read_attachment(dir: &[u8], path: &[u8], max: &[u8]) -> Result<(), Refusal> {
     let relative = relative_attachment_path(dir, root, path)?;
     let directory = open_attachment_directory(root)?;
     refuse_broad_directory(root, &directory)?;
-    let file = open_attachment(&directory, relative, path)?;
-    validate_attachment(&file, path, max)?;
+    let (file, st) = open_attachment(&directory, relative, path)?;
+    validate_attachment(&file, &st, path, max)?;
     emit_attachment(file, path, max)
 }
 
@@ -150,10 +150,14 @@ fn open_beneath(
 /// reopens that same inode for reading through /proc/self/fd/<probe>, which
 /// follows the descriptor rather than walking the path again, so a file
 /// swapped in under the name meanwhile is never opened. The inode is compared
-/// once more as a backstop. No O_NOFOLLOW on the probe: with O_PATH it would
-/// return a final symlink itself instead of letting RESOLVE_NO_SYMLINKS
-/// refuse it.
-fn open_attachment(directory: &OwnedFd, relative: &[u8], path: &[u8]) -> Result<File, Refusal> {
+/// once more as a backstop, and its status returned. No O_NOFOLLOW on the
+/// probe: with O_PATH it would return a final symlink itself instead of
+/// letting RESOLVE_NO_SYMLINKS refuse it.
+fn open_attachment(
+    directory: &OwnedFd,
+    relative: &[u8],
+    path: &[u8],
+) -> Result<(File, FileStat), Refusal> {
     let probe = open_beneath(directory, relative, path, OFlag::O_PATH)?;
     let before = fstat(&probe).map_err(|_| not_regular(path))?;
     if !is_regular(&before) {
@@ -176,7 +180,7 @@ fn open_attachment(directory: &OwnedFd, relative: &[u8], path: &[u8]) -> Result<
     if after.st_dev != before.st_dev || after.st_ino != before.st_ino {
         return Err(changed());
     }
-    Ok(file)
+    Ok((file, after))
 }
 
 /// The C library's text for an I/O error, without Rust's "(os error N)".
@@ -187,12 +191,9 @@ fn os_error_text(e: &std::io::Error) -> String {
     }
 }
 
-fn validate_attachment(file: &File, path: &[u8], max: u64) -> Result<(), Refusal> {
+/// `st` is the status of the open file, already known to be regular.
+fn validate_attachment(file: &File, st: &FileStat, path: &[u8], max: u64) -> Result<(), Refusal> {
     let shown = show(path);
-    let st = fstat(file).map_err(|_| not_regular(path))?;
-    if !is_regular(&st) {
-        return Err(not_regular(path));
-    }
     if st.st_nlink > 1 {
         return Err(format!("attachment {shown} has more than one hard link"));
     }
