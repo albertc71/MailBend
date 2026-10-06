@@ -1602,7 +1602,9 @@ def daily_limit(srv, work):
     state = os.path.join(os.path.realpath(work), "send-state", "mailbend")
     limit = {"MAILBEND_MAX_SENDS_PER_DAY": "2", "MAILBEND_STATE_DIR": state}
     n = sent_count(srv)
+    days = {time.strftime("%Y-%m-%d", time.gmtime())}
     answers = [tool(srv, "mail_send", SEND, **limit) for _ in range(3)]
+    days.add(time.strftime("%Y-%m-%d", time.gmtime()))
     check("daily limit: sends below and at the limit go", [c for c, _ in answers[:2]] == [0, 0]
           and sent_count(srv) == n + 2, answers[:2])
     c, r = answers[2]
@@ -1612,6 +1614,8 @@ def daily_limit(srv, work):
     check("daily limit: the counter lives in the state directory, created private",
           counter.is_file() and len(counter.read_text().splitlines()) == 2
           and (os.stat(state).st_mode & 0o777) == 0o700, state)
+    check("daily limit: a send counts against the UTC day of its reservation",
+          set(counter.read_text().splitlines()) <= days, (counter.read_text(), days))
     c, r = tool(srv, "mail_save_draft", SEND, **limit)
     check("daily limit: drafts are not counted", c == 0 and r.get("saved_to") == "Drafts"
           and len(counter.read_text().splitlines()) == 2, r)

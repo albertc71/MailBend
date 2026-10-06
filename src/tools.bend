@@ -2363,8 +2363,7 @@ def ask_options(
   names: List<&2, String>,
   +opts: Jev.Options
 ) -> IO(Tally()):
-  ask_all(tries, Jev.requests(c, ms, opts),
-    List.append(&2, String, names, [Jev.options_none(opts)]))
+  ask_all(tries, Jev.requests(c, ms, opts), Jev.option_keys(names, opts))
 
 # Messages to ask about
 # ---------------------
@@ -4107,10 +4106,9 @@ def atts_collect(rs: List<&2, Attachment()>) -> Attachments():
 # Stamps and drafts
 # -----------------
 
-# A date, a unique token (for Message-ID and the MIME boundary), and the
-# UTC day (YYYY-MM-DD) a send counts against.
+# A date and a unique token (for Message-ID and the MIME boundary).
 type Stamp is Data:
-  Stamp{date: String, token: String, day: String}
+  Stamp{date: String, token: String}
 
 # What the tools want composed; Bcc goes only into the SMTP envelope. With
 # `draft` the message is saved instead of sent; with `dry` that is only shown.
@@ -4147,7 +4145,7 @@ def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
       0
 
 def stamp_of(+secs: U32, a: U32, b: U32) -> Stamp:
-  Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b), M.iso_date(secs)}
+  Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b)}
 
 # The time in seconds since the epoch; 0 when it cannot be read.
 def now_seconds() -> IO(U32):
@@ -4172,7 +4170,7 @@ def domain_of(addr: String) -> String:
 # SMTP envelope.
 def draft_of(w: Want, +from: String, st: Stamp, keep_bcc: Bool) -> M.Draft:
   Want{to, cc, bcc, subject, text, irt, refs, atts, draft, dry, about, jev} = w
-  Stamp{date, token, day} = st
+  Stamp{date, token} = st
   msgid = "<" ++ token ++ "@" ++ domain_of(from) ++ ">"
   M.Draft{from, to, cc, Bool.pick(List<&2, String>, keep_bcc, bcc, []), subject, text, date,
     msgid, irt, refs, atts}
@@ -4182,12 +4180,8 @@ def msgid_of(d: M.Draft) -> String:
   msgid
 
 def boundary_of(st: Stamp) -> String:
-  Stamp{date, token, day} = st
+  Stamp{date, token} = st
   "mailbend-" ++ token
-
-def day_of(st: Stamp) -> String:
-  Stamp{date, token, day} = st
-  day
 
 def all_rcpts(w: Want) -> List<&2, String>:
   Want{to, cc, bcc, s, x, i, r, a, d, y, o, j} = w
@@ -4480,9 +4474,12 @@ def unlisted_msg(refused: List<&2, String>) -> String:
   "MAILBEND_ALLOWED_RECIPIENTS does not allow sending to " ++ String.join(refused, ", ") ++
     "; nothing was sent"
 
-def send_allowed.run(envelope: String, limit: U32, dir: String, day: String, s: Sent) -> IO(Out):
+# The send counts against the UTC day read just before its reservation,
+# after the gates, which may take a while.
+def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(Out):
   do IO<Out>:
-    problem : String <- reserve(limit, dir, day)
+    secs : U32 <- now_seconds()
+    problem : String <- reserve(limit, dir, M.iso_date(secs))
     send_allowed.if(problem, envelope, s)
 
 # A message ready to send once the gates pass it: the bare sender and
@@ -4496,7 +4493,6 @@ type Ready is Data:
     allow: List<&2, String>,
     limit: U32,
     dir: String,
-    day: String,
     sent: Sent,
     dry: Bool,
     preview: Preview
@@ -4528,12 +4524,12 @@ def send_allowed(
 ) -> IO(Out):
   match envelope:
     case None{}:
-      Ready{from, rcpts, msg, allow, limit, dir, day, s, dry, p} = r
+      Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       pure_out(send_refused(blocked, allow, rcpts, report))
     case Some{e}:
-      Ready{from, rcpts, msg, allow, limit, dir, day, s, dry, p} = r
+      Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       do IO<Out>:
-        o : Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, day, s))
+        o : Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
         return with_fields(o, report)
 
 # The send once the gates have decided: the envelope comes only from
@@ -4545,14 +4541,18 @@ def send_checked(
   report: List<&2, J.Json>,
   +r: Ready
 ) -> IO(Out):
-  Ready{from, rcpts, msg, allow, l, dr, dy, s, y, p} = r
+  Ready{from, rcpts, msg, allow, l, dr, s, y, p} = r
   send_allowed(Jev.outbound_checked(scan, allow, g, rcpts, from, msg),
     Jev.blocked_reason(scan, g), report, r)
+
+# The secret scan's result field.
+def scan_kvs(s: Secrets.Scan) -> List<&2, J.Json>:
+  [J.kv("secret_scan", J.str(Secrets.scan_name(s)))]
 
 # With Jev on, a send reports the secret scan's result and Jev's decision.
 def send_decided(+scan: Secrets.Scan, d: Jev.Decision, r: Ready) -> IO(Out):
   Jev.Decision{g, report} = d
-  send_checked(scan, g, List.append(&2, J.Json, Secrets.scan_kvs(scan), report), r)
+  send_checked(scan, g, List.append(&2, J.Json, scan_kvs(scan), report), r)
 
 def outgoing_answered(
   a: Asked,
@@ -4644,7 +4644,7 @@ def send_jev.put(
 # With Jev on, a send passes the allowlist, then the local secret scan of
 # its content, then Jev's veto questions, before its envelope is built.
 def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Out):
-  Ready{f, rcpts, m, allow, l, dr, dy, s, y, p} = r
+  Ready{f, rcpts, m, allow, l, dr, s, y, p} = r
   send_jev.put(S.refused(allow, rcpts), c, w, from, r)
 
 def send_gated(jev: Jev.Switch, w: Want, from: String, r: Ready) -> IO(Out):
@@ -4663,7 +4663,7 @@ def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Out):
       +rcpts = specs(all_rcpts(w))
       +sender = M.addr_spec(from)
       +msg = M.compose(d, boundary_of(st))
-      send_gated(want_jev(w), w, from, Ready{sender, rcpts, msg, allow, limit, dir, day_of(st),
+      send_gated(want_jev(w), w, from, Ready{sender, rcpts, msg, allow, limit, dir,
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
           draft_of(w, from, st, True{}), boundary_of(st)},
         is_dry(w), SmtpPreview{sender, rcpts, msg, save}})
@@ -4762,9 +4762,6 @@ def spec_keys(xs: List<&2, String>) -> List<&2, String>:
     case x <> t:
       spec_key(x) <> spec_keys(t)
 
-def key_in(k: String, ks: List<&2, String>) -> Bool:
-  List.contains(~String, ~String.eq, ks, k)
-
 # The addresses whose addr-spec is not in `seen` and not repeated, in order.
 def fresh(xs: List<&2, String>, +seen: List<&2, String>) -> List<&2, String>:
   match xs:
@@ -4772,7 +4769,7 @@ def fresh(xs: List<&2, String>, +seen: List<&2, String>) -> List<&2, String>:
       []
     case +x <> t:
       +k = spec_key(x)
-      +repeated = key_in(k, seen)
+      +repeated = C.is_in(k, seen)
       List.filter.put(String, x,
         fresh(t, Bool.pick(List<&2, String>, repeated, seen, k <> seen)), Bool.not(repeated))
 
@@ -5438,7 +5435,7 @@ type Filing is Data:
     answered: Jev.Answered,
     verdict: Jev.Verdict,
     vetoes: List<&2, String>,
-    action: Jev.Action
+    action: Ops.Action
   }
 
 def triage_request(+args: J.Json) -> Result<&2, &2, String, Triage>:
@@ -5550,7 +5547,7 @@ def senders(ps: List<&2, Pending>, +seen: List<&2, String>) -> List<&2, String>:
     case Nil{}:
       []
     case Pending{f, vetoes, Some{+a}} <> t:
-      +fresh = Bool.not(key_in(a, seen))
+      +fresh = Bool.not(C.is_in(a, seen))
       List.filter.put(String, a, senders(t, Bool.pick(List<&2, String>, fresh, a <> seen, seen)),
         fresh)
     case _ <> t:
@@ -5563,7 +5560,7 @@ def correspondence(written: Maybe<&2, List<&2, String>>, a: String) -> Jev.Corre
     case None{}:
       Jev.Unverified{}
     case Some{ws}:
-      Bool.pick(Jev.Correspondence, key_in(a, ws), Jev.Correspondent{}, Jev.Stranger{})
+      Bool.pick(Jev.Correspondence, C.is_in(a, ws), Jev.Correspondent{}, Jev.Stranger{})
 
 def settled.put(
   sender: Maybe<&2, String>,
@@ -5636,22 +5633,24 @@ def vetoes_of(ps: List<&2, Pending>, +uid: U32) -> List<&2, String>:
       Pending{f, vetoes, sender} = p
       Bool.pick(List<&2, String>, U32.is_eq(pending_uid(p), uid), vetoes, vetoes_of(t, uid))
 
-def rechecked.put(ms: List<&2, I.Msg>, p: Pending) -> Pending:
-  match ms:
-    case Nil{}:
+def rechecked.put(flags: Maybe<&2, List<&2, String>>, p: Pending) -> Pending:
+  match flags:
+    case None{}:
       p
-    case I.Msg{uid, flags, date, size, headers, body, structure} <> t:
+    case Some{fs}:
       Pending{f, vetoes, sender} = p
-      Pending{f, List.append(&2, String, vetoes, Jev.flag_vetoes(flags)), sender}
+      Pending{f, List.append(&2, String, vetoes, Jev.flag_vetoes(fs)), sender}
 
 # The messages with the vetoes of the flags read again (`ms`, the messages
 # bound for review): one flagged or answered since the first read is kept.
+# The last FETCH of a message counts, as a later unsolicited one may report
+# a flag set since.
 def rechecked(ps: List<&2, Pending>, +ms: List<&2, I.Msg>) -> List<&2, Pending>:
   match ps:
     case Nil{}:
       []
     case +p <> t:
-      rechecked.put(with_uid(ms, pending_uid(p)), p) <> rechecked(t, ms)
+      rechecked.put(last_flags(ms, pending_uid(p), None{}), p) <> rechecked(t, ms)
 
 def filing_of(+x: Jev.Answered, c: Jev.Content, none: String, found: List<&2, Pending>)
   -> Filing:
@@ -5688,7 +5687,7 @@ def to_review(fs: List<&2, Filing>) -> List<&2, U32>:
   match fs:
     case Nil{}:
       []
-    case Filing{x, v, vetoes, Jev.ToReview{}} <> t:
+    case Filing{x, v, vetoes, Ops.ToReview{}} <> t:
       answered_uid(x) <> to_review(t)
     case _ <> t:
       to_review(t)
@@ -5922,8 +5921,7 @@ def triage_ask(+t: Triaging) -> IO(Out):
     Jev.requests(c, asked_messages(c, found, False{}), opts),
     requests_alone(c, asked_messages(c, found, True{}), opts))
   do IO<Out>:
-    r : Tally() <- ask_all(Retried{}, steps,
-      List.append(&2, String, cats, [Jev.options_none(opts)]))
+    r : Tally() <- ask_all(Retried{}, steps, Jev.option_keys(cats, opts))
     triage_answered(r, t)
 
 def triage_written(r: Run(), addrs: List<&2, String>, t: Triaging) -> IO(Out):
@@ -6326,7 +6324,7 @@ def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
 def offered_items(ts: J.Json, +names: List<&2, String>) -> J.Json:
   match ts:
     case J.JCons{+t, rest}:
-      offered_items.if(key_in(str_arg(t, "name", ""), names), t, offered_items(rest, names))
+      offered_items.if(C.is_in(str_arg(t, "name", ""), names), t, offered_items(rest, names))
     case _:
       J.JEnd{}
 

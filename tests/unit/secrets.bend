@@ -220,6 +220,8 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([eml(with_part("message/global", "Subject: inner\r\n\r\n" ++ secret))]))
     IO.print(scan_atts([eml("Subject: Deploy\r\nX-Deploy-Token: " ++ github_token() ++
       "\r\n\r\nsee the header\r\n")]))
+    IO.print(scan_atts([eml("Subject: =?utf-8?B?" ++ C.b64_encode("AKIAIOSFODNN7EXAMPLE",
+      False{}) ++ "?=\r\n\r\nsee the subject\r\n")]))
     IO.print(scan_atts([M.Attach{"key.eml", "message/rfc822", pem()}]))
     IO.print(scan_atts([eml(multiparts(7n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(multiparts(8n, forwarded("7bit", secret)))]))
@@ -281,6 +283,7 @@ def main() -> IO(Unit):
 #|found in attachment 1 > message/rfc822 > application/octet-stream
 #|found in attachment 1 > message/rfc822 > message/global > text/plain
 #|found in the header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
 #|found in the header of attachment 1 > message/rfc822
 #|found in attachment 1 > message/rfc822 > text/plain
 #|incomplete: attachment 1 > message/rfc822 nests its parts more than 8 levels deep

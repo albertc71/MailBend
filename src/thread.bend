@@ -42,10 +42,6 @@ def msg_ids.go(
 def msg_ids(v: String) -> List<&2, String>:
   msg_ids.go(v, False{}, "", [])
 
-# Whether `id` is one of `ids`, compared exactly.
-def is_in(id: String, ids: List<&2, String>) -> Bool:
-  List.contains(~String, ~String.eq, ids, id)
-
 # Messages
 # --------
 
@@ -149,7 +145,7 @@ def any_in(xs: List<&2, String>, +ids: List<&2, String>) -> Bool:
     case Nil{}:
       False{}
     case x <> t:
-      is_in(x, ids) || any_in(t, ids)
+      C.is_in(x, ids) || any_in(t, ids)
 
 # Whether a message's own ID, In-Reply-To or References names one of `ids`
 # exactly.
@@ -189,7 +185,7 @@ def next_ids.go(
     case _ 0n:
       []
     case +id <> t 1n+r:
-      +new = is_searchable(id) && Bool.not(is_in(id, seen))
+      +new = is_searchable(id) && Bool.not(C.is_in(id, seen))
       List.filter.put(String, id,
         next_ids.go(t, Bool.pick(List<&2, String>, new, id <> seen, seen),
           Bool.pick(Nat, new, r, 1n+r)),
@@ -214,15 +210,21 @@ def no_later(+a: Node, +b: Node) -> Bool:
   +tb = node_time(b)
   U32.is_lt(ta, tb) || (U32.is_eq(ta, tb) && U32.is_le(node_uid(a), node_uid(b)))
 
-# The parent of the message `id` among the messages placed so far; "" when
-# it is not placed or has none. Threads are short, so the search walks them
-# all.
-def placed_parent(ps: List<&2, Placed>, +id: String) -> String:
-  match ps:
-    case Nil{}:
+# Walks `ps` until a message placed is `id`: `hit` says whether the one
+# before them was, and `parent` is its parent.
+def placed_parent.go(ps: List<&2, Placed>, hit: Bool, parent: String, +id: String) -> String:
+  match ps hit:
+    case _ True{}:
+      parent
+    case Nil{} False{}:
       ""
-    case Placed{n, parent} <> t:
-      Bool.pick(String, String.eq(node_id(n), id), parent, placed_parent(t, id))
+    case Placed{n, p} <> t False{}:
+      placed_parent.go(t, String.eq(node_id(n), id), p, id)
+
+# The parent of the message `id` among the messages placed so far; "" when
+# it is not placed or has none. The walk stops at the first hit.
+def placed_parent(ps: List<&2, Placed>, id: String) -> String:
+  placed_parent.go(ps, False{}, "", id)
 
 # Whether following parents from `at` leads to `target`, through the
 # messages placed so far; `hit` says whether `at` is `target`. An empty `at`
@@ -253,7 +255,7 @@ def parent_in.go(
     case Nil{} False{}:
       ""
     case +d <> t False{}:
-      parent_in.go(t, is_in(d, present) && Bool.not(String.eq(d, self)), d, present, self)
+      parent_in.go(t, C.is_in(d, present) && Bool.not(String.eq(d, self)), d, present, self)
 
 # The first of `cands` that is a message of the thread (`present`) other
 # than `self`; "" for none. The walk stops at the first hit.

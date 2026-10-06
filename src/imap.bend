@@ -822,19 +822,6 @@ def month_number.go(+k: Nat, +name: String) -> U32:
 def month_number(name: String) -> U32:
   month_number.go(12n, name)
 
-# Days from 1970-01-01 to a civil date (days-from-civil, H. Hinnant), the
-# inverse of mime.bend's civil. The year starts in March, so leap days come
-# last, and every step stays unsigned for dates from 1970 on.
-def days_from_civil(y: U32, +m: U32, d: U32) -> U32:
-  +early = U32.is_le(m, 2)
-  +yy = (y - Bool.to_u32(early) : U32)
-  +era = (yy / 400 : U32)
-  +yoe = (yy - era * 400 : U32)
-  mp = Bool.pick(U32, early, (m + 9 : U32), (m - 3 : U32))
-  doy = ((153 * mp + 2) / 5 + d - 1 : U32)
-  doe = (yoe * 365 + yoe / 4 - yoe / 100 + doy : U32)
-  (era * 146097 + doe - 719468 : U32)
-
 # A "+hhmm" or "-hhmm" zone's offset in seconds.
 def zone_seconds(hhmm: String) -> U32:
   +n = date_num(hhmm)
@@ -857,7 +844,7 @@ def civil_seconds(
 ) -> U32:
   match dmy hms:
     case d <> mon <> y <> Nil{} h <> mi <> s <> Nil{}:
-      days = days_from_civil(date_num(y), month_number(mon), date_num(d))
+      days = C.days_from_civil(date_num(y), month_number(mon), date_num(d))
       utc((days * 86400 + date_num(h) * 3600 + date_num(mi) * 60 + date_num(s) : U32),
         zone)
     case _ _:
@@ -1666,23 +1653,11 @@ type Walk is Data:
 def nth(vs: List<&2, Value>, n: Nat) -> Value:
   Maybe.default(&2, Value, List.get(&2, Value, vs, n), VNil{})
 
-# A parameter value as a quoted string: '"' and '\' escaped.
-def quoted(s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{'"', t}:
-      "\\\"" ++ quoted(t)
-    case SCon{'\\', t}:
-      "\\\\" ++ quoted(t)
-    case SCon{c, t}:
-      SCon{c, quoted(t)}
-
 # "; key=\"value\"" for each key and value of a parameter list.
 def param_pairs(vs: List<&2, Value>) -> String:
   match vs:
     case k <> v <> t:
-      "; " ++ Value.text(k) ++ "=\"" ++ quoted(Value.text(v)) ++ "\"" ++ param_pairs(t)
+      "; " ++ Value.text(k) ++ "=" ++ C.quoted(Value.text(v)) ++ param_pairs(t)
     case _:
       ""
 

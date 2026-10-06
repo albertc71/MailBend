@@ -4,7 +4,6 @@
 import Base
 import ../../src/imap.bend as I
 import ../../src/ops.bend as Ops
-import ../../src/jev.bend as Jev
 
 # A script on one line: each CRLF but the last becomes " | ".
 def one_line(s: String) -> String:
@@ -108,9 +107,9 @@ def plans_text(ps: List<&2, List<&2, I.Cmd>>) -> String:
       " {" ++ wire(p) ++ "}" ++ plans_text(t)
 
 def placements() -> List<&2, Ops.Placement>:
-  [Ops.Placement{5, Jev.ToFolder{"Receipts"}}, Ops.Placement{3, Jev.ToReview{}},
-   Ops.Placement{4, Jev.Stay{}}, Ops.Placement{7, Jev.ToFolder{"Receipts"}},
-   Ops.Placement{8, Jev.ToFolder{"inbox"}}, Ops.Placement{9, Jev.ToFolder{"News"}}]
+  [Ops.Placement{5, Ops.ToFolder{"Receipts"}}, Ops.Placement{3, Ops.ToReview{}},
+   Ops.Placement{4, Ops.Stay{}}, Ops.Placement{7, Ops.ToFolder{"Receipts"}},
+   Ops.Placement{8, Ops.ToFolder{"inbox"}}, Ops.Placement{9, Ops.ToFolder{"News"}}]
 
 def triage(cats: List<&2, String>, ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool)
   -> String:
@@ -272,7 +271,7 @@ def main() -> IO(Unit):
     IO.print(wire(Ops.plan_reread_flags("INBOX", [3, 5])))
     IO.print(flag(I.any_writes(Ops.plan_reread_flags("INBOX", [3]))))
     IO.print("[" ++ moves_text(Ops.triage_moves("INBOX", placements())) ++ "]")
-    IO.print("[" ++ moves_text(Ops.triage_moves("To Delete", [Ops.Placement{1, Jev.ToReview{}}]))
+    IO.print("[" ++ moves_text(Ops.triage_moves("To Delete", [Ops.Placement{1, Ops.ToReview{}}]))
       ++ "]")
     IO.print("[" ++ moves_text(Ops.triage_moves("INBOX", [])) ++ "]")
     IO.print(flag(Ops.triage_dest("INBOX", ["Receipts"], [], "To Delete")))

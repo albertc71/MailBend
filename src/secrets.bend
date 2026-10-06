@@ -9,7 +9,6 @@
 # hidden on purpose (in a compressed file, say).
 
 import Base
-import ./json.bend as J
 import ./mime.bend as M
 
 # The scan's result
@@ -30,9 +29,6 @@ def scan_name(s: Scan) -> String:
       "incomplete"
     case Clean{}:
       "clean"
-
-def scan_kvs(s: Scan) -> List<&2, J.Json>:
-  [J.kv("secret_scan", J.str(scan_name(s)))]
 
 # Limits
 # ------
@@ -154,21 +150,21 @@ def password_key_length() -> Nat:
   8n
 
 # `c` and the rest of its word, `space` saying whether `c` is a space.
-def first_word.if(t: String, c: Char, space: Bool) -> String:
+def first_word.go(t: String, c: Char, space: Bool) -> String:
   match t space:
     case _ True{}:
       ""
     case SNil{} False{}:
       SCon{c, ""}
     case SCon{+d, u} False{}:
-      SCon{c, first_word.if(u, d, Char.is_space(d))}
+      SCon{c, first_word.go(u, d, Char.is_space(d))}
 
 def first_word(s: String) -> String:
   match s:
     case SNil{}:
       ""
     case SCon{+c, t}:
-      first_word.if(t, c, Char.is_space(c))
+      first_word.go(t, c, Char.is_space(c))
 
 # A password: a word of at least 6 characters with a digit in it, which
 # keeps out words such as "required" or "(none)".
@@ -435,19 +431,29 @@ def cut_pieces(cut: Bool, part: String) -> List<&2, Piece>:
     case False{}:
       []
 
+# Each header field's value with its RFC 2047 encoded words decoded, one
+# per line.
+def decoded_values(fs: List<&2, M.Hdr>) -> String:
+  match fs:
+    case Nil{}:
+      ""
+    case M.Hdr{name, value} <> t:
+      M.decode_header(value) ++ "\n" ++ decoded_values(t)
+
 def message_pieces.put(
   +part: String,
-  head: String,
+  +head: String,
   forwards: Nat,
   leaves: List<&2, M.Leaf> & Bool
 ) -> List<&2, Piece>:
   (ls, cut) = leaves
   Plain{"the header of " ++ part, head} <>
-    List.append(&2, Piece, leaves_pieces(ls, forwards, part), cut_pieces(cut, part))
+    Plain{"the decoded header of " ++ part, decoded_values(M.headers(head))} <>
+      List.append(&2, Piece, leaves_pieces(ls, forwards, part), cut_pieces(cut, part))
 
 # A forwarded message: its header section, read as text (so a message with
-# no blank line is read whole), then its single parts. Parts nested past
-# M.multipart_limit are missed.
+# no blank line is read whole) and with its values decoded, then its single
+# parts. Parts nested past M.multipart_limit are missed.
 def message_pieces(part: String, +raw: String, forwards: Nat) -> List<&2, Piece>:
   message_pieces.put(part, M.head_of(M.split(raw)), forwards, M.message_leaves.cut(raw))
 

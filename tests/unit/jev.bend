@@ -9,6 +9,7 @@ import ../../src/codec.bend as C
 import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/mime.bend as M
+import ../../src/ops.bend as Ops
 import ../../src/smtp.bend as S
 import ../../src/jev.bend as Jev
 import ../../src/secrets.bend as Secrets
@@ -34,6 +35,13 @@ def headers() -> String:
 
 def full(text: String) -> String:
   "Content-Type: text/plain; charset=utf-8\r\n\r\n" ++ text
+
+# A multipart message of the subtype `sub`: a text/plain part, then a part
+# of type `second`.
+def two_parts(sub: String, second: String) -> String:
+  "Content-Type: multipart/" ++ sub ++ "; boundary=\"b\"\r\n\r\n--b\r\n" ++
+    "Content-Type: text/plain\r\n\r\nfirst\r\n--b\r\nContent-Type: " ++ second ++
+    "\r\n\r\nsecond\r\n--b--\r\n"
 
 def msg(uid: U32, size: U32, body: String, structure: I.Value) -> I.Msg:
   I.Msg{uid, ["\\Seen"], "1-Oct-2026 09:00:00 +0000", size, headers(), body, structure}
@@ -63,6 +71,10 @@ def check_facts() -> IO(Unit):
       I.VNil{}), 1000)))
     IO.print(show_text(Jev.text_of(msg(8, 2000, full("Hi\r\n"), I.VNil{}), 1000)))
     IO.print(show_text(Jev.text_of(msg(8, 60, full("Caf�\r\n"), I.VNil{}), 1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 300, two_parts("mixed", "text/plain"), I.VNil{}),
+      1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 300, two_parts("alternative", "text/html"), I.VNil{}),
+      1000)))
     IO.print(Nat.show(String.length(Jev.escaped_prefix("aé\"b", 4))) ++ " " ++
       Jev.escaped_prefix("aé\"b", 3) ++ " [" ++ Jev.escaped_prefix("\"x", 1) ++ "] " ++
       Jev.escaped_prefix("abc", 99))
@@ -332,13 +344,13 @@ def verdicts(
     case k <> t:
       " " ++ by_level(c, whole, vetoes, k, bands()) ++ verdicts(c, whole, vetoes, t)
 
-def action_name(a: Jev.Action) -> String:
+def action_name(a: Ops.Action) -> String:
   match a:
-    case Jev.ToReview{}:
+    case Ops.ToReview{}:
       "review"
-    case Jev.ToFolder{folder}:
+    case Ops.ToFolder{folder}:
       "folder:" ++ folder
-    case Jev.Stay{}:
+    case Ops.Stay{}:
       "stay"
 
 # The category answers filing sees: an existing folder at each band, a
@@ -552,6 +564,8 @@ def main() -> IO(Unit):
 #|] partial
 #|[Caf�
 #|] partial
+#|[first] partial
+#|[first] complete
 #|2 aé [] abc
 #|10
 #|none___ none

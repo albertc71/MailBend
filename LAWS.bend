@@ -815,11 +815,11 @@ law filing_matches_table:
   for v: Jev.Verdict
   for unsafe: {Jev.is_safe(v) == False{} : Bool}
   for folder: String
-  ({Jev.filing(Jev.SafeToDelete{}, cat) == Jev.ToReview{} : Jev.Action} &
-   {Jev.filing(v, Jev.Filed{folder}) == Jev.ToFolder{folder} : Jev.Action} &
-   {Jev.filing(v, Jev.Proposed{folder}) == Jev.Stay{} : Jev.Action} &
-   {Jev.filing(v, Jev.NeedsNew{}) == Jev.Stay{} : Jev.Action} &
-   {Jev.filing(v, Jev.Uncategorised{}) == Jev.Stay{} : Jev.Action})
+  ({Jev.filing(Jev.SafeToDelete{}, cat) == Ops.ToReview{} : Ops.Action} &
+   {Jev.filing(v, Jev.Filed{folder}) == Ops.ToFolder{folder} : Ops.Action} &
+   {Jev.filing(v, Jev.Proposed{folder}) == Ops.Stay{} : Ops.Action} &
+   {Jev.filing(v, Jev.NeedsNew{}) == Ops.Stay{} : Ops.Action} &
+   {Jev.filing(v, Jev.Uncategorised{}) == Ops.Stay{} : Ops.Action})
 
 # LAW: a message that is not safe to delete, with a category answer below
 # High confidence or none at all, is in no triage plan; nor is a message

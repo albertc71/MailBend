@@ -776,7 +776,7 @@ def want(to: List<&2, String>, bcc: List<&2, String>, draft: Bool) -> T.Want:
     Jev.Fresh{}, Jev.Off{}}
 
 def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
-  T.Stamp{date, token, day} = st
+  T.Stamp{date, token} = st
   do IO<Unit>:
     IO.print(date ++ " " ++ token ++ " " ++ T.boundary_of(st))
     IO.print(T.msgid_of(T.draft_of(w, "me@my.org", st, True{})) ++ " " ++
@@ -863,7 +863,7 @@ def check_reply() -> IO(Unit):
     IO.print(show_line_endings(T.quote_lines(["a", "", "b"])) ++ "|" ++ T.quote_lines([]))
     IO.print(T.spec_key("A <A@X.com>") ++ " " ++
       String.join(T.spec_keys(["B@y", "c <C@z>"]), ",") ++ " " ++
-      show_bool(T.key_in("b@y", ["a", "b@y"])) ++ " " ++ show_bool(T.key_in("b", [])))
+      show_bool(C.is_in("b@y", ["a", "b@y"])) ++ " " ++ show_bool(C.is_in("b", [])))
     IO.print(String.join(T.fresh(["A <a@x>", "a@X", "b@y", "C <c@z>", "B@Y"], ["c@z"]), "|"))
     IO.print(M.readable_text(M.Parts{"plain", "<b>html</b>", []}) ++ "|" ++
       M.readable_text(M.Parts{"", "<p>Hi &amp; bye</p>", []}) ++ "|" ++
@@ -897,7 +897,7 @@ def tool_defs() -> J.Json:
 
 # Whether a configuration lists the tool named `n`.
 def listed(n: String, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
-  T.key_in(n, Ops.listed_names(Ops.all_ops(), ro, drafts, jev))
+  C.is_in(n, Ops.listed_names(Ops.all_ops(), ro, drafts, jev))
 
 def check_dispatch() -> IO(Unit):
   do IO<Unit>:
@@ -921,7 +921,7 @@ def check_dispatch() -> IO(Unit):
       show_bool(listed("mail_classify", False{}, False{}, False{})) ++ " " ++
       show_bool(listed("mail_classify", True{}, False{}, True{})) ++ " " ++
       show_bool(listed("mail_nope", False{}, False{}, True{})) ++ " " ++
-      show_bool(T.key_in("b", ["a", "b"])) ++ " " ++ show_bool(T.key_in("b", [])))
+      show_bool(C.is_in("b", ["a", "b"])) ++ " " ++ show_bool(C.is_in("b", [])))
     IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, False{}, Jev.Off{}})))
     IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.Off{}})))
     IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, True{}, Jev.Off{}})))
@@ -1261,6 +1261,9 @@ def check_triage() -> IO(Unit):
       ","))
     IO.print(vetoes_line(T.rechecked([pending(1, None{}), pending(2, None{})], reread())) ++
       " " ++ vetoes_line(T.rechecked([pending(2, None{})], [])))
+    IO.print(vetoes_line(T.rechecked([pending(2, None{})], I.flag_fetches(I.frame(
+      "* 1 FETCH (UID 2 FLAGS (\\Seen))\r\n* 1 FETCH (UID 2 FLAGS (\\Seen \\Flagged))\r\n" ++
+      "a1 OK\r\n")))))
     IO.print(String.join(Jev.correspondence_vetoes(T.correspondence(None{}, "a@x")), ",") ++
       "|" ++ String.join(Jev.correspondence_vetoes(T.correspondence(Some{["a@x"]}, "a@x")), ",") ++
       "|" ++ String.join(Jev.correspondence_vetoes(T.correspondence(Some{["b@y"]}, "a@x")), ","))
@@ -1614,6 +1617,7 @@ def main() -> IO(Unit):
 #|a@x,b@y
 #|a@x,c@z
 #|[][it has been answered] []
+#|[it is flagged]
 #|whether the user has written to its sender cannot be told|the user has written to its sender|
 #||it was not checked
 #|[Jev found UID 3, UID 4 safe to delete, but "To Delete" cannot take them: it does not exist][][]

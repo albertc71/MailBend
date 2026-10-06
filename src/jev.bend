@@ -13,6 +13,7 @@ import ./codec.bend as C
 import ./json.bend as J
 import ./imap.bend as I
 import ./mime.bend as M
+import ./ops.bend as Ops
 import ./secrets.bend as Secrets
 import ./smtp.bend as S
 
@@ -64,9 +65,10 @@ type Attachments is Data:
   Known{names: List<&2, String>}
   Unknown{}
 
-# Whether Jev saw the whole readable text. A fetch cut, the text cap, an
-# undecodable part or the request budget make it Partial. In headers mode
-# Jev sees no text, and this records only whether the fetch was cut.
+# Whether Jev saw the whole readable text. A fetch cut, a second text part
+# left out, the text cap, an undecodable part or the request budget make it
+# Partial. In headers mode Jev sees no text, and this records only whether
+# the fetch was cut.
 type Completeness is Data:
   Complete{}
   Partial{}
@@ -191,11 +193,16 @@ def text_of.put(+plain: String, cut: Bool) -> Text:
   partial = cut || undecodable || U32.is_lt(C.utf8_len(capped), C.utf8_len(plain))
   Text{capped, Bool.pick(Completeness, partial, Partial{}, Complete{})}
 
+def text_of.fin(kept: M.Parts & Bool, cut: Bool) -> Text:
+  (p, left_out) = kept
+  text_of.put(plain_text(M.readable_text(p)), cut || left_out)
+
 # The text of a message fetched whole up to `max` bytes: Partial when the
-# fetch cut it, the cap shortened it or a part did not decode.
+# fetch cut it, a second text part was left out (see M.parts_kept), the cap
+# shortened it or a part did not decode.
 def text_of(m: I.Msg, max: U32) -> Text:
   I.Msg{uid, flags, date, size, headers, body, structure} = m
-  text_of.put(plain_text(M.readable_text(M.parts(body))), U32.is_gt(size, max))
+  text_of.fin(M.parts_kept(M.message_leaves(body)), U32.is_gt(size, max))
 
 def escaped_prefix.if(fits: Bool, c: Char, acc: String) -> String:
   match fits:
@@ -293,8 +300,18 @@ def action_options() -> List<&2, J.Json>:
     J.kv("none", J.str("Nothing needs doing"))
   ]
 
+# The member names of an object's items.
+def member_names(items: J.Json) -> List<&2, String>:
+  match items:
+    case J.JCons{J.JKv{k, v}, t}:
+      k <> member_names(t)
+    case J.JCons{h, t}:
+      member_names(t)
+    case _:
+      []
+
 def action_keys() -> List<&2, String>:
-  ["read_now", "read_later", "label", "review", "none"]
+  member_names(J.chain(action_options()))
 
 # The "none" key of the category options: "none", with one "_" more than
 # any folder or candidate named "none" and underscores, so it is free.
@@ -426,9 +443,9 @@ def request_limit() -> U32:
 def overhead() -> U32:
   128
 
-# One message ready to ask about: its facts (body completeness settled), the
-# text it was asked with, its state and questions, and their sizes (each
-# with one byte for the comma before it).
+# One message ready to ask about: its facts (body completeness settled), its
+# state and questions, and their sizes (each with one byte for the comma
+# before it).
 type Entry is Data:
   Entry{
     facts: Facts,
@@ -585,18 +602,15 @@ def options_none(o: Options) -> String:
   Options{p, json, none} = o
   none
 
-def leaves_room.put(m: Maybe<&2, U32>) -> Bool:
-  match m:
-    case Some{r}:
-      True{}
-    case None{}:
-      False{}
+# The keys a category answer may give: the folder names, then the none key.
+def option_keys(names: List<&2, String>, o: Options) -> List<&2, String>:
+  List.append(&2, String, names, [options_none(o)])
 
 # Whether the options leave room for a message: one with the largest UID
 # and no header fields fits a request on its own.
 def leaves_room(c: Content, opts: Options) -> Bool:
   bare : Facts = Facts{4294967295, [], [], "", 0, Known{[]}, Complete{}}
-  leaves_room.put(text_room(entry(c, bare, "", opts)))
+  Maybe.is_some(&2, U32, text_room(entry(c, bare, "", opts)))
 
 # A message that starts a request (its entry `e`): whole when it fits.
 def alone(
@@ -899,16 +913,6 @@ def answers_for(+answers: J.Json, +uid: U32, categories: List<&2, String>) -> An
 # tokens TypeSafe counted, when it says.
 type Reply is Data:
   Reply{answered: List<&2, Answered>, input_tokens: Maybe<&2, U32>}
-
-# The member names of an object's items.
-def member_names(items: J.Json) -> List<&2, String>:
-  match items:
-    case J.JCons{J.JKv{k, v}, t}:
-      k <> member_names(t)
-    case J.JCons{h, t}:
-      member_names(t)
-    case _:
-      []
 
 def sorted_repeat.go(xs: List<&2, String>, +prev: String) -> Bool:
   match xs:
@@ -1270,31 +1274,26 @@ def verdict(c: Content, whole: Completeness, +vetoes: List<&2, String>, a: Answe
   Bool.pick(Verdict, kept, Keep{},
     Bool.pick(Verdict, missing, Unanswered{}, Bool.pick(Verdict, sure, SafeToDelete{}, Review{})))
 
-# What triage does with a message: move it into the review folder or into
-# a category folder, or leave it where it is.
-type Action is Data:
-  ToReview{}
-  ToFolder{folder: String}
-  Stay{}
-
-def filed(c: Category) -> Action:
+# Where a category files a message: into the folder Jev chose, if it was
+# Filed; otherwise it stays.
+def filed(c: Category) -> Ops.Action:
   match c:
     case Filed{folder}:
-      ToFolder{folder}
+      Ops.ToFolder{folder}
     case Proposed{folder}:
-      Stay{}
+      Ops.Stay{}
     case NeedsNew{}:
-      Stay{}
+      Ops.Stay{}
     case Uncategorised{}:
-      Stay{}
+      Ops.Stay{}
 
 # The filing table: a message safe to delete goes to review whatever its
 # category; any other is filed into its category only when Jev chose an
 # existing folder with High confidence, and otherwise stays.
-def filing(v: Verdict, c: Category) -> Action:
+def filing(v: Verdict, c: Category) -> Ops.Action:
   match v:
     case SafeToDelete{}:
-      ToReview{}
+      Ops.ToReview{}
     case Keep{}:
       filed(c)
     case Review{}:

@@ -584,13 +584,15 @@ def boundary(hs: List<&2, Hdr>) -> String:
   Bool.pick(String, multipart, param(ct, "boundary"), "")
 
 # The open part's lines, joined, pushed onto the finished parts when
-# `inside` a part.
+# `inside` a part. The lines keep their CRs, so the part keeps its bytes
+# (a binary part may hold a bare LF); only the CR of the line break before
+# the next boundary is dropped, as that break belongs to the boundary.
 def subparts.push(
   cur: List<&2, String>, parts: List<&2, String>, inside: Bool
 ) -> List<&2, String>:
   match inside:
     case True{}:
-      String.join(List.reverse(&2, String, cur), "\r\n") <> parts
+      strip_cr(String.join(List.reverse(&2, String, cur), "\n")) <> parts
     case False{}:
       parts
 
@@ -623,7 +625,7 @@ def subparts.go(lines: List<&2, String>, +b: String, c: Cut) -> Cut:
     case Nil{}:
       c
     case l <> t:
-      subparts.go(t, b, subparts.line(strip_cr(l), b, c))
+      subparts.go(t, b, subparts.line(l, b, c))
 
 def subparts.fin(c: Cut) -> List<&2, String>:
   Cut{cur, parts, inside, done} = c
@@ -684,12 +686,31 @@ def message_leaves.cut(msg: String) -> List<&2, Leaf> & Bool:
 def message_leaves(msg: String) -> List<&2, Leaf>:
   Pair.fst(List<&2, Leaf>, Bool, message_leaves.cut(msg))
 
-def parts_of(ls: List<&2, Leaf>) -> Parts:
+# Whether neither text is empty.
+def both_filled(+a: String, +b: String) -> Bool:
+  Bool.not(String.is_empty(a)) && Bool.not(String.is_empty(b))
+
+# A part's content `a` merged before the content after it (`rest`), and
+# whether the merge left a text or an HTML out.
+def parts_kept.fin(+a: Parts, rest: Parts & Bool) -> Parts & Bool:
+  Parts{t1, h1, a1} = a
+  (+b, cut) = rest
+  Parts{t2, h2, a2} = b
+  (merge(a, b), cut || both_filled(t1, t2) || both_filled(h1, h2))
+
+# The readable content of single parts, and whether it left out a second
+# text/plain part, or a second text/html part, that holds text. A text and
+# an HTML part are read as versions of one text (as multipart/alternative
+# sends them), so the HTML one left out beside a text is not counted.
+def parts_kept(ls: List<&2, Leaf>) -> Parts & Bool:
   match ls:
     case Nil{}:
-      no_parts()
+      (no_parts(), False{})
     case l <> t:
-      merge(leaf(l), parts_of(t))
+      parts_kept.fin(leaf(l), parts_kept(t))
+
+def parts_of(ls: List<&2, Leaf>) -> Parts:
+  Pair.fst(Parts, Bool, parts_kept(ls))
 
 # The readable content of a whole message.
 def parts(msg: String) -> Parts:
@@ -1351,20 +1372,6 @@ def day_name(n: U32) -> String:
 def wday(days: U32) -> String:
   day_name(((days + 4) % 7 : U32))
 
-# Days since 1970-01-01 to (year, month, day) (civil-from-days, H. Hinnant),
-# shifted by 719468 days so all arithmetic stays unsigned.
-def civil(days: U32) -> U32 & (U32 & U32):
-  +z = (days + 719468 : U32)
-  +era = (z / 146097 : U32)
-  +doe = (z - era * 146097 : U32)
-  +yoe = ((doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 : U32)
-  +doy = (doe - (365 * yoe + yoe / 4 - yoe / 100) : U32)
-  +mp = ((5 * doy + 2) / 153 : U32)
-  d = (doy - (153 * mp + 2) / 5 + 1 : U32)
-  +m = Bool.pick(U32, U32.is_lt(mp, 10), (mp + 3 : U32), (mp - 9 : U32))
-  y = (yoe + era * 400 + Bool.to_u32(U32.is_le(m, 2)) : U32)
-  (y, (m, d))
-
 # A civil date as "D Mon YYYY".
 def civil_text(date: U32 & (U32 & U32)) -> String:
   (y, (m, d)) = date
@@ -1381,8 +1388,8 @@ def rfc5322_date(+secs: U32) -> String:
   +rem = (secs % 86400 : U32)
   time = pad2((rem / 3600 : U32)) ++ ":" ++ pad2(((rem % 3600) / 60 : U32))
     ++ ":" ++ pad2((rem % 60 : U32))
-  wday(days) ++ ", " ++ civil_text(civil(days)) ++ " " ++ time ++ " +0000"
+  wday(days) ++ ", " ++ civil_text(C.civil(days)) ++ " " ++ time ++ " +0000"
 
 # Seconds since the epoch to the UTC date, as YYYY-MM-DD.
 def iso_date(secs: U32) -> String:
-  iso_text(civil((secs / 86400 : U32)))
+  iso_text(C.civil((secs / 86400 : U32)))

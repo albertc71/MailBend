@@ -1038,7 +1038,7 @@ def distinct_if_unrepeated(xs: List<&2, U32>, +e: {Ops.repeated(xs) == False{} :
       distinct_if_unrepeated(t,
         or_false_right(List.contains(~U32, ~U32.is_eq, t, x), Ops.repeated(t), e))
 
-def triage_one_move_per_message.put(
+def moves_are_distinct(
   -mbox: String, +ms: List<&2, Ops.FolderUids>, move: Bool, uidplus: Bool, -uidv: U32,
   r: {Ops.repeats(Ops.uids_per_move(ms)) == False{} : Bool})
   -> {Ops.distinct(List.concat(&2, U32,
@@ -1075,7 +1075,7 @@ def triage_one_move_per_message.if(
   match ok:
     case True{}:
       +unique = Bool.not(Ops.repeats(Ops.uids_per_move(ms)))
-      triage_one_move_per_message.put(mbox, ms, move, uidplus, uidv,
+      moves_are_distinct(mbox, ms, move, uidplus, uidv,
         not_true(Ops.repeats(Ops.uids_per_move(ms)),
           and_right(Ops.dests_ok(mbox, cats, reserved, ms), unique, e)))
     case False{}:
@@ -1143,20 +1143,20 @@ def Laws.triage_expunges_only_moved(mbox, cats, reserved, ms, move, uidplus, uid
   triage_expunges_only_moved.if(triage_ok(m, cats, reserved, xs), m, xs, move, uidplus, uidv)
 
 # filing a message that is not safe to delete, case by case over its verdict
-def filing_matches_table.unsafe(
+def unsafe_filing_matches_table(
   v: Jev.Verdict, unsafe: {Jev.is_safe(v) == False{} : Bool}, -folder: String)
-  -> ({Jev.filing(v, Jev.Filed{folder}) == Jev.ToFolder{folder} : Jev.Action} &
-      {Jev.filing(v, Jev.Proposed{folder}) == Jev.Stay{} : Jev.Action} &
-      {Jev.filing(v, Jev.NeedsNew{}) == Jev.Stay{} : Jev.Action} &
-      {Jev.filing(v, Jev.Uncategorised{}) == Jev.Stay{} : Jev.Action}):
+  -> ({Jev.filing(v, Jev.Filed{folder}) == Ops.ToFolder{folder} : Ops.Action} &
+      {Jev.filing(v, Jev.Proposed{folder}) == Ops.Stay{} : Ops.Action} &
+      {Jev.filing(v, Jev.NeedsNew{}) == Ops.Stay{} : Ops.Action} &
+      {Jev.filing(v, Jev.Uncategorised{}) == Ops.Stay{} : Ops.Action}):
   match v:
     case Jev.SafeToDelete{}:
       Empty.absurd(
-        ({Jev.filing(Jev.SafeToDelete{}, Jev.Filed{folder}) == Jev.ToFolder{folder}
-            : Jev.Action} &
-         {Jev.filing(Jev.SafeToDelete{}, Jev.Proposed{folder}) == Jev.Stay{} : Jev.Action} &
-         {Jev.filing(Jev.SafeToDelete{}, Jev.NeedsNew{}) == Jev.Stay{} : Jev.Action} &
-         {Jev.filing(Jev.SafeToDelete{}, Jev.Uncategorised{}) == Jev.Stay{} : Jev.Action}),
+        ({Jev.filing(Jev.SafeToDelete{}, Jev.Filed{folder}) == Ops.ToFolder{folder}
+            : Ops.Action} &
+         {Jev.filing(Jev.SafeToDelete{}, Jev.Proposed{folder}) == Ops.Stay{} : Ops.Action} &
+         {Jev.filing(Jev.SafeToDelete{}, Jev.NeedsNew{}) == Ops.Stay{} : Ops.Action} &
+         {Jev.filing(Jev.SafeToDelete{}, Jev.Uncategorised{}) == Ops.Stay{} : Ops.Action}),
         true_is_not_false(unsafe))
     case Jev.Keep{}:
       ({==}, {==}, {==}, {==})
@@ -1166,7 +1166,7 @@ def filing_matches_table.unsafe(
       ({==}, {==}, {==}, {==})
 
 def Laws.filing_matches_table(cat, v, unsafe, folder):
-  ({==}, filing_matches_table.unsafe(v, unsafe, folder))
+  ({==}, unsafe_filing_matches_table(v, unsafe, folder))
 
 # A message that stays is in no plan: it has no move, and no moves pass the
 # check, which leaves no plan.
@@ -1174,19 +1174,32 @@ def stays_unplanned(
   -mbox: String, -cats: List<&2, String>, -reserved: List<&2, String>, -uid: U32, -move: Bool,
   -uidplus: Bool, -uidv: U32)
   -> {Ops.plan_triage(mbox, cats, reserved,
-       Ops.triage_moves(mbox, [Ops.Placement{uid, Jev.Stay{}}]), move, uidplus, uidv) == []
+       Ops.triage_moves(mbox, [Ops.Placement{uid, Ops.Stay{}}]), move, uidplus, uidv) == []
        : List<&2, List<&2, I.Cmd>>}:
   {==}
+
+# A message whose action `act` is Stay is in no plan.
+def stay_unplanned(
+  -mbox: String, -cats: List<&2, String>, -reserved: List<&2, String>, -uid: U32,
+  -act: Ops.Action, e: {act == Ops.Stay{} : Ops.Action}, -move: Bool, -uidplus: Bool,
+  -uidv: U32)
+  -> {Ops.plan_triage(mbox, cats, reserved,
+       Ops.triage_moves(mbox, [Ops.Placement{uid, act}]), move, uidplus, uidv) == []
+       : List<&2, List<&2, I.Cmd>>}:
+  %Equal.sym(Ops.Action, act, Ops.Stay{}, e) :
+    {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{uid, _}]),
+      move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
+  stays_unplanned(mbox, cats, reserved, uid, move, uidplus, uidv)
 
 # A category below High confidence, or none, files nothing: case by case
 # over the verdict, then the confidence.
 def unsure_files_nothing(
   v: Jev.Verdict, unsafe: {Jev.is_safe(v) == False{} : Bool}, -cat: Jev.Category,
-  e: {Jev.filed(cat) == Jev.Stay{} : Jev.Action})
-  -> {Jev.filing(v, cat) == Jev.Stay{} : Jev.Action}:
+  e: {Jev.filed(cat) == Ops.Stay{} : Ops.Action})
+  -> {Jev.filing(v, cat) == Ops.Stay{} : Ops.Action}:
   match v:
     case Jev.SafeToDelete{}:
-      Empty.absurd({Jev.ToReview{} == Jev.Stay{} : Jev.Action}, true_is_not_false(unsafe))
+      Empty.absurd({Ops.ToReview{} == Ops.Stay{} : Ops.Action}, true_is_not_false(unsafe))
     case Jev.Keep{}:
       e
     case Jev.Review{}:
@@ -1197,8 +1210,8 @@ def unsure_files_nothing(
 def unsure_is_unfiled(
   -key: String, conf: Jev.Band, unsure: {Jev.is_high(conf) == False{} : Bool},
   -candidates: List<&2, String>, -none: String)
-  -> {Jev.filed(Jev.category_of(Jev.Picked{key, conf}, candidates, none)) == Jev.Stay{}
-       : Jev.Action}:
+  -> {Jev.filed(Jev.category_of(Jev.Picked{key, conf}, candidates, none)) == Ops.Stay{}
+       : Ops.Action}:
   match conf:
     case Jev.Low{}:
       {==}
@@ -1206,8 +1219,8 @@ def unsure_is_unfiled(
       {==}
     case Jev.High{}:
       Empty.absurd(
-        {Jev.filed(Jev.category_of(Jev.Picked{key, Jev.High{}}, candidates, none)) == Jev.Stay{}
-          : Jev.Action},
+        {Jev.filed(Jev.category_of(Jev.Picked{key, Jev.High{}}, candidates, none)) == Ops.Stay{}
+          : Ops.Action},
         true_is_not_false(unsure))
     case Jev.Missing{}:
       {==}
@@ -1219,7 +1232,7 @@ def missing_stays(
   -keys: List<&2, String>, -candidates: List<&2, String>, -none: String)
   -> {Jev.filing(Jev.verdict(c, whole, vetoes, Jev.answers_for(J.JNull{}, uid, keys)),
        Jev.category_of(Jev.answers_category(Jev.answers_for(J.JNull{}, uid, keys)),
-         candidates, none)) == Jev.Stay{} : Jev.Action}:
+         candidates, none)) == Ops.Stay{} : Ops.Action}:
   match vetoes:
     case Nil{}:
       {==}
@@ -1232,27 +1245,19 @@ def Laws.uncertain_changes_nothing(
   +u = uid
   +a = v
   +no = unsafe
-  (%Equal.sym(Jev.Action,
-      Jev.filing(a, Jev.category_of(Jev.Picked{key, conf}, candidates, none)), Jev.Stay{},
-      unsure_files_nothing(a, no, Jev.category_of(Jev.Picked{key, conf}, candidates, none),
-        unsure_is_unfiled(key, conf, unsure, candidates, none))) :
-     {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{u, _}]),
-       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
-   stays_unplanned(mbox, cats, reserved, u, move, uidplus, uidv),
-   %Equal.sym(Jev.Action, Jev.filing(a, Jev.category_of(Jev.NoPick{}, candidates, none)),
-      Jev.Stay{},
-      unsure_files_nothing(a, no, Jev.category_of(Jev.NoPick{}, candidates, none), {==})) :
-     {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{u, _}]),
-       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
-   stays_unplanned(mbox, cats, reserved, u, move, uidplus, uidv),
-   %Equal.sym(Jev.Action,
-      Jev.filing(Jev.verdict(c, whole, vetoes, Jev.answers_for(J.JNull{}, u, keys)),
-        Jev.category_of(Jev.answers_category(Jev.answers_for(J.JNull{}, u, keys)),
-          candidates, none)),
-      Jev.Stay{}, missing_stays(c, whole, vetoes, u, keys, candidates, none)) :
-     {Ops.plan_triage(mbox, cats, reserved, Ops.triage_moves(mbox, [Ops.Placement{u, _}]),
-       move, uidplus, uidv) == [] : List<&2, List<&2, I.Cmd>>}
-   stays_unplanned(mbox, cats, reserved, u, move, uidplus, uidv))
+  (stay_unplanned(mbox, cats, reserved, u,
+     Jev.filing(a, Jev.category_of(Jev.Picked{key, conf}, candidates, none)),
+     unsure_files_nothing(a, no, Jev.category_of(Jev.Picked{key, conf}, candidates, none),
+       unsure_is_unfiled(key, conf, unsure, candidates, none)), move, uidplus, uidv),
+   stay_unplanned(mbox, cats, reserved, u,
+     Jev.filing(a, Jev.category_of(Jev.NoPick{}, candidates, none)),
+     unsure_files_nothing(a, no, Jev.category_of(Jev.NoPick{}, candidates, none), {==}),
+     move, uidplus, uidv),
+   stay_unplanned(mbox, cats, reserved, u,
+     Jev.filing(Jev.verdict(c, whole, vetoes, Jev.answers_for(J.JNull{}, u, keys)),
+       Jev.category_of(Jev.answers_category(Jev.answers_for(J.JNull{}, u, keys)),
+         candidates, none)),
+     missing_stays(c, whole, vetoes, u, keys, candidates, none), move, uidplus, uidv))
 
 # Dry runs
 # --------

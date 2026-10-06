@@ -229,6 +229,12 @@ def attachments_message() -> String:
     "Content-Type: image/png\r\nContent-Transfer-Encoding: 7bit\r\n\r\nraw bytes\r\n",
     "--A--\r\n"])
 
+# A binary part whose bytes hold a bare LF, a CRLF and a bare CR.
+def binary_message() -> String:
+  "Content-Type: multipart/mixed; boundary=\"Z\"\r\n\r\n--Z\r\n" ++
+    "Content-Type: application/octet-stream; name=\"raw.bin\"\r\n" ++
+    "Content-Transfer-Encoding: binary\r\n\r\nA\nB\r\nC\rD\r\n--Z--\r\n"
+
 def byte_values.go(s: String) -> List<&2, String>:
   match s:
     case SNil{}:
@@ -256,6 +262,7 @@ def attachment_cases() -> IO(Unit):
     IO.print(show_attachment(M.attachment_at(attachments_message(), 3)))
     IO.print(show_attachment(M.attachment_at("Subject: x\r\n\r\nno parts", 0)))
     IO.print(show_attachment(M.attachment_at(multipart_message(), 0)))
+    IO.print(show_attachment(M.attachment_at(binary_message(), 0)))
 
 def local_name_cases() -> IO(Unit):
   do IO<Unit>:
@@ -375,6 +382,7 @@ def main() -> IO(Unit):
 #|none
 #|none
 #|résumé.pdf|application/pdf|37,80,68,70,45,49,46,52,10
+#|raw.bin|application/octet-stream|65,10,66,13,10,67,13,68
 #|evil.sh | passwd | report.pdf | []
 #|gnp.exe | hidden | abcdefgh |  .x
 #|[] [] [] []

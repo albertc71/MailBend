@@ -4,7 +4,6 @@
 
 import Base
 import ./imap.bend as I
-import ./jev.bend as Jev
 
 # Operations
 # ----------
@@ -143,7 +142,7 @@ def all_ops() -> List<&2, Op>:
   ]
 
 # `op`'s name before `rest` when `keep` holds, else just `rest`.
-def read_only_names.if(keep: Bool, op: Op, rest: List<&2, String>) -> List<&2, String>:
+def names_if(keep: Bool, op: Op, rest: List<&2, String>) -> List<&2, String>:
   match keep:
     case True{}:
       name(op) <> rest
@@ -156,7 +155,7 @@ def read_only_names(+ops: List<&2, Op>) -> List<&2, String>:
     case Nil{}:
       []
     case op <> t:
-      read_only_names.if(is_read_only(op), op, read_only_names(t))
+      names_if(is_read_only(op), op, read_only_names(t))
 
 # Whether an operation consults TypeSafe's Jev, so it is listed and runs
 # only when MAILBEND_TYPESAFE is on.
@@ -184,13 +183,6 @@ def listed(+op: Op, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
   Bool.not(ro && Bool.not(is_read_only(op))) && Bool.not(drafts && is_send(op)) &&
     (jev || Bool.not(needs_jev(op)))
 
-def listed_names.if(keep: Bool, op: Op, rest: List<&2, String>) -> List<&2, String>:
-  match keep:
-    case True{}:
-      name(op) <> rest
-    case False{}:
-      rest
-
 # The names of the operations among `ops` that a configuration lists, in
 # order.
 def listed_names(ops: List<&2, Op>, +ro: Bool, +drafts: Bool, +jev: Bool) -> List<&2, String>:
@@ -198,7 +190,7 @@ def listed_names(ops: List<&2, Op>, +ro: Bool, +drafts: Bool, +jev: Bool) -> Lis
     case Nil{}:
       []
     case +op <> t:
-      listed_names.if(listed(op, ro, drafts, jev), op, listed_names(t, ro, drafts, jev))
+      names_if(listed(op, ro, drafts, jev), op, listed_names(t, ro, drafts, jev))
 
 # The first operation among `ops` named `n`. The list is short, so the
 # search simply walks all of it.
@@ -513,9 +505,16 @@ def plan_label(
 def review_folder() -> String:
   "To Delete"
 
+# What triage does with a message: move it into the review folder or into
+# a category folder, or leave it where it is.
+type Action is Data:
+  ToReview{}
+  ToFolder{folder: String}
+  Stay{}
+
 # A message and what filing chose for it.
 type Placement is Data:
-  Placement{uid: U32, action: Jev.Action}
+  Placement{uid: U32, action: Action}
 
 def destination.if(here: Bool, dest: String) -> Maybe<&2, String>:
   match here:
@@ -525,13 +524,13 @@ def destination.if(here: Bool, dest: String) -> Maybe<&2, String>:
       Some{dest}
 
 # Where an action moves a message out of `mbox`: None when it stays there.
-def destination(+mbox: String, a: Jev.Action) -> Maybe<&2, String>:
+def destination(+mbox: String, a: Action) -> Maybe<&2, String>:
   match a:
-    case Jev.ToReview{}:
+    case ToReview{}:
       destination.if(I.same_name(review_folder(), mbox), review_folder())
-    case Jev.ToFolder{+folder}:
+    case ToFolder{+folder}:
       destination.if(I.same_name(folder, mbox), folder)
-    case Jev.Stay{}:
+    case Stay{}:
       None{}
 
 def moving.put(

@@ -203,26 +203,26 @@ def utf16_high(n: U32) -> Bool:
 def utf16_unpaired(hi: U32, +out: String) -> String:
   Bool.pick(String, U32.is_zero(hi), out, SCon{repl(), out})
 
-def utf16_unit.char.if(bad: Bool, n: U32, out: String) -> String:
+def utf16_unit.char(bad: Bool, n: U32, out: String) -> String:
   match bad:
     case True{}:
       SCon{repl(), out}
     case False{}:
       SCon{chr(n), out}
 
-def utf16_unit.low.if(pair: Bool, +n: U32, hi: U32, out: String) -> String:
+def utf16_unit.pair(pair: Bool, +n: U32, hi: U32, out: String) -> String:
   match pair:
     case True{}:
       SCon{chr((65536 + (hi - 55296) * 1024 + (n - 56320) : U32)), out}
     case False{}:
-      utf16_unit.char.if(between(n, 55296, 57343), n, utf16_unpaired(hi, out))
+      utf16_unit.char(between(n, 55296, 57343), n, utf16_unpaired(hi, out))
 
-def utf16_unit.high.if(high: Bool, +n: U32, +hi: U32, out: String) -> String:
+def utf16_unit.if(high: Bool, +n: U32, +hi: U32, out: String) -> String:
   match high:
     case True{}:
       utf16_unpaired(hi, out)
     case False{}:
-      utf16_unit.low.if(between(n, 56320, 57343) && Bool.not(U32.is_zero(hi)),
+      utf16_unit.pair(between(n, 56320, 57343) && Bool.not(U32.is_zero(hi)),
         n, hi, out)
 
 # The reversed text `out` after UTF-16 unit n, given the pending high
@@ -230,7 +230,7 @@ def utf16_unit.high.if(high: Bool, +n: U32, +hi: U32, out: String) -> String:
 # surrogate becomes U+FFFD. A high surrogate n only settles an older `hi`:
 # the caller keeps n pending (see utf16_high).
 def utf16_unit(+n: U32, hi: U32, out: String) -> String:
-  utf16_unit.high.if(utf16_high(n), n, hi, out)
+  utf16_unit.if(utf16_high(n), n, hi, out)
 
 # Other charsets
 # --------------
@@ -578,6 +578,10 @@ def is_plain(s: String) -> Bool:
 # Text
 # ----
 
+# Whether `s` is one of `xs`, compared exactly.
+def is_in(s: String, xs: List<&2, String>) -> Bool:
+  List.contains(~String, ~String.eq, xs, s)
+
 # Whether every char is an ASCII digit; true for "".
 def all_digits(s: String) -> Bool:
   match s:
@@ -634,3 +638,30 @@ def month_name(m: U32) -> String:
       "Dec"
     case _:
       ""
+
+# Days since 1970-01-01 to (year, month, day) (civil-from-days, H. Hinnant),
+# shifted by 719468 days so all arithmetic stays unsigned.
+def civil(days: U32) -> U32 & (U32 & U32):
+  +z = (days + 719468 : U32)
+  +era = (z / 146097 : U32)
+  +doe = (z - era * 146097 : U32)
+  +yoe = ((doe - doe / 1460 + doe / 36524 - doe / 146096) / 365 : U32)
+  +doy = (doe - (365 * yoe + yoe / 4 - yoe / 100) : U32)
+  +mp = ((5 * doy + 2) / 153 : U32)
+  d = (doy - (153 * mp + 2) / 5 + 1 : U32)
+  +m = Bool.pick(U32, U32.is_lt(mp, 10), (mp + 3 : U32), (mp - 9 : U32))
+  y = (yoe + era * 400 + Bool.to_u32(U32.is_le(m, 2)) : U32)
+  (y, (m, d))
+
+# Days from 1970-01-01 to a civil date (days-from-civil, H. Hinnant), the
+# inverse of civil. The year starts in March, so leap days come last, and
+# every step stays unsigned for dates from 1970 on.
+def days_from_civil(y: U32, +m: U32, d: U32) -> U32:
+  +early = U32.is_le(m, 2)
+  +yy = (y - Bool.to_u32(early) : U32)
+  +era = (yy / 400 : U32)
+  +yoe = (yy - era * 400 : U32)
+  mp = Bool.pick(U32, early, (m + 9 : U32), (m - 3 : U32))
+  doy = ((153 * mp + 2) / 5 + d - 1 : U32)
+  doe = (yoe * 365 + yoe / 4 - yoe / 100 + doy : U32)
+  (era * 146097 + doe - 719468 : U32)
