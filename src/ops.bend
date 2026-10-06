@@ -934,21 +934,25 @@ def all_offered(+cats: List<&2, String>, ds: List<&2, String>) -> Bool:
       (String.eq(d, review_folder()) || List.contains(~String, ~String.eq, cats, d)) &&
         all_offered(cats, t)
 
+# Whether two names are equal in lower case.
+def lower_eq(a: String, b: String) -> Bool:
+  String.eq(String.to_lower(a), String.to_lower(b))
+
 # Whether no folder is one of `names`, compared in lower case.
 def none_named(+names: List<&2, String>, ds: List<&2, String>) -> Bool:
   match ds:
     case Nil{}:
       True{}
-    case d <> t:
-      Bool.not(named_in(names, d)) && none_named(names, t)
+    case +d <> t:
+      Bool.not(List.contains(~String, ~lower_eq, names, d)) && none_named(names, t)
 
-# Whether no folder is `mbox`, as I.same_name compares them.
+# Whether no folder is exactly `mbox`.
 def none_same(+mbox: String, ds: List<&2, String>) -> Bool:
   match ds:
     case Nil{}:
       True{}
     case d <> t:
-      Bool.not(I.same_name(d, mbox)) && none_same(mbox, t)
+      Bool.not(String.eq(d, mbox)) && none_same(mbox, t)
 
 # Whether no UID appears twice.
 def distinct(xs: List<&2, U32>) -> Bool:

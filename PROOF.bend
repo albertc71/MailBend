@@ -817,6 +817,25 @@ def dest_offered(
     and_right(Bool.not(I.same_name(dest, mbox)),
       Bool.and(unreserved(reserved, dest), offered(cats, dest)), e))
 
+# The laws compare names on their own; these tie them to the check's.
+def contains_named(names: List<&2, String>, +d: String)
+  -> {Ops.named_in(names, d) == List.contains(~String, ~Ops.lower_eq, names, d) : Bool}:
+  match names:
+    case Nil{}:
+      {==}
+    case n <> t:
+      %contains_named(t, d) :
+        {Ops.named_in(n <> t, d) == Bool.or(Ops.lower_eq(n, d), _) : Bool}
+      {==}
+
+def not_same_not_eq(+a: String, +b: String, e: {Bool.not(I.same_name(a, b)) == True{} : Bool})
+  -> {Bool.not(String.eq(a, b)) == True{} : Bool}:
+  %Equal.sym(Bool, String.eq(a, b), False{}, or_false_left(String.eq(a, b),
+    String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"),
+    not_true(I.same_name(a, b), e))) :
+    {Bool.not(_) == True{} : Bool}
+  {==}
+
 # Each part, for every move the check passed.
 def offered_moves(
   +mbox: String, +cats: List<&2, String>, +reserved: List<&2, String>,
@@ -845,6 +864,9 @@ def unreserved_moves(
     case Nil{}:
       {==}
     case Ops.FolderUids{+dest, uids} <> +t:
+      %contains_named("INBOX" <> reserved, dest) :
+        {Bool.and(Bool.not(_), Ops.none_named("INBOX" <> reserved, move_dests(t))) == True{}
+          : Bool}
       %Equal.sym(Bool, unreserved(reserved, dest), True{},
         dest_unreserved(mbox, cats, reserved, dest,
           and_left(Ops.triage_dest(mbox, cats, reserved, dest),
@@ -863,10 +885,10 @@ def not_source_moves(
     case Nil{}:
       {==}
     case Ops.FolderUids{+dest, uids} <> +t:
-      %Equal.sym(Bool, Bool.not(I.same_name(dest, mbox)), True{},
-        dest_not_source(mbox, cats, reserved, dest,
+      %Equal.sym(Bool, Bool.not(String.eq(dest, mbox)), True{},
+        not_same_not_eq(dest, mbox, dest_not_source(mbox, cats, reserved, dest,
           and_left(Ops.triage_dest(mbox, cats, reserved, dest),
-            Ops.dests_ok(mbox, cats, reserved, t), e))) :
+            Ops.dests_ok(mbox, cats, reserved, t), e)))) :
         {Bool.and(_, Ops.none_same(mbox, move_dests(t))) == True{} : Bool}
       not_source_moves(mbox, cats, reserved, t,
         and_right(Ops.triage_dest(mbox, cats, reserved, dest),

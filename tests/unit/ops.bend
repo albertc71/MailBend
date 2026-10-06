@@ -477,4 +477,4 @@ def main() -> IO(Unit):
 #|dests=News,Receipts,To Delete offered=True unreserved=True not_source=True folders=[] distinct=True expunged=([9])([5,7])([3]) copied=([9])([5,7])([3])
 #|dests=B,A offered=False unreserved=True not_source=True folders=[] distinct=False expunged=([1])() copied=([1])()
 #|dests=A offered=True unreserved=True not_source=True folders=[a1 CREATE "A"] distinct=True expunged=([2])() copied=([1])()
-#|dests=inbox,ARCHIVE offered=False unreserved=False not_source=False folders=[] distinct=True expunged=()() copied=()()
+#|dests=inbox,ARCHIVE offered=False unreserved=False not_source=True folders=[] distinct=True expunged=()() copied=()()

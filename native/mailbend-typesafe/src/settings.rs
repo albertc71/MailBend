@@ -71,8 +71,8 @@ pub fn read_key() -> Result<Zeroizing<Vec<u8>>, Exit> {
 }
 
 /// Whether `key` is an RFC 6750 b64token, the Bearer grammar. It holds no
-/// quote or backslash, so a JSON answer can spell it only as it is, or with
-/// `\/` for each `/`.
+/// quote or backslash, so JSON encoders write it as it is, or with `\/` for
+/// each `/`.
 fn is_bearer_token(key: &[u8]) -> bool {
     let token = |b: &u8| b.is_ascii_alphanumeric() || b"._~+/-".contains(b);
     let body = key.iter().position(|b| !token(b)).unwrap_or(key.len());
