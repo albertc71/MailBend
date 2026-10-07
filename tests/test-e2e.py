@@ -171,6 +171,7 @@ def run_all(work):
     send_safety(work)
     downloads(work)
     threads(work)
+    flags_first_reads(work)
     dry_runs(work)
     jev(work)
     triage(work)
@@ -2011,6 +2012,54 @@ def threads(work):
               "(3 keys in 2 folders each), after 1 in the first round",
               c == 0 and thread_of(r) == [first, ("INBOX", 8, "<trip1@example.com>")]
               and len(searches) == (1 + 50) * 3 * 2, (r, len(searches)))
+    finally:
+        srv.stop()
+
+
+def listed_once(r):
+    """Whether a listing shows each UID once, each with the size it fetched."""
+    ms = r.get("messages", [])
+    return ms and len({m["uid"] for m in ms}) == len(ms) and all(m.get("size") for m in ms)
+
+
+def flags_first_reads(work):
+    """The server precedes every FETCH answer with an unsolicited update
+    holding only UID and FLAGS (RFC 9051 7.5.2): no tool may take it for
+    the message it fetched."""
+    dl = os.path.join(os.path.realpath(work), "flags-first-downloads")
+    os.makedirs(dl)
+    srv = Server(work, extra=["--flags-first"], fixture=thread_fixture())
+    try:
+        c, r = tool(srv, "mail_get", {"uid": 2})
+        check("flags first: mail_get reads the message, not the FLAGS update", c == 0
+              and r.get("subject") == "Café menu" and "é" in r.get("text", "") and r.get("size", 0) > 0, r)
+        c, r = tool(srv, "mail_search")
+        check("flags first: mail_search lists each message once, with its summary", c == 0 and listed_once(r), r)
+        c, r = tool(srv, "mail_get_new", {"since_uid": 0})
+        check("flags first: mail_get_new lists each message once, with its summary", c == 0 and listed_once(r), r)
+        c, r = tool(srv, "mail_get_thread", {"uid": 7})
+        check("flags first: mail_get_thread starts from the message and finds its thread", c == 0
+              and thread_of(r) == [("INBOX", 7, None), ("Sent Messages", 1, "<trip1@example.com>"),
+                                   ("INBOX", 8, "<trip2@example.com>")]
+              and [m.get("subject") for m in r.get("messages", [])] == ["Trip plans"] * 3, r)
+        c, r = tool(srv, "mail_get_attachment", {"uid": 4, "index": 0}, MAILBEND_DOWNLOAD_DIR=dl)
+        check("flags first: mail_get_attachment saves the attachment of the message", c == 0
+              and r.get("filename") == "notes.pdf" and os.path.isfile(os.path.join(dl, "notes.pdf")), r)
+        original = msgs(srv.st(), "INBOX")[2]["raw"]
+        orig_id = next(l for l in original.split("\r\n") if l.lower().startswith("message-id:")).split(":", 1)[1].strip()
+        n = len(srv.st().get("sent", []))
+        c, r = tool(srv, "mail_forward", {"uid": 2, "uidvalidity": 1700000001, "to": ["boss@example.com"], "body": "FYI"})
+        sent = srv.st().get("sent", [])
+        data = sent[-1]["data"] if len(sent) == n + 1 else ""
+        check("flags first: mail_forward attaches the real original, not an empty one", c == 0
+              and "forwarded-message.eml" in data and orig_id in data, (r, data[-800:]))
+        n = len(sent)
+        c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001, "body": "Sounds good"})
+        sent = srv.st().get("sent", [])
+        last = sent[-1] if len(sent) == n + 1 else {}
+        check("flags first: mail_reply answers and quotes the real original", c == 0
+              and last.get("rcpt_to") == ["jose@example.com"] and ("In-Reply-To: " + orig_id) in last.get("data", "")
+              and r.get("quoted_bytes", 0) > 0, r)
     finally:
         srv.stop()
 

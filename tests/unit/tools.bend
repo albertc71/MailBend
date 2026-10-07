@@ -418,11 +418,14 @@ def headers_transcript(uidv: U32) -> String:
     "L OK in\r\n",
     "* OK [UIDVALIDITY " ++ U32.show(uidv) ++ "] ok\r\n",
     "a1 OK [READ-ONLY] examined\r\n",
+    "* 1 FETCH (UID 5 FLAGS (\\Seen))\r\n",
     "* 1 FETCH (UID 5 FLAGS (\\Seen) INTERNALDATE \"1-Feb-2026 10:00:00 +0000\"",
-    " RFC822.SIZE 42)\r\n",
+    " RFC822.SIZE 42 BODY[HEADER.FIELDS (SUBJECT)] {16}\r\nSubject: Lunch\r\n)\r\n",
     "* 2 FETCH (UID 9 FLAGS ())\r\n",
+    "* 3 FETCH (UID 4 FLAGS (\\Flagged))\r\n",
     "* 3 FETCH (UID 4 FLAGS (\\Flagged) INTERNALDATE \"2-Feb-2026 10:00:00 +0000\"",
-    " RFC822.SIZE 7)\r\n",
+    " RFC822.SIZE 7 BODY[HEADER.FIELDS (SUBJECT)] {13}\r\nSubject: Hi\r\n",
+    " BODY[]<0> {17}\r\nSubject: Hi\r\n\r\nyo)\r\n",
     "a2 OK fetched\r\n",
     "Z OK bye\r\n"])
 
@@ -454,10 +457,14 @@ def check_get() -> IO(Unit):
     IO.print(show_shown(T.get_msg([message(5, raw_message())], "INBOX", 5, Some{7}, 262144)))
     IO.print(show_shown(T.get_msg([message(6, html_message())], "INBOX", 6, None{}, 100)))
     IO.print(show_shown(T.get_msg([], "Work", 8, Some{7}, 100)))
-    IO.print(show_msgs(T.with_uid([message(9, ""), message(5, ""), message(5, "")], 5)))
+    IO.print(show_msgs(T.with_uid([message(9, "x"), message(5, ""), message(5, "y")], 5, True{})) ++
+      "|" ++ show_msgs(T.with_uid([message(9, "x"), message(5, "")], 5, True{})) ++
+      "|" ++ show_msgs(T.with_uid([message(5, "")], 5, False{})))
     IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 4,
       1000)))
     IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 8,
+      1000)))
+    IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 9,
       1000)))
 
 def check_new() -> IO(Unit):
@@ -1399,19 +1406,20 @@ def main() -> IO(Unit):
 #|error "before" must be a date like 2026-02-01
 #|a1 UID SEARCH ALL\r\n
 #|5 4 |9 5 4 |4 5 9 |9 3 1 |1 3 9 |True False
-#|ok {"folder":"INBOX","uidvalidity":7,"total":12,"messages":[{"uid":5,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false},{"uid":4,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true}]} | shown 5 4 
+#|ok {"folder":"INBOX","uidvalidity":7,"total":12,"messages":[{"uid":5,"date":"","from":"","to":"","cc":"","subject":"Lunch","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false},{"uid":4,"date":"","from":"","to":"","cc":"","subject":"Hi","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true}]} | shown 5 4 
 #|err the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again | shown 
 #|err connection or TLS verification failed: down | shown 
 #|{"uid":5,"date":"Mon, 1 Feb 2026 10:00:00 +0000","from":"José <jose@example.com>","to":"me@x.com","cc":"","subject":"Lunch","message_id":"<m1@example.com>","internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"flags":["\\Seen"],"seen":true,"flagged":false}
 #|ok {"folder":"INBOX","uid":5,"uidvalidity":7,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":false,"from":"José <jose@example.com>","to":"me@x.com","cc":"","reply_to":"","subject":"Lunch","date":"Mon, 1 Feb 2026 10:00:00 +0000","message_id":"<m1@example.com>","in_reply_to":"","references":"","text":"Hello\nthere\n","html_available":false,"attachments":[]} | whole 5 262144
 #|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":" Hi & bye \n","html_available":true,"attachments":[]} | whole 6 100
 #|err no message with UID 8 in Work | shown 
-#|5 
-#|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"","date":"","message_id":"","in_reply_to":"","references":"","text":"","html_available":false,"attachments":[]} | whole 4 1000
+#|5 ||
+#|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":"yo","html_available":false,"attachments":[]} | whole 4 1000
 #|err no message with UID 8 in INBOX | shown 
+#|err no message with UID 9 in INBOX | shown 
 #|9 5 |5 1
 #|[] [] "uidvalidity" is required with "since_uid": pass the uidvalidity returned with that checkpoint
-#|ok {"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":4,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true},{"uid":5,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false}]} | shown 4 5 
+#|ok {"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":4,"date":"","from":"","to":"","cc":"","subject":"Hi","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true},{"uid":5,"date":"","from":"","to":"","cc":"","subject":"Lunch","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false}]} | shown 4 5 
 #|ok {"folder":"INBOX","uidvalidity":8,"uidvalidity_changed":true,"next_since_uid":0,"has_more":true,"messages":[]} | shown 
 #|err configuration error: bad config | shown 
 #|True False False True False True

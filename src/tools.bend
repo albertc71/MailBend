@@ -1260,6 +1260,35 @@ def requested(ms: List<&2, I.Msg>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
     case +m <> t:
       List.filter.put(I.Msg, m, requested(t, uids), uid_in(msg_uid(m), uids))
 
+# Whether a FETCH response carries the message data fetched: the message
+# itself for a `whole` fetch, else its header fields. An unsolicited update
+# (RFC 9051 7.5.2), such as FLAGS alone, carries neither.
+def has_data(m: I.Msg, whole: Bool) -> Bool:
+  I.Msg{uid, flags, date, size, headers, body, _} = m
+  Bool.not(String.is_empty(Bool.pick(String, whole, body, headers)))
+
+# Whether a FETCH response carries what a Jev tool fetched: the header
+# fields, and with `body` the message too.
+def has_facts(+m: I.Msg, body: Bool) -> Bool:
+  has_data(m, False{}) && (Bool.not(body) || has_data(m, True{}))
+
+# `ms` in UID order, each UID once: its first response that carries what
+# was fetched (a server may answer twice, or add updates). A UID with none
+# is left out, so it counts as missing.
+def first_uids(ms: List<&2, I.Msg>, +prev: U32, +body: Bool) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      +u = msg_uid(m)
+      +keep = has_facts(m, body) && Bool.not(U32.is_eq(u, prev))
+      List.filter.put(I.Msg, m, first_uids(t, Bool.pick(U32, keep, u, prev), body), keep)
+
+# The messages of `uids` a session fetched, in UID order, each once. `body`
+# says the fetch took the messages whole as well as their header fields.
+def fetched_msgs(lines: List<&2, I.RLine>, uids: List<&2, U32>, body: Bool) -> List<&2, I.Msg>:
+  first_uids(oldest_first(requested(I.fetched(lines), uids)), 0, body)
+
 # The UIDs of `us` that are not in `seen`, each once, in order.
 def unseen(us: List<&2, U32>, +seen: List<&2, U32>) -> List<&2, U32>:
   match us:
@@ -1454,7 +1483,7 @@ def search_headers.if(
 ) -> Shown:
   match same:
     case True{}:
-      +ms = newest_first(requested(I.fetched(lines), uids))
+      +ms = newest_first(fetched_msgs(lines, uids, False{}))
       Listed{list_out(folder, uidv, total, summaries(ms)), ms}
     case False{}:
       Listed{Err{moved_msg()}, []}
@@ -1562,13 +1591,15 @@ def msg_body(m: I.Msg) -> String:
 def body_headers(body: String) -> List<&2, M.Hdr>:
   M.headers(M.head_of(M.split(body)))
 
-# The FETCH response for `uid` (a server may also send unsolicited FETCHes).
-def with_uid(ms: List<&2, I.Msg>, +uid: U32) -> List<&2, I.Msg>:
+# The first FETCH response for `uid` that carries the data fetched (see
+# has_data): a server may also send unsolicited FETCHes, such as FLAGS alone.
+def with_uid(ms: List<&2, I.Msg>, +uid: U32, +whole: Bool) -> List<&2, I.Msg>:
   match ms:
     case Nil{}:
       []
     case +m <> t:
-      Bool.pick(List<&2, I.Msg>, U32.is_eq(msg_uid(m), uid), [m], with_uid(t, uid))
+      Bool.pick(List<&2, I.Msg>, U32.is_eq(msg_uid(m), uid) && has_data(m, whole), [m],
+        with_uid(t, uid, whole))
 
 def no_message(uid: U32, folder: String) -> String:
   "no message with UID " ++ U32.show(uid) ++ " in " ++ folder
@@ -1592,7 +1623,8 @@ def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Shown:
     case Fail{m}:
       Listed{Err{m}, []}
     case Done{+lines}:
-      get_msg(with_uid(I.fetched(lines), uid), folder, uid, I.ok_code(lines, "UIDVALIDITY"), max)
+      get_msg(with_uid(I.fetched(lines), uid, True{}), folder, uid,
+        I.ok_code(lines, "UIDVALIDITY"), max)
 
 # The one UID a tool that reads a single message is given.
 def single_uid(u: Uids(), tool: String) -> Result<&2, &2, String, U32>:
@@ -1659,7 +1691,7 @@ def new_headers.if(
 ) -> Shown:
   match same:
     case True{}:
-      +ms = oldest_first(requested(I.fetched(lines), uids))
+      +ms = fetched_msgs(lines, uids, False{})
       Listed{new_out(folder, uidv, False{}, next, more, summaries(ms)), ms}
     case False{}:
       Listed{new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, []), []}
@@ -1787,7 +1819,8 @@ def Thread() -> Data:
   Result<&2, &2, String, Threading>
 
 # Command `c`'s replies `rs` added to what its folder found: an EXAMINE
-# opens the next folder, and a fetch keeps only the UIDs it asked for.
+# opens the next folder, and a fetch keeps only the UIDs it asked for, each
+# once, with its summary.
 def thread_found.step(
   c: I.Cmd, rs: List<&2, I.RLine>, acc: List<&2, Found>
 ) -> List<&2, Found>:
@@ -1797,7 +1830,7 @@ def thread_found.step(
     case I.CSearch{_} Found{f, v, us, ms} <> t:
       Found{f, v, List.append(&2, U32, us, I.search_uids(rs)), ms} <> t
     case I.CFetch{uids, _} Found{f, v, us, ms} <> t:
-      Found{f, v, us, List.append(&2, I.Msg, ms, requested(I.fetched(rs), uids))} <> t
+      Found{f, v, us, List.append(&2, I.Msg, ms, fetched_msgs(rs, uids, False{}))} <> t
     case _ _:
       acc
 
@@ -2069,8 +2102,8 @@ def thread_start(r: Run(), mbox: String, +uid: U32) -> IO(Shown):
     case Fail{m}:
       pure_shown(Err{m})
     case Done{+lines}:
-      thread_start.put(with_uid(I.fetched(lines), uid), I.ok_code(lines, "UIDVALIDITY"), mbox,
-        uid)
+      thread_start.put(with_uid(I.fetched(lines), uid, False{}), I.ok_code(lines, "UIDVALIDITY"),
+        mbox, uid)
 
 def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String) -> IO(Shown):
   match u:
@@ -2391,30 +2424,6 @@ def jev_uids(tool: String, u: Uids()) -> Uids():
       Fail{m}
     case Done{+us}:
       jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
-
-# Whether a FETCH response carries what a Jev tool fetched: the header
-# fields, and with `body` the message too. An unsolicited update (RFC 9051
-# 7.5.2), such as FLAGS alone, does not.
-def has_facts(m: I.Msg, body: Bool) -> Bool:
-  I.Msg{uid, flags, date, size, headers, text, st} = m
-  Bool.not(String.is_empty(headers) || (body && String.is_empty(text)))
-
-# `ms` in UID order, each UID once: its first response that carries what
-# was fetched (a server may answer twice, or add updates). A UID with none
-# is left out, so it counts as missing.
-def first_uids(ms: List<&2, I.Msg>, +prev: U32, +body: Bool) -> List<&2, I.Msg>:
-  match ms:
-    case Nil{}:
-      []
-    case +m <> t:
-      +u = msg_uid(m)
-      +keep = has_facts(m, body) && Bool.not(U32.is_eq(u, prev))
-      List.filter.put(I.Msg, m, first_uids(t, Bool.pick(U32, keep, u, prev), body), keep)
-
-# The messages of `uids` a session fetched, in UID order, each once: those
-# Jev is asked about. `body` says the fetch took the messages whole.
-def jev_msgs(lines: List<&2, I.RLine>, uids: List<&2, U32>, body: Bool) -> List<&2, I.Msg>:
-  first_uids(oldest_first(requested(I.fetched(lines), uids)), 0, body)
 
 def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
   match ms:
@@ -3263,7 +3272,7 @@ def delete_gated(
 ) -> IO(Out):
   match jev uidplus:
     case Jev.On{+c} True{}:
-      delete_ask(jev_msgs(lines, uids, Jev.is_body(c)), c, folder, uids, confirm, uidv, dry)
+      delete_ask(fetched_msgs(lines, uids, Jev.is_body(c)), c, folder, uids, confirm, uidv, dry)
     case Jev.On{c} False{}:
       delete_decided(Jev.Decision{Jev.JevOff{}, []}, False{}, folder, uids, uids, confirm, uidv,
         dry)
@@ -4945,7 +4954,8 @@ def orig_found.if(
     case True{}:
       pure_out(Err{stale_msg()})
     case False{}:
-      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0)), args, mode, max, me, jev)
+      orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0), True{}), args, mode, max,
+        me, jev)
 
 # The original is used only if its folder still has the caller's
 # UIDVALIDITY (checked in the same session that fetched it).
@@ -5113,7 +5123,7 @@ def file_to_save(
 ) -> Result<&2, &2, String, M.Attach>:
   do Result<&2, &2, String, M.Attach>:
     lines : List<&2, I.RLine> <- r
-    body : String <- whole_body(with_uid(I.fetched(lines), uid), uid, folder)
+    body : String <- whole_body(with_uid(I.fetched(lines), uid, True{}), uid, folder)
     a : M.Attach <- attachment_found(M.attachment_at(body, index), index)
     save_as(a, filename)
 
@@ -5349,7 +5359,7 @@ def classify_folders(
       +g = guard_for(folders)
       +cats = categories(g)
       +canon = canonical_names(g, cands)
-      +ms = jev_msgs(lines, uids, Jev.is_body(c))
+      +ms = fetched_msgs(lines, uids, Jev.is_body(c))
       head : List<&2, J.Json> = [
         J.kv("folder", J.str(folder)),
         J.kv("uidvalidity", maybe_num(I.ok_code(lines, "UIDVALIDITY"))),
@@ -5986,7 +5996,7 @@ def triage_folders.if(
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       Triage{folder, +uids, uidv, dry} = call
-      +ms = jev_msgs(lines, uids, Jev.is_body(c))
+      +ms = fetched_msgs(lines, uids, Jev.is_body(c))
       +roles = role_folders(folders)
       triage_sent(Triaging{call, c, cats, opts, roles, I.caps(lines),
         review_problem(folders, roles), pendings(c, now, ms), minus(uids, msg_uids(ms))},
