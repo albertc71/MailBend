@@ -1,13 +1,14 @@
 #!/usr/bin/env sh
 # MailBend launcher: runs the compiled core (bin/mailbend-core) with the TLS
-# helper and the attachment reader next to it. Falls back to
+# helper, the attachment reader and the TypeSafe helper next to it. Falls back to
 # `bend main.bend` (slower start) when the core was not compiled.
 # Usage: scripts/mailbend mcp | tools | call <tool> [json]
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${MAILBEND_TLS_HELPER:=$root/bin/mailbend-tls}"
 : "${MAILBEND_ATTACH_HELPER:=$root/bin/mailbend-attach}"
-export MAILBEND_TLS_HELPER MAILBEND_ATTACH_HELPER
+: "${MAILBEND_TYPESAFE_HELPER:=$root/bin/mailbend-typesafe}"
+export MAILBEND_TLS_HELPER MAILBEND_ATTACH_HELPER MAILBEND_TYPESAFE_HELPER
 export BEND_NO_TELEMETRY=1
 if [ -n "${MAILBEND_CA_FILE:-}" ]; then
   echo "mailbend: warning: MAILBEND_CA_FILE replaces the system trust store; it is meant for local tests" >&2

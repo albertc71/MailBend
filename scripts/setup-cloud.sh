@@ -13,6 +13,8 @@ check_readiness() {
     || fail "TLS helper cannot run; rerun setup-cloud.sh"
   [ -x "$root/bin/mailbend-attach" ] \
     || fail "attachment helper is missing; rerun setup-cloud.sh"
+  "$root/bin/mailbend-typesafe" --check >/dev/null 2>&1 \
+    || fail "TypeSafe helper cannot run; rerun setup-cloud.sh"
   [ -x "$root/bin/mailbend-core" ] \
     || fail "compiled core is missing; rerun setup-cloud.sh"
   "$root/scripts/mailbend" tools >/dev/null 2>&1 \
@@ -40,8 +42,10 @@ as_root() {
 }
 # Do not re-run the whole script with sudo: Bend belongs in the user's home.
 as_root env DEBIAN_FRONTEND=noninteractive apt-get update >&2
+# Rust 1.99 for the native helpers is not packaged by Debian or Ubuntu, so
+# install.sh --install-rust installs it with a checksum-verified rustup.
 as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  build-essential libssl-dev libcurl4-openssl-dev clang ca-certificates curl >&2
-sh "$root/scripts/install.sh" --install-bend >&2
+  build-essential clang ca-certificates curl >&2
+sh "$root/scripts/install.sh" --install-bend --install-rust >&2
 sh "$root/scripts/setup-cloud.sh" --check || fail "installed binaries failed the readiness check"
 printf 'mailbend: ready; use %s/scripts/mailbend-cloud call mail_probe\n' "$root" >&2

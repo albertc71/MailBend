@@ -1,0 +1,8 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# Certificate verification is mandatory: no code may reach rustls's
+# "dangerous" configuration (CI also greps for it).
+disallowed-methods = [
+  { path = "rustls::ClientConfig::dangerous", reason = "TLS verification is mandatory" },
+  { path = "rustls::ConfigBuilder::dangerous", reason = "TLS verification is mandatory" },
+]

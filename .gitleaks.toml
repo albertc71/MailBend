@@ -14,3 +14,12 @@ regex = '''\b[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}\b'''
 [[rules.allowlists]]
 regexTarget = "match"
 regexes = ['''^xxxx-xxxx-xxxx-xxxx$''']
+
+# The fake keys that test MailBend's own secret scan before a send.
+[[allowlists]]
+description = "secret-scan fixtures"
+paths = ['''^src/secrets\.bend$''', '''^tests/unit/secrets\.bend$''']
+
+[[allowlists]]
+description = "fake keys in the end-to-end tests"
+regexes = ['''fakefake''', '''^ts_test_key_''']

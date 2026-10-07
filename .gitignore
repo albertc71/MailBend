@@ -15,6 +15,7 @@
 # native/build output
 build/
 bin/
+native/target/
 *.o
 *.so
 *.a

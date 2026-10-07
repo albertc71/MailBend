@@ -33,7 +33,10 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential libssl-dev libcurl4-openssl-dev clang openssl
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl
+
+      - name: Install Rust 1.99 (native/rust-toolchain.toml)
+        run: rustup toolchain install 1.99 --profile minimal
 
       - name: Install Bend
         run: |
@@ -45,8 +48,52 @@ jobs:
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
 
-      - name: Safety proofs
-        run: bend PROOF.bend
+      # The allowlist law is about S.outbound, so no other code may make an
+      # SMTP envelope.
+      - name: The SMTP envelope comes only from the allowlist
+        run: |
+          if grep -rnE '[A-Za-z_]\.envelope\(' --include='*.bend' src main.bend; then
+            echo "envelope is called outside src/smtp.bend" >&2
+            exit 1
+          fi
+
+      # The gate laws are about Jev.outbound_checked and Jev.delete_checked,
+      # so the tools reach an SMTP envelope, the SMTP session and a delete
+      # plan only through them. Code is flattened to one line first, so a
+      # call split across lines is still seen.
+      - name: Sends and deletes pass Jev's gates
+        run: |
+          flat() { cat "$@" | tr -s ' \t\n' ' '; }
+          count() { grep -oE "$1" | wc -l; }
+          outside=$(ls src/*.bend main.bend | grep -vxE 'src/(ops|imap)\.bend')
+          if [ "$(flat src/*.bend main.bend | count '[A-Za-z_]\.outbound\(')" -ne 2 ] \
+              || [ "$(flat src/jev.bend | count '[A-Za-z_]\.outbound\(')" -ne 2 ]; then
+            echo "S.outbound is called other than in Jev.outbound_checked in src/jev.bend" >&2
+            exit 1
+          fi
+          # Its definition and the one call that sends what the gate allowed.
+          if [ "$(flat src/*.bend main.bend | count 'smtp_run\(')" -ne 2 ]; then
+            echo "smtp_run has a caller other than the one after Jev's send gate" >&2
+            exit 1
+          fi
+          plans=$(flat $outside | count 'plan_delete')
+          gated=$(flat $outside | count 'delete_checked\( ?[a-z_]+, ?Ops\.plan_delete\(')
+          if [ "$plans" -ne "$gated" ]; then
+            echo "a delete plan is used without Jev.delete_checked" >&2
+            exit 1
+          fi
+          if flat $outside | grep -qE 'Ops\.delete_uids\(|CExpunge'; then
+            echo "an expunge is made outside src/ops.bend and src/imap.bend" >&2
+            exit 1
+          fi
+
+      - name: Install Lean (scripts/install-lean.sh, for --verdict)
+        run: sh scripts/install-lean.sh
+
+      # --verdict checks the proofs, then rechecks every def with Bend's
+      # proven BendTT kernel (built with Lean on first use).
+      - name: Safety proofs, rechecked by the proven kernel
+        run: bend PROOF.bend --verdict
 
       - name: Unit tests
         run: sh tests/run-unit.sh
@@ -62,3 +109,76 @@ jobs:
 
       - name: End-to-end tests
         run: python3 tests/test-e2e.py
+
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.99 (the MSRV, native/rust-toolchain.toml)
+        run: rustup toolchain install 1.99 --profile minimal --component clippy,rustfmt
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: No way around TLS verification
+        run: |
+          if grep -rnE 'dangerous\(|client::danger|ServerCertVerifier' --include='*.rs' .; then
+            echo "TLS verification must not be configurable" >&2
+            exit 1
+          fi
+
+      - name: The attachment reader has no network or TLS crate
+        run: |
+          cargo tree --locked -p mailbend-attach -e normal --prefix none > "$RUNNER_TEMP/attach-tree.txt"
+          if grep -E '^(rustls|ring|socket2|mio|tokio|hyper|ureq|reqwest|curl|openssl)[ -]' "$RUNNER_TEMP/attach-tree.txt"; then
+            echo "mailbend-attach must not depend on network or TLS crates" >&2
+            exit 1
+          fi
+          if grep -rnE 'std::net|TcpStream|UdpSocket|UnixStream' mailbend-attach/src; then
+            echo "mailbend-attach must not open network sockets" >&2
+            exit 1
+          fi
+
+      # Built with the Rust installed above (cargo-deny-action runs its own
+      # Rust 1.85 container); the repository allows only GitHub's own actions.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+
+      - name: Dependency policy (cargo-deny)
+        run: cargo deny --log-level warn --all-features check
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: native/fuzz
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned nightly (fuzzing only)
+        run: rustup toolchain install nightly-2026-10-06 --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly-2026-10-06 install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Fuzz each parser for 60 seconds
+        run: |
+          for target in imap_script imap_response smtp_envelope smtp_reply dns_answer http_response url_and_proxy; do
+            cargo +nightly-2026-10-06 fuzz run "$target" -O -- -max_total_time=60
+          done

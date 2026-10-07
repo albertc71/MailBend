@@ -4,8 +4,8 @@
 # tested Bend version is pinned; CI and scripts/install.sh both use it.
 # Only the Linux x64 release is pinned.
 set -eu
-BEND_VERSION=2.0.32
-BEND_SHA256=5c365ddb12954d0933cef751802e0f7d9875f842edcb80f9661f89cd1a9ff7b6
+BEND_VERSION=2.0.35
+BEND_SHA256=63039d1a119f716767ac5a7d8fe0717cfacf219c6c253c35192148e0dade722f
 
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 

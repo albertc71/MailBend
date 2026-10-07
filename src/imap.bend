@@ -1,11 +1,12 @@
+# IMAP commands as data, their wire form, and the parsing of server
+# transcripts. The helper (native/mailbend-tls/) logs in and out; the
+# commands here are everything in between.
+
 import Base
 import ./codec.bend as C
 
-# IMAP commands as data, their wire form, and the parsing of server
-# transcripts. The helper (native/mailbend-tls.c) logs in and out; the
-# commands here are everything in between.
-
-# ---- the command model -----------------------------------------------------------
+# The command model
+# -----------------
 
 type Flag is Data:
   FSeen{}
@@ -13,6 +14,24 @@ type Flag is Data:
   FDraft{}
   FFlagged{}
   FAnswered{}
+  FColourBit0{}
+  FColourBit1{}
+  FColourBit2{}
+
+# Apple Mail's flag colours: a 3-bit index over $MailFlagBit0..2, meaningful
+# only while \Flagged is set.
+type Colour is Data:
+  ColRed{}
+  ColOrange{}
+  ColYellow{}
+  ColGreen{}
+  ColBlue{}
+  ColPurple{}
+  ColGrey{}
+
+# Which of $MailFlagBit0..2 a colour sets.
+type Bits is Data:
+  Bits{b0: Bool, b1: Bool, b2: Bool}
 
 # Search keys. Strings are matched by the server (substring, case-insensitive
 # for ASCII); dates are IMAP dates such as "1-Feb-2026".
@@ -30,23 +49,28 @@ type Key is Data:
   KUnseen{}
   KFlagged{}
   KUnflagged{}
+  KUndeleted{}
+  KHeader{name: String, value: String}
   KUidFrom{n: U32}
   KUids{uids: List<&2, U32>}
 
 # Fetch items. None of them can set \Seen: message content is only ever
-# fetched with BODY.PEEK.
+# fetched with BODY.PEEK, and BODYSTRUCTURE only describes the parts
+# (RFC 3501 6.4.5).
 type Item is Data:
   IUid{}
   IFlags{}
   IDate{}
   ISize{}
   IHeaders{}
+  IStructure{}
   IFull{max: U32}
 
 type Cmd is Data:
   CCapability{}
   CList{}
   CListRoles{}
+  CLsub{}
   CExamine{mbox: String}
   CSelect{mbox: String}
   CSearch{keys: List<&2, Key>}
@@ -55,294 +79,357 @@ type Cmd is Data:
   CCopy{uids: List<&2, U32>, dest: String}
   CMove{uids: List<&2, U32>, dest: String}
   CExpunge{uids: List<&2, U32>}
+  CCreate{mbox: String}
+  CRename{from: String, to: String}
+  CSubscribe{mbox: String}
+  CUnsubscribe{mbox: String}
   CAppend{mbox: String, flags: List<&2, Flag>, msg: String}
   CExpect{text: String}
   CExpectWord{word: String}
 
-type M7 is Data:
-  M7{out: String, run: String}
+# Effects
+# -------
 
-type D7 is Data:
-  D7{out: String, b64: String, inb: Bool}
+# What a command does to the account. Every command is named in `effect`,
+# with no catch-all case, so a new command cannot be added without deciding
+# how the laws see it.
+type Effect is Data:
+  ENone{}
+  ESelect{}
+  EMail{}
+  ECopy{}
+  EExpunge{}
+  EFolder{}
 
-# ---- transcript framing ------------------------------------------------------------
-
-# One logical response line. Each literal in it is replaced by lit_mark()
-# in `text`, and its bytes are in `lits`, in order.
-type RLine is Data:
-  RLine{text: String, lits: List<&2, String>}
-
-type LitHit is Data:
-  LitHit{n: U32, rest: String}
-  LitNone{}
-
-# The framer: the current line (reversed), its literals so far, the finished
-# lines, the bytes left in an open literal, and whether the current line is
-# untagged ("* ..."): only those carry literals, exactly as in the helper.
-type Frm is Data:
-  Frm{line: String, lits: List<&2, String>, lines: List<&2, RLine>, left: U32, lit: String, star: Bool}
-
-# ---- tokens ----------------------------------------------------------------------
-
-type IV is Data:
-  IAtom{s: String}
-  IStr{s: String}
-  INil{}
-  IList{items: List<&2, IV>}
-
-type TkMode is Data:
-  TNorm{}
-  TAtom{acc: String, depth: U32}
-  TQuo{acc: String}
-  TQEsc{acc: String}
-
-# The builder: open lists (innermost first, each reversed) and the literals
-# still to be placed.
-type Tk is Data:
-  Tk{mode: TkMode, stack: List<&2, List<&2, IV>>, lits: List<&2, String>}
-
-type Folder is Data:
-  Folder{name: String, delim: String, attrs: List<&2, String>}
-
-# A FETCH response for one message.
-type Msg is Data:
-  Msg{uid: U32, flags: List<&2, String>, date: String, size: U32, headers: String, body: String}
-
-# Whether a command can change the mailbox: open it read-write, change
-# flags, or add or remove messages. EXAMINE, SEARCH and FETCH cannot.
-def writes(+c: Cmd) -> Bool:
+# ENone: reads and expectations. ESelect: opens a mailbox read-write.
+# EMail: flags, moves or appends messages. ECopy: adds copies. EExpunge:
+# permanently removes messages. EFolder: creates, renames, subscribes or
+# unsubscribes a folder.
+def effect(c: Cmd) -> Effect:
   match c:
     case CCapability{}:
-      False{}
+      ENone{}
     case CList{}:
-      False{}
+      ENone{}
     case CListRoles{}:
-      False{}
+      ENone{}
+    case CLsub{}:
+      ENone{}
     case CExamine{m}:
-      False{}
+      ENone{}
     case CSelect{m}:
-      True{}
+      ESelect{}
     case CSearch{k}:
-      False{}
+      ENone{}
     case CFetch{u, i}:
-      False{}
+      ENone{}
     case CStore{u, a, f}:
-      True{}
+      EMail{}
     case CCopy{u, d}:
-      True{}
+      ECopy{}
     case CMove{u, d}:
-      True{}
+      EMail{}
     case CExpunge{u}:
-      True{}
+      EExpunge{}
+    case CCreate{m}:
+      EFolder{}
+    case CRename{a, b}:
+      EFolder{}
+    case CSubscribe{m}:
+      EFolder{}
+    case CUnsubscribe{m}:
+      EFolder{}
     case CAppend{m, f, b}:
-      True{}
+      EMail{}
     case CExpect{e}:
-      False{}
+      ENone{}
     case CExpectWord{w}:
+      ENone{}
+
+# Whether an effect can change the mailbox: EXAMINE, SEARCH and FETCH cannot.
+def writes(e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      True{}
+    case EMail{}:
+      True{}
+    case ECopy{}:
+      True{}
+    case EExpunge{}:
+      True{}
+    case EFolder{}:
+      True{}
+
+# The predicates below name every Effect, with no catch-all case, so a new
+# kind of effect must be classified here too.
+
+# Whether an effect adds, removes or flags messages.
+def changes_mail(e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      True{}
+    case ECopy{}:
+      True{}
+    case EExpunge{}:
+      True{}
+    case EFolder{}:
+      False{}
+
+# Whether an effect creates, renames, subscribes or unsubscribes a folder.
+def changes_mailbox(e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      False{}
+    case ECopy{}:
+      False{}
+    case EExpunge{}:
+      False{}
+    case EFolder{}:
+      True{}
+
+# Whether an effect permanently removes messages: only UID EXPUNGE does.
+def destroys_mail(e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      False{}
+    case ECopy{}:
+      False{}
+    case EExpunge{}:
+      True{}
+    case EFolder{}:
+      False{}
+
+# Whether an effect only adds copies of messages: UID COPY.
+def copies_mail(e: Effect) -> Bool:
+  match e:
+    case ENone{}:
+      False{}
+    case ESelect{}:
+      False{}
+    case EMail{}:
+      False{}
+    case ECopy{}:
+      True{}
+    case EExpunge{}:
+      False{}
+    case EFolder{}:
       False{}
 
 # Whether a command permanently removes messages (UID EXPUNGE).
-def expunges(+c: Cmd) -> Bool:
-  match c:
-    case CExpunge{u}:
-      True{}
-    case _:
-      False{}
+def expunges(c: Cmd) -> Bool:
+  destroys_mail(effect(c))
 
 # Whether a command marks messages \Deleted.
-def marks_deleted(+c: Cmd) -> Bool:
+def marks_deleted(c: Cmd) -> Bool:
   match c:
-    case CStore{u, True{}, FDeleted{}}:
-      True{}
+    case CStore{u, add, FDeleted{}}:
+      add
     case _:
       False{}
 
-def any_writes(+cs: List<&2, Cmd>) -> Bool:
+def any_writes(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
-      writes(c) || any_writes(t)
+    case c <> t:
+      writes(effect(c)) || any_writes(t)
 
-def any_expunges(+cs: List<&2, Cmd>) -> Bool:
+def any_expunges(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
+    case c <> t:
       expunges(c) || any_expunges(t)
 
-def any_marks_deleted(+cs: List<&2, Cmd>) -> Bool:
+def any_marks_deleted(cs: List<&2, Cmd>) -> Bool:
   match cs:
     case Nil{}:
       False{}
-    case Con{c, t}:
+    case c <> t:
       marks_deleted(c) || any_marks_deleted(t)
 
-# ---- modified UTF-7 mailbox names (RFC 3501 5.1.3) -----------------------------
+# Modified UTF-7 mailbox names (RFC 3501 5.1.3)
+# ---------------------------------------------
 
-def utf16_pair(+m: U32) -> String:
+# Encoding so far: the finished text and the pending run of non-ASCII text
+# as UTF-16BE bytes, both reversed.
+type Utf7Encoder is Data:
+  Utf7Encoder{out: String, run: String}
+
+# Decoding so far: the finished text and the pending base64, both reversed,
+# and whether the input is inside a "&...-" run.
+type Utf7Decoder is Data:
+  Utf7Decoder{out: String, b64: String, shifted: Bool}
+
+# The four UTF-16BE bytes of the surrogate pair for a code point past U+FFFF,
+# given as `m`, its offset above U+10000 (20 bits).
+def utf16be.pair(+m: U32) -> String:
   +hi = (55296 + (m >> 10n) : U32)
   +lo = (56320 + (m .&. 1023) : U32)
-  SCon{C.chr((hi >> 8n : U32)), SCon{C.chr((hi .&. 255 : U32)), SCon{C.chr((lo >> 8n : U32)), SCon{C.chr((lo .&. 255 : U32)), SNil{}}}}}
+  SCon{C.chr((hi >> 8n : U32)), SCon{C.chr((hi .&. 255 : U32)),
+    SCon{C.chr((lo >> 8n : U32)), SCon{C.chr((lo .&. 255 : U32)), SNil{}}}}}
 
+def utf16be.if(bmp: Bool, +n: U32) -> String:
+  match bmp:
+    case True{}:
+      SCon{C.chr((n >> 8n : U32)), SCon{C.chr((n .&. 255 : U32)), SNil{}}}
+    case False{}:
+      utf16be.pair((n - 65536 : U32))
+
+# A code point as UTF-16BE bytes.
 def utf16be(+n: U32) -> String:
-  Bool.pick(String, U32.is_lt(n, 65536),
-    SCon{C.chr((n >> 8n : U32)), SCon{C.chr((n .&. 255 : U32)), SNil{}}},
-    utf16_pair((n - 65536 : U32)))
+  utf16be.if(U32.is_lt(n, 65536), n)
 
-def m7_flush(+out: String, +run: String) -> String:
+# `out` with the pending run, if any, closed as "&<base64>-".
+def mutf7_encode.flush(out: String, run: String) -> String:
   match run:
     case SNil{}:
       out
     case SCon{h, t}:
       String.reverse("&" ++ C.b64_encode(String.reverse(run), True{}) ++ "-") ++ out
 
-def m7_put(+ascii: Bool, +c: Char, +out: String, +run: String) -> M7:
-  match ascii:
+# A printable ASCII character, reversed: "&" is escaped as "&-".
+def mutf7_encode.ascii(c: Char) -> String:
+  match c:
+    case '&':
+      "-&"
+    case _:
+      SCon{c, SNil{}}
+
+def mutf7_encode.if(
+  printable: Bool,
+  c: Char,
+  out: String,
+  run: String
+) -> Utf7Encoder:
+  match printable:
     case True{}:
-      M7{Bool.pick(String, Char.is_eq(c, '&'), "-&", SCon{c, SNil{}}) ++ m7_flush(out, run), ""}
+      Utf7Encoder{mutf7_encode.ascii(c) ++ mutf7_encode.flush(out, run), ""}
     case False{}:
-      M7{out, String.reverse(utf16be(C.u(c))) ++ run}
+      Utf7Encoder{out, String.reverse(utf16be(C.u(c))) ++ run}
 
-def m7_step(+c: Char, +st: M7) -> M7:
-  match st:
-    case M7{out, run}:
-      m7_put(C.between(C.u(c), 32, 126), c, out, run)
+def mutf7_encode.step(+c: Char, st: Utf7Encoder) -> Utf7Encoder:
+  Utf7Encoder{out, run} = st
+  mutf7_encode.if(C.between(C.u(c), 32, 126), c, out, run)
 
-def m7_go(+s: String, +st: M7) -> M7:
+def mutf7_encode.go(s: String, st: Utf7Encoder) -> Utf7Encoder:
   match s:
     case SNil{}:
       st
     case SCon{c, t}:
-      m7_go(t, m7_step(c, st))
+      mutf7_encode.go(t, mutf7_encode.step(c, st))
 
-def m7_end(+st: M7) -> String:
-  match st:
-    case M7{out, run}:
-      String.reverse(m7_flush(out, run))
+def mutf7_encode.fin(st: Utf7Encoder) -> String:
+  Utf7Encoder{out, run} = st
+  String.reverse(mutf7_encode.flush(out, run))
 
 # Mailbox name to its modified UTF-7 wire form.
-def mutf7_encode(+name: String) -> String:
-  m7_end(m7_go(name, M7{"", ""}))
-
-def u16_char(+bad: Bool, +n: U32, +out: String) -> String:
-  match bad:
-    case True{}:
-      SCon{C.repl(), out}
-    case False{}:
-      SCon{C.chr(n), out}
-
-def u16_low(+pair: Bool, +n: U32, +hi: U32, +out: String) -> String:
-  match pair:
-    case True{}:
-      SCon{C.chr((65536 + (hi - 55296) * 1024 + (n - 56320) : U32)), out}
-    case False{}:
-      u16_char(C.between(n, 55296, 57343), n, Bool.pick(String, U32.is_zero(hi), out, SCon{C.repl(), out}))
-
-# Output for one UTF-16 unit given a pending high surrogate (or 0).
-def u16_emit(+high: Bool, +n: U32, +hi: U32, +out: String) -> String:
-  match high:
-    case True{}:
-      Bool.pick(String, U32.is_zero(hi), out, SCon{C.repl(), out})
-    case False{}:
-      u16_low(C.between(n, 56320, 57343) && Bool.not(U32.is_zero(hi)), n, hi, out)
+def mutf7_encode(name: String) -> String:
+  mutf7_encode.fin(mutf7_encode.go(name, Utf7Encoder{"", ""}))
 
 # UTF-16BE bytes to text; `hi` is a pending high surrogate or 0, `out` the
-# reversed text so far.
-def utf16_decode(+bytes: String, +hi: U32, +out: String) -> String:
+# reversed text so far. A trailing odd byte is dropped.
+def utf16_decode(bytes: String, hi: U32, out: String) -> String:
   match bytes:
     case SCon{a, SCon{b, t}}:
       +n = ((C.u(a) << 8n) .|. C.u(b) : U32)
-      +high = C.between(n, 55296, 56319)
-      utf16_decode(t, Bool.pick(U32, high, n, 0), u16_emit(high, n, hi, out))
+      utf16_decode(t, Bool.pick(U32, C.utf16_high(n), n, 0),
+        C.utf16_unit(n, hi, out))
     case _:
-      String.reverse(Bool.pick(String, U32.is_zero(hi), out, SCon{C.repl(), out}))
+      String.reverse(C.utf16_unpaired(hi, out))
 
-def d7_close(+b64: String, +out: String) -> String:
+# `out` with a closed "&...-" run: "&-" is a literal "&", anything else is
+# base64 of UTF-16BE.
+def mutf7_decode.close(b64: String, out: String) -> String:
   match b64:
     case SNil{}:
       SCon{'&', out}
     case SCon{h, t}:
-      String.reverse(utf16_decode(C.b64_decode(String.reverse(b64)), 0, "")) ++ out
+      String.reverse(utf16_decode(C.b64_decode(String.reverse(b64)), 0, "")) ++
+        out
 
-def d7_in(+c: Char, +out: String, +b64: String) -> D7:
+def mutf7_decode.shifted(c: Char, out: String, b64: String) -> Utf7Decoder:
   match c:
     case '-':
-      D7{d7_close(b64, out), "", False{}}
+      Utf7Decoder{mutf7_decode.close(b64, out), "", False{}}
     case _:
-      D7{out, SCon{c, b64}, True{}}
+      Utf7Decoder{out, SCon{c, b64}, True{}}
 
-def d7_out(+c: Char, +out: String, +b64: String) -> D7:
+def mutf7_decode.plain(c: Char, out: String, b64: String) -> Utf7Decoder:
   match c:
     case '&':
-      D7{out, "", True{}}
+      Utf7Decoder{out, "", True{}}
     case _:
-      D7{SCon{c, out}, b64, False{}}
+      Utf7Decoder{SCon{c, out}, b64, False{}}
 
-def d7_step(+c: Char, +st: D7) -> D7:
+def mutf7_decode.step(c: Char, st: Utf7Decoder) -> Utf7Decoder:
   match st:
-    case D7{out, b64, True{}}:
-      d7_in(c, out, b64)
-    case D7{out, b64, False{}}:
-      d7_out(c, out, b64)
+    case Utf7Decoder{out, b64, True{}}:
+      mutf7_decode.shifted(c, out, b64)
+    case Utf7Decoder{out, b64, False{}}:
+      mutf7_decode.plain(c, out, b64)
 
-def d7_go(+s: String, +st: D7) -> D7:
+def mutf7_decode.go(s: String, st: Utf7Decoder) -> Utf7Decoder:
   match s:
     case SNil{}:
       st
     case SCon{c, t}:
-      d7_go(t, d7_step(c, st))
+      mutf7_decode.go(t, mutf7_decode.step(c, st))
 
-def d7_end(+st: D7) -> String:
-  match st:
-    case D7{out, b64, inb}:
-      String.reverse(out)
+# The decoded text; an unterminated run is dropped.
+def mutf7_decode.fin(st: Utf7Decoder) -> String:
+  Utf7Decoder{out, _, _} = st
+  String.reverse(out)
 
 # Modified UTF-7 wire form to the mailbox name.
-def mutf7_decode(+s: String) -> String:
-  d7_end(d7_go(s, D7{"", "", False{}}))
+def mutf7_decode(s: String) -> String:
+  mutf7_decode.fin(mutf7_decode.go(s, Utf7Decoder{"", "", False{}}))
 
-# ---- rendering ------------------------------------------------------------------
+# Rendering
+# ---------
 
 def crlf() -> String:
   "\r\n"
 
-def esc_quoted(+s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{'"', t}:
-      "\\\"" ++ esc_quoted(t)
-    case SCon{'\\', t}:
-      "\\\\" ++ esc_quoted(t)
-    case SCon{c, t}:
-      SCon{c, esc_quoted(t)}
-
-def astring_as(+plain: Bool, +s: String) -> String:
+def astring.if(plain: Bool, +s: String) -> String:
   match plain:
     case True{}:
-      "\"" ++ esc_quoted(s) ++ "\""
+      C.quoted(s)
     case False{}:
       "{" ++ U32.show(C.utf8_len(s)) ++ "}" ++ crlf() ++ s
 
 # An IMAP string: quoted when it is printable ASCII, else a literal
 # ({bytes} CRLF then the UTF-8 bytes; the command continues after it).
 def astring(+s: String) -> String:
-  astring_as(C.is_plain(s), s)
+  astring.if(C.is_plain(s), s)
 
-def mailbox(+name: String) -> String:
+def mailbox(name: String) -> String:
   astring(mutf7_encode(name))
 
-def uid_set(+uids: List<&2, U32>) -> String:
+def uid_set(uids: List<&2, U32>) -> String:
   match uids:
     case Nil{}:
       ""
-    case Con{u, Nil{}}:
+    case u <> Nil{}:
       U32.show(u)
-    case Con{u, t}:
+    case u <> t:
       U32.show(u) ++ "," ++ uid_set(t)
 
-def flag_name(+f: Flag) -> String:
+def flag_name(f: Flag) -> String:
   match f:
     case FSeen{}:
       "\\Seen"
@@ -354,17 +441,88 @@ def flag_name(+f: Flag) -> String:
       "\\Flagged"
     case FAnswered{}:
       "\\Answered"
+    case FColourBit0{}:
+      "$MailFlagBit0"
+    case FColourBit1{}:
+      "$MailFlagBit1"
+    case FColourBit2{}:
+      "$MailFlagBit2"
 
-def flag_list(+fs: List<&2, Flag>) -> String:
+def colour_name(c: Colour) -> String:
+  match c:
+    case ColRed{}:
+      "red"
+    case ColOrange{}:
+      "orange"
+    case ColYellow{}:
+      "yellow"
+    case ColGreen{}:
+      "green"
+    case ColBlue{}:
+      "blue"
+    case ColPurple{}:
+      "purple"
+    case ColGrey{}:
+      "grey"
+
+def colours() -> List<&2, Colour>:
+  [ColRed{}, ColOrange{}, ColYellow{}, ColGreen{}, ColBlue{}, ColPurple{}, ColGrey{}]
+
+def colour_names.go(cs: List<&2, Colour>) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case c <> t:
+      colour_name(c) <> colour_names.go(t)
+
+def colour_names() -> List<&2, String>:
+  colour_names.go(colours())
+
+# Walks all seven colours, keeping the match in `found`: a fold is simpler
+# than an early-stop `.if` helper.
+def colour_from_name.go(
+  cs: List<&2, Colour>,
+  +n: String,
+  found: Maybe<&2, Colour>
+) -> Maybe<&2, Colour>:
+  match cs:
+    case Nil{}:
+      found
+    case +c <> t:
+      colour_from_name.go(t, n,
+        Bool.pick(Maybe<&2, Colour>, String.eq(colour_name(c), n), Some{c}, found))
+
+def colour_from_name(n: String) -> Maybe<&2, Colour>:
+  colour_from_name.go(colours(), n, None{})
+
+# The index is Bit0 x 1 + Bit1 x 2 + Bit2 x 4, with red 0 and grey 6.
+def colour_bits(c: Colour) -> Bits:
+  match c:
+    case ColRed{}:
+      Bits{False{}, False{}, False{}}
+    case ColOrange{}:
+      Bits{True{}, False{}, False{}}
+    case ColYellow{}:
+      Bits{False{}, True{}, False{}}
+    case ColGreen{}:
+      Bits{True{}, True{}, False{}}
+    case ColBlue{}:
+      Bits{False{}, False{}, True{}}
+    case ColPurple{}:
+      Bits{True{}, False{}, True{}}
+    case ColGrey{}:
+      Bits{False{}, True{}, True{}}
+
+def flag_list(fs: List<&2, Flag>) -> String:
   match fs:
     case Nil{}:
       ""
-    case Con{f, Nil{}}:
+    case f <> Nil{}:
       flag_name(f)
-    case Con{f, t}:
+    case f <> t:
       flag_name(f) ++ " " ++ flag_list(t)
 
-def key_str(+k: Key) -> String:
+def key_str(k: Key) -> String:
   match k:
     case KAll{}:
       "ALL"
@@ -392,12 +550,17 @@ def key_str(+k: Key) -> String:
       "FLAGGED"
     case KUnflagged{}:
       "UNFLAGGED"
+    case KUndeleted{}:
+      "UNDELETED"
+    case KHeader{n, v}:
+      "HEADER " ++ astring(n) ++ " " ++ astring(v)
     case KUidFrom{n}:
       "UID " ++ U32.show(n) ++ ":*"
     case KUids{us}:
       "UID " ++ uid_set(us)
 
-def key_plain(+k: Key) -> Bool:
+# Whether a key's strings are all printable ASCII.
+def key_plain(k: Key) -> Bool:
   match k:
     case KFrom{s}:
       C.is_plain(s)
@@ -411,37 +574,37 @@ def key_plain(+k: Key) -> Bool:
       C.is_plain(s)
     case KText{s}:
       C.is_plain(s)
+    case KHeader{n, v}:
+      C.is_plain(n) && C.is_plain(v)
     case _:
       True{}
 
-def keys_plain(+ks: List<&2, Key>) -> Bool:
-  match ks:
-    case Nil{}:
-      True{}
-    case Con{k, t}:
-      key_plain(k) && keys_plain(t)
-
-def keys_str(+ks: List<&2, Key>) -> String:
+def keys_str(ks: List<&2, Key>) -> String:
   match ks:
     case Nil{}:
       ""
-    case Con{k, Nil{}}:
+    case k <> Nil{}:
       key_str(k)
-    case Con{k, t}:
+    case k <> t:
       key_str(k) ++ " " ++ keys_str(t)
 
+# The SEARCH criteria: ALL when there are none, and CHARSET UTF-8 when a
+# string is not printable ASCII.
 def search_args(+ks: List<&2, Key>) -> String:
   match ks:
     case Nil{}:
       "ALL"
-    case Con{h, t}:
-      Bool.pick(String, keys_plain(ks), "", "CHARSET UTF-8 ") ++ keys_str(ks)
+    case h <> t:
+      Bool.pick(String, List.all(~&2, ~Key, ~key_plain, ks), "", "CHARSET UTF-8 ") ++
+        keys_str(ks)
 
-# The header fields fetched for message summaries.
+# The header fields fetched for message summaries, and the list and
+# auto-reply fields Jev may see.
 def header_fields() -> String:
-  "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES"
+  "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID " ++
+    "LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE"
 
-def item_str(+i: Item) -> String:
+def item_str(i: Item) -> String:
   match i:
     case IUid{}:
       "UID"
@@ -453,20 +616,26 @@ def item_str(+i: Item) -> String:
       "RFC822.SIZE"
     case IHeaders{}:
       "BODY.PEEK[HEADER.FIELDS (" ++ header_fields() ++ ")]"
+    case IStructure{}:
+      "BODYSTRUCTURE"
     case IFull{max}:
       "BODY.PEEK[]<0." ++ U32.show(max) ++ ">"
 
-def items_str(+xs: List<&2, Item>) -> String:
+def items_str(xs: List<&2, Item>) -> String:
   match xs:
     case Nil{}:
       ""
-    case Con{i, Nil{}}:
+    case i <> Nil{}:
       item_str(i)
-    case Con{i, t}:
+    case i <> t:
       item_str(i) ++ " " ++ items_str(t)
 
-def store_op(+add: Bool) -> String:
+def store_op(add: Bool) -> String:
   Bool.pick(String, add, "+FLAGS.SILENT (", "-FLAGS.SILENT (")
+
+# An APPEND up to its message: the mailbox and the flags.
+def append_head(m: String, fs: List<&2, Flag>) -> String:
+  "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") "
 
 # The wire form of one command, without tag and CRLF.
 def cmd_str(+c: Cmd) -> String:
@@ -477,6 +646,8 @@ def cmd_str(+c: Cmd) -> String:
       "LIST \"\" \"*\""
     case CListRoles{}:
       "LIST \"\" \"*\" RETURN (SPECIAL-USE)"
+    case CLsub{}:
+      "LSUB \"\" \"*\""
     case CExamine{m}:
       "EXAMINE " ++ mailbox(m)
     case CSelect{m}:
@@ -493,19 +664,30 @@ def cmd_str(+c: Cmd) -> String:
       "UID MOVE " ++ uid_set(us) ++ " " ++ mailbox(d)
     case CExpunge{us}:
       "UID EXPUNGE " ++ uid_set(us)
+    case CCreate{m}:
+      "CREATE " ++ mailbox(m)
+    case CRename{a, b}:
+      "RENAME " ++ mailbox(a) ++ " " ++ mailbox(b)
+    case CSubscribe{m}:
+      "SUBSCRIBE " ++ mailbox(m)
+    case CUnsubscribe{m}:
+      "UNSUBSCRIBE " ++ mailbox(m)
     case CAppend{m, fs, msg}:
-      "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") {" ++ U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
+      append_head(m, fs) ++ "{" ++ U32.show(C.utf8_len(msg)) ++ "}" ++ crlf() ++ msg
     case CExpect{e}:
       e
     case CExpectWord{w}:
       w
 
-def tag(+n: U32) -> String:
+# Scripts
+# -------
+
+def tag(n: U32) -> String:
   "a" ++ U32.show(n)
 
 # An expectation is not a command: the helper checks it against the
 # previous command's untagged replies, so it takes no tag.
-def is_expect(+c: Cmd) -> Bool:
+def is_expect(c: Cmd) -> Bool:
   match c:
     case CExpect{e}:
       True{}
@@ -514,106 +696,241 @@ def is_expect(+c: Cmd) -> Bool:
     case _:
       False{}
 
-def expect_kw(+c: Cmd) -> String:
-  match c:
-    case CExpectWord{w}:
-      "=EXPECT-WORD "
-    case _:
-      "=EXPECT "
+# The tag after command `c`, given that `n` is the next free one.
+def next_tag(c: Cmd, +n: U32) -> U32:
+  Bool.pick(U32, is_expect(c), n, (n + 1 : U32))
 
-def line_of(+expect: Bool, +c: Cmd, +n: U32) -> String:
-  match expect:
-    case True{}:
-      expect_kw(c) ++ cmd_str(c)
-    case False{}:
+# One script line: a tagged command, or an expectation after its keyword.
+def script.line(c: Cmd, n: U32) -> String:
+  match c:
+    case CExpect{e}:
+      "=EXPECT " ++ e
+    case CExpectWord{w}:
+      "=EXPECT-WORD " ++ w
+    case _:
       tag(n) ++ " " ++ cmd_str(c)
 
-def script_go(+cs: List<&2, Cmd>, +n: U32) -> String:
+def script.go(cs: List<&2, Cmd>, +n: U32) -> String:
   match cs:
     case Nil{}:
       ""
-    case Con{c, t}:
-      +expect = is_expect(c)
-      line_of(expect, c, n) ++ crlf() ++ script_go(t, Bool.pick(U32, expect, n, (n + 1 : U32)))
+    case +c <> t:
+      script.line(c, n) ++ crlf() ++ script.go(t, next_tag(c, n))
 
-def script(+cs: List<&2, Cmd>) -> String:
-  script_go(cs, 1)
+def script(cs: List<&2, Cmd>) -> String:
+  script.go(cs, 1)
 
-# ---- dates -------------------------------------------------------------------
+# A dry run's view of a plan: the script, one line per command, except that
+# an APPEND shows the size of its message instead of the message.
+def preview.line(c: Cmd, n: U32) -> String:
+  match c:
+    case CAppend{m, fs, msg}:
+      tag(n) ++ " " ++ append_head(m, fs) ++ C.size_note(C.utf8_len(msg))
+    case _:
+      script.line(c, n)
 
-def month_name(+m: U32) -> String:
-  match m:
-    case 1: "Jan"
-    case 2: "Feb"
-    case 3: "Mar"
-    case 4: "Apr"
-    case 5: "May"
-    case 6: "Jun"
-    case 7: "Jul"
-    case 8: "Aug"
-    case 9: "Sep"
-    case 10: "Oct"
-    case 11: "Nov"
-    case 12: "Dec"
-    case _: ""
+def preview.go(cs: List<&2, Cmd>, +n: U32) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      []
+    case +c <> t:
+      preview.line(c, n) <> preview.go(t, next_tag(c, n))
 
-def all_digits(+s: String) -> Bool:
-  match s:
-    case SNil{}:
-      True{}
-    case SCon{c, t}:
-      Char.is_digit(c) && all_digits(t)
+def preview(cs: List<&2, Cmd>) -> List<&2, String>:
+  preview.go(cs, 1)
 
-def date_ok(+y: String, +m: U32, +d: U32) -> Maybe<&2, String>:
-  Bool.pick(Maybe<&2, String>, C.between(m, 1, 12) && C.between(d, 1, 31) && Nat.is_eq(String.length(y), 4n) && all_digits(y),
-    Some{U32.show(d) ++ "-" ++ month_name(m) ++ "-" ++ y}, None{})
+# How many commands of a script carry a tag (expectations carry none).
+def tag_count(cs: List<&2, Cmd>) -> U32:
+  match cs:
+    case Nil{}:
+      0
+    case c <> t:
+      (Bool.pick(U32, is_expect(c), 0, 1) + tag_count(t) : U32)
 
-def date_nums(+y: String, +m: Maybe<&2, U32>, +d: Maybe<&2, U32>) -> Maybe<&2, String>:
-  match m:
-    case Some{mm}:
-      match d:
-        case Some{dd}:
-          date_ok(y, mm, dd)
-        case None{}:
-          None{}
-    case None{}:
+# How many commands of a script are UNSUBSCRIBEs.
+def unsubscribe_count(cs: List<&2, Cmd>) -> U32:
+  match cs:
+    case Nil{}:
+      0
+    case CUnsubscribe{m} <> t:
+      (1 + unsubscribe_count(t) : U32)
+    case c <> t:
+      unsubscribe_count(t)
+
+# The tag number script() gives the first UID COPY, from tag `n` on; 0 when
+# the script has none.
+def copy_tag(cs: List<&2, Cmd>, n: U32) -> U32:
+  match cs:
+    case Nil{}:
+      0
+    case CCopy{u, d} <> t:
+      n
+    case c <> t:
+      copy_tag(t, next_tag(c, n))
+
+# Dates
+# -----
+
+def imap_date.if(ok: Bool, y: String, m: U32, d: U32) -> Maybe<&2, String>:
+  match ok:
+    case True{}:
+      Some{U32.show(d) ++ "-" ++ C.month_name(m) ++ "-" ++ y}
+    case False{}:
       None{}
 
-def date_parts(+ps: List<&2, String>) -> Maybe<&2, String>:
+# The date when the year has four digits, the month is 1-12 and the day 1-31.
+def imap_date.check(+y: String, +m: U32, +d: U32) -> Maybe<&2, String>:
+  ok = C.between(m, 1, 12) && C.between(d, 1, 31) &&
+    Nat.is_eq(String.length(y), 4n) && C.all_digits(y)
+  imap_date.if(ok, y, m, d)
+
+def imap_date.nums(
+  y: String,
+  m: Maybe<&2, U32>,
+  d: Maybe<&2, U32>
+) -> Maybe<&2, String>:
+  match m d:
+    case Some{mm} Some{dd}:
+      imap_date.check(y, mm, dd)
+    case _ _:
+      None{}
+
+def imap_date.parts(ps: List<&2, String>) -> Maybe<&2, String>:
   match ps:
-    case Con{y, Con{m, Con{d, Nil{}}}}:
-      date_nums(y, U32.read(m), U32.read(d))
+    case y <> m <> d <> Nil{}:
+      imap_date.nums(y, U32.read(m), U32.read(d))
     case _:
       None{}
 
 # "2026-02-01" to the IMAP date "1-Feb-2026".
-def imap_date(+iso: String) -> Maybe<&2, String>:
-  date_parts(String.split(iso, '-'))
+def imap_date(iso: String) -> Maybe<&2, String>:
+  imap_date.parts(String.split(iso, '-'))
+
+# A number of a date, 0 when it does not read.
+def date_num(s: String) -> U32:
+  Maybe.default(&2, U32, U32.read(s), 0)
+
+# The number of the month abbreviated `name` (upper case), from month `k`
+# down to 1; 0 when none is. Each step is one short comparison.
+def month_number.go(+k: Nat, +name: String) -> U32:
+  match k:
+    case 0n:
+      0
+    case 1n+p:
+      +m = (U32.from_nat(p) + 1 : U32)
+      Bool.pick(U32, String.eq(String.to_upper(C.month_name(m)), name), m,
+        month_number.go(p, name))
+
+# The number of the month abbreviated `name` in any case (IMAP strings are
+# case-insensitive, RFC 3501 9); 0 when it is no month.
+def month_number(name: String) -> U32:
+  month_number.go(12n, String.to_upper(name))
+
+# A "+hhmm" or "-hhmm" zone's offset in seconds.
+def zone_seconds(hhmm: String) -> U32:
+  +n = date_num(hhmm)
+  ((n / 100) * 3600 + (n % 100) * 60 : U32)
+
+# Local seconds in `zone` as seconds in UTC.
+def utc(local: U32, zone: String) -> U32:
+  match zone:
+    case SCon{'+', t}:
+      (local - zone_seconds(t) : U32)
+    case SCon{'-', t}:
+      (local + zone_seconds(t) : U32)
+    case _:
+      local
+
+# The seconds in UTC of a date's day ("dd-Mon-yyyy"), time ("hh:mm:ss") and
+# zone, split into their fields; 0 when the month does not read, which
+# days_from_civil would take for the December before.
+def civil_seconds(
+  dmy: List<&2, String>, hms: List<&2, String>, zone: String
+) -> U32:
+  match dmy hms:
+    case d <> mon <> y <> Nil{} h <> mi <> s <> Nil{}:
+      +m = month_number(mon)
+      days = C.days_from_civil(date_num(y), m, date_num(d))
+      Bool.pick(U32, U32.is_zero(m), 0,
+        utc((days * 86400 + date_num(h) * 3600 + date_num(mi) * 60 + date_num(s) : U32),
+          zone))
+    case _ _:
+      0
+
+def internal_seconds.put(ps: List<&2, String>) -> U32:
+  match ps:
+    case dmy <> hms <> zone <> Nil{}:
+      civil_seconds(String.split(dmy, '-'), String.split(hms, ':'), zone)
+    case _:
+      0
+
+# An INTERNALDATE ("dd-Mon-yyyy hh:mm:ss +zzzz", RFC 3501) in seconds since
+# the epoch, so that dates in different zones compare; 0 when it does not
+# read. The server sets it, unlike the Date header, which the sender writes.
+def internal_seconds(date: String) -> U32:
+  internal_seconds.put(String.split(String.trim(date), ' '))
+
+# Transcript framing
+# ------------------
+
+# One logical response line. Each literal in it is replaced by lit_mark()
+# in `text`, and its bytes are in `lits`, in order.
+type RLine is Data:
+  RLine{text: String, lits: List<&2, String>}
+
+# The size N of a "{N}" literal announcement and the reversed line before it.
+type LitHit is Data:
+  LitHit{n: U32, rest: String}
+  LitNone{}
+
+# The framer: the current line (reversed), its literals so far, the finished
+# lines, the bytes left in an open literal, and whether the current line is
+# untagged ("* ..."): only those carry literals, exactly as in the helper.
+type Framer is Data:
+  Framer{
+    line: String,
+    lits: List<&2, String>,
+    lines: List<&2, RLine>,
+    left: U32,
+    lit: String,
+    star: Bool
+  }
 
 # A private-use character: it cannot occur in the transcript, whose
 # characters are all bytes (0..255).
 def lit_mark() -> Char:
   C.chr(57344)
 
-# Reads "{N}" backwards off a reversed line that ended in "{N}\r\n":
-# digits come least significant first.
-def lit_scan(+r: String, +acc: U32, +mul: U32, +any: Bool) -> LitHit:
-  match r:
-    case SCon{'{', t}:
+# Reads "{N}" backwards off a reversed line that ended in "{N}\r\n": digits
+# come least significant first. `more` is false once a non-digit was read,
+# which ends the scan early; `any` says a digit was read.
+def lit_scan(r: String, more: Bool, acc: U32, +mul: U32, any: Bool) -> LitHit:
+  match r more:
+    case SCon{'{', t} True{}:
       Bool.pick(LitHit, any, LitHit{acc, t}, LitNone{})
-    case SCon{+c, t}:
-      Bool.pick(LitHit, Char.is_digit(c), lit_scan(t, (acc + (C.u(c) - 48) * mul : U32), (mul * 10 : U32), True{}), LitNone{})
-    case SNil{}:
+    case SCon{+c, t} True{}:
+      lit_scan(t, Char.is_digit(c), (acc + (C.u(c) - 48) * mul : U32),
+        (mul * 10 : U32), True{})
+    case _ _:
       LitNone{}
 
-def lit_len(+rev: String) -> LitHit:
+# The literal announced at the end of a reversed line, if any.
+def lit_len(rev: String) -> LitHit:
   match rev:
     case SCon{'\n', SCon{'\r', SCon{'}', t}}}:
-      lit_scan(t, 0, 1, False{})
+      lit_scan(t, True{}, 0, 1, False{})
     case _:
       LitNone{}
 
-def strip_crlf(+rev: String) -> String:
+# The literal an ended line announces: only untagged lines carry them.
+def lit_of(star: Bool, rev: String) -> LitHit:
+  match star:
+    case True{}:
+      lit_len(rev)
+    case False{}:
+      LitNone{}
+
+def strip_crlf(rev: String) -> String:
   match rev:
     case SCon{'\n', SCon{'\r', t}}:
       t
@@ -622,225 +939,349 @@ def strip_crlf(+rev: String) -> String:
     case _:
       rev
 
-def frm_lit_start(+empty: Bool, +n: U32, +line: String, +lits: List<&2, String>, +lines: List<&2, RLine>) -> Frm:
+def frame.lit_start(
+  empty: Bool,
+  n: U32,
+  line: String,
+  lits: List<&2, String>,
+  lines: List<&2, RLine>
+) -> Framer:
   match empty:
     case True{}:
-      Frm{line, "" <> lits, lines, 0, "", True{}}
+      Framer{line, "" <> lits, lines, 0, "", True{}}
     case False{}:
-      Frm{line, lits, lines, n, "", True{}}
+      Framer{line, lits, lines, n, "", True{}}
 
-def frm_line_end(+hit: LitHit, +line: String, +lits: List<&2, String>, +lines: List<&2, RLine>) -> Frm:
+def frame.line_end(
+  hit: LitHit,
+  line: String,
+  lits: List<&2, String>,
+  lines: List<&2, RLine>
+) -> Framer:
   match hit:
-    case LitHit{n, rest}:
-      frm_lit_start(U32.is_zero(n), n, SCon{lit_mark(), rest}, lits, lines)
+    case LitHit{+n, rest}:
+      frame.lit_start(U32.is_zero(n), n, SCon{lit_mark(), rest}, lits, lines)
     case LitNone{}:
-      Frm{"", [], RLine{String.reverse(strip_crlf(line)), List.reverse(&2, String, lits)} <> lines, 0, "", False{}}
+      Framer{"", [],
+        RLine{String.reverse(strip_crlf(line)), List.reverse(&2, String, lits)} <> lines,
+        0, "", False{}}
 
-def frm_text(+c: Char, +line: String, +lits: List<&2, String>, +lines: List<&2, RLine>, +star: Bool) -> Frm:
+def frame.text(
+  +c: Char,
+  +line: String,
+  lits: List<&2, String>,
+  lines: List<&2, RLine>,
+  star: Bool
+) -> Framer:
   match c:
     case '\n':
-      frm_line_end(Bool.pick(LitHit, star, lit_len(SCon{c, line}), LitNone{}), SCon{c, line}, lits, lines)
+      +rev = {SCon{c, line} : String}
+      frame.line_end(lit_of(star, rev), rev, lits, lines)
     case _:
-      Frm{SCon{c, line}, lits, lines, 0, "", Bool.pick(Bool, String.is_empty(line), Char.is_eq(c, '*'), star)}
+      first = String.is_empty(line)
+      Framer{SCon{c, line}, lits, lines, 0, "",
+        Bool.pick(Bool, first, Char.is_eq(c, '*'), star)}
 
-def frm_lit(+last: Bool, +c: Char, +line: String, +lits: List<&2, String>, +lines: List<&2, RLine>, +left: U32, +lit: String) -> Frm:
+def frame.lit(
+  last: Bool,
+  c: Char,
+  line: String,
+  lits: List<&2, String>,
+  lines: List<&2, RLine>,
+  left: U32,
+  lit: String
+) -> Framer:
   match last:
     case True{}:
-      Frm{line, String.reverse(SCon{c, lit}) <> lits, lines, 0, "", True{}}
+      Framer{line, String.reverse(SCon{c, lit}) <> lits, lines, 0, "", True{}}
     case False{}:
-      Frm{line, lits, lines, (left - 1 : U32), SCon{c, lit}, True{}}
+      Framer{line, lits, lines, (left - 1 : U32), SCon{c, lit}, True{}}
 
-def frm_any(+text: Bool, +c: Char, +line: String, +lits: List<&2, String>, +lines: List<&2, RLine>, +left: U32, +lit: String, +star: Bool) -> Frm:
+# One byte: line text, or the next byte of an open literal.
+def frame.byte(
+  text: Bool,
+  c: Char,
+  line: String,
+  lits: List<&2, String>,
+  lines: List<&2, RLine>,
+  +left: U32,
+  lit: String,
+  star: Bool
+) -> Framer:
   match text:
     case True{}:
-      frm_text(c, line, lits, lines, star)
+      frame.text(c, line, lits, lines, star)
     case False{}:
-      frm_lit(U32.is_eq(left, 1), c, line, lits, lines, left, lit)
+      frame.lit(U32.is_eq(left, 1), c, line, lits, lines, left, lit)
 
-def frm_step(+c: Char, +f: Frm) -> Frm:
-  match f:
-    case Frm{line, lits, lines, +left, lit, star}:
-      frm_any(U32.is_zero(left), c, line, lits, lines, left, lit, star)
+def frame.step(c: Char, f: Framer) -> Framer:
+  Framer{line, lits, lines, +left, lit, star} = f
+  frame.byte(U32.is_zero(left), c, line, lits, lines, left, lit, star)
 
-def frm_go(+s: String, +f: Frm) -> Frm:
+def frame.go(s: String, f: Framer) -> Framer:
   match s:
     case SNil{}:
       f
     case SCon{c, t}:
-      frm_go(t, frm_step(c, f))
+      frame.go(t, frame.step(c, f))
 
-def frm_last(+line: String, +lits: List<&2, String>, +lines: List<&2, RLine>) -> List<&2, RLine>:
+# The finished lines, with an unterminated last line kept.
+def frame.last(
+  line: String,
+  lits: List<&2, String>,
+  lines: List<&2, RLine>
+) -> List<&2, RLine>:
   match line:
     case SNil{}:
       List.reverse(&2, RLine, lines)
     case SCon{h, t}:
-      List.reverse(&2, RLine, RLine{String.reverse(line), List.reverse(&2, String, lits)} <> lines)
+      List.reverse(&2, RLine,
+        RLine{String.reverse(line), List.reverse(&2, String, lits)} <> lines)
 
-def frm_end(+f: Frm) -> List<&2, RLine>:
-  match f:
-    case Frm{line, lits, lines, left, lit, star}:
-      frm_last(line, lits, lines)
+def frame.fin(f: Framer) -> List<&2, RLine>:
+  Framer{line, lits, lines, _, _, _} = f
+  frame.last(line, lits, lines)
 
 # Splits a transcript into response lines, keeping literals exact.
-def frame(+transcript: String) -> List<&2, RLine>:
-  frm_end(frm_go(transcript, Frm{"", [], [], 0, "", False{}}))
+def frame(transcript: String) -> List<&2, RLine>:
+  frame.fin(frame.go(transcript, Framer{"", [], [], 0, "", False{}}))
 
-def push(+v: IV, +stack: List<&2, List<&2, IV>>) -> List<&2, List<&2, IV>>:
+# Tokens
+# ------
+
+# A response value: an atom, a quoted or literal string, NIL, or a list.
+type Value is Data:
+  VAtom{s: String}
+  VStr{s: String}
+  VNil{}
+  VList{items: List<&2, Value>}
+
+# What the tokenizer is inside: nothing, an atom (with its "[...]" nesting
+# depth), a quoted string, or a quoted string right after a backslash. Each
+# accumulator is reversed.
+type TokenMode is Data:
+  TPlain{}
+  TAtom{acc: String, depth: U32}
+  TQuoted{acc: String}
+  TEscaped{acc: String}
+
+# The tokenizer: its mode, the open lists (innermost first, each reversed)
+# and the literals still to be placed.
+type Tokenizer is Data:
+  Tokenizer{
+    mode: TokenMode,
+    stack: List<&2, List<&2, Value>>,
+    lits: List<&2, String>
+  }
+
+def tokens.push(
+  v: Value,
+  stack: List<&2, List<&2, Value>>
+) -> List<&2, List<&2, Value>>:
   match stack:
-    case Con{top, rest}:
+    case top <> rest:
       (v <> top) <> rest
     case Nil{}:
       [[v]]
 
-def close_list(+stack: List<&2, List<&2, IV>>) -> List<&2, List<&2, IV>>:
+def tokens.close(
+  stack: List<&2, List<&2, Value>>
+) -> List<&2, List<&2, Value>>:
   match stack:
-    case Con{top, Con{up, rest}}:
-      (IList{List.reverse(&2, IV, top)} <> up) <> rest
+    case top <> up <> rest:
+      (VList{List.reverse(&2, Value, top)} <> up) <> rest
     case _:
       stack
 
-def atom_val(+s: String) -> IV:
-  Bool.pick(IV, String.eq(String.to_upper(s), "NIL"), INil{}, IAtom{s})
+def tokens.atom_value(+s: String) -> Value:
+  Bool.pick(Value, String.eq(String.to_upper(s), "NIL"), VNil{}, VAtom{s})
 
-def next_lit(+stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+def tokens.atom_end(
+  acc: String,
+  stack: List<&2, List<&2, Value>>
+) -> List<&2, List<&2, Value>>:
+  tokens.push(tokens.atom_value(String.reverse(acc)), stack)
+
+# Places the next literal; a missing one reads as "".
+def tokens.literal(
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match lits:
-    case Con{l, rest}:
-      Tk{TNorm{}, push(IStr{l}, stack), rest}
+    case l <> rest:
+      Tokenizer{TPlain{}, tokens.push(VStr{l}, stack), rest}
     case Nil{}:
-      Tk{TNorm{}, push(IStr{""}, stack), []}
+      Tokenizer{TPlain{}, tokens.push(VStr{""}, stack), []}
 
-def tk_mark(+mark: Bool, +c: Char, +stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+def tokens.atom_start(
+  mark: Bool,
+  c: Char,
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match mark:
     case True{}:
-      next_lit(stack, lits)
+      tokens.literal(stack, lits)
     case False{}:
-      Tk{TAtom{SCon{c, SNil{}}, 0}, stack, lits}
+      Tokenizer{TAtom{SCon{c, SNil{}}, 0}, stack, lits}
 
-def tk_norm(+c: Char, +stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+def tokens.plain(
+  +c: Char,
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match c:
     case ' ':
-      Tk{TNorm{}, stack, lits}
+      Tokenizer{TPlain{}, stack, lits}
     case '(':
-      Tk{TNorm{}, [] <> stack, lits}
+      Tokenizer{TPlain{}, [] <> stack, lits}
     case ')':
-      Tk{TNorm{}, close_list(stack), lits}
+      Tokenizer{TPlain{}, tokens.close(stack), lits}
     case '"':
-      Tk{TQuo{""}, stack, lits}
+      Tokenizer{TQuoted{""}, stack, lits}
     case '[':
-      Tk{TAtom{"[", 1}, stack, lits}
+      Tokenizer{TAtom{"[", 1}, stack, lits}
     case _:
-      tk_mark(Char.is_eq(c, lit_mark()), c, stack, lits)
+      tokens.atom_start(Char.is_eq(c, lit_mark()), c, stack, lits)
 
-def atom_end(+acc: String, +stack: List<&2, List<&2, IV>>) -> List<&2, List<&2, IV>>:
-  push(atom_val(String.reverse(acc)), stack)
-
-def tk_atom_top(+c: Char, +acc: String, +stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+# A character of an atom outside "[...]": a space or parenthesis ends it.
+def tokens.atom_top(
+  c: Char,
+  acc: String,
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match c:
     case ' ':
-      Tk{TNorm{}, atom_end(acc, stack), lits}
+      Tokenizer{TPlain{}, tokens.atom_end(acc, stack), lits}
     case '(':
-      Tk{TNorm{}, [] <> atom_end(acc, stack), lits}
+      Tokenizer{TPlain{}, [] <> tokens.atom_end(acc, stack), lits}
     case ')':
-      Tk{TNorm{}, close_list(atom_end(acc, stack)), lits}
+      Tokenizer{TPlain{}, tokens.close(tokens.atom_end(acc, stack)), lits}
     case _:
-      Tk{TAtom{SCon{c, acc}, 0}, stack, lits}
+      Tokenizer{TAtom{SCon{c, acc}, 0}, stack, lits}
 
-def tk_atom_other(+top: Bool, +c: Char, +acc: String, +depth: U32, +stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+def tokens.atom_char(
+  top: Bool,
+  c: Char,
+  acc: String,
+  depth: U32,
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match top:
     case True{}:
-      tk_atom_top(c, acc, stack, lits)
+      tokens.atom_top(c, acc, stack, lits)
     case False{}:
-      Tk{TAtom{SCon{c, acc}, depth}, stack, lits}
+      Tokenizer{TAtom{SCon{c, acc}, depth}, stack, lits}
 
-def tk_atom(+c: Char, +acc: String, +depth: U32, +stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+def tokens.atom(
+  +c: Char,
+  acc: String,
+  +depth: U32,
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match c:
     case '[':
-      Tk{TAtom{SCon{c, acc}, (depth + 1 : U32)}, stack, lits}
+      Tokenizer{TAtom{SCon{c, acc}, (depth + 1 : U32)}, stack, lits}
     case ']':
-      Tk{TAtom{SCon{c, acc}, Bool.pick(U32, U32.is_zero(depth), 0, (depth - 1 : U32))}, stack, lits}
+      up = Bool.pick(U32, U32.is_zero(depth), 0, (depth - 1 : U32))
+      Tokenizer{TAtom{SCon{c, acc}, up}, stack, lits}
     case _:
-      tk_atom_other(U32.is_zero(depth), c, acc, depth, stack, lits)
+      tokens.atom_char(U32.is_zero(depth), c, acc, depth, stack, lits)
 
-def tk_quo(+c: Char, +acc: String, +stack: List<&2, List<&2, IV>>, +lits: List<&2, String>) -> Tk:
+def tokens.quoted(
+  c: Char,
+  acc: String,
+  stack: List<&2, List<&2, Value>>,
+  lits: List<&2, String>
+) -> Tokenizer:
   match c:
     case '"':
-      Tk{TNorm{}, push(IStr{String.reverse(acc)}, stack), lits}
+      Tokenizer{TPlain{}, tokens.push(VStr{String.reverse(acc)}, stack), lits}
     case '\\':
-      Tk{TQEsc{acc}, stack, lits}
+      Tokenizer{TEscaped{acc}, stack, lits}
     case _:
-      Tk{TQuo{SCon{c, acc}}, stack, lits}
+      Tokenizer{TQuoted{SCon{c, acc}}, stack, lits}
 
-def tk_step(+c: Char, +t: Tk) -> Tk:
+def tokens.step(c: Char, t: Tokenizer) -> Tokenizer:
   match t:
-    case Tk{TNorm{}, stack, lits}:
-      tk_norm(c, stack, lits)
-    case Tk{TAtom{acc, depth}, stack, lits}:
-      tk_atom(c, acc, depth, stack, lits)
-    case Tk{TQuo{acc}, stack, lits}:
-      tk_quo(c, acc, stack, lits)
-    case Tk{TQEsc{acc}, stack, lits}:
-      Tk{TQuo{SCon{c, acc}}, stack, lits}
+    case Tokenizer{TPlain{}, stack, lits}:
+      tokens.plain(c, stack, lits)
+    case Tokenizer{TAtom{acc, depth}, stack, lits}:
+      tokens.atom(c, acc, depth, stack, lits)
+    case Tokenizer{TQuoted{acc}, stack, lits}:
+      tokens.quoted(c, acc, stack, lits)
+    case Tokenizer{TEscaped{acc}, stack, lits}:
+      Tokenizer{TQuoted{SCon{c, acc}}, stack, lits}
 
-def tk_go(+s: String, +t: Tk) -> Tk:
+def tokens.go(s: String, t: Tokenizer) -> Tokenizer:
   match s:
     case SNil{}:
       t
     case SCon{c, r}:
-      tk_go(r, tk_step(c, t))
+      tokens.go(r, tokens.step(c, t))
 
 # Closes every open list: `done` is the finished inner list, in order.
-def flatten_go(+rest: List<&2, List<&2, IV>>, +done: List<&2, IV>) -> List<&2, IV>:
+def tokens.flatten.go(
+  rest: List<&2, List<&2, Value>>,
+  done: List<&2, Value>
+) -> List<&2, Value>:
   match rest:
     case Nil{}:
       done
-    case Con{up, r}:
-      flatten_go(r, List.reverse(&2, IV, IList{done} <> up))
+    case up <> r:
+      tokens.flatten.go(r, List.reverse(&2, Value, VList{done} <> up))
 
-def flatten(+stack: List<&2, List<&2, IV>>) -> List<&2, IV>:
+def tokens.flatten(stack: List<&2, List<&2, Value>>) -> List<&2, Value>:
   match stack:
     case Nil{}:
       []
-    case Con{top, rest}:
-      flatten_go(rest, List.reverse(&2, IV, top))
+    case top <> rest:
+      tokens.flatten.go(rest, List.reverse(&2, Value, top))
 
-def tk_end(+t: Tk) -> List<&2, IV>:
+# The values once the text ends: an open atom or quoted string is kept.
+def tokens.fin(t: Tokenizer) -> List<&2, Value>:
   match t:
-    case Tk{TAtom{acc, depth}, stack, lits}:
-      flatten(atom_end(acc, stack))
-    case Tk{TQuo{acc}, stack, lits}:
-      flatten(push(IStr{String.reverse(acc)}, stack))
-    case Tk{m, stack, lits}:
-      flatten(stack)
+    case Tokenizer{TAtom{acc, depth}, stack, lits}:
+      tokens.flatten(tokens.atom_end(acc, stack))
+    case Tokenizer{TQuoted{acc}, stack, lits}:
+      tokens.flatten(tokens.push(VStr{String.reverse(acc)}, stack))
+    case Tokenizer{m, stack, lits}:
+      tokens.flatten(stack)
 
 # The values of a response text, with its literals put back in place.
-def tokens(+text: String, +lits: List<&2, String>) -> List<&2, IV>:
-  tk_end(tk_go(text, Tk{TNorm{}, [[]], lits}))
+def tokens(text: String, lits: List<&2, String>) -> List<&2, Value>:
+  tokens.fin(tokens.go(text, Tokenizer{TPlain{}, [[]], lits}))
 
-def iv_str(+v: IV) -> String:
+# The text of an atom or string; "" for NIL and lists.
+def Value.text(v: Value) -> String:
   match v:
-    case IAtom{s}:
+    case VAtom{s}:
       s
-    case IStr{s}:
+    case VStr{s}:
       s
-    case INil{}:
+    case VNil{}:
       ""
-    case IList{xs}:
+    case VList{xs}:
       ""
 
-def iv_strs(+vs: List<&2, IV>) -> List<&2, String>:
+def Value.texts(vs: List<&2, Value>) -> List<&2, String>:
   match vs:
     case Nil{}:
       []
-    case Con{v, t}:
-      iv_str(v) <> iv_strs(t)
+    case v <> t:
+      Value.text(v) <> Value.texts(t)
 
-# ---- response lines ------------------------------------------------------------------
+# Response lines
+# --------------
 
-def upper_starts(+s: String, +p: String) -> Bool:
+def upper_starts(s: String, p: String) -> Bool:
   String.starts_with(String.to_upper(s), p)
 
 # The text after the first space, or "".
-def after_space(+s: String) -> String:
+def after_space(s: String) -> String:
   match s:
     case SNil{}:
       ""
@@ -849,7 +1290,7 @@ def after_space(+s: String) -> String:
     case SCon{c, t}:
       after_space(t)
 
-def before_space(+s: String) -> String:
+def before_space(s: String) -> String:
   match s:
     case SNil{}:
       ""
@@ -858,7 +1299,7 @@ def before_space(+s: String) -> String:
     case SCon{c, t}:
       SCon{c, before_space(t)}
 
-def code_body(+s: String) -> String:
+def code_body(s: String) -> String:
   match s:
     case SNil{}:
       ""
@@ -868,181 +1309,310 @@ def code_body(+s: String) -> String:
       SCon{c, code_body(t)}
 
 # The response code inside "[...]" at the start of a status text, or "".
-def resp_code(+s: String) -> String:
+def resp_code(s: String) -> String:
   match s:
     case SCon{'[', t}:
       code_body(t)
     case _:
       ""
 
-# Capabilities announced by "* CAPABILITY" lines, upper-cased.
-def caps(+lines: List<&2, RLine>) -> List<&2, String>:
+# `hit` says the line before `lines`, whose text is `last`, was accepted:
+# the walk stops there instead of reading the rest of the transcript.
+def first_line.go(
+  ~is_hit: String -> String -> Bool,
+  lines: List<&2, RLine>,
+  +key: String,
+  last: String,
+  hit: Bool
+) -> Maybe<&2, String>:
+  match lines hit:
+    case _ True{}:
+      Some{last}
+    case Nil{} False{}:
+      None{}
+    case RLine{+text, lits} <> t False{}:
+      first_line.go(~is_hit, t, key, text, is_hit(text, key))
+
+# The text of the first line that `is_hit(text, key)` accepts.
+def first_line(
+  ~is_hit: String -> String -> Bool,
+  lines: List<&2, RLine>,
+  key: String
+) -> Maybe<&2, String>:
+  first_line.go(~is_hit, lines, key, "", False{})
+
+# The first line that starts with `p`, or "".
+def line_starting(lines: List<&2, RLine>, p: String) -> String:
+  Maybe.default(&2, String, first_line(~String.starts_with, lines, p), "")
+
+def caps.line(hit: Bool, text: String) -> List<&2, String>:
+  match hit:
+    case True{}:
+      String.split(String.to_upper(String.drop(text, 13n)), ' ')
+    case False{}:
+      []
+
+# Capabilities announced by "* CAPABILITY " (13 characters) lines,
+# upper-cased.
+def caps(lines: List<&2, RLine>) -> List<&2, String>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, l}, t}:
-      List.append(&2, String, Bool.pick(List<&2, String>, upper_starts(text, "* CAPABILITY "),
-        String.split(String.to_upper(String.drop(text, 13n)), ' '), []), caps(t))
+    case RLine{+text, l} <> t:
+      List.append(&2, String, caps.line(upper_starts(text, "* CAPABILITY "), text),
+        caps(t))
 
-def has_cap(+cs: List<&2, String>, +name: String) -> Bool:
-  match cs:
-    case Nil{}:
-      False{}
-    case Con{c, t}:
-      String.eq(c, name) || has_cap(t, name)
+def has_cap(cs: List<&2, String>, name: String) -> Bool:
+  List.contains(~String, ~String.eq, cs, name)
 
-def folder_of(+vs: List<&2, IV>) -> List<&2, Folder>:
+# Folders
+# -------
+
+type Folder is Data:
+  Folder{name: String, delim: String, attrs: List<&2, String>}
+
+def folder_of(vs: List<&2, Value>) -> List<&2, Folder>:
   match vs:
-    case Con{IList{attrs}, Con{d, Con{n, Nil{}}}}:
-      [Folder{mutf7_decode(iv_str(n)), iv_str(d), iv_strs(attrs)}]
+    case VList{attrs} <> d <> n <> Nil{}:
+      [Folder{mutf7_decode(Value.text(n)), Value.text(d), Value.texts(attrs)}]
     case _:
       []
 
-def folder_line(+is_list: Bool, +text: String, +lits: List<&2, String>) -> List<&2, Folder>:
+def listed.line(
+  is_list: Bool,
+  text: String,
+  lits: List<&2, String>
+) -> List<&2, Folder>:
   match is_list:
     case True{}:
       folder_of(tokens(String.drop(text, 7n), lits))
     case False{}:
       []
 
-# Mailboxes from "* LIST" lines.
-def folders(+lines: List<&2, RLine>) -> List<&2, Folder>:
+# Mailboxes from the untagged lines that start with `prefix` ("* LIST " or
+# "* LSUB ", both 7 characters long).
+def listed(+prefix: String, lines: List<&2, RLine>) -> List<&2, Folder>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, lits}, t}:
-      List.append(&2, Folder, folder_line(upper_starts(text, "* LIST "), text, lits), folders(t))
+    case RLine{+text, lits} <> t:
+      List.append(&2, Folder, listed.line(upper_starts(text, prefix), text, lits),
+        listed(prefix, t))
 
-def has_attr_lowered(+attrs: List<&2, String>, +want: String) -> Bool:
+# Mailboxes from "* LIST" lines.
+def folders(lines: List<&2, RLine>) -> List<&2, Folder>:
+  listed("* LIST ", lines)
+
+# The subscribed mailboxes, from "* LSUB" lines.
+def subscribed(lines: List<&2, RLine>) -> List<&2, Folder>:
+  listed("* LSUB ", lines)
+
+def has_attr.go(attrs: List<&2, String>, +want: String) -> Bool:
   match attrs:
     case Nil{}:
       False{}
-    case Con{attr, rest}:
-      String.eq(String.to_lower(attr), want) || has_attr_lowered(rest, want)
+    case attr <> rest:
+      String.eq(String.to_lower(attr), want) || has_attr.go(rest, want)
 
-def has_attr(+attrs: List<&2, String>, +a: String) -> Bool:
-  has_attr_lowered(attrs, String.to_lower(a))
+# Whether folder attributes or message flags include `a`, in any case.
+def has_attr(attrs: List<&2, String>, a: String) -> Bool:
+  has_attr.go(attrs, String.to_lower(a))
 
-# The first mailbox carrying a special-use attribute such as "\\Trash".
-def special(+fs: List<&2, Folder>, +attr: String) -> Maybe<&2, String>:
-  match fs:
-    case Nil{}:
-      None{}
-    case Con{Folder{name, d, +attrs}, t}:
-      Bool.pick(Maybe<&2, String>, has_attr(attrs, attr), Some{name}, special(t, attr))
-
-# The mailbox with exactly this name; only INBOX is matched in any case, as
-# IMAP requires (other names may differ only in case, e.g. trash and Trash).
+# Whether two mailbox names are the same mailbox: only INBOX is matched in
+# any case, as IMAP requires (other names may differ only in case, e.g.
+# trash and Trash).
 def same_name(+a: String, +b: String) -> Bool:
-  String.eq(a, b) || (String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"))
+  String.eq(a, b) ||
+    (String.eq(String.to_upper(a), "INBOX") && String.eq(String.to_upper(b), "INBOX"))
 
-def named(+fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
+# The mailbox with exactly this name, as same_name() compares them.
+def named(fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
   match fs:
     case Nil{}:
       None{}
-    case Con{Folder{+name, d, a}, t}:
-      Bool.pick(Maybe<&2, String>, same_name(name, want), Some{name}, named(t, want))
+    case Folder{+name, d, a} <> t:
+      Bool.pick(Maybe<&2, String>, same_name(name, want), Some{name},
+        named(t, want))
 
-def num_or_skip(+m: Maybe<&2, U32>, +rest: List<&2, U32>) -> List<&2, U32>:
+# Status and data responses
+# -------------------------
+
+def nums.put(m: Maybe<&2, U32>, rest: List<&2, U32>) -> List<&2, U32>:
   match m:
     case Some{n}:
       n <> rest
     case None{}:
       rest
 
-def nums(+ws: List<&2, String>) -> List<&2, U32>:
+# The words that are numbers, as numbers.
+def nums(ws: List<&2, String>) -> List<&2, U32>:
   match ws:
     case Nil{}:
       []
-    case Con{w, t}:
-      num_or_skip(U32.read(w), nums(t))
+    case w <> t:
+      nums.put(U32.read(w), nums(t))
 
-# UIDs from "* SEARCH" lines.
-def search_uids(+lines: List<&2, RLine>) -> List<&2, U32>:
+def search_uids.line(hit: Bool, text: String) -> List<&2, U32>:
+  match hit:
+    case True{}:
+      nums(String.split(String.drop(text, 8n), ' '))
+    case False{}:
+      []
+
+# UIDs from "* SEARCH" (8 characters) lines.
+def search_uids(lines: List<&2, RLine>) -> List<&2, U32>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, l}, t}:
-      List.append(&2, U32, Bool.pick(List<&2, U32>, upper_starts(text, "* SEARCH"), nums(String.split(String.drop(text, 8n), ' ')), []), search_uids(t))
+    case RLine{+text, l} <> t:
+      List.append(&2, U32, search_uids.line(upper_starts(text, "* SEARCH"), text),
+        search_uids(t))
 
-def resp_code_value(+code: String) -> String:
-  after_space(code)
+# The value of the "[NAME value]" code of a "* OK " (5 characters) line.
+def ok_code.value(line: String) -> String:
+  after_space(resp_code(String.drop(line, 5n)))
 
-def code_hit(+hit: Bool, +text: String, +name: String, +rest: Maybe<&2, U32>) -> Maybe<&2, U32>:
-  match hit:
-    case True{}:
-      U32.read(resp_code_value(resp_code(String.drop(text, 5n))))
-    case False{}:
-      rest
+# The raw value of the first "* OK [NAME value]" response code.
+def ok_code_text(lines: List<&2, RLine>, name: String) -> Maybe<&2, String>:
+  Maybe.map(&2, String, String, ok_code.value,
+    first_line(~upper_starts, lines, "* OK [" ++ name ++ " "))
 
-# The value of a "* OK [NAME value]" response code, e.g. UIDVALIDITY.
-def ok_code(+lines: List<&2, RLine>, +name: String) -> Maybe<&2, U32>:
-  match lines:
-    case Nil{}:
-      None{}
-    case Con{RLine{+text, l}, t}:
-      code_hit(upper_starts(text, "* OK [" ++ name ++ " "), text, name, ok_code(t, name))
+# The number of a "* OK [NAME n]" response code, e.g. UIDVALIDITY.
+def ok_code(lines: List<&2, RLine>, name: String) -> Maybe<&2, U32>:
+  Maybe.bind(&2, String, U32, ok_code_text(lines, name), U32.read)
 
-def exists_hit(+hit: Bool, +text: String, +rest: Maybe<&2, U32>) -> Maybe<&2, U32>:
-  match hit:
-    case True{}:
-      U32.read(before_space(String.drop(text, 2n)))
-    case False{}:
-      rest
+# Fetched messages
+# ----------------
 
-# "* <n> EXISTS"
-def exists(+lines: List<&2, RLine>) -> Maybe<&2, U32>:
-  match lines:
-    case Nil{}:
-      None{}
-    case Con{RLine{+text, l}, t}:
-      exists_hit(String.ends_with(String.to_upper(text), " EXISTS") && String.starts_with(text, "* "), text, exists(t))
+# A FETCH response for one message. `structure` is its BODYSTRUCTURE, NIL
+# when the response has none.
+type Msg is Data:
+  Msg{
+    uid: U32,
+    flags: List<&2, String>,
+    date: String,
+    size: U32,
+    headers: String,
+    body: String,
+    structure: Value
+  }
+
+# The Msg field a FETCH item with a non-list value sets, if any.
+type Field is Data:
+  FieldUid{}
+  FieldDate{}
+  FieldSize{}
+  FieldHeaders{}
+  FieldBody{}
+  FieldNone{}
 
 def msg_empty() -> Msg:
-  Msg{0, [], "", 0, "", ""}
+  Msg{0, [], "", 0, "", "", VNil{}}
 
-def msg_scalar(+k: String, +s: String, +uid: U32, +flags: List<&2, String>, +date: String, +size: U32, +headers: String, +body: String) -> Msg:
-  Bool.pick(Msg, String.eq(k, "UID"), Msg{Maybe.default(&2, U32, U32.read(s), 0), flags, date, size, headers, body},
-    Bool.pick(Msg, String.eq(k, "INTERNALDATE"), Msg{uid, flags, s, size, headers, body},
-      Bool.pick(Msg, String.eq(k, "RFC822.SIZE"), Msg{uid, flags, date, Maybe.default(&2, U32, U32.read(s), 0), headers, body},
-        Bool.pick(Msg, String.starts_with(k, "BODY[HEADER"), Msg{uid, flags, date, size, s, body},
-          Bool.pick(Msg, String.starts_with(k, "BODY[]"), Msg{uid, flags, date, size, headers, s},
-            Msg{uid, flags, date, size, headers, body})))))
+# The field an upper-cased item name sets. Every branch is a constant, so
+# Bool.pick building all of them costs nothing.
+def field_of(+k: String) -> Field:
+  Bool.pick(Field, String.eq(k, "UID"), FieldUid{},
+    Bool.pick(Field, String.eq(k, "INTERNALDATE"), FieldDate{},
+      Bool.pick(Field, String.eq(k, "RFC822.SIZE"), FieldSize{},
+        Bool.pick(Field, String.starts_with(k, "BODY[HEADER"), FieldHeaders{},
+          Bool.pick(Field, String.starts_with(k, "BODY[]"), FieldBody{},
+            FieldNone{})))))
 
-def msg_key(+k: String, +v: IV, +uid: U32, +flags: List<&2, String>, +date: String, +size: U32, +headers: String, +body: String) -> Msg:
+# Sets a field from an item's text; a number that does not read is 0.
+def msg_scalar(f: Field, s: String, m: Msg) -> Msg:
+  match f m:
+    case FieldUid{} Msg{_, flags, date, size, headers, body, st}:
+      Msg{Maybe.default(&2, U32, U32.read(s), 0), flags, date, size, headers, body, st}
+    case FieldDate{} Msg{uid, flags, _, size, headers, body, st}:
+      Msg{uid, flags, s, size, headers, body, st}
+    case FieldSize{} Msg{uid, flags, date, _, headers, body, st}:
+      Msg{uid, flags, date, Maybe.default(&2, U32, U32.read(s), 0), headers, body, st}
+    case FieldHeaders{} Msg{uid, flags, date, size, _, body, st}:
+      Msg{uid, flags, date, size, s, body, st}
+    case FieldBody{} Msg{uid, flags, date, size, headers, _, st}:
+      Msg{uid, flags, date, size, headers, s, st}
+    case FieldNone{} _:
+      m
+
+# Sets the field a list value names: FLAGS, or the BODYSTRUCTURE list
+# `whole` whose items are `xs`. Any other list sets nothing.
+def msg_list(
+  is_flags: Bool,
+  is_structure: Bool,
+  xs: List<&2, Value>,
+  whole: Value,
+  m: Msg
+) -> Msg:
+  match is_flags is_structure m:
+    case True{} _ Msg{uid, _, date, size, headers, body, st}:
+      Msg{uid, Value.texts(xs), date, size, headers, body, st}
+    case False{} True{} Msg{uid, flags, date, size, headers, body, _}:
+      Msg{uid, flags, date, size, headers, body, whole}
+    case False{} False{} _:
+      m
+
+# Sets the field one FETCH item names.
+def msg_set(m: Msg, k: String, v: Value) -> Msg:
   match v:
-    case IList{xs}:
-      Bool.pick(Msg, String.eq(k, "FLAGS"), Msg{uid, iv_strs(xs), date, size, headers, body}, Msg{uid, flags, date, size, headers, body})
+    case VList{+xs}:
+      +key = String.to_upper(k)
+      msg_list(String.eq(key, "FLAGS"), String.eq(key, "BODYSTRUCTURE"), xs, VList{xs}, m)
     case _:
-      msg_scalar(k, iv_str(v), uid, flags, date, size, headers, body)
+      msg_scalar(field_of(String.to_upper(k)), Value.text(v), m)
 
-def msg_set(+m: Msg, +k: String, +v: IV) -> Msg:
-  match m:
-    case Msg{uid, flags, date, size, headers, body}:
-      msg_key(String.to_upper(k), v, uid, flags, date, size, headers, body)
-
-def msg_pairs(+vs: List<&2, IV>, +m: Msg) -> Msg:
+def msg_pairs(vs: List<&2, Value>, m: Msg) -> Msg:
   match vs:
-    case Con{IAtom{k}, Con{v, rest}}:
+    case VAtom{k} <> v <> rest:
       msg_pairs(rest, msg_set(m, k, v))
     case _:
       m
 
-def msg_of(+vs: List<&2, IV>) -> List<&2, Msg>:
+# Whether a FETCH response's items name `key` (upper case).
+def has_item(vs: List<&2, Value>, +key: String) -> Bool:
   match vs:
-    case Con{n, Con{IAtom{f}, Con{IList{items}, Nil{}}}}:
-      [msg_pairs(items, msg_empty())]
+    case VAtom{k} <> v <> rest:
+      String.eq(String.to_upper(k), key) || has_item(rest, key)
     case _:
-      []
+      False{}
 
-def fetch_line(+is_fetch: Bool, +text: String, +lits: List<&2, String>) -> List<&2, Msg>:
-  match is_fetch:
+def msg_of.if(keep: Bool, items: List<&2, Value>) -> List<&2, Msg>:
+  match keep:
     case True{}:
-      msg_of(tokens(String.drop(text, 2n), lits))
+      [msg_pairs(items, msg_empty())]
     case False{}:
       []
 
-def before_paren(+s: String) -> String:
+# Whether to keep a FETCH response: any, or with `need_flags` only one that
+# carries FLAGS. One without them (e.g. only MODSEQ) says nothing about the
+# flags.
+def msg_of.need(need_flags: Bool, items: List<&2, Value>) -> Bool:
+  match need_flags:
+    case True{}:
+      has_item(items, "FLAGS")
+    case False{}:
+      True{}
+
+def msg_of(vs: List<&2, Value>, need_flags: Bool) -> List<&2, Msg>:
+  match vs:
+    case n <> VAtom{f} <> VList{+items} <> Nil{}:
+      msg_of.if(msg_of.need(need_flags, items), items)
+    case _:
+      []
+
+def fetches.line(
+  is_fetch: Bool,
+  text: String,
+  lits: List<&2, String>,
+  need_flags: Bool
+) -> List<&2, Msg>:
+  match is_fetch:
+    case True{}:
+      msg_of(tokens(String.drop(text, 2n), lits), need_flags)
+    case False{}:
+      []
+
+def before_paren(s: String) -> String:
   match s:
     case SNil{}:
       ""
@@ -1051,42 +1621,234 @@ def before_paren(+s: String) -> String:
     case SCon{c, t}:
       SCon{c, before_paren(t)}
 
-# Messages from "* <n> FETCH (...)" lines.
-def fetched(+lines: List<&2, RLine>) -> List<&2, Msg>:
+# Messages from FETCH lines; with `need_flags`, only those that carry FLAGS.
+def fetches(lines: List<&2, RLine>, +need_flags: Bool) -> List<&2, Msg>:
   match lines:
     case Nil{}:
       []
-    case Con{RLine{+text, lits}, t}:
-      List.append(&2, Msg, fetch_line(String.starts_with(text, "* ") && String.contains(String.to_upper(before_paren(text)), " FETCH "), text, lits), fetched(t))
+    case RLine{+text, lits} <> t:
+      is_fetch = String.starts_with(text, "* ") &&
+        String.contains(String.to_upper(before_paren(text)), " FETCH ")
+      List.append(&2, Msg, fetches.line(is_fetch, text, lits, need_flags),
+        fetches(t, need_flags))
+
+# Messages from "* <n> FETCH (...)" lines.
+def fetched(lines: List<&2, RLine>) -> List<&2, Msg>:
+  fetches(lines, False{})
+
+# Messages from the FETCH lines that carry FLAGS. A line without UID names
+# only a sequence number, so its message has UID 0, which no request has.
+def flag_fetches(lines: List<&2, RLine>) -> List<&2, Msg>:
+  fetches(lines, True{})
+
+# Body structure
+# --------------
+
+# One single part of a BODYSTRUCTURE, as the Content-Type and
+# Content-Disposition values it describes (parameter values quoted), so the
+# MIME code reads it like a part's own header fields.
+type BodyPart is Data:
+  BodyPart{ct: String, cd: String}
+
+# Where a BODYSTRUCTURE walk stands: the parts still to read, depth first,
+# and the single parts found (reversed); or a malformed structure.
+type Walk is Data:
+  Walking{todo: List<&2, Value>, found: List<&2, BodyPart>}
+  WalkBad{}
+
+# Item `n` of a list, or NIL.
+def nth(vs: List<&2, Value>, n: Nat) -> Value:
+  Maybe.default(&2, Value, List.get(&2, Value, vs, n), VNil{})
+
+# "; key=\"value\"" for each key and value of a parameter list.
+def param_pairs(vs: List<&2, Value>) -> String:
+  match vs:
+    case k <> v <> t:
+      "; " ++ Value.text(k) ++ "=" ++ C.quoted(Value.text(v)) ++ param_pairs(t)
+    case _:
+      ""
+
+# The parameters of a "(key value ...)" list; none for NIL.
+def params_text(v: Value) -> String:
+  match v:
+    case VList{xs}:
+      param_pairs(xs)
+    case _:
+      ""
+
+# A body disposition, "(type (params))", as a header value; "" for NIL.
+def disposition_text(v: Value) -> String:
+  match v:
+    case VList{+xs}:
+      Value.text(nth(xs, 0n)) ++ params_text(nth(xs, 1n))
+    case _:
+      ""
+
+# Where a single part's disposition is (RFC 3501 7.4.2): after the line
+# count of a text part, after the envelope, body and line count of a
+# message/rfc822 part, else after the seven basic fields and the MD5.
+def disposition_at(+mime: String) -> Nat:
+  Bool.pick(Nat, String.starts_with(mime, "text/"), 9n,
+    Bool.pick(Nat, String.eq(mime, "message/rfc822"), 11n, 8n))
+
+def single_part.if(ok: Bool, +mime: String, +xs: List<&2, Value>) -> Maybe<&2, BodyPart>:
+  match ok:
+    case True{}:
+      cd = disposition_text(nth(xs, disposition_at(mime)))
+      Some{BodyPart{mime ++ params_text(nth(xs, 2n)), cd}}
+    case False{}:
+      None{}
+
+# A single part from its fields; None when its type or subtype is missing.
+def single_part(+xs: List<&2, Value>) -> Maybe<&2, BodyPart>:
+  +typ = String.to_lower(Value.text(nth(xs, 0n)))
+  +sub = String.to_lower(Value.text(nth(xs, 1n)))
+  ok = Bool.not(String.is_empty(typ) || String.is_empty(sub))
+  single_part.if(ok, typ ++ "/" ++ sub, xs)
+
+# The leading lists of a multipart's fields: its parts (the subtype and any
+# extension data follow them).
+def subparts(xs: List<&2, Value>) -> List<&2, Value>:
+  match xs:
+    case VList{ys} <> t:
+      VList{ys} <> subparts(t)
+    case _:
+      []
+
+def is_multipart(xs: List<&2, Value>) -> Bool:
+  match xs:
+    case VList{ys} <> t:
+      True{}
+    case _:
+      False{}
+
+def body_parts.put(
+  m: Maybe<&2, BodyPart>,
+  todo: List<&2, Value>,
+  found: List<&2, BodyPart>
+) -> Walk:
+  match m:
+    case Some{p}:
+      Walking{todo, p <> found}
+    case None{}:
+      WalkBad{}
+
+def body_parts.if(
+  multi: Bool,
+  xs: List<&2, Value>,
+  todo: List<&2, Value>,
+  found: List<&2, BodyPart>
+) -> Walk:
+  match multi:
+    case True{}:
+      Walking{List.append(&2, Value, subparts(xs), todo), found}
+    case False{}:
+      body_parts.put(single_part(xs), todo, found)
+
+# One part read: a multipart puts its parts first in line; anything but a
+# list is malformed.
+def body_parts.step(v: Value, todo: List<&2, Value>, found: List<&2, BodyPart>) -> Walk:
+  match v:
+    case VList{+xs}:
+      body_parts.if(is_multipart(xs), xs, todo, found)
+    case _:
+      WalkBad{}
+
+# `fuel` bounds the parts read: a server could nest them without end.
+def body_parts.go(fuel: Nat, w: Walk) -> Maybe<&2, List<&2, BodyPart>>:
+  match fuel w:
+    case _ WalkBad{}:
+      None{}
+    case _ Walking{Nil{}, found}:
+      Some{List.reverse(&2, BodyPart, found)}
+    case 0n _:
+      None{}
+    case 1n+f Walking{v <> todo, found}:
+      body_parts.go(f, body_parts.step(v, todo, found))
+
+# The single parts of a BODYSTRUCTURE, in order; None when it is missing
+# (NIL), malformed or has more than 128 parts and levels.
+def body_parts(structure: Value) -> Maybe<&2, List<&2, BodyPart>>:
+  body_parts.go(128n, Walking{[structure], []})
+
+# Tagged replies
+# --------------
 
 # The untagged reply that pins a folder's UIDVALIDITY after SELECT.
-def uidv_line(+v: U32) -> String:
+def uidv_line(v: U32) -> String:
   "* OK [UIDVALIDITY " ++ U32.show(v) ++ "]"
 
 # The tagged status of command n: "OK", "NO", "BAD", or "" if it never ran.
-def status(+lines: List<&2, RLine>, +n: U32) -> String:
-  match lines:
-    case Nil{}:
-      ""
-    case Con{RLine{+text, l}, t}:
-      Bool.pick(String, String.starts_with(text, tag(n) ++ " "), String.to_upper(before_space(after_space(text))), status(t, n))
+def status(lines: List<&2, RLine>, n: U32) -> String:
+  String.to_upper(before_space(after_space(line_starting(lines, tag(n) ++ " "))))
 
 # The status text (after OK/NO/BAD) of command n.
-def status_text(+lines: List<&2, RLine>, +n: U32) -> String:
-  match lines:
-    case Nil{}:
-      ""
-    case Con{RLine{+text, l}, t}:
-      Bool.pick(String, String.starts_with(text, tag(n) ++ " "), after_space(after_space(text)), status_text(t, n))
+def status_text(lines: List<&2, RLine>, n: U32) -> String:
+  after_space(after_space(line_starting(lines, tag(n) ++ " ")))
 
+# Whether a tagged status is a refusal.
+def is_refusal(+st: String) -> Bool:
+  String.eq(st, "NO") || String.eq(st, "BAD")
+
+# Whether a line is a tagged refusal.
 def is_failure(+text: String) -> Bool:
-  +st = String.to_upper(before_space(after_space(text)))
-  String.starts_with(text, "a") && (String.eq(st, "NO") || String.eq(st, "BAD"))
+  String.starts_with(text, "a") &&
+    is_refusal(String.to_upper(before_space(after_space(text))))
+
+# Whether command n was refused (NO or BAD).
+def refused(lines: List<&2, RLine>, n: U32) -> Bool:
+  is_refusal(status(lines, n))
 
 # The first rejected command's status line, or "" when every command ran.
-def first_failure(+lines: List<&2, RLine>) -> String:
-  match lines:
-    case Nil{}:
-      ""
-    case Con{RLine{+text, l}, t}:
-      Bool.pick(String, is_failure(text), text, first_failure(t))
+def first_failure(lines: List<&2, RLine>) -> String:
+  Maybe.default(&2, String,
+    first_line(~(text => key => is_failure(text)), lines, ""), "")
+
+# The lines after the first that starts with `p` (none if no line does).
+# `hit` says the line before `lines` did, which ends the walk.
+def after_line(lines: List<&2, RLine>, +p: String, hit: Bool) -> List<&2, RLine>:
+  match lines hit:
+    case Nil{} _:
+      []
+    case l <> t True{}:
+      l <> t
+    case RLine{text, lits} <> t False{}:
+      after_line(t, p, String.starts_with(text, p))
+
+# The untagged ("* ") lines before the first that starts with `p`. `hit`
+# says the line before `lines` did, which ends the walk.
+def untagged_until(
+  lines: List<&2, RLine>,
+  +p: String,
+  hit: Bool
+) -> List<&2, RLine>:
+  match lines hit:
+    case Nil{} _:
+      []
+    case l <> t True{}:
+      []
+    case RLine{+text, lits} <> t False{}:
+      List.filter.put(RLine, RLine{text, lits},
+        untagged_until(t, p, String.starts_with(text, p)),
+        String.starts_with(text, "* "))
+
+# The untagged replies to command n: the "* " lines after command n-1's
+# tagged reply (from the start, for the first command) and before n's own
+# (or the end, if n got none). The helper runs one command at a time, so no
+# other command's replies fall in between.
+def replies(lines: List<&2, RLine>, +n: U32) -> List<&2, RLine>:
+  from = after_line(lines, tag((n - 1 : U32)) ++ " ", U32.is_eq(n, 1))
+  untagged_until(from, tag(n) ++ " ", False{})
+
+def listed_flags(vs: List<&2, Value>) -> List<&2, String>:
+  match vs:
+    case VList{xs} <> rest:
+      Value.texts(xs)
+    case _:
+      []
+
+# The flags of a "* OK [PERMANENTFLAGS (...)]" reply: the flags the client
+# can change for good (RFC 3501 7.1). None when there is no such reply.
+def permanent_flags(lines: List<&2, RLine>) -> Maybe<&2, List<&2, String>>:
+  Maybe.map(&2, String, List<&2, String>, v => listed_flags(tokens(v, [])),
+    ok_code_text(lines, "PERMANENTFLAGS"))

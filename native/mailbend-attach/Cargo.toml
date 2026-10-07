@@ -1,0 +1,15 @@
+[package]
+name = "mailbend-attach"
+description = "Reads attachments, saves downloads and counts sends for MailBend, sandboxed and without credentials"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mailbend-io.workspace = true
+nix.workspace = true
+
+[lints]
+workspace = true

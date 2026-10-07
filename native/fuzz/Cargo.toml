@@ -1,0 +1,67 @@
+# Fuzz targets, one per parser of network or script data. A separate
+# workspace (cargo-fuzz needs nightly):
+#   cargo +nightly fuzz run imap_script -- -max_total_time=60
+[package]
+name = "mailbend-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+mailbend-net = { path = "../mailbend-net" }
+mailbend-tls = { path = "../mailbend-tls" }
+
+[workspace]
+
+[[bin]]
+name = "imap_script"
+path = "fuzz_targets/imap_script.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "imap_response"
+path = "fuzz_targets/imap_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "smtp_envelope"
+path = "fuzz_targets/smtp_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "smtp_reply"
+path = "fuzz_targets/smtp_reply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_answer"
+path = "fuzz_targets/dns_answer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_response"
+path = "fuzz_targets/http_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "url_and_proxy"
+path = "fuzz_targets/url_and_proxy.rs"
+test = false
+doc = false
+bench = false

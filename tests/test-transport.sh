@@ -33,7 +33,8 @@ fail() { echo "FAIL $1 -- $2"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 # --- build the helper -------------------------------------------------
 mkdir -p "$ROOT/bin"
-if ! cc -std=c11 -O2 -Wall -Wextra -Werror -o "$HELPER" "$ROOT/native/mailbend-tls.c" -lssl -lcrypto -lcurl 2>"$WORK/build.err"; then
+if ! { (cd "$ROOT/native" && "${CARGO:-cargo}" build --release --locked --quiet -p mailbend-tls) \
+       && cp "$ROOT/native/target/release/mailbend-tls" "$HELPER"; } 2>"$WORK/build.err"; then
   echo "FAIL build -- $(cat "$WORK/build.err")"
   exit 1
 fi
@@ -514,6 +515,32 @@ case20() {
 }
 
 # =========================================================================
+# Case 21: a final LOGOUT or QUIT reply cut off mid-line, after every
+# command was accepted, keeps the run a success (a retry would duplicate
+# the draft or the mail).
+# =========================================================================
+case21() {
+  start_server case21 --cut-goodbye || { fail 21 "server did not start"; return; }
+  ok=1; detail=""
+  body="cut-off logout draft"
+  call_imap $'a1 APPEND "Drafts" (\\Draft) {'"${#body}"$'}\r\n'"$body"$'\r\n'
+  if [ "$CODE" -ne 0 ] || [ -s "$ERR" ] || ! grep -aq "a1 OK" "$OUT"; then
+    ok=0; detail="imap exit=$CODE $(tr -d '\r' <"$ERR")"
+  fi
+  body=$'Subject: x\r\n\r\nhi\r\n'
+  call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+  if [ "$CODE" -ne 0 ] || [ -s "$ERR" ]; then
+    ok=0; detail="$detail smtp exit=$CODE $(tr -d '\r' <"$ERR")"
+  fi
+  if [ "$ok" -eq 1 ]; then
+    pass "21 a cut-off LOGOUT or QUIT reply keeps the success"
+  else
+    fail "21 a cut-off LOGOUT or QUIT reply keeps the success" "$detail"
+  fi
+  stop_server
+}
+
+# =========================================================================
 # Case 2: the fixture password never leaks, and LOGIN/AUTH are redacted in
 # the log. Aggregates over every call made by every other case above, so it
 # runs last.
@@ -555,6 +582,7 @@ case17
 case18
 case19
 case20
+case21
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"

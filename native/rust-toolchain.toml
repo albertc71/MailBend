@@ -1,0 +1,6 @@
+# The MSRV: the latest stable Rust, 1.99.0 (2026-09-28). Fuzzing alone uses
+# nightly (cargo +nightly fuzz).
+[toolchain]
+channel = "1.99"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
