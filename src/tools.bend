@@ -1559,7 +1559,7 @@ def get_json(
   +p: M.Parts
 ) -> Out:
   I.Msg{uid, +flags, date, +size, headers, body, _} = m
-  M.Parts{_, html, atts} = p
+  M.Parts{_, +html, atts} = p
   ok_obj([
     J.kv("folder", J.str(folder)),
     J.kv("uid", J.num(uid)),
@@ -1579,6 +1579,7 @@ def get_json(
     J.kv("in_reply_to", J.str(M.header(hs, "in-reply-to"))),
     J.kv("references", J.str(M.header(hs, "references"))),
     J.kv("text", J.str(M.readable_text(p))),
+    J.kv("html", J.str(html)),
     J.kv("html_available", J.bool(Bool.not(String.is_empty(html)))),
     J.kv("attachments", J.arr(atts_json(atts)))
   ])
