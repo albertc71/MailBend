@@ -1410,11 +1410,11 @@ def main() -> IO(Unit):
 #|err the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again | shown 
 #|err connection or TLS verification failed: down | shown 
 #|{"uid":5,"date":"Mon, 1 Feb 2026 10:00:00 +0000","from":"José <jose@example.com>","to":"me@x.com","cc":"","subject":"Lunch","message_id":"<m1@example.com>","internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"flags":["\\Seen"],"seen":true,"flagged":false}
-#|ok {"folder":"INBOX","uid":5,"uidvalidity":7,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":false,"from":"José <jose@example.com>","to":"me@x.com","cc":"","reply_to":"","subject":"Lunch","date":"Mon, 1 Feb 2026 10:00:00 +0000","message_id":"<m1@example.com>","in_reply_to":"","references":"","text":"Hello\nthere\n","html_available":false,"attachments":[]} | whole 5 262144
-#|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":" Hi & bye \n","html_available":true,"attachments":[]} | whole 6 100
+#|ok {"folder":"INBOX","uid":5,"uidvalidity":7,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":false,"from":"José <jose@example.com>","to":"me@x.com","cc":"","reply_to":"","subject":"Lunch","date":"Mon, 1 Feb 2026 10:00:00 +0000","message_id":"<m1@example.com>","in_reply_to":"","references":"","text":"Hello\nthere\n","html":"","html_available":false,"attachments":[]} | whole 5 262144
+#|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":" Hi & bye \n","html":"<p>Hi &amp; bye</p>\n","html_available":true,"attachments":[]} | whole 6 100
 #|err no message with UID 8 in Work | shown 
 #|5 ||
-#|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":"yo","html_available":false,"attachments":[]} | whole 4 1000
+#|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":"yo","html":"","html_available":false,"attachments":[]} | whole 4 1000
 #|err no message with UID 8 in INBOX | shown 
 #|err no message with UID 9 in INBOX | shown 
 #|9 5 |5 1

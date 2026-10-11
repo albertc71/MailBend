@@ -13,6 +13,7 @@ import json
 import os
 import pwd
 import pathlib
+import quopri
 import shutil
 import signal
 import subprocess
@@ -176,6 +177,35 @@ def run_all(work):
     jev(work)
     triage(work)
     gates(work)
+    sign_in_html(work)
+
+
+def sign_in_html(work):
+    html = '<p>Café</p><a href="https://example.com/login?token=test%2Bvalue&amp;next=%2Finbox">Sign in</a>'
+    for encoding in ("quoted-printable", "base64"):
+        for alternative in (False, True):
+            fixture = copy.deepcopy(FIX)
+            encoded = (base64.b64encode(html.encode()).decode() if encoding == "base64"
+                       else quopri.encodestring(html.encode()).decode())
+            part = (f"Content-Type: text/html; charset=utf-8\r\n"
+                    f"Content-Transfer-Encoding: {encoding}\r\n\r\n{encoded}")
+            raw = ("Content-Type: multipart/alternative; boundary=sign-in\r\n\r\n"
+                   "--sign-in\r\nContent-Type: text/plain\r\n\r\nUse the sign-in button.\r\n"
+                   f"--sign-in\r\n{part}\r\n--sign-in--\r\n" if alternative else part)
+            fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = raw
+            srv = Server(work, fixture=fixture)
+            try:
+                before = srv.st()
+                c, r = tool(srv, "mail_get", {"uid": 1}, MAILBEND_READ_ONLY="1")
+                check(f"get: {encoding} alternative={alternative} preserves sign-in HTML",
+                      c == 0 and r.get("html", "").strip() == html and r.get("html_available") is True, r)
+                check("get: sign-in read leaves mailbox unchanged", srv.st()["mailboxes"] == before["mailboxes"])
+                if alternative:
+                    check("get: plain alternative still wins for text", r.get("text", "").strip() == "Use the sign-in button.", r)
+                c, r = tool(srv, "mail_get", {"uid": 2})
+                check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
+            finally:
+                srv.stop()
 
 
 def reads(srv):
