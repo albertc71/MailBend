@@ -214,6 +214,7 @@ class State:
         self.session_flags = False
         self.noisy_store = False
         self.fetch_no_flags = set()
+        self.fetch_bad_flags = set()
         self.search_response = "normal"
         self.remove_after_fetch = set()
         self.measure_responses = False
@@ -995,6 +996,8 @@ class IMAPSession:
                 if word == 'UID':
                     parts.append(f'UID {m["uid"]}')
                     have_uid = True
+                elif word == 'FLAGS' and m['uid'] in self.state.fetch_bad_flags:
+                    parts.append('FLAGS NIL')
                 elif word == 'FLAGS' and m['uid'] not in self.state.fetch_no_flags:
                     parts.append('FLAGS (' + ' '.join(m['flags']) + ')')
                 elif word == 'INTERNALDATE':
@@ -1612,6 +1615,8 @@ def main():
                     default='normal')
     ap.add_argument('--remove-after-fetch', type=lambda v: {int(u) for u in v.split(',')}, default=set())
     ap.add_argument('--measure-responses', action='store_true')
+    ap.add_argument('--fetch-bad-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
+                    help='return malformed FLAGS NIL for these UIDs')
     ap.add_argument('--fetch-no-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     ap.add_argument('--cut-goodbye', action='store_true',
@@ -1639,6 +1644,7 @@ def main():
     state.session_flags = args.session_flags
     state.noisy_store = args.noisy_store
     state.fetch_no_flags = args.fetch_no_flags
+    state.fetch_bad_flags = args.fetch_bad_flags
     state.search_response = args.search_response
     state.remove_after_fetch = args.remove_after_fetch
     state.measure_responses = args.measure_responses

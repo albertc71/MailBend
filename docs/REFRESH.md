@@ -27,7 +27,8 @@ reset stops the plan before either UID operation and invalidates the old cache.
 get arrivals, change flags and move one message elsewhere, refresh known UIDs,
 then obtain later arrivals with the original cursor. It also covers empty,
 duplicate, invalid, maximum and excessive UIDs, stale UIDVALIDITY, concurrent
-removal after FETCH, omitted flags, missing/malformed/duplicate SEARCH, rejected
+removal after FETCH, omitted/malformed flags, authentication failures,
+missing/malformed/duplicate SEARCH, rejected
 commands, connection loss and output overflow. The synthetic server records
 response byte counts without logging mail content for the cost cases.
 
@@ -41,11 +42,24 @@ tool-list laws include refresh in every appropriate configuration. These proofs
 cover the command plan; protocol evidence and output interpretation are tested,
 not represented as a proof of server correctness.
 
-Measured synthetic results will be recorded after the full test run.
+Synthetic results from the [validated prototype CI run](https://github.com/albertc71/MailBend/actions/runs/40107360295)
+(2026-10-24), using one `\Seen` flag per present UID:
+
+| Requested UIDs | Wire commands | IMAP response bytes | Result JSON bytes |
+| ---: | ---: | ---: | ---: |
+| 1 | 5 | 489 | 160 |
+| 10 | 5 | 809 | 422 |
+| 100 | 5 | 4234 | 3123 |
+
+The five commands include LOGIN and LOGOUT. Response bytes include the greeting
+and authentication responses, but exclude TLS record overhead. Result JSON is
+UTF-8 serialized without whitespace, excluding CLI/MCP envelopes. The same test
+suite passes the 256 KiB helper-output and JSON-expansion failure controls.
 
 ## Decision
 
-Retain the bounded stateless prototype if the synthetic tests pass. The cost
+Retain the bounded stateless prototype: the synthetic measurements keep command
+count constant and the 100-UID response small relative to the fixed caps. The cost
 experiment measures client command count and response size, not provider latency,
 rate limits or a claim that polling an entire large mailbox is cheap. There is
 no automatic polling schedule. Larger-scale or event-driven synchronization

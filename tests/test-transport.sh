@@ -564,8 +564,8 @@ case2() {
 
 
 # The bounded refresh plan guards read identities before fetching flags.
-case22() {
-  start_server case22 || { fail 22 "server did not start"; return; }
+case_refresh() {
+  start_server case_refresh || { fail 22 "server did not start"; return; }
   call_imap $'a1 EXAMINE "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 1700000001]\r\na2 UID FETCH 1,99 (UID FLAGS)\r\na3 UID SEARCH UID 1,99\r\n'
   if [ "$CODE" -eq 0 ] && grep -aq 'a3 OK' "$OUT" && grep -aq '\* SEARCH 1' "$OUT"; then
     pass "22 refresh reads flags and presence in one guarded session"
@@ -573,7 +573,7 @@ case22() {
     fail "22 refresh reads flags and presence" "exit=$CODE"
   fi
   stop_server
-  start_server case22-stale || { fail 22 "server did not start"; return; }
+  start_server case-refresh-stale || { fail 22 "server did not start"; return; }
   call_imap $'a1 EXAMINE "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 7]\r\na2 UID FETCH 1 (UID FLAGS)\r\na3 UID SEARCH UID 1\r\n'
   if [ "$CODE" -eq 5 ] && ! grep -aq 'UID FETCH\|UID SEARCH' "$LOG_FILE"; then
     pass "22 stale refresh stops before any UID operation"
@@ -604,7 +604,7 @@ case18
 case19
 case20
 case21
-case22
+case_refresh
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"

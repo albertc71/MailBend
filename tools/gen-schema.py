@@ -233,7 +233,8 @@ TOOLS = [
     tool("mail_refresh",
          "Refresh known message UIDs in one read-only session. Returns present "
          "UIDs with flags, absent UIDs proved absent in this mailbox by SEARCH, "
-         "and unknown UIDs when evidence is incomplete. Absence is not global "
+         "and unknown UIDs when evidence is incomplete. Protocol/transport/limit "
+         "failures are tool errors retaining these fields. Absence is not global "
          "deletion. Missing FETCH never proves absence. complete is false for "
          "unknown evidence or reset_required; on reset discard the mailbox's "
          "cached UIDs. Stateless, not a snapshot; combine with mail_get_new. "

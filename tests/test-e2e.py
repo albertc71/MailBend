@@ -233,8 +233,26 @@ def refresh_known(work):
               and not any(' UID ' in line for line in srv.log_lines()[n:]), r)
     finally:
         srv.stop()
+    srv = Server(work)
+    try:
+        c, r = tool(srv, 'mail_refresh', {'uids': [1, 99], 'uidvalidity': uidv},
+                    MAILBEND_APP_PASSWORD='invalid-synthetic-password')
+        check('refresh: authentication failure is an error retaining unknown identities',
+              c != 0 and r.get('unknown') == [1, 99] and r.get('absent') == []
+              and 'authentication failed' in r.get('reason', ''), r)
+        replies, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "mail_refresh", "arguments": {"uids": [1, 99], "uidvalidity": uidv}}}],
+            MAILBEND_APP_PASSWORD='invalid-synthetic-password')
+        result = replies[0].get('result', {})
+        body = json.loads(result.get('content', [{}])[0].get('text', '{}'))
+        check('refresh: MCP exposes authentication failure while retaining unknown identities',
+              result.get('isError') is True and body.get('unknown') == [1, 99]
+              and body.get('absent') == [], result)
+    finally:
+        srv.stop()
     for extra, absent, unknown in [
             (('--fetch-no-flags', '1'), [99], [1]),
+            (('--fetch-bad-flags', '1'), [99], [1]),
             (('--remove-after-fetch', '1'), [1, 99], []),
             (('--search-response', 'missing'), [], [1, 99]),
             (('--search-response', 'malformed'), [], [1, 99]),
@@ -246,7 +264,9 @@ def refresh_known(work):
         try:
             c, r = tool(srv, 'mail_refresh', {'uids': [1, 99], 'uidvalidity': uidv})
             check('refresh evidence: ' + ' '.join(extra),
-                  c == 0 and r.get('absent') == absent and r.get('unknown') == unknown
+                  (c == 0) == (extra[0] in ('--fetch-no-flags', '--fetch-bad-flags',
+                                            '--remove-after-fetch'))
+                  and r.get('absent') == absent and r.get('unknown') == unknown
                   and r.get('complete') == (not unknown), r)
         finally:
             srv.stop()
@@ -276,8 +296,9 @@ def refresh_known(work):
         try:
             c, r = tool(srv, 'mail_refresh', {'uids': [1, 99], 'uidvalidity': uidv})
             check('refresh: ' + label + ' cap loses evidence, never declares absence',
-                  c == 0 and not r.get('complete') and r.get('absent') == []
-                  and r.get('unknown') == [1, 99], r)
+                  c != 0 and not r.get('complete') and r.get('absent') == []
+                  and r.get('unknown') == [1, 99]
+                  and (label != 'JSON result' or r.get('reason') == 'result exceeds 256 KiB'), r)
         finally:
             srv.stop()
 

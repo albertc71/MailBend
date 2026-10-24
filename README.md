@@ -269,7 +269,9 @@ The result reports:
   retry later; missing FETCH entries alone never establish absence.
 - `complete`: all requested UIDs resolved. A failed command, missing/malformed
   SEARCH response, lost connection or response limit returns all UIDs unknown,
-  with an explanatory `reason`. Missing flags alone leave that UID unknown.
+  with an explanatory `reason`, a nonzero CLI exit and MCP `isError: true`.
+  Missing or malformed flags alone leave that UID unknown without failing the
+  whole call. A genuine empty `FLAGS ()` is a valid empty observation.
 - `reset_required`: UIDVALIDITY changed. All identity lists are empty and
   `complete` is false. Discard that mailbox's cache and restart `mail_get_new`
   from zero; never apply the old UIDs to the new mailbox identity.

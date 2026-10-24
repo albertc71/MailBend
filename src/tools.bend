@@ -2590,7 +2590,7 @@ def observed_json(os: List<&2, Observed>) -> List<&2, J.Json>:
 
 # Limit the supplied array before sorting/deduplicating; duplicates count
 # against the work bound. Empty arrays are rejected without a connection.
-def refresh_uids.go(xs: List<&2, U32>, +prev: U32) -> List<&2, U32>:
+def refresh_uids.go(xs: List<&2, U32>, prev: U32) -> List<&2, U32>:
   match xs:
     case Nil{}:
       []
@@ -2623,7 +2623,7 @@ def refresh_search.numbers(ws: List<&2, String>, +asked: List<&2, U32>)
         rest : List<&2, U32> <- refresh_search.numbers(t, asked)
         return u <> rest
 
-def refresh_search.line(+text: String, asked: List<&2, U32>)
+def refresh_search.line(text: String, asked: List<&2, U32>)
   -> Maybe<&2, List<&2, U32>>:
   match text:
     case "* SEARCH":
@@ -2631,7 +2631,7 @@ def refresh_search.line(+text: String, asked: List<&2, U32>)
     case _:
       refresh_search.numbers(String.split(String.drop(text, 9n), ' '), asked)
 
-def refresh_search(lines: List<&2, I.RLine>, +asked: List<&2, U32>)
+def refresh_search(lines: List<&2, I.RLine>, asked: List<&2, U32>)
   -> Maybe<&2, List<&2, U32>>:
   match lines:
     case I.RLine{+text, Nil{}} <> Nil{}:
@@ -2643,6 +2643,52 @@ def refresh_search(lines: List<&2, I.RLine>, +asked: List<&2, U32>)
         return return_from
     case _:
       None{}
+
+# FLAGS NIL and other malformed values must not become an empty flag list.
+# Validate refresh metadata locally; preserve the shared FETCH parser's contract.
+def refresh_flags.atoms(vs: List<&2, I.Value>) -> Bool:
+  match vs:
+    case Nil{}:
+      True{}
+    case I.VAtom{+s} <> t:
+      Bool.not(String.is_empty(s)) && refresh_flags.atoms(t)
+    case _:
+      False{}
+
+def refresh_flags.value(v: I.Value) -> Bool:
+  match v:
+    case I.VList{vs}:
+      refresh_flags.atoms(vs)
+    case _:
+      False{}
+
+def refresh_flags.pairs(vs: List<&2, I.Value>, +seen: Bool) -> Bool:
+  match vs:
+    case Nil{}:
+      seen
+    case I.VAtom{k} <> v <> rest:
+      +flags = String.eq(String.to_upper(k), "FLAGS")
+      (Bool.not(flags && seen) && (Bool.not(flags) || refresh_flags.value(v)) &&
+        refresh_flags.pairs(rest, seen || flags))
+    case _:
+      False{}
+
+def refresh_flags.msg(vs: List<&2, I.Value>) -> List<&2, I.Msg>:
+  match vs:
+    case I.VAtom{n} <> I.VAtom{f} <> I.VList{+items} <> Nil{}:
+      I.msg_of.if(String.eq(String.to_upper(f), "FETCH") &&
+        Maybe.is_some(&2, U32, positive(U32.read(n))) && refresh_flags.pairs(items, False{}),
+        items)
+    case _:
+      []
+
+def refresh_flags(lines: List<&2, I.RLine>) -> List<&2, I.Msg>:
+  match lines:
+    case Nil{}:
+      []
+    case I.RLine{text, lits} <> t:
+      List.append(&2, I.Msg, refresh_flags.msg(I.tokens(String.drop(text, 2n), lits)),
+        refresh_flags(t))
 
 # Partition only the caller's identities. Null flags mean unknown, even
 # when SEARCH found the UID. Absence is local to this mailbox at SEARCH.
@@ -2693,15 +2739,28 @@ def refresh_out(
     J.kv("reason", J.str(reason))
   ])
 
+def refresh_failed.put(out: Out) -> Out:
+  match out:
+    case Ok{j}:
+      Partial{j}
+    case _:
+      out
+
+# Protocol failures retain bounded evidence but remain visible as tool errors.
+def refresh_failed(
+  folder: String, uidv: Maybe<&2, U32>, us: List<&2, U32>, reason: String
+) -> Out:
+  refresh_failed.put(refresh_out(folder, uidv, False{}, us, [], [], reason))
+
 def refresh_found(
   search: Maybe<&2, List<&2, U32>>, lines: List<&2, I.RLine>,
   +us: List<&2, U32>, folder: String, uidv: Maybe<&2, U32>
 ) -> Out:
   match search:
     case None{}:
-      refresh_out(folder, uidv, False{}, us, [], [], "incomplete SEARCH evidence")
+      refresh_failed(folder, uidv, us, "incomplete SEARCH evidence")
     case Some{+found}:
-      +os = refresh_partition(us, found, I.flag_fetches(I.replies(lines, 2)))
+      +os = refresh_partition(us, found, refresh_flags(I.replies(lines, 2)))
       refresh_out(folder, uidv, False{}, refresh_unknown(os), refresh_absent(us, found),
         refresh_present(os), "")
 
@@ -2711,7 +2770,7 @@ def refresh_result.if(
 ) -> Out:
   match complete:
     case False{}:
-      refresh_out(folder, uidv, False{}, us, [], [], "incomplete protocol evidence")
+      refresh_failed(folder, uidv, us, "incomplete protocol evidence")
     case True{}:
       refresh_found(refresh_search(I.replies(lines, 3), us), lines, us, folder, uidv)
 
@@ -2720,7 +2779,7 @@ def refresh_result(
 ) -> Out:
   match r:
     case Fail{m}:
-      refresh_out(folder, uidv, False{}, us, [], [], m)
+      refresh_failed(folder, uidv, us, m)
     case Done{+lines}:
       refresh_result.if(Maybe.is_some(&2, U32, uidv) &&
         ok_at(lines, 1) && ok_at(lines, 2) && ok_at(lines, 3),
@@ -2748,7 +2807,7 @@ def refresh_bounded.if(
 ) -> Out:
   match over:
     case True{}:
-      refresh_out(folder, Some{uidv}, False{}, us, [], [], "result exceeds 256 KiB")
+      refresh_failed(folder, Some{uidv}, us, "result exceeds 256 KiB")
     case False{}:
       out
 
@@ -2756,6 +2815,8 @@ def refresh_bounded(out: Out, us: List<&2, U32>, folder: String, uidv: U32) -> O
   match out:
     case Ok{+j}:
       refresh_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), Ok{j}, us, folder, uidv)
+    case Partial{+j}:
+      refresh_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), Partial{j}, us, folder, uidv)
     case _:
       out
 
