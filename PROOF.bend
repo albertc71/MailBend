@@ -37,7 +37,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_seven():
+def Laws.read_only_tools_are_exactly_eight():
   {==}
 
 def Laws.tools_listed_per_config(drafts):
@@ -112,6 +112,9 @@ def get_new_writes_nothing.if(at_end: Bool, -mbox: String, -since: U32)
 
 def Laws.get_new_writes_nothing(mbox, since):
   get_new_writes_nothing.if(U32.is_eq(since, Ops.max_uid()), mbox, since)
+
+def Laws.refresh_plan(mbox, uids, uidv):
+  ({==}, {==})
 
 # The thread plans are lists over folders and keys, so their law rests on
 # lemmas by induction over those lists: the searches add no write to what
@@ -216,6 +219,9 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
       {==}
     case False{}:
       {==}
+
+def Laws.mark_changes_only_seen(mbox, uids, seen, uidv):
+  {==}
 
 def flag_never_deletes.put(
   -mbox: String, -uids: List<&2, U32>, bits: I.Bits, -uidv: U32)
@@ -1346,4 +1352,7 @@ def Laws.smtp_unconfirmed_is_unknown(code, out, err):
   ({==}, {==})
 
 def Laws.smtp_acceptance_survives_exit(code, out, err):
+  {==}
+
+def Laws.expunge_renders_exact_uid_set(uids):
   {==}

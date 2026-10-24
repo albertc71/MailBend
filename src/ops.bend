@@ -15,6 +15,7 @@ type Op is Data:
   OSearch{}
   OGet{}
   OGetNew{}
+  ORefresh{}
   OGetThread{}
   OClassify{}
   OTriage{}
@@ -49,6 +50,8 @@ def is_read_only(op: Op) -> Bool:
       True{}
     case OGetNew{}:
       True{}
+    case ORefresh{}:
+      True{}
     case OGetThread{}:
       True{}
     case OClassify{}:
@@ -77,6 +80,8 @@ def name(op: Op) -> String:
       "mail_get"
     case OGetNew{}:
       "mail_get_new"
+    case ORefresh{}:
+      "mail_refresh"
     case OGetThread{}:
       "mail_get_thread"
     case OClassify{}:
@@ -122,6 +127,7 @@ def all_ops() -> List<&2, Op>:
     OSearch{},
     OGet{},
     OGetNew{},
+    ORefresh{},
     OGetThread{},
     OClassify{},
     OTriage{},
@@ -347,6 +353,12 @@ def plan_sent_search(sent: String, addrs: List<&2, String>) -> List<&2, I.Cmd>:
 # then a UID FETCH of FLAGS.
 def plan_reread_flags(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CFetch{uids, [I.IUid{}, I.IFlags{}]}]
+
+# Refresh known UIDs in one read-only session. Search after fetching so a
+# concurrent removal is absent, while an omitted FETCH is never absence.
+def plan_refresh(mbox: String, +uids: List<&2, U32>, uidv: U32) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+   I.CFetch{uids, [I.IUid{}, I.IFlags{}]}, I.CSearch{[I.KUids{uids}]}]
 
 # Some UIDs in one folder: those to fetch there, or to move there.
 type FolderUids is Data:

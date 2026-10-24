@@ -58,6 +58,7 @@ Jev off, no tool asks it.
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no | adds notes |
 | `mail_get` | Read one message: headers, text, HTML with link targets, attachment list | no | adds notes |
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
+| `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
@@ -319,6 +320,54 @@ and in no tool does it approve an action. Message text reaches TypeSafe only
 in `body` mode. Settings, what leaves the machine, the `jev` result object,
 failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
+## Polling known messages
+
+Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
+cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
+Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
+1–100 `uids` to refresh the cache. Duplicates count toward the input limit and
+are returned once, sorted. UIDs and UIDVALIDITY must be in 1–4294967295; empty
+and invalid requests are refused before connecting. Folder names are limited
+to 1024 UTF-8 bytes.
+
+The result reports:
+
+- `present`: `{uid, flags}` observations, without message content or Jev calls.
+- `absent`: UIDs proven absent **in this mailbox** by a successful, complete UID
+  SEARCH after fetching flags. This does not prove global deletion: a message
+  may have moved or still have a copy elsewhere.
+- `unknown`: UIDs whose evidence is incomplete. Keep their cached state and
+  retry later; missing FETCH entries alone never establish absence.
+- `complete`: all requested UIDs resolved. A failed command, missing/malformed
+  SEARCH response, lost connection or response limit returns all UIDs unknown,
+  with an explanatory `reason`, a nonzero CLI exit and MCP `isError: true`.
+  Missing or malformed flags alone leave that UID unknown without failing the
+  whole call. A genuine empty `FLAGS ()` is a valid empty observation.
+- `reset_required`: UIDVALIDITY changed. All identity lists are empty and
+  `complete` is false. Discard that mailbox's cache and restart `mail_get_new`
+  from zero; never apply the old UIDs to the new mailbox identity.
+
+Update flags from `present`, remove only `absent` from this mailbox's cache,
+and leave `unknown` unchanged. Refresh does not advance the arrival cursor.
+A concurrent removal between FETCH and SEARCH can appear as absent when the
+SEARCH evidence is complete. Flags are observations from FETCH, not an atomic
+snapshot with SEARCH or later calls.
+Conservative parsing may return unknown when a server sends extra unsolicited
+responses during SEARCH. Split larger caches into batches and choose the
+polling interval yourself; there is no resident watcher, database or automatic
+mail action.
+
+Each call uses one verified TLS session: EXAMINE, UID FETCH (UID FLAGS), and
+UID SEARCH restricted to exactly the supplied set. A UIDVALIDITY expectation
+runs before either UID command. Login and logout add two
+wire commands; no optional IMAP extension is needed. The helper process has a hard 256 KiB stdout/stderr cap
+and a 30-second deadline, enforced before response parsing; exceeding either
+loses evidence. Work is bounded by that response cap and 100 requested UIDs.
+The serialized tool result also has a 256 KiB cap (excluding its CLI/MCP
+envelope); expansion beyond it returns all UIDs unknown. The
+synthetic cost measurements and experiment decision are in
+[the refresh experiment](docs/REFRESH.md).
+
 ## Safety
 
 - **TLS is always verified**: certificate chain and host name, TLS 1.2+, with
@@ -347,7 +396,7 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven).
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
-  every read plan (probe, folders, search, get, new mail, thread) contains
+  every read plan (probe, folders, search, get, new mail, refresh, thread) contains
   no command that can change a mailbox, for every argument, and
   that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`.
 - **Nothing is lost by accident.** Move and trash never expunge before
@@ -547,7 +596,8 @@ before relying on a complete link.
 - iCloud does not file SMTP-sent mail in Sent, and `MAILBEND_SAVE_SENT` is
   off by default, so set it to `1` on iCloud to keep a Sent copy.
 - No watcher: nothing monitors the mailbox with IDLE or polling.
-  `mail_get_new` provides the checkpoint an agent needs to poll.
+  `mail_get_new` provides an arrival checkpoint; `mail_refresh` refreshes known
+  UIDs. The caller owns scheduling and state (see [polling](#polling-known-messages)).
 - Each character of a fetched message is a separate value in memory, so
   very large messages (the 16 MiB `mail_get` / 25 MiB forward caps) use a
   lot of RAM.
