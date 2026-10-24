@@ -11,6 +11,7 @@ import Base
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/search-cursor.bend as SC
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
@@ -61,6 +62,20 @@ def Laws.folder_scan_writes_nothing():
 
 def Laws.search_writes_nothing(mbox, keys):
   {==}
+
+def Laws.search_page_writes_nothing(mbox, keys, cursor):
+  match cursor:
+    case SC.Start{}:
+      {==}
+    case SC.Continue{uidv, before}:
+      {==}
+
+def Laws.search_page_examines(mbox, keys, cursor):
+  match cursor:
+    case SC.Start{}:
+      {==}
+    case SC.Continue{uidv, before}:
+      {==}
 
 def Laws.get_writes_nothing(mbox, uid, max):
   {==}

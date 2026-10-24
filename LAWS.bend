@@ -15,6 +15,7 @@ import Base
 import ./src/codec.bend as C
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/search-cursor.bend as SC
 import ./src/mime.bend as M
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
@@ -121,6 +122,21 @@ law search_writes_nothing:
   for mbox: String
   for keys: List<&2, I.Key>
   {I.any_writes(Ops.plan_search(mbox, keys)) == False{} : Bool}
+
+# LAW: every search page is read-only, including its UIDVALIDITY expectation.
+law search_page_writes_nothing:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for cursor: SC.Cursor
+  {I.any_writes(Ops.plan_search_page(mbox, keys, cursor)) == False{} : Bool}
+
+# LAW: every search page starts by opening the folder read-only.
+law search_page_examines:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for cursor: SC.Cursor
+  {Ops.has_prefix("a1 EXAMINE ", I.script(Ops.plan_search_page(mbox, keys, cursor))) ==
+    True{} : Bool}
 
 # LAW: for every mailbox, UID and size limit, the get plan writes nothing
 law get_writes_nothing:

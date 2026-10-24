@@ -4,6 +4,7 @@
 
 import Base
 import ./imap.bend as I
+import ./search-cursor.bend as SC
 
 # Operations
 # ----------
@@ -237,6 +238,16 @@ def plan_roles() -> List<&2, I.Cmd>:
 # The UIDs in `mbox` that match every key.
 def plan_search(mbox: String, keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CSearch{keys}]
+
+# A continuation checks the mailbox incarnation in the search session itself.
+# SEARCH still enumerates every match; Bend applies the descending boundary.
+def plan_search_page(mbox: String, keys: List<&2, I.Key>, cursor: SC.Cursor)
+  -> List<&2, I.Cmd>:
+  match cursor:
+    case SC.Start{}:
+      plan_search(mbox, keys)
+    case SC.Continue{uidv, before}:
+      [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{keys}]
 
 # The largest UID, 2^32 - 1.
 def max_uid() -> U32:

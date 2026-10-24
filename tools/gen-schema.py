@@ -185,7 +185,10 @@ TOOLS = [
          READS),
     tool("mail_search",
          "Search a folder, newest first. Opens the folder read-only, so "
-         "nothing is marked read. All criteria are combined with AND."
+         "nothing is marked read. All criteria are combined with AND. Pass next_cursor "
+         "back as cursor with the same folder and criteria for older matches. "
+         "has_more=false and next_cursor=null end traversal. Searches are re-evaluated; "
+         "new arrivals above the boundary are excluded. UID SEARCH still enumerates matches."
          + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
@@ -200,6 +203,8 @@ TOOLS = [
           "unseen": param("boolean"),
           "seen": param("boolean"),
           "flagged": param("boolean"),
+          "cursor": param("string", "Opaque continuation from next_cursor; at most 4096 characters.",
+                          maxLength=4096),
           "limit": param("integer", "Default 20.", minimum=1, maximum=200)}),
     tool("mail_get",
          "Read one message: headers, plain text (or text from HTML), decoded "

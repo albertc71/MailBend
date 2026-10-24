@@ -219,6 +219,8 @@ class State:
         self.file_sent = None
         self.bodystructure = 'real'
         self.seen = {}
+        self.examine_count = 0
+        self.examine_changes = fixture.get("examine_changes", [])
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -938,6 +940,15 @@ class IMAPSession:
                 self.mailbox = None
                 self.send(f'{tag} NO [NONEXISTENT] no such mailbox\r\n')
                 return
+            if readonly:
+                self.state.examine_count += 1
+                for change in self.state.examine_changes:
+                    if change['at'] == self.state.examine_count:
+                        if 'uidvalidity' in change:
+                            mb['uidvalidity'] = change['uidvalidity']
+                        removed = change.get('remove_uids', [])
+                        mb['messages'] = [m for m in mb['messages'] if m['uid'] not in removed]
+                        self.state.save()
             count, uidvalidity, uidnext = len(mb['messages']), mb['uidvalidity'], mb['uidnext']
         self.mailbox, self.readonly = name, readonly
         self.send(self.FLAGS_LINE)

@@ -299,6 +299,25 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 - **Folder targets must be resolved.** Overrides, advertised roles and
   conventional names follow the per-role precedence above; ambiguous or
   unselectable targets never trigger a guessed mutation.
+- **Search pages move toward older UIDs.** `mail_search` keeps its newest-first
+  first page (default 20, at most 200 summaries). Pass its `next_cursor` as
+  `cursor`, with the same folder and criteria; `limit` may change. A mismatched,
+  malformed or stale UIDVALIDITY cursor fails: restart by omitting `cursor`.
+  `has_more: false` and `next_cursor: null` explicitly end the traversal;
+  do not pass null or an empty cursor to restart. Tokens are opaque, at most
+  4,096 characters, with a folder/normalized-criteria binding limited to
+  4,000 characters. They contain the criteria, so handle them like the query.
+  Each page re-evaluates the query and selects UIDs strictly below the previous
+  page's last selected UID. Stable matches are visited once; arrivals and moves
+  into the folder above that boundary are excluded. Removed messages disappear,
+  and changed flags affect matching only in the still-unvisited range. This is
+  bounded traversal, not a mailbox snapshot. If a selected message vanishes
+  before FETCH, the cursor still advances past it; follow `has_more` even for
+  an empty page. UIDVALIDITY is checked across pages and again between SEARCH
+  and FETCH. `total` remains the current full-query match count, not a frozen
+  count or the remaining number of pages. Every page still enumerates matching
+  UIDs with UID SEARCH; pagination bounds fetched summaries and response size,
+  not server search work. `mail_get_new` retains its separate arrival cursor.
 - **Labels are folders, and no tool deletes one.** On iCloud a label is a
   folder: `mail_label` is the proven move plan (so every move law holds for
   it), and moving the messages back to INBOX removes the label.

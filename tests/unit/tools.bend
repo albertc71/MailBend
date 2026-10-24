@@ -445,11 +445,11 @@ def check_search() -> IO(Unit):
       "|" ++ show_u32s(T.desc([3, 9, 1])) ++ "|" ++ show_u32s(T.asc([3, 9, 1])) ++
       "|" ++ show_bool(T.uid_in(3, [1, 3])) ++ " " ++ show_bool(T.uid_in(2, [1, 3])))
     IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(show_shown(T.search_headers(T.imap_code(3, [], "mailbend-tls: down"),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(J.show(T.summary(message(5, raw_message()))))
 
 def check_get() -> IO(Unit):

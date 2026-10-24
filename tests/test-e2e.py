@@ -178,6 +178,7 @@ def run_all(work):
     triage(work)
     gates(work)
     sign_in_html(work)
+    search_pagination(work)
 
 
 def sign_in_html(work):
@@ -206,6 +207,114 @@ def sign_in_html(work):
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
                 srv.stop()
+
+
+def search_pagination(work):
+    fixture = copy.deepcopy(FIX)
+    sample = copy.deepcopy(fixture["mailboxes"]["INBOX"]["messages"][0])
+    sample["raw"] = "From: Alice <alice@example.test>\r\nSubject: page fixture\r\n\r\nbody"
+    sample["flags"] = []
+    fixture["mailboxes"]["INBOX"]["messages"] = [dict(sample, uid=i) for i in range(1, 406)]
+    srv = Server(work, fixture=fixture)
+    try:
+        seen, token = [], None
+        for page in range(4):
+            args = {"subject": "page fixture", "limit": 200}
+            if token is not None:
+                args["cursor"] = token
+            c, r = tool(srv, "mail_search", args)
+            seen.extend(m["uid"] for m in r.get("messages", []))
+            check("search pages: each response bounded with full-query total", c == 0
+                  and len(r.get("messages", [])) <= 200 and r.get("total") == 405, r)
+            token = r.get("next_cursor")
+            if not r.get("has_more"):
+                break
+        check("search pages: traverse 405 stable matches once and terminate", seen == list(range(405, 0, -1))
+              and token is None and page == 2 and r.get("has_more") is False, (len(seen), r))
+        c, first = tool(srv, "mail_search", {"unseen": True, "limit": 200})
+        cursor = first.get("next_cursor")
+        check("search pages: first cursor exists", c == 0 and isinstance(cursor, str), first)
+        start = len(srv.log_lines())
+        for bad in ("", "s2:" + cursor[3:], cursor + "junk", "x" * 4097,
+                    cursor.replace(":206:", ":4294967296:"), cursor.replace(":206:", ":1:")):
+            c, r = tool(srv, "mail_search", {"unseen": True, "cursor": bad})
+            check("search pages: malformed cursor rejected", c != 0 and "cursor" in r.get("error", ""), r)
+        for args in ({"cursor": cursor}, {"unseen": True, "cursor": cursor, "folder": "Archive"}):
+            c, r = tool(srv, "mail_search", args)
+            check("search pages: changed query or folder rejected", c != 0 and "cursor" in r.get("error", ""), r)
+        check("search pages: malformed and mismatched cursors cause no network work",
+              len(srv.log_lines()) == start, srv.log_lines()[start:])
+        log = srv.log_lines()
+        check("search pages: EXAMINE and BODY.PEEK only", not any(" SELECT " in x for x in log)
+              and all("BODY.PEEK" in x for x in log if " UID FETCH " in x), log[-8:])
+    finally:
+        srv.stop()
+
+    # Continue after a removal, flag change, and new arrival. Lower stable
+    # matches remain visitable; previously visited matches and the new
+    # arrival are both above the exclusive boundary.
+    changed = copy.deepcopy(fixture)
+    messages = changed["mailboxes"]["INBOX"]["messages"]
+    messages[:] = [m for m in messages if m["uid"] != 205]
+    next(m for m in messages if m["uid"] == 204)["flags"] = ["\\Seen"]
+    messages.append(dict(sample, uid=406))
+    srv = Server(work, fixture=changed)
+    try:
+        c, r = tool(srv, "mail_search", {"unseen": True, "cursor": cursor, "limit": 200})
+        check("search pages: arrivals, removals and flags obey the descending boundary", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == list(range(203, 3, -1))
+              and r.get("has_more") is True, r)
+        c, r = tool(srv, "mail_search", {"unseen": True, "cursor": r.get("next_cursor"), "limit": 3})
+        check("search pages: limit may change and final page is explicit", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == [3, 2, 1]
+              and r.get("has_more") is False and r.get("next_cursor") is None, r)
+    finally:
+        srv.stop()
+
+    for name, tweaks in (
+            ("stale", {"uidvalidity": 99}),
+            ("empty", {"messages": []}),
+            ("maximum", {"messages": [dict(sample, uid=4294967295), dict(sample, uid=1)]})):
+        scenario = copy.deepcopy(fixture)
+        scenario["mailboxes"]["INBOX"].update(tweaks)
+        srv = Server(work, fixture=scenario)
+        try:
+            args = {"unseen": True, "cursor": cursor} if name != "maximum" else {"limit": 1}
+            c, r = tool(srv, "mail_search", args)
+            if name == "stale":
+                check("search pages: changed UIDVALIDITY refuses continuation before SEARCH", c != 0
+                      and "UIDVALIDITY" in r.get("error", "")
+                      and not any(" UID SEARCH " in x or " UID FETCH " in x for x in srv.log_lines()), r)
+            elif name == "empty":
+                check("search pages: empty continuation is terminal", c == 0 and r.get("messages") == []
+                      and r.get("has_more") is False and r.get("next_cursor") is None, r)
+            else:
+                check("search pages: maximum UID included on first page", c == 0
+                      and [m["uid"] for m in r.get("messages", [])] == [4294967295], r)
+                c, r = tool(srv, "mail_search", {"cursor": r.get("next_cursor"), "limit": 1})
+                check("search pages: maximum UID cannot wrap or repeat", c == 0
+                      and [m["uid"] for m in r.get("messages", [])] == [1]
+                      and r.get("has_more") is False and r.get("next_cursor") is None, r)
+        finally:
+            srv.stop()
+
+    for change in ({"at": 2, "uidvalidity": 99}, {"at": 2, "remove_uids": [405, 404]}):
+        scenario = copy.deepcopy(fixture)
+        scenario["examine_changes"] = [change]
+        srv = Server(work, fixture=scenario)
+        try:
+            c, r = tool(srv, "mail_search", {"limit": 2})
+            if "uidvalidity" in change:
+                check("search pages: changed UIDVALIDITY between SEARCH and FETCH refuses results", c != 0
+                      and "UIDVALIDITY" in r.get("error", ""), r)
+            else:
+                check("search pages: disappearing selected messages still advance cursor", c == 0
+                      and r.get("messages") == [] and r.get("has_more") is True, r)
+                c, r = tool(srv, "mail_search", {"limit": 2, "cursor": r.get("next_cursor")})
+                check("search pages: empty FETCH does not repeat a page", c == 0
+                      and [m["uid"] for m in r.get("messages", [])] == [403, 402], r)
+        finally:
+            srv.stop()
 
 
 def reads(srv):
@@ -3410,6 +3519,12 @@ def gates_annotations(srv, work, key_file):
         listed = {m["uid"]: m.get("jev", {}) for m in r.get("messages", [])}
         check("gates: every message mail_search lists carries a checked jev object",
               c == 0 and listed and all(j.get("status") == "checked" for j in listed.values()), r)
+        c, page = tool(srv, "mail_search", {"limit": 1}, **env)
+        c, page = tool(srv, "mail_search", {"limit": 1, "cursor": page.get("next_cursor")}, **env)
+        check("gates: search continuation retains Jev annotations and pagination fields", c == 0
+              and len(page.get("messages", [])) == 1
+              and page["messages"][0].get("jev", {}).get("status") == "checked"
+              and "has_more" in page and "next_cursor" in page, page)
         flagged = {uid for uid, j in listed.items() if j.get("signals", {}).get("suspected_injection")}
         check("gates: suspected_injection is shown only where Jev suspects it", flagged == {GATE_INJECTION}, listed)
         missing = [(name, r) for name, args in ANNOTATED_READS[1:] for c, r in [tool(srv, name, args, **env)]
