@@ -19,6 +19,7 @@ import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 import ./src/response.bend as Response
+import ./tests/formal/smtp-tls.bend as SmtpTls
 
 # Tool classes
 # ------------

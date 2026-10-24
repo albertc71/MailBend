@@ -46,6 +46,14 @@ fn assert_refused(out: &Output, reason: &str) {
 }
 
 #[test]
+fn smtp_tls_mode_is_explicit_and_invalid_values_fail_before_connecting() {
+    for mode in ["", "off", "plain", "auto", "IMPLICIT", "starttls "] {
+        let out = helper(&["smtp"], b"", &[("MAILBEND_SMTP_TLS_MODE", mode)]);
+        assert_refused(&out, "MAILBEND_SMTP_TLS_MODE must be starttls or implicit");
+    }
+}
+
+#[test]
 fn check_needs_no_credentials() {
     let out = Command::new(env!("CARGO_BIN_EXE_mailbend-tls"))
         .arg("--check")

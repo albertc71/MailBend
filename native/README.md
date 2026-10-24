@@ -95,7 +95,11 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   configuration, clippy forbids rustls's `dangerous()` API, and CI greps for
   it. Certificates must carry subjectAltName entries (no CN-only
   certificates).
-  SMTP must offer STARTTLS; the helper refuses to authenticate without it.
+  SMTP defaults to mandatory STARTTLS, with EHLO repeated after the upgrade.
+  `MAILBEND_SMTP_TLS_MODE=implicit` instead verifies TLS before the greeting.
+  Only `starttls` and `implicit` are accepted; unset defaults to `starttls`.
+  The port remains independently configured (default 587), with no mode
+  inference or fallback. Neither mode authenticates before verified TLS.
 - **Resolution**: system DNS by default; a nonempty `MAILBEND_DOH_URL`
   selects an HTTPS DNS resolver without fallback to system DNS for the mail
   hostname. The helper asks for A and AAAA records (RFC 8484 POST) and uses
@@ -204,7 +208,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   refused. Needs a file system with `O_TMPFILE` support.
 - **SMTP envelope**: `MAIL FROM`, `RCPT TO`, ..., `DATA`, the dot-stuffed
   message, `.`. EHLO, HELO, STARTTLS, AUTH and QUIT are refused in the
-  envelope. The helper owns greeting, STARTTLS, authentication and QUIT.
+  envelope. The helper owns greeting, TLS negotiation, authentication and QUIT.
   Envelope commands and final message acceptance require 2xx replies; DATA
   requires a 354 continuation before the message is sent. A rejection stops
   the run.

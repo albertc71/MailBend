@@ -22,7 +22,7 @@ def guidance(stage: String) -> String:
     case "connect":
       "Check the configured port, firewall and provider connectivity."
     case "tls":
-      "IMAP requires implicit verified TLS; SMTP requires STARTTLS, not implicit TLS."
+      "Check the configured SMTP TLS mode and port; IMAP uses implicit verified TLS."
     case "authentication":
       "Check provider password-login support and credentials; SMTP needs AUTH PLAIN or LOGIN."
     case "folders":

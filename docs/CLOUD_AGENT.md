@@ -101,9 +101,12 @@ when you need folder names.
 
 Diagnostics separate DNS/DoH lookup, TCP connection, TLS, greeting/EHLO and
 authentication failures. MailBend supports IMAP implicit TLS with password LOGIN,
-and SMTP STARTTLS with AUTH PLAIN or LOGIN. Missing STARTTLS or unsupported SMTP
-AUTH mechanisms have explicit reasons; OAuth and implicit-TLS SMTP are unsupported.
-The SMTP check uses only greeting, EHLO, STARTTLS, AUTH and best-effort QUIT.
+and SMTP STARTTLS or explicit implicit TLS with AUTH PLAIN or LOGIN. Missing
+STARTTLS in STARTTLS mode or unsupported SMTP AUTH mechanisms have explicit
+reasons; OAuth is unsupported. The SMTP check follows the configured TLS mode:
+implicit mode verifies TLS before greeting or EHLO; STARTTLS mode upgrades
+before authentication. Both use only greeting, EHLO, authentication and
+best-effort QUIT, with STARTTLS only in that mode.
 IMAP discovery uses only authenticated CAPABILITY/LIST queries and logout.
 Both are permitted with read-only/drafts-only enabled; malformed switches stop
 all network work. This grants no sending permission or exception to send gates.
@@ -289,7 +292,8 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
 
 - **Policy and blocked DoH:** opt in only where alternate DNS/direct mail
   egress is permitted. DoH cannot open blocked TCP ports: IMAP needs 993 and
-  SMTP needs 587 plus STARTTLS. A network allowlist may need the resolver and
+  SMTP needs its configured port and TLS mode (587 with STARTTLS by default).
+  A network allowlist may need the resolver and
   mail destinations approved. There is no silent fallback to the broken
   system resolver when a DoH lookup fails.
 - **Alternate resolvers:** set `MAILBEND_DOH_URL` to an approved HTTPS DNS

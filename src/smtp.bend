@@ -1,5 +1,5 @@
-# The SMTP envelope handed to mailbend-tls, which greets, upgrades with
-# STARTTLS and authenticates before sending these lines; and the reading of
+# The SMTP envelope handed to mailbend-tls, which establishes verified TLS
+# and authenticates before sending these lines; and the reading of
 # the replies it gives back.
 
 import Base

@@ -47,7 +47,14 @@ pub fn run(protocol: Protocol) -> Result<Outcome, Exit> {
     let host = &settings.host;
     let outcome = match &plan {
         Plan::Imap(commands) => imap::session::run(&mut conn, &tls, host, &credentials, commands),
-        Plan::Smtp(steps) => smtp::session::run(&mut conn, &tls, host, &credentials, steps),
+        Plan::Smtp(steps) => smtp::session::run(
+            &mut conn,
+            &tls,
+            host,
+            settings.smtp_tls_mode,
+            &credentials,
+            steps,
+        ),
     };
     conn.flush_transcript();
     outcome

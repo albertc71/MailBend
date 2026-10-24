@@ -50,7 +50,14 @@ fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
     // Diagnostics bypass envelope parsing and never accept message input.
     let result = match protocol {
         Protocol::Imap => imap::session::run(&mut conn, &tls, &settings.host, &credentials, &[]),
-        Protocol::Smtp => smtp::session::run(&mut conn, &tls, &settings.host, &credentials, &[]),
+        Protocol::Smtp => smtp::session::run(
+            &mut conn,
+            &tls,
+            &settings.host,
+            settings.smtp_tls_mode,
+            &credentials,
+            &[],
+        ),
     };
     result.map_err(|e| (conn.stage, reason(&e)))?;
     Ok(())

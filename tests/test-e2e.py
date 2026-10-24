@@ -71,6 +71,7 @@ def check(name, cond, detail=""):
 class Server:
     def __init__(self, work, caps=None, extra=(), fixture=None):
         self.work = work
+        self.smtp_mode = "implicit" if "--smtp-implicit" in extra else "starttls"
         self.state = os.path.join(work, "state.json")
         self.log = os.path.join(work, "log.jsonl")
         for f in (self.state, self.log):
@@ -102,6 +103,7 @@ class Server:
         e.pop("MAILBEND_READ_ONLY", None)
         e.pop("MAILBEND_DRAFTS_ONLY", None)
         e.pop("MAILBEND_PASSWORD_FILE", None)
+        e["MAILBEND_SMTP_TLS_MODE"] = self.smtp_mode
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_DOWNLOAD_DIR", None)
         e.pop("MAILBEND_TLS_HELPER", None)
@@ -328,6 +330,7 @@ def run_all(work):
     flag_tools(work)
     send_safety(work)
     smtp_outcomes(work)
+    implicit_smtp(work)
     downloads(work)
     threads(work)
     flags_first_reads(work)
@@ -2232,6 +2235,36 @@ SEND = {"to": "friend@example.com", "subject": "safety", "body": "x"}
 
 def sent_count(srv):
     return len(srv.st().get("sent", []))
+
+
+def implicit_smtp(work):
+    srv = Server(work, extra=["--smtp-implicit"])
+    ts = TypeSafe(work)
+    try:
+        key_file = typesafe_key_file(work)
+        env = jev_env(ts, key_file)
+        for setting in ("MAILBEND_READ_ONLY", "MAILBEND_DRAFTS_ONLY"):
+            c, r = tool(srv, "mail_send", SEND, **{setting: "1"})
+            check(f"implicit SMTP: {setting} blocks sending", c != 0 and sent_count(srv) == 0, r)
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_ALLOWED_RECIPIENTS="other@example.com")
+        check("implicit SMTP: allowlist blocks sending", c != 0 and sent_count(srv) == 0, r)
+        c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "subject": "[veto] plans"}, **env)
+        check("implicit SMTP: Jev veto prevents SMTP", send_blocked(c, r, logged, "Jev vetoed it")
+              and sent_count(srv) == 0, r)
+        limit = {"MAILBEND_MAX_SENDS_PER_DAY": "1",
+                 "MAILBEND_STATE_DIR": os.path.join(os.path.realpath(work), "implicit-send-state")}
+        c, r = tool(srv, "mail_send", SEND, **env, **limit)
+        check("implicit SMTP: checked send accepted", c == 0 and sent_count(srv) == 1
+              and r.get("jev", {}).get("decision") == "proceeded", r)
+        c, r = tool(srv, "mail_send", SEND, **limit)
+        check("implicit SMTP: daily counter blocks next send", c != 0 and "daily send limit" in r.get("error", "")
+              and sent_count(srv) == 1, r)
+        c, r = tool(srv, "mail_send", SEND, MAILBEND_SMTP_TLS_MODE="plain")
+        check("implicit SMTP: invalid mode refuses sending", c != 0 and "MAILBEND_SMTP_TLS_MODE" in r.get("error", "")
+              and sent_count(srv) == 1, r)
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def send_safety(work):

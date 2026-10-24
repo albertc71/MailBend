@@ -106,7 +106,7 @@ call_helper() {
   shift 2
   printf '%s' "$script" >"$WORK/in.txt"
   OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
-  env MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
+  env -u MAILBEND_SMTP_TLS_MODE MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
       MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
       "$@" "$HELPER" "$protocol" <"$WORK/in.txt" >"$OUT" 2>"$ERR"
   CODE=$?
@@ -617,6 +617,54 @@ case_refresh() {
   stop_server
 }
 
+# Both modes share the envelope and credential-redaction path.
+case_smtp_modes() {
+  local mode cert extra start elapsed
+  for mode in starttls implicit; do
+    extra=""
+    [ "$mode" = implicit ] && extra="--smtp-implicit"
+    start_server "smtp-$mode" $extra --echo-login || { fail "$mode" "server did not start"; return; }
+    call_smtp $'MAIL FROM:<user@example.com>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\nSubject: mode\r\n\r\nhello\r\n.\r\n' MAILBEND_SMTP_TLS_MODE="$mode"
+    if [ "$CODE" -eq 0 ] && python3 - "$LOG_FILE" "$mode" <<'PY'
+import json, sys
+lines = [json.loads(line)['line'] for line in open(sys.argv[1])]
+ehlo = [i for i, l in enumerate(lines) if l.startswith('EHLO ')]
+auth = next(i for i, l in enumerate(lines) if l == 'AUTH <redacted>')
+assert len(ehlo) == (2 if sys.argv[2] == 'starttls' else 1)
+assert ehlo[-1] < auth
+assert ('STARTTLS' in lines) == (sys.argv[2] == 'starttls')
+PY
+    then pass "$mode SMTP negotiation and send"; else fail "$mode SMTP negotiation and send" "exit=$CODE"; fi
+    stop_server
+    start_server "smtp-reject-$mode" $extra || { fail "$mode RCPT rejection" "server did not start"; return; }
+    call_smtp $'MAIL FROM:<user@example.com>\r\nRCPT TO:<reject@example.com>\r\nDATA\r\nSubject: mode\r\n\r\nhello\r\n.\r\n' MAILBEND_SMTP_TLS_MODE="$mode"
+    if [ "$CODE" -eq 5 ] && ! grep -aq '"line": "DATA"' "$LOG_FILE"; then pass "$mode RCPT rejection prevents DATA"; else fail "$mode RCPT rejection" "exit=$CODE"; fi
+    stop_server
+    for cert in wronghost expired selfsigned; do
+      start_server "smtp-$mode-$cert" $extra --cert-name "$cert" || { fail "$mode rejects $cert" "server did not start"; return; }
+      call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode"
+      if [ "$CODE" -eq 3 ] && ! grep -aq 'AUTH' "$LOG_FILE"; then pass "$mode rejects $cert before AUTH"; else fail "$mode rejects $cert" "exit=$CODE"; fi
+      stop_server
+    done
+    start_server "smtp-silent-$mode" --silent-port || { fail "$mode silent endpoint" "server did not start"; return; }
+    start=$SECONDS
+    call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode" MAILBEND_SMTP_PORT="$SILENT_PORT" MAILBEND_TIMEOUT_MS=300
+    elapsed=$((SECONDS - start))
+    if [ "$CODE" -ne 0 ] && [ "$elapsed" -lt 5 ] && [ ! -s "$OUT" ]; then pass "$mode silent endpoint bounded"; else fail "$mode silent endpoint" "exit=$CODE elapsed=$elapsed"; fi
+    stop_server
+  done
+  for mode in starttls implicit; do
+    extra="--smtp-implicit"
+    [ "$mode" = implicit ] && extra=""
+    start_server "smtp-wrong-$mode" $extra || { fail "$mode wrong endpoint" "server did not start"; return; }
+    start=$SECONDS
+    call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode" MAILBEND_TIMEOUT_MS=300
+    elapsed=$((SECONDS - start))
+    if [ "$CODE" -ne 0 ] && [ "$elapsed" -lt 5 ] && ! grep -aq 'AUTH' "$LOG_FILE"; then pass "$mode wrong endpoint fails without AUTH"; else fail "$mode wrong endpoint" "exit=$CODE elapsed=$elapsed"; fi
+    stop_server
+  done
+}
+
 # --- run every case -------------------------------------------------------
 case1
 case3
@@ -641,6 +689,7 @@ case21
 case_smtp_progress
 case_selected_section
 case_refresh
+case_smtp_modes
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"
