@@ -455,9 +455,17 @@ TOOLS = [
          ANNOTATED_READS,
          {"folder": FOLDER,
           "uid": UID,
+          "uidvalidity": UIDVALIDITY,
+          "section": param("string", "Optional: list for section metadata, text/html for the first "
+                           "inline part, or a numeric section from list. Requires uidvalidity. "
+                           "Fetches only that part; incomplete or malformed content fails. "
+                           "Omit for the compatible whole-message prefix. Selected reads "
+                           "return content with selected_part scope. Jev annotations respect the "
+                           "configured mode and cover only selected text, never unrelated bodies."),
           "max_bytes": param(
               "integer",
-              "Read at most this many bytes of the message. Default 262144.",
+              "Whole-message prefix or selected encoded-part window. Default 262144; "
+              "a selected part must be smaller than this window.",
               minimum=1024, maximum=16777216)},
          ["uid"]),
     tool("mail_get_new",
@@ -534,7 +542,8 @@ TOOLS = [
          "Save one attachment of a message as a new file in "
          "MAILBEND_DOWNLOAD_DIR (downloads are off without it) and return its "
          "path. The message is read as mail_get reads it, so it stays "
-         "unread; it must be at most 25 MB. The file name is the "
+         "unread. With section and uidvalidity only that part is read (under 25 MB "
+         "encoded); otherwise the complete message must fit 25 MB. The file name is the "
          "attachment's (or filename) without any directory, control or "
          "invisible format characters or leading dots. An existing file is "
          "never replaced: the call fails, so pass another filename. Not "
@@ -542,6 +551,9 @@ TOOLS = [
          CHANGES,
          {"folder": FOLDER,
           "uid": UID,
+          "uidvalidity": UIDVALIDITY,
+          "section": param("string", "Numeric section from mail_get(section=list). Requires "
+                           "uidvalidity; replaces index. Only complete decoded files are saved."),
           "index": param(
               "integer",
               "The attachment's position in mail_get's attachments, from 0.",
@@ -550,7 +562,7 @@ TOOLS = [
               "string",
               "Name to save the file as. Default: the attachment's file "
               "name.")},
-         ["uid", "index"]),
+         ["uid"]),
     tool("mail_mark_read",
          "Mark messages as read (add the \\Seen flag).",
          SETS_FLAGS, MESSAGES, MESSAGES_REQUIRED),

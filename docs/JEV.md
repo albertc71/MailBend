@@ -52,6 +52,14 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   attachment names and the header facts of the original it answers or
   forwards; its body only in `body` mode.
 
+Selected `mail_get` content keeps this annotation policy: parent header facts
+are available in either mode; body mode adds only the selected part's readable
+text, explicitly identified as a selected, incomplete view of the message.
+Binary parts do not contribute binary data to Jev. The read result's
+`scope: "selected_part"` and `message_complete: false` prevent a section's
+`complete: true` from implying the whole message was checked. Unrelated MIME
+bodies are not fetched. A metadata-only section list does not ask Jev.
+
 ## The `jev` object
 
 Every message or call Jev was asked about carries a `jev` object: `status`

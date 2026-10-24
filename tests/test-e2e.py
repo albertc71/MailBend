@@ -183,7 +183,8 @@ def flags(state, box, uid):
 
 
 def main():
-    work = tempfile.mkdtemp(prefix="e2e-", dir=str(ROOT / "build") if (ROOT / "build").exists() else None)
+    work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
+                            (str(ROOT / "build") if (ROOT / "build").exists() else None))
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
@@ -224,6 +225,8 @@ def run_all(work):
     triage(work)
     gates(work)
     sign_in_html(work)
+    selected_parts(work)
+    selected_parts_errors(work)
 
 
 def sign_in_html(work):
@@ -3798,6 +3801,149 @@ def gates_annotations(srv, work, key_file):
               states and not has_key(states, "text") and GATE_TEXT not in json.dumps(states), states[:1])
     finally:
         ts.stop()
+
+
+def selected_parts(work):
+    fixture = copy.deepcopy(FIX)
+    huge = "Z" * (26 * 1024 * 1024)
+    raw = ("Content-Type: multipart/mixed; boundary=outer\r\n\r\n"
+           "--outer\r\nContent-Type: application/octet-stream\r\n"
+           "Content-Disposition: attachment; filename=large.bin\r\n\r\n" + huge +
+           "\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n"
+           "--inner\r\nContent-Type: text/plain\r\n"
+           "Content-Transfer-Encoding: quoted-printable\r\n\r\nsmall=20text"
+           "\r\n--inner\r\nContent-Type: text/html\r\n"
+           "Content-Transfer-Encoding: base64\r\n\r\nPHA+c21hbGw8L3A+"
+           "\r\n--inner--\r\n--outer\r\nContent-Type: application/octet-stream\r\n"
+           "Content-Disposition: attachment; filename=small.bin\r\n"
+           "Content-Transfer-Encoding: base64\r\n\r\naGVsbG8="
+           "\r\n--outer--\r\n")
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = raw
+    fixture["mailboxes"]["INBOX"]["messages"][0]["measure_sections"] = True
+    uidv = fixture["mailboxes"]["INBOX"]["uidvalidity"]
+    download_dir = pathlib.Path(work) / "selected-downloads"
+    download_dir.mkdir(exist_ok=True)
+    srv = Server(work, fixture=fixture)
+    try:
+        common = {"uid": 1, "uidvalidity": uidv}
+        c, r = tool(srv, "mail_get", dict(common, section="list"))
+        check("sections: discover nested paths without message bytes", c == 0 and
+              [p["section"] for p in r.get("parts", [])] == ["1", "2.1", "2.2", "3"], r)
+        for section, expected in [("text", "small text"), ("html", "<p>small</p>")]:
+            c, r = tool(srv, "mail_get", dict(common, section=section), MAILBEND_READ_ONLY="1")
+            check("sections: small " + section + " after oversized sibling", c == 0 and
+                  r.get("content") == expected and r.get("complete") is True, r)
+        c, r = tool(srv, "mail_get", dict(common, section="3"))
+        check("sections: binary content remains lossless", c == 0 and
+              r.get("content_encoding") == "base64" and r.get("content") == "aGVsbG8=", r)
+        c, r = tool(srv, "mail_get_attachment",
+                    dict(common, section="3", filename="preview.bin", dry_run=True),
+                    MAILBEND_DOWNLOAD_DIR=str(download_dir))
+        check("sections: dry run never publishes a file", c == 0 and
+              not (download_dir / "preview.bin").exists(), r)
+        c, r = tool(srv, "mail_get_attachment", dict(common, section="3"),
+                    MAILBEND_DOWNLOAD_DIR=str(download_dir))
+        path = download_dir / "small.bin"
+        check("sections: complete selected attachment", c == 0 and path.read_bytes() == b"hello", r)
+        c, r = tool(srv, "mail_get_attachment", dict(common, section="3"),
+                    MAILBEND_DOWNLOAD_DIR=str(download_dir))
+        check("sections: no overwrite", c != 0 and path.exists() and path.read_bytes() == b"hello", r)
+        for args in [dict(common, section="1] STORE 1 +FLAGS (\\Seen)"),
+                     dict(common, section="0"), dict(common, section="01"),
+                     dict(common, section="3", uidvalidity=uidv + 1),
+                     {"uid": 1, "section": "text"}]:
+            c, r = tool(srv, "mail_get", args)
+            check("sections: invalid identity refused", c != 0, r)
+        records = srv.log_records()
+        lines = [x["line"] for x in records if x["proto"] == "imap"]
+        sizes = [x["line"] for x in records if x["proto"] == "imap-section-bytes"]
+        expected_sizes = {"BODY[2.1]<0>": 12, "BODY[2.2]<0>": 16, "BODY[3]<0>": 8}
+        measured = [(name, int(size)) for name, size in (line.split() for line in sizes)]
+        check("sections: measured payload sizes", {name for name, _ in measured} ==
+              set(expected_sizes) and all(expected_sizes.get(name) == size
+                                         for name, size in measured), sizes)
+        check("sections: only selected PEEK and read-only metadata", not any(
+            " SELECT " in x or "BODY.PEEK[]" in x or "BODY[" in x or
+            "BODY.PEEK[1]" in x or " STORE " in x for x in lines), lines[-20:])
+        check("sections: message remains unread", not flags(srv.st(), "INBOX", 1))
+        if os.environ.get("MAILBEND_MEASURE_PARTS") == "1":
+            for label, args in [("whole-prefix", dict(uid=1, max_bytes=262144)),
+                                ("selected-text", dict(common, section="text"))]:
+                before = len(srv.log_records())
+                measurement = pathlib.Path(work) / (label + ".rss")
+                p = subprocess.run(["/usr/bin/time", "-f", "%M", "-o", str(measurement),
+                                    LAUNCHER, "call", "mail_get", json.dumps(args)],
+                                   env=srv.env(), capture_output=True, text=True, timeout=120)
+                check("sections: measured " + label, p.returncode == 0, p.stderr)
+                payloads = [x["line"] for x in srv.log_records()[before:]
+                            if x["proto"] == "imap-section-bytes"]
+                print("MEASURE " + label + " peak RSS KiB=" + measurement.read_text().strip() +
+                      "; payload bytes=" + repr(payloads))
+        key_file = typesafe_key_file(work)
+        for scenario, mode in [("ok", "headers"), ("ok", "body"), ("status:503", "body")]:
+            ts = TypeSafe(work, scenario)
+            try:
+                c, r = tool(srv, "mail_get", dict(common, section="text"),
+                            **jev_env(ts, key_file, MAILBEND_TYPESAFE_CONTENT=mode,
+                                      MAILBEND_TYPESAFE_ZERO_RETENTION="1"))
+                expected_status = "checked" if scenario == "ok" else "unchecked"
+                check("sections: Jev " + mode + " " + scenario + " preserves content and scope",
+                      c == 0 and r.get("content") == "small text" and
+                      r.get("scope") == "selected_part" and r.get("message_complete") is False and
+                      r.get("jev", {}).get("status") == expected_status, r)
+                states = [email for q in ts.requests() for email in q["body"]["state"]["emails"]]
+                check("sections: Jev " + mode + " sees only permitted selected facts",
+                      states and all(("text" not in email if mode == "headers" else
+                                      "small text" in email.get("text", "") and
+                                      "message incomplete" in email.get("text", ""))
+                                     for email in states) and "ZZZZ" not in json.dumps(states), states)
+            finally:
+                ts.stop()
+        print("MEASURE selected fixture: unrelated encoded bytes=" + str(len(huge)) +
+              "; selected text=12, html=16, attachment=8 encoded bytes")
+    finally:
+        srv.stop()
+
+
+def selected_parts_errors(work):
+    uidv = FIX["mailboxes"]["INBOX"]["uidvalidity"]
+    for encoding, body, truncate, cut in [("base64", "aGVsbG8", False, False),
+                                           ("quoted-printable", "hello=2", False, False),
+                                           ("7bit", "hello", True, False),
+                                           ("7bit", "hello", False, True)]:
+        fixture = copy.deepcopy(FIX)
+        message = fixture["mailboxes"]["INBOX"]["messages"][0]
+        message["raw"] = ("Content-Type: application/octet-stream\r\n"
+                          "Content-Disposition: attachment; filename=broken.bin\r\n"
+                          f"Content-Transfer-Encoding: {encoding}\r\n\r\n{body}")
+        message["section_truncate"] = truncate
+        message["cut_section_literal"] = cut
+        target = pathlib.Path(work) / "selected-errors"
+        target.mkdir(exist_ok=True)
+        srv = Server(work, fixture=fixture, extra=("--flags-first",))
+        try:
+            c, r = tool(srv, "mail_get_attachment",
+                        {"uid": 1, "uidvalidity": uidv, "section": "1"},
+                        MAILBEND_DOWNLOAD_DIR=str(target))
+            check("sections: " + encoding + (" cut literal" if cut else
+                  " size mismatch" if truncate else " malformed transfer") + " never saved",
+                  c != 0 and not (target / "broken.bin").exists(), r)
+        finally:
+            srv.stop()
+    fixture = copy.deepcopy(FIX)
+    attached = "Subject: enclosed\nContent-Type: text/plain\n\ninner text"
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "Content-Type: message/rfc822\r\n"
+        "Content-Disposition: attachment; filename=original.eml\r\n\r\n" + attached)
+    srv = Server(work, fixture=fixture, extra=("--flags-first",))
+    try:
+        c, r = tool(srv, "mail_get_attachment", {"uid": 1, "uidvalidity": uidv, "section": "1"},
+                    MAILBEND_DOWNLOAD_DIR=str(target))
+        saved = target / "original.eml"
+        check("sections: message/rfc822 remains a complete opaque attachment",
+              c == 0 and saved.read_text() == attached, r)
+    finally:
+        srv.stop()
 
 
 if __name__ == "__main__":

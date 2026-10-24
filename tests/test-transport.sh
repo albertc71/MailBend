@@ -579,6 +579,24 @@ case2() {
   fi
 }
 
+# Numeric section partials retain literal framing and the UIDVALIDITY guard.
+case_selected_section() {
+  start_server case_selected_section || { fail selected-section "server did not start"; return; }
+  call_imap $'a1 EXAMINE INBOX\r\n=EXPECT * OK [UIDVALIDITY 1700000001]\r\na2 UID FETCH 4 (UID BODYSTRUCTURE BODY.PEEK[2]<0.64>)\r\n'
+  if [ "$CODE" -eq 0 ] && grep -aq 'BODY\[2\]<0>' "$OUT" && grep -aq 'JVBERi0xLjQKJeLjz9MK' "$OUT"; then
+    pass "selected PEEK literal"
+  else
+    fail "selected PEEK literal" "exit=$CODE"
+  fi
+  call_imap $'a1 EXAMINE INBOX\r\n=EXPECT * OK [UIDVALIDITY 9]\r\na2 UID FETCH 4 (UID BODY.PEEK[2]<0.64>)\r\n'
+  if [ "$CODE" -ne 0 ] && ! grep -aq 'BODY\[2\]' "$OUT"; then
+    pass "selected section stale generation stops before selected read"
+  else
+    fail "selected section stale generation stops before selected read" "exit=$CODE"
+  fi
+  stop_server
+}
+
 # --- run every case -------------------------------------------------------
 case1
 case3
@@ -601,6 +619,7 @@ case19
 case20
 case21
 case_smtp_progress
+case_selected_section
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"

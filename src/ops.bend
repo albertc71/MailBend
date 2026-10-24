@@ -284,6 +284,18 @@ def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
     I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
   ]
 
+# Discover metadata without message content. The caller checks UIDVALIDITY;
+# the selected read then guards that generation before requesting content.
+def plan_parts(mbox: String, uid: U32) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CFetch{[uid], [I.IUid{}, I.IStructure{}]}]
+
+def plan_part(
+  mbox: String, uid: U32, uidv: U32, section: List<&2, U32>, max: U32
+) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+    I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
+        I.IStructure{}, I.IPart{section, max}]}]
+
 # A conversation is read in sessions of several folders each: one searches
 # every folder for the thread's message IDs, the next fetches the summaries
 # of what it found.
