@@ -31,7 +31,7 @@ pub fn connect(settings: &Settings, tls: &Arc<ClientConfig>) -> Result<TcpStream
 
 /// The addresses to try, with the name of the route that produced them for
 /// error messages.
-fn addresses(
+pub(crate) fn addresses(
     settings: &Settings,
     tls: &Arc<ClientConfig>,
     deadline: &Deadline,

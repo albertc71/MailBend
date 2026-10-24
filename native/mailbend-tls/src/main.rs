@@ -26,6 +26,10 @@ fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(|a| a.to_str().unwrap_or("")).collect();
     let result = match args.as_slice() {
         ["--check"] => Ok(Outcome::Completed),
+        ["diagnose-config-imap"] => mailbend_tls::diagnostic::run(Protocol::Imap, false),
+        ["diagnose-config-smtp"] => mailbend_tls::diagnostic::run(Protocol::Smtp, false),
+        ["diagnose-imap"] => mailbend_tls::diagnostic::run(Protocol::Imap, true),
+        ["diagnose-smtp"] => mailbend_tls::diagnostic::run(Protocol::Smtp, true),
         ["imap"] => mailbend_tls::run(Protocol::Imap),
         ["smtp"] => mailbend_tls::run(Protocol::Smtp),
         _ => Err(Exit::usage("usage: mailbend-tls imap|smtp|--check")),

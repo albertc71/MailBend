@@ -40,16 +40,22 @@ pub fn run(
     creds: &Credentials,
     commands: &[Command<'_>],
 ) -> Result<Outcome, Exit> {
+    conn.enter_stage("tls");
     conn.start_tls(tls, host)?;
+    conn.enter_stage("greeting");
     let first = conn
         .read_line()?
         .ok_or_else(|| Exit::protocol("no greeting"))?;
     conn.emit(&first)?;
     match greeting(&first) {
-        Some(Greeting::Ok) => login(conn, creds)?,
-        Some(Greeting::Preauth) => {}
+        Some(Greeting::Ok) => {
+            conn.enter_stage("authentication");
+            login(conn, creds)?;
+        }
+        Some(Greeting::Preauth) => conn.enter_stage("authentication"),
         None => return Err(Exit::protocol("server refused the connection")),
     }
+    conn.enter_stage("commands");
     let outcome = run_commands(conn, commands)?;
     logout(conn);
     Ok(outcome)

@@ -4,6 +4,7 @@
 #   mailbend tools                 print the tool list as JSON
 #   mailbend call <tool> [json]    run one tool and print its JSON result
 #   mailbend version               print the version
+#   mailbend diagnose [--imap] [--smtp]   redacted setup checks; network is opt-in
 
 import Base
 import ./src/codec.bend as C
@@ -12,6 +13,7 @@ import ./src/tools.bend as T
 import ./src/schema.bend as Schema
 import ./src/mcp-protocol.bend as MCP
 import ./src/ops.bend as Ops
+import ./src/diagnostics.bend as Diagnostics
 
 def version() -> String:
   "0.1.0"
@@ -558,7 +560,8 @@ def mcp() -> IO(Unit):
 # ===
 
 def usage() -> String:
-  "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments]"
+  "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments] | " ++
+    "mailbend diagnose [--imap] [--smtp]"
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -604,8 +607,23 @@ def command_args(xs: List<String>) -> List<&2, String>:
     case prog <> t:
       share(t)
 
+def diagnose_cli(imap: Bool, smtp: Bool) -> IO(Unit):
+  do IO<Unit>:
+    o : T.Out <- Diagnostics.run(imap, smtp)
+    print_out(o)
+
 def cli(args: List<&2, String>) -> IO(Unit):
   match args:
+    case "diagnose" <> Nil{}:
+      diagnose_cli(False{}, False{})
+    case "diagnose" <> "--imap" <> Nil{}:
+      diagnose_cli(True{}, False{})
+    case "diagnose" <> "--smtp" <> Nil{}:
+      diagnose_cli(False{}, True{})
+    case "diagnose" <> "--imap" <> "--smtp" <> Nil{}:
+      diagnose_cli(True{}, True{})
+    case "diagnose" <> "--smtp" <> "--imap" <> Nil{}:
+      diagnose_cli(True{}, True{})
     case "mcp" <> Nil{}:
       mcp()
     case "tools" <> Nil{}:

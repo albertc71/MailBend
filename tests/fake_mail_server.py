@@ -222,6 +222,8 @@ class State:
         self.cut_goodbye = False
         self.file_sent = None
         self.bodystructure = 'real'
+        self.smtp_auth = fixture.get('smtp_auth', 'PLAIN LOGIN')
+        self.smtp_greeting = fixture.get('smtp_greeting', 'fake ESMTP')
         self.seen = {}
         self.examine_count = 0
         self.examine_changes = fixture.get("examine_changes", [])
@@ -1419,7 +1421,7 @@ class SMTPSession:
             return user == self.state.data['user'] and pw == self.state.data['password']
 
     def run(self):
-        self.send('220 fake ESMTP\r\n')
+        self.send('220 ' + self.state.smtp_greeting + '\r\n')
         while True:
             raw = self.conn.readline()
             if raw is None:
@@ -1483,7 +1485,7 @@ class SMTPSession:
         if self.starttls_offered and not self.tls_active:
             lines.append('STARTTLS')
         if self.tls_active:
-            lines.append('AUTH PLAIN LOGIN')
+            lines.append('AUTH ' + self.state.smtp_auth)
         for line in lines[:-1]:
             self.send(f'250-{line}\r\n')
         self.send(f'250 {lines[-1]}\r\n')

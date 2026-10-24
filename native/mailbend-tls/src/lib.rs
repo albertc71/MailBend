@@ -13,6 +13,7 @@ pub(crate) mod text;
 
 mod connection;
 mod creds;
+pub mod diagnostic;
 mod route;
 mod settings;
 
