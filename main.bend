@@ -10,6 +10,8 @@ import ./src/codec.bend as C
 import ./src/json.bend as J
 import ./src/tools.bend as T
 import ./src/schema.bend as Schema
+import ./src/mcp-protocol.bend as MCP
+import ./src/ops.bend as Ops
 
 def version() -> String:
   "0.1.0"
@@ -59,15 +61,24 @@ def rpc_error(id: J.Json, code: String, msg: String) -> String:
     J.kv("jsonrpc", J.str("2.0")), J.kv("id", id), J.kv("error", error)
   ]))
 
+# Modern errors omit an unreadable id; legacy JSON-RPC uses null.
+def rpc_unidentified(legacy: Maybe<&2, String>, code: String, msg: String) -> String:
+  match legacy:
+    case None{}:
+      error = J.obj([J.kv("code", J.JNum{code}), J.kv("message", J.str(msg))])
+      J.show(J.obj([J.kv("jsonrpc", J.str("2.0")), J.kv("error", error)]))
+    case _:
+      rpc_error(J.JNull{}, code, msg)
+
+def rpc_invalid_id(legacy: Maybe<&2, String>, id: J.Json, code: String, msg: String) -> String:
+  match id:
+    case J.JNull{}:
+      rpc_unidentified(legacy, code, msg)
+    case _:
+      rpc_error(id, code, msg)
+
 # initialize
 # ----------
-
-def latest_version() -> String:
-  "2025-06-18"
-
-def known_version(v: String) -> Bool:
-  List.contains(~String, ~String.eq,
-    [latest_version(), "2025-03-26", "2024-11-05"], v)
 
 def instructions() -> String:
   "Mail over IMAP/SMTP. Start with mail_probe. " ++
@@ -80,14 +91,16 @@ def instructions() -> String:
   "mail_rename_folder manage folders (none deletes a folder). " ++
   "mail_flag and mail_unflag set or clear \\Flagged and an Apple Mail colour."
 
-# A client asking for a version we do not know is offered the latest.
-def initialize_result(params: J.Json) -> J.Json:
+# A client asking for a version we do not know is offered the latest legacy revision.
+def legacy_version(params: J.Json) -> String:
   +asked = T.str_arg(params, "protocolVersion", "")
-  agreed = Bool.pick(String, known_version(asked), asked, latest_version())
+  known = List.contains(~String, ~String.eq, MCP.legacy_versions(), asked)
+  Bool.pick(String, known, asked, MCP.latest_legacy_version())
+
+def initialize_result(params: J.Json) -> J.Json:
+  agreed = legacy_version(params)
   tools = J.obj([J.kv("listChanged", J.bool(False{}))])
-  server = J.obj([
-    J.kv("name", J.str("mailbend")), J.kv("version", J.str(version()))
-  ])
+  server = MCP.server_info(version())
   J.obj([
     J.kv("protocolVersion", J.str(agreed)),
     J.kv("capabilities", J.obj([J.kv("tools", tools)])),
@@ -118,7 +131,7 @@ def object_or_empty(m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
       None{}
 
 # Runs the tool when its arguments are an object.
-def run_tool(id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
+def run_tool(modern: Bool, id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
   match args:
     case None{}:
       IO.print(rpc_error(id, "-32602",
@@ -126,24 +139,30 @@ def run_tool(id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
     case Some{a}:
       do IO<Unit>:
         o : T.Out <- T.call(name, a)
-        IO.print(rpc_result(id, call_result(o)))
+        IO.print(rpc_result(id, MCP.result(modern, call_result(o), version())))
 
-def call_tool(id: J.Json, +params: J.Json) -> IO(Unit):
+def call_tool(modern: Bool, id: J.Json, +params: J.Json) -> IO(Unit):
   args = object_or_empty(J.get(params, "arguments"))
-  run_tool(id, T.str_arg(params, "name", ""), args)
+  run_tool(modern, id, T.str_arg(params, "name", ""), args)
 
 # Requests
 # --------
 
 # Answers a request by its method. `params` is an object.
-def respond(id: J.Json, +method: String, params: J.Json) -> IO(Unit):
+def respond(modern: Bool, id: J.Json, +method: String, params: J.Json) -> IO(Unit):
   match method:
     case "tools/call":
-      call_tool(id, params)
+      call_tool(modern, id, params)
     case "tools/list":
       do IO<Unit>:
         ts : J.Json <- offered_tools()
-        IO.print(rpc_result(id, J.obj([J.kv("tools", ts)])))
+        IO.print(rpc_result(id, MCP.result(modern, J.obj([J.kv("tools", ts)]), version())))
+    case "server/discover":
+      IO.print(rpc_result(id, MCP.complete_result(J.obj([
+        J.kv("supportedVersions", MCP.versions()),
+        J.kv("capabilities", J.obj([J.kv("tools", J.obj([]))])),
+        J.kv("instructions", J.str(instructions()))
+      ]), version())))
     case "initialize":
       IO.print(rpc_result(id, initialize_result(params)))
     case "ping":
@@ -151,25 +170,115 @@ def respond(id: J.Json, +method: String, params: J.Json) -> IO(Unit):
     case _:
       IO.print(rpc_error(id, "-32601", "method not found: " ++ method))
 
+# Protocol errors are distinct from tool execution failures. Optional resume
+# fields are refused: this server never emits a resumable result.
+def modern_request.problem(method: String, +p: J.Json) -> String:
+  match method:
+    case "tools/call":
+      Bool.pick(String,
+        MCP.is_string(J.get(p, "name")) &&
+        Maybe.is_some(&2, Ops.Op, Ops.from_name(T.str_arg(p, "name", ""))) &&
+        MCP.optional_object(p, "arguments") &&
+        Bool.not(MCP.has(p, "inputResponses") || MCP.has(p, "requestState")),
+        "", "invalid params: unknown tool or malformed tools/call")
+    case "tools/list":
+      Bool.pick(String, MCP.has(p, "cursor"), "invalid params: invalid cursor", "")
+    case _:
+      ""
+
+def modern_request.run(id: J.Json, method: String, p: J.Json, problem: String) -> IO(Unit):
+  match problem:
+    case "":
+      respond(True{}, id, method, p)
+    case _:
+      IO.print(rpc_error(id, "-32602", problem))
+
+def modern_request.method(id: J.Json, +method: String, +p: J.Json) -> IO(Unit):
+  match method:
+    case "initialize":
+      IO.print(rpc_error(id, "-32601", "initialize is a legacy method"))
+    case "ping":
+      IO.print(rpc_error(id, "-32601", "ping is a legacy method"))
+    case _:
+      modern_request.run(id, method, p, modern_request.problem(method, p))
+
+def modern_request.version(id: J.Json, method: String, p: J.Json, supported: Bool) -> IO(Unit):
+  match supported:
+    case False{}:
+      IO.print(MCP.unsupported(id, p))
+    case True{}:
+      modern_request.method(id, method, p)
+
+def modern_request.meta(id: J.Json, method: String, +p: J.Json, valid: Bool) -> IO(Unit):
+  match valid:
+    case False{}:
+      IO.print(rpc_error(id, "-32602", "invalid params: required MCP metadata is malformed"))
+    case True{}:
+      modern_request.version(id, method, p, String.eq(MCP.requested(p), MCP.modern_version()))
+
+# Validation order: id, metadata shape, supported version, method, then params.
+def modern_request(id: J.Json, method: String, +p: J.Json, valid: Bool) -> IO(Unit):
+  match valid:
+    case False{}:
+      IO.print(rpc_unidentified(None{}, "-32600",
+        "invalid request: MCP id must be a string or integer"))
+    case True{}:
+      modern_request.meta(id, method, p, MCP.metadata_ok(p))
+
+# Only legacy initialization changes connection state. Modern metadata never
+# inherits or changes that state, even when modern and legacy calls interleave.
+def legacy_after(
+  legacy: Maybe<&2, String>, method: String, p: J.Json
+) -> Maybe<&2, String>:
+  match method:
+    case "initialize":
+      Some{legacy_version(p)}
+    case _:
+      legacy
+
+def respond_era(
+  legacy: Maybe<&2, String>, +id: J.Json, +method: String, +p: J.Json, modern: Bool
+) -> IO(Maybe<&2, String>):
+  match modern:
+    case True{}:
+      do IO<Maybe<&2, String>>:
+        modern_request(id, method, p, MCP.id_ok(id))
+        return legacy
+    case False{}:
+      do IO<Maybe<&2, String>>:
+        respond(False{}, id, method, p)
+        return legacy_after(legacy, method, p)
+
+# Explicit modern metadata always selects modern handling. Without it, only
+# initialize or an established legacy revision selects the legacy contract.
+def is_modern(legacy: Maybe<&2, String>, +method: String, p: J.Json) -> Bool:
+  MCP.is_modern_marked(p) || String.eq(method, "server/discover") ||
+  (Bool.not(Maybe.is_some(&2, String, legacy)) && Bool.not(String.eq(method, "initialize")))
+
 # Parameters that are not an object are refused, not read as none.
 def respond_with(
-  id: J.Json, method: String, params: Maybe<&2, J.Json>
-) -> IO(Unit):
+  +legacy: Maybe<&2, String>, id: J.Json, +method: String, params: Maybe<&2, J.Json>
+) -> IO(Maybe<&2, String>):
   match params:
     case None{}:
-      IO.print(rpc_error(id, "-32602",
-        "invalid params: \"params\" must be an object"))
-    case Some{p}:
-      respond(id, method, p)
+      do IO<Maybe<&2, String>>:
+        IO.print(rpc_invalid_id(legacy, id, "-32602",
+          "invalid params: \"params\" must be an object"))
+        return legacy
+    case Some{+p}:
+      modern = is_modern(legacy, method, p)
+      respond_era(legacy, id, method, p, modern)
 
-# A request carries an id; a notification (no id) gets no answer.
-def request(+req: J.Json, id: Maybe<&2, J.Json>) -> IO(Unit):
+# A notification (no id) gets no answer and cannot select a legacy revision.
+def request(
+  legacy: Maybe<&2, String>, +req: J.Json, id: Maybe<&2, J.Json>
+) -> IO(Maybe<&2, String>):
   match id:
     case None{}:
-      IO.pure(Unit, Unit{})
+      IO.pure(Maybe<&2, String>, legacy)
     case Some{i}:
       method = T.str_arg(req, "method", "")
-      respond_with(i, method, object_or_empty(J.get(req, "params")))
+      respond_with(legacy, i, method, object_or_empty(J.get(req, "params")))
 
 # A JSON-RPC id is a string, a number or null.
 def id_ok(id: Maybe<&2, J.Json>) -> Bool:
@@ -204,20 +313,24 @@ def envelope_ok(+req: J.Json) -> Bool:
 
 # A message failing the envelope check is answered with -32600, under its
 # id when that id is valid.
-def message.if(+req: J.Json, valid: Bool) -> IO(Unit):
+def message.if(+legacy: Maybe<&2, String>, +req: J.Json, valid: Bool) -> IO(Maybe<&2, String>):
   match valid:
     case True{}:
-      request(req, J.get(req, "id"))
+      request(legacy, req, J.get(req, "id"))
     case False{}:
-      IO.print(rpc_error(id_or_null(J.get(req, "id")), "-32600",
-        "invalid request: expected a JSON-RPC 2.0 object with a string method"))
+      do IO<Maybe<&2, String>>:
+        IO.print(rpc_invalid_id(legacy, id_or_null(J.get(req, "id")), "-32600",
+          "invalid request: expected a JSON-RPC 2.0 object with a string method"))
+        return legacy
 
-def message(m: Maybe<&2, J.Json>) -> IO(Unit):
+def message(+legacy: Maybe<&2, String>, m: Maybe<&2, J.Json>) -> IO(Maybe<&2, String>):
   match m:
     case None{}:
-      IO.print(rpc_error(J.JNull{}, "-32700", "parse error"))
+      do IO<Maybe<&2, String>>:
+        IO.print(rpc_unidentified(legacy, "-32700", "parse error"))
+        return legacy
     case Some{+req}:
-      message.if(req, envelope_ok(req))
+      message.if(legacy, req, envelope_ok(req))
 
 # Lines
 # -----
@@ -239,40 +352,42 @@ def is_blank(s: String) -> Bool:
     case _:
       False{}
 
-def handle_text.if(text: String, blank: Bool) -> IO(Unit):
+def handle_text.if(legacy: Maybe<&2, String>, text: String, blank: Bool) -> IO(Maybe<&2, String>):
   match blank:
     case True{}:
-      IO.pure(Unit, Unit{})
+      IO.pure(Maybe<&2, String>, legacy)
     case False{}:
-      message(J.parse(text))
+      message(legacy, J.parse(text))
 
-def handle_text(+text: String) -> IO(Unit):
-  handle_text.if(text, is_blank(text))
+def handle_text(legacy: Maybe<&2, String>, +text: String) -> IO(Maybe<&2, String>):
+  handle_text.if(legacy, text, is_blank(text))
 
 # JSON-RPC messages are UTF-8: a line that does not round-trip through the
 # decoder (invalid bytes become U+FFFD) is a parse error, not a request.
-def handle_line.if(text: String, valid: Bool) -> IO(Unit):
+def handle_line.if(+legacy: Maybe<&2, String>, text: String, valid: Bool) -> IO(Maybe<&2, String>):
   match valid:
     case True{}:
-      handle_text(text)
+      handle_text(legacy, text)
     case False{}:
-      IO.print(rpc_error(J.JNull{}, "-32700",
-        "parse error: the line is not valid UTF-8"))
+      do IO<Maybe<&2, String>>:
+        IO.print(rpc_unidentified(legacy, "-32700",
+          "parse error: the line is not valid UTF-8"))
+        return legacy
 
 # Answers one complete line of UTF-8 bytes. It is decoded only once whole, so
 # a read that ends inside a multi-byte character cannot corrupt it.
-def handle_line(+line: String) -> IO(Unit):
+def handle_line(legacy: Maybe<&2, String>, +line: String) -> IO(Maybe<&2, String>):
   +text = C.utf8_decode(line)
-  handle_line.if(text, String.eq(C.utf8_encode(text), line))
+  handle_line.if(legacy, text, String.eq(C.utf8_encode(text), line))
 
-def handle_lines(ls: List<&2, String>) -> IO(Unit):
+def handle_lines(ls: List<&2, String>, legacy: Maybe<&2, String>) -> IO(Maybe<&2, String>):
   match ls:
     case Nil{}:
-      IO.pure(Unit, Unit{})
+      IO.pure(Maybe<&2, String>, legacy)
     case l <> t:
-      do IO<Unit>:
-        handle_line(l)
-        handle_lines(t)
+      do IO<Maybe<&2, String>>:
+        next : Maybe<&2, String> <- handle_line(legacy, l)
+        handle_lines(t, next)
 
 # Serving stdin
 # -------------
@@ -280,10 +395,10 @@ def handle_lines(ls: List<&2, String>) -> IO(Unit):
 # The longest request line accepted, in bytes. A longer one gets an error
 # and ends the session, so a client cannot grow the server without bound.
 def line_cap() -> U32:
-  8388608
+  MCP.line_cap()
 
-def too_long() -> String:
-  rpc_error(J.JNull{}, "-32600", "request line longer than 8 MiB; closing")
+def too_long(legacy: Maybe<&2, String>) -> String:
+  rpc_unidentified(legacy, "-32600", "request line longer than 8 MiB; closing")
 
 # The unfinished line is kept as its chunks (newest first) and its length,
 # so a long line is joined once instead of copied on every read.
@@ -307,15 +422,17 @@ def StdinRead() -> Type:
 # Bend's own server demos) rather than counting down a fuel that would end a
 # long session.
 @unsafe
-def serve(f: File, parts: List<&2, String>, n: U32) -> IO(Unit):
+def serve(f: File, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>) -> IO(Unit):
   do IO<Unit>:
     m : StdinRead() <- File.read_bytes(f, 65536)
-    serve.read(m, parts, n)
+    serve.read(m, parts, n, legacy)
 
 # A failed read ends the session; an empty one (end of input) answers the
 # unfinished line first.
 @unsafe
-def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32) -> IO(Unit):
+def serve.read(
+  m: StdinRead(), parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>
+) -> IO(Unit):
   (f, r) = m
   match r:
     case Fail{e}:
@@ -324,55 +441,56 @@ def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32) -> IO(Unit):
       match xs:
         case Nil{}:
           do IO<Unit>:
-            handle_line(pending(parts))
+            ignored : Maybe<&2, String> <- handle_line(legacy, pending(parts))
             File.close(f)
         case h <> t:
-          serve.chunk(f, String.split(C.bytes_str(xs), '\n'), parts, n)
+          serve.chunk(f, String.split(C.bytes_str(xs), '\n'), parts, n, legacy)
 
 # `pieces` is the chunk split at its newlines. Its first piece ends the
 # unfinished line, which is refused once it is longer than the cap.
 @unsafe
 def serve.chunk(
-  f: File, pieces: List<&2, String>, parts: List<&2, String>, n: U32
+  f: File, pieces: List<&2, String>, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>
 ) -> IO(Unit):
   match pieces:
     case Nil{}:
-      serve(f, parts, n)
+      serve(f, parts, n, legacy)
     case +p <> rest:
       +length = (n + C.byte_len(p) : U32)
-      serve.chunk.if(f, rest, p <> parts, length, U32.is_gt(length, line_cap()))
+      serve.chunk.if(f, rest, p <> parts, length, U32.is_gt(length, line_cap()), legacy)
 
 @unsafe
 def serve.chunk.if(
-  f: File, rest: List<&2, String>, parts: List<&2, String>, n: U32, over: Bool
+  f: File, rest: List<&2, String>, parts: List<&2, String>,
+  n: U32, over: Bool, legacy: Maybe<&2, String>
 ) -> IO(Unit):
   match over:
     case True{}:
       do IO<Unit>:
-        IO.print(too_long())
+        IO.print(too_long(legacy))
         File.close(f)
     case False{}:
-      serve.rest(f, rest, parts, n)
+      serve.rest(f, rest, parts, n, legacy)
 
 # `rest` holds the pieces of the chunk after its first newline, if any.
 @unsafe
 def serve.rest(
-  f: File, +rest: List<&2, String>, parts: List<&2, String>, n: U32
+  f: File, +rest: List<&2, String>, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>
 ) -> IO(Unit):
   match rest:
     case Nil{}:
-      serve(f, parts, n)
+      serve(f, parts, n, legacy)
     case h <> t:
       do IO<Unit>:
-        handle_line(pending(parts))
-        handle_lines(complete_lines(rest))
+        next : Maybe<&2, String> <- handle_line(legacy, pending(parts))
+        last : Maybe<&2, String> <- handle_lines(complete_lines(rest), next)
         +unfinished : String = last_line(rest)
-        serve(f, [unfinished], C.byte_len(unfinished))
+        serve(f, [unfinished], C.byte_len(unfinished), last)
 
 def mcp() -> IO(Unit):
   do IO<Unit>:
     f : File <- IO.try(File, File.open("/dev/stdin", "r"))
-    serve(f, [], 0)
+    serve(f, [], 0, None{})
 
 # CLI
 # ===

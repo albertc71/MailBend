@@ -225,6 +225,11 @@ Register the MCP server (stdio) with your agent, using the absolute path:
 The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` (or
 `MAILBEND_PASSWORD_FILE`) from its environment.
 
+MCP supports `2026-07-28` discovery and per-request metadata, alongside legacy
+initialization for `2025-06-18`, `2025-03-26` and `2024-11-05`. It advertises only
+tools. See [MCP compatibility](docs/MCP.md) for request requirements, errors,
+capabilities and the conformance test mapping.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
