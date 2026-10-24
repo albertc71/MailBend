@@ -455,6 +455,11 @@ law expunge_renders_uid_expunge:
   for uids: List<&2, U32>
   {Ops.has_prefix("UID EXPUNGE ", I.cmd_str(I.CExpunge{uids})) == True{} : Bool}
 
+# LAW: UID EXPUNGE renders exactly the supplied set, with no suffix command.
+law expunge_renders_exact_uid_set:
+  for uids: List<&2, U32>
+  {I.cmd_str(I.CExpunge{uids}) == "UID EXPUNGE " ++ I.uid_set(uids) : String}
+
 # LAW: unless the confirmation is exactly "permanently-delete", deletion
 # does nothing at all
 law delete_needs_confirmation:

@@ -1307,3 +1307,6 @@ def Laws.secret_scan_blocks(part, reason, gate, allow, rcpts, from, msg):
 
 def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, text):
   {==}
+
+def Laws.expunge_renders_exact_uid_set(uids):
+  {==}
