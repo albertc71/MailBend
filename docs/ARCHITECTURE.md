@@ -28,7 +28,9 @@ touches the password and the mail servers; `mailbend-attach`, which holds no
 credentials, is the only code that opens attachment files, writes downloaded
 attachments or opens the send counter; `mailbend-typesafe`, which never holds
 the password, is the only code that reads the TypeSafe key and reaches
-TypeSafe.
+TypeSafe. `mailbend-stdio` adapts inherited socket stdin to a bounded pipe for
+the fixed core in MCP mode. It reads no credentials, creates no sockets and
+makes no JSON or mail decisions; see the [native contract](../native/README.md#mcp-stdin-adapter).
 
 ```mermaid
 flowchart TB
@@ -74,7 +76,9 @@ flowchart TB
   tsapi[("TypeSafe HTTPS<br/>api.typesafe.ai/v1/systemone")]
   tskey[["MAILBEND_TYPESAFE_KEY_FILE"]]
 
-  agent -- "JSON-RPC lines on stdio" --> main
+  agent -- "MCP stdin" --> stdio["mailbend-stdio (Rust)<br/>bounded socket-to-pipe relay"]
+  stdio -- "unchanged bytes" --> main
+  main -- "MCP stdout" --> agent
   cli --> main
   main --> json
   main --> tools
@@ -281,6 +285,7 @@ native/              the Rust helpers (native/README.md):
   mailbend-tls/        verified TLS, login, lock-step command execution
   mailbend-attach/     attachment reads and downloads, the send counter (no credentials)
   mailbend-typesafe/   the TypeSafe request, with the key from its file (no mail password)
+  mailbend-stdio/      inherited socket stdin, bounded pipe and core supervision
   mailbend-net/, mailbend-io/, fuzz/
                        shared network and file code, parser fuzzing
 ```

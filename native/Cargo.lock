@@ -102,6 +102,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailbend-stdio"
+version = "0.1.0"
+dependencies = [
+ "mailbend-io",
+ "nix",
+]
+
+[[package]]
 name = "mailbend-tls"
 version = "0.1.0"
 dependencies = [

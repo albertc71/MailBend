@@ -116,6 +116,9 @@ jobs:
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
 
+      - name: MCP inherited-descriptor and lifecycle tests
+        run: python3 tests/test-stdio.py
+
       - name: End-to-end tests (CLI and structured MCP)
         run: |
           python3 tests/test-e2e.py
@@ -152,7 +155,7 @@ jobs:
             exit 1
           fi
 
-      - name: The attachment reader has no network or TLS crate
+      - name: Attachment and stdio helpers have no network or TLS crate
         run: |
           cargo tree --locked -p mailbend-attach -e normal --prefix none > "$RUNNER_TEMP/attach-tree.txt"
           if grep -E '^(rustls|ring|socket2|mio|tokio|hyper|ureq|reqwest|curl|openssl)[ -]' "$RUNNER_TEMP/attach-tree.txt"; then
@@ -161,6 +164,15 @@ jobs:
           fi
           if grep -rnE 'std::net|TcpStream|UdpSocket|UnixStream' mailbend-attach/src; then
             echo "mailbend-attach must not open network sockets" >&2
+            exit 1
+          fi
+          cargo tree --locked -p mailbend-stdio -e normal --prefix none > "$RUNNER_TEMP/stdio-tree.txt"
+          if grep -E '^(rustls|ring|socket2|mio|tokio|hyper|ureq|reqwest|curl|openssl)[ -]' "$RUNNER_TEMP/stdio-tree.txt"; then
+            echo "mailbend-stdio must not depend on network or TLS crates" >&2
+            exit 1
+          fi
+          if grep -rnE 'std::net|TcpStream|UdpSocket|UnixStream|socket\(' mailbend-stdio/src; then
+            echo "mailbend-stdio must only use inherited descriptors" >&2
             exit 1
           fi
 

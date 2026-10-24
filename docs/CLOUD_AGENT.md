@@ -33,7 +33,7 @@ MAILBEND_READ_ONLY=1 scripts/mailbend-cloud call mail_probe
 Setup installs Debian/Ubuntu build and runtime dependencies, installs the
 pinned Bend and Rust (Rust with a checksum-verified rustup, into `~/.cargo`)
 if missing,
-builds the three native helpers, checks the safety proofs, and compiles the
+builds the four native helpers, checks the safety proofs, and compiles the
 Bend core. Run it as the computer user; it uses noninteractive `sudo`
 only for apt (or apt directly when already root). It needs working package
 repositories and HTTPS downloads. It does not read mail credentials, modify
@@ -193,9 +193,14 @@ separate from DNS errors.
 [Issue #30](https://github.com/albertc71/MailBend/issues/30) reports
 `failed_to_load`, `Connection closed` and `No such device or address`
 (`ENXIO`) during Grok Bot tool discovery, despite standalone MCP success.
-MailBend does not require a terminal. Use the direct launcher and
-`args: ["mcp"]` shown above. The custom `mailbend-mcp-host.py` in that
-report is not shipped by this repository.
+Linux reproduction identified a repository defect: the pinned Bend runtime
+reopens `/dev/stdin`, which fails when a client supplies a Unix socket rather
+than a pipe. Rebuild with `scripts/install.sh` and register the public launcher
+with `args: ["mcp"]` shown above. Its Rust `mailbend-stdio` helper adapts socket
+input without requiring a terminal. Do not launch `bin/mailbend-core` directly;
+it retains that runtime limitation. The custom `mailbend-mcp-host.py` in the
+report is not shipped by this repository; change its target to the public
+launcher or remove it from the registration.
 
 To compare standalone discovery without a controlling terminal, run on Linux:
 
@@ -213,8 +218,9 @@ does not contact the mailbox. If this succeeds but the connector still fails,
 collect the client's launch error and exit status for the platform maintainer.
 If it fails, check the launcher path, build readiness and client environment.
 Do not dump environment values or credentials. A pseudo-terminal is not a
-verified repair and can change the stdio protocol. The exact failing Grok
-client call remains unresolved in the linked issue.
+verified repair and can change the stdio protocol. Socket, pipe and file input
+are covered by `python3 tests/test-stdio.py`; an actual Grok connector session
+has not yet been validated.
 
 The supported fallback is the CLI, with the same environment and safety
 settings as the MCP server:
