@@ -183,6 +183,9 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
     case False{}:
       {==}
 
+def Laws.mark_changes_only_seen(mbox, uids, seen, uidv):
+  {==}
+
 def flag_never_deletes.put(
   -mbox: String, -uids: List<&2, U32>, bits: I.Bits, -uidv: U32)
   -> {Bool.or(
