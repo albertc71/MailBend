@@ -111,13 +111,45 @@ def initialize_result(params: J.Json) -> J.Json:
 # tools/call
 # ----------
 
-# The tool's JSON result as text content, flagged when the tool failed.
-def call_result(+o: T.Out) -> J.Json:
-  text = J.str(J.show(result_json(o)))
+# Serialize the same result value as text and, when negotiated, structured content.
+def call_result_for(structured: Bool, +o: T.Out) -> J.Json:
+  +value = result_json(o)
+  text = J.str(J.show(value))
   content = J.obj([J.kv("type", J.str("text")), J.kv("text", text)])
-  J.obj([
+  fields : List<&2, J.Json> = [
     J.kv("content", J.arr([content])), J.kv("isError", J.bool(is_error(o)))
-  ])
+  ]
+  J.obj(List.append(&2, J.Json, fields,
+    Bool.pick(List<&2, J.Json>, structured, [J.kv("structuredContent", value)], [])))
+
+def call_result(o: T.Out) -> J.Json:
+  call_result_for(True{}, o)
+
+# outputSchema arrived with structuredContent in MCP 2025-06-18.
+def legacy_fields(xs: List<&2, J.Json>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JKv{"outputSchema", _} <> t:
+      legacy_fields(t)
+    case h <> t:
+      h <> legacy_fields(t)
+
+def legacy_tools(xs: List<&2, J.Json>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JObj{items} <> t:
+      J.obj(legacy_fields(J.unchain(items))) <> legacy_tools(t)
+    case h <> t:
+      h <> legacy_tools(t)
+
+def tools_for(structured: Bool, ts: J.Json) -> J.Json:
+  match structured ts:
+    case False{} J.JArr{items}:
+      J.arr(legacy_tools(J.unchain(items)))
+    case _ _:
+      ts
 
 # Method parameters and tool arguments are an object, or absent (read as {}).
 # Anything else is None, so it is refused rather than read as no arguments.
@@ -131,7 +163,9 @@ def object_or_empty(m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
       None{}
 
 # Runs the tool when its arguments are an object.
-def run_tool(modern: Bool, id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
+def run_tool(
+  modern: Bool, structured: Bool, id: J.Json, name: String, args: Maybe<&2, J.Json>
+) -> IO(Unit):
   match args:
     case None{}:
       IO.print(rpc_error(id, "-32602",
@@ -139,24 +173,27 @@ def run_tool(modern: Bool, id: J.Json, name: String, args: Maybe<&2, J.Json>) ->
     case Some{a}:
       do IO<Unit>:
         o : T.Out <- T.call(name, a)
-        IO.print(rpc_result(id, MCP.result(modern, call_result(o), version())))
+        IO.print(rpc_result(id, MCP.result(modern, call_result_for(structured, o), version())))
 
-def call_tool(modern: Bool, id: J.Json, +params: J.Json) -> IO(Unit):
+def call_tool(modern: Bool, structured: Bool, id: J.Json, +params: J.Json) -> IO(Unit):
   args = object_or_empty(J.get(params, "arguments"))
-  run_tool(modern, id, T.str_arg(params, "name", ""), args)
+  run_tool(modern, structured, id, T.str_arg(params, "name", ""), args)
 
 # Requests
 # --------
 
 # Answers a request by its method. `params` is an object.
-def respond(modern: Bool, id: J.Json, +method: String, params: J.Json) -> IO(Unit):
+def respond(
+  modern: Bool, structured: Bool, id: J.Json, +method: String, params: J.Json
+) -> IO(Unit):
   match method:
     case "tools/call":
-      call_tool(modern, id, params)
+      call_tool(modern, structured, id, params)
     case "tools/list":
       do IO<Unit>:
         ts : J.Json <- offered_tools()
-        IO.print(rpc_result(id, MCP.result(modern, J.obj([J.kv("tools", ts)]), version())))
+        IO.print(rpc_result(id, MCP.result(modern,
+          J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
     case "server/discover":
       IO.print(rpc_result(id, MCP.complete_result(J.obj([
         J.kv("supportedVersions", MCP.versions()),
@@ -189,7 +226,7 @@ def modern_request.problem(method: String, +p: J.Json) -> String:
 def modern_request.run(id: J.Json, method: String, p: J.Json, problem: String) -> IO(Unit):
   match problem:
     case "":
-      respond(True{}, id, method, p)
+      respond(True{}, True{}, id, method, p)
     case _:
       IO.print(rpc_error(id, "-32602", problem))
 
@@ -228,8 +265,16 @@ def legacy_after(
     case _:
       legacy
 
+# Structured tool results are available from the June 2025 legacy revision.
+def legacy_structured(legacy: Maybe<&2, String>) -> Bool:
+  match legacy:
+    case Some{v}:
+      String.eq(v, MCP.latest_legacy_version())
+    case None{}:
+      False{}
+
 def respond_era(
-  legacy: Maybe<&2, String>, id: J.Json, +method: String, +p: J.Json, modern: Bool
+  +legacy: Maybe<&2, String>, id: J.Json, +method: String, +p: J.Json, modern: Bool
 ) -> IO(Maybe<&2, String>):
   match modern:
     case True{}:
@@ -238,7 +283,7 @@ def respond_era(
         return legacy
     case False{}:
       do IO<Maybe<&2, String>>:
-        respond(False{}, id, method, p)
+        respond(False{}, legacy_structured(legacy), id, method, p)
         return legacy_after(legacy, method, p)
 
 # Explicit modern metadata always selects modern handling. Without it, only
@@ -566,7 +611,7 @@ def cli(args: List<&2, String>) -> IO(Unit):
     case "tools" <> Nil{}:
       do IO<Unit>:
         ts : J.Json <- offered_tools()
-        IO.print(J.show(ts))
+        IO.print(J.show(tools_for(False{}, ts)))
     case "call" <> name <> Nil{}:
       call_cli(name, "{}")
     case "call" <> name <> raw <> Nil{}:

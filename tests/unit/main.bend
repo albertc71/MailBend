@@ -74,12 +74,12 @@ def main() -> IO(Unit):
 #|{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request: expected a JSON-RPC 2.0 object with a string method"}}
 #|{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request: expected a JSON-RPC 2.0 object with a string method"}}
 #|{"jsonrpc":"2.0","id":12,"error":{"code":-32602,"message":"invalid params: \"arguments\" must be an object"}}
-#|{"jsonrpc":"2.0","id":13,"result":{"content":[{"type":"text","text":"{\"error\":\"unknown tool: nope\"}"}],"isError":true}}
-#|{"jsonrpc":"2.0","id":14,"result":{"content":[{"type":"text","text":"{\"error\":\"\\\"uid\\\" is required\"}"}],"isError":true}}
-#|{"jsonrpc":"2.0","id":15,"result":{"content":[{"type":"text","text":"{\"error\":\"unknown tool: \"}"}],"isError":true}}
-#|{"content":[{"type":"text","text":"{\"ok\":true}"}],"isError":false}
-#|{"content":[{"type":"text","text":"{\"error\":\"no\"}"}],"isError":true}
-#|{"content":[{"type":"text","text":"{\"partial\":true}"}],"isError":true}
+#|{"jsonrpc":"2.0","id":13,"result":{"content":[{"type":"text","text":"{\"error\":\"unknown tool: nope\"}"}],"isError":true,"structuredContent":{"error":"unknown tool: nope"}}}
+#|{"jsonrpc":"2.0","id":14,"result":{"content":[{"type":"text","text":"{\"error\":\"\\\"uid\\\" is required\"}"}],"isError":true,"structuredContent":{"error":"\"uid\" is required"}}}
+#|{"jsonrpc":"2.0","id":15,"result":{"content":[{"type":"text","text":"{\"error\":\"unknown tool: \"}"}],"isError":true,"structuredContent":{"error":"unknown tool: "}}}
+#|{"content":[{"type":"text","text":"{\"ok\":true}"}],"isError":false,"structuredContent":{"ok":true}}
+#|{"content":[{"type":"text","text":"{\"error\":\"no\"}"}],"isError":true,"structuredContent":{"error":"no"}}
+#|{"content":[{"type":"text","text":"{\"partial\":true}"}],"isError":true,"structuredContent":{"partial":true}}
 #|call|mail_get|{}
 #|
 #|

@@ -9,6 +9,7 @@ any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 """
 import base64
 import copy
+import importlib.util
 import json
 import os
 import pwd
@@ -21,6 +22,8 @@ import sys
 import tempfile
 import threading
 import time
+
+from jsonschema import Draft202012Validator
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
@@ -36,6 +39,25 @@ FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
 TOOL_COUNT = 21
 READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_get_thread"]
+
+# Validate every CLI result in the existing scenario matrix against the source
+# of the advertised contract, including Jev and interrupted mutation cases.
+_spec = importlib.util.spec_from_file_location("mailbend_schema", ROOT / "tools/gen-schema.py")
+_schema = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_schema)
+OUTPUT_VALIDATORS = {}
+for _entry in _schema.TOOLS:
+    Draft202012Validator.check_schema(_entry["outputSchema"])
+    OUTPUT_VALIDATORS[_entry["name"]] = Draft202012Validator(_entry["outputSchema"])
+    for _invalid in ({}, {"error": 1}, {"ok": True, "partial": True}):
+        assert not OUTPUT_VALIDATORS[_entry["name"]].is_valid(_invalid), _entry["name"]
+
+
+def validate_output(name, value):
+    if name in OUTPUT_VALIDATORS:
+        errors = list(OUTPUT_VALIDATORS[name].iter_errors(value))
+        check(f"schema: {name}", not errors, [e.message for e in errors])
+
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -120,6 +142,26 @@ def tool(srv, name, args=None, **env):
 
 def tool_text(srv, name, text, **env):
     """Calls a tool with its arguments as raw JSON text."""
+    if os.environ.get("MAILBEND_TEST_MCP") == "1":
+        try:
+            args = json.loads(text)
+        except json.JSONDecodeError:
+            args = None
+        if isinstance(args, dict):
+            # Keep the raw arguments: duplicate-key refusal is part of the contract.
+            call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": name, "arguments": None}})
+            call = call.replace('"arguments": null', '"arguments": ' + text, 1)
+            replies, code = mcp_session(srv, [
+                {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                 "params": {"protocolVersion": "2025-06-18"}},
+                call,
+            ], **env)
+            result = replies[-1]["result"]
+            out = json.loads(result["content"][0]["text"])
+            check(f"mcp shared value: {name}", result.get("structuredContent") == out)
+            validate_output(name, out)
+            return (1 if result["isError"] else code), out
     p = subprocess.run([LAUNCHER, "call", name, text], capture_output=True, text=True,
                        env=srv.env(**env), timeout=120)
     outputs.extend([p.stdout, p.stderr])
@@ -127,6 +169,8 @@ def tool_text(srv, name, text, **env):
         out = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
     except (json.JSONDecodeError, IndexError):
         out = {"unparsed": p.stdout, "stderr": p.stderr}
+    if p.stdout.strip():
+        validate_output(name, out)
     return p.returncode, out
 
 
@@ -154,6 +198,7 @@ def main():
 
 
 def run_all(work):
+    mcp_headless()
     srv = Server(work)
     try:
         reads(srv)
@@ -529,6 +574,59 @@ def compose(srv):
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
 
+def mcp_headless():
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "headless-test", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    probe = """
+import errno, os, sys
+assert not any(os.isatty(fd) for fd in (0, 1, 2))
+try:
+    fd = os.open('/dev/tty', os.O_RDONLY | os.O_NOCTTY)
+except OSError as error:
+    assert error.errno == errno.ENXIO, error
+else:
+    os.close(fd)
+    raise AssertionError('child has a controlling terminal')
+print('no controlling terminal', file=sys.stderr, flush=True)
+os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
+"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env["MAILBEND_READ_ONLY"] = "1"
+    data = "".join(json.dumps(r) + "\n" for r in requests)
+    for launcher in (pathlib.Path(LAUNCHER), ROOT / "scripts/mailbend-cloud"):
+        tag = f"headless {launcher.name}: "
+        try:
+            p = subprocess.run([sys.executable, "-c", probe, str(launcher)], input=data,
+                               text=True, capture_output=True, env=env, cwd="/",
+                               start_new_session=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            check(tag + "responds and exits within 180 seconds", False)
+            continue
+        outputs.extend([p.stdout, p.stderr])
+        check(tag + "starts without a controlling terminal, exits on EOF, and adds no stderr",
+              p.returncode == 0 and p.stderr == "no controlling terminal\n", p.stderr)
+        try:
+            replies = [json.loads(line) for line in p.stdout.splitlines()]
+        except json.JSONDecodeError:
+            replies = []
+        check(tag + "stdout contains only the two JSON-RPC replies",
+              len(replies) == 2 and [r.get("id") for r in replies] == [1, 2]
+              and all(r.get("jsonrpc") == "2.0" for r in replies), replies)
+        by_id = {r.get("id"): r.get("result", {}) for r in replies}
+        check(tag + "initializes without credentials",
+              by_id.get(1, {}).get("serverInfo", {}).get("name") == "mailbend"
+              and by_id.get(1, {}).get("protocolVersion") == "2025-06-18", by_id.get(1))
+        listed = by_id.get(2, {}).get("tools", [])
+        check(tag + "discovers exactly the read-only tools without credentials",
+              sorted(t.get("name", "") for t in listed) == sorted(READ_TOOLS)
+              and all("inputSchema" in t for t in listed), listed)
+
+
 def mcp_bytes(srv, data, *, legacy=True, **env):
     if legacy:
         init = {"jsonrpc": "2.0", "id": "test-initialize", "method": "initialize",
@@ -736,6 +834,7 @@ def mcp(srv):
     check("mcp: malformed envelopes answered with -32600", by_id.get(8, {}).get("error", {}).get("code") == -32600
           and any(r.get("id") is None and r.get("error", {}).get("code") == -32600 for r in res), res)
     check("mcp: exits cleanly when stdin closes", code == 0, code)
+    mcp_structured(srv)
     mcp_framing(srv)
     mcp_modern(srv)
 
@@ -746,6 +845,60 @@ def ping(i):
 
 def unknown_method(i, name):
     return json.dumps({"jsonrpc": "2.0", "id": i, "method": name}, ensure_ascii=False).encode()
+
+
+def mcp_structured(srv):
+    calls = [
+        ("mail_get", {"uid": 3}),
+        ("mail_search", {}),
+        ("mail_get", {"uid": 1, "unexpected": True}),
+        ("mail_delete", {"uids": [1], "uidvalidity": 1}),
+        ("mail_mark_read", {"uids": [3], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
+        ("mail_send", {"to": ["test@example.net"], "body": 'A "quote"\n\t雪', "dry_run": True}),
+    ]
+    for version in ("2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05", "unknown"):
+        requests = [{"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                     "params": {"protocolVersion": version}},
+                    {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+        requests += [{"jsonrpc": "2.0", "id": i + 2, "method": "tools/call",
+                      "params": {"name": name, "arguments": args}}
+                     for i, (name, args) in enumerate(calls)]
+        if version == "2026-07-28":
+            requests = [modern_request(0), modern_request(1, "tools/list")]
+            requests += [modern_request(i + 2, "tools/call", name=name, arguments=args)
+                         for i, (name, args) in enumerate(calls)]
+        replies, code = mcp_session(srv, requests, legacy=False)
+        modern = version in ("2026-07-28", "2025-06-18", "unknown")
+        check(f"mcp: {version} output schemas follow negotiated version",
+              all(("outputSchema" in t) == modern for t in replies[1]["result"]["tools"]))
+        if modern:
+            check(f"mcp: {version} publishes generated output contracts",
+                  all(t["outputSchema"] == OUTPUT_VALIDATORS[t["name"]].schema
+                      for t in replies[1]["result"]["tools"]))
+        for (name, _), reply in zip(calls, replies[2:]):
+            result = reply["result"]
+            value = json.loads(result["content"][0]["text"])
+            validate_output(name, value)
+            check(f"mcp: {version} {name} shared output",
+                  result.get("structuredContent") == value if modern
+                  else "structuredContent" not in result, result)
+        check(f"mcp: {version} exits cleanly", code == 0)
+
+    # State survives chunk boundaries, invalid requests, notifications and EOF.
+    lines = [
+        {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+         "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 1, "method": "ping", "padding": "x" * 70000},
+        {"jsonrpc": "2.0", "method": "initialize",
+         "params": {"protocolVersion": "2024-11-05"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": []},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "mail_get", "arguments": {"uid": 3}}},
+    ]
+    replies, _ = mcp_bytes(srv, b"\n".join(json.dumps(line).encode() for line in lines))
+    result = replies[-1]["result"]
+    check("mcp: negotiated output survives chunks, invalid initialize, notification and EOF",
+          result.get("structuredContent") == json.loads(result["content"][0]["text"]))
 
 
 def mcp_framing(srv):

@@ -230,6 +230,14 @@ initialization for `2025-06-18`, `2025-03-26` and `2024-11-05`. It advertises on
 tools. See [MCP compatibility](docs/MCP.md) for request requirements, errors,
 capabilities and the conformance test mapping.
 
+MCP revisions `2025-06-18` and `2026-07-28` return the same JSON object in `structuredContent`
+and serialized text, and advertise a per-tool `outputSchema`. The older
+`2025-03-26` and `2024-11-05` revisions
+retain text-only results and omit output schemas. The CLI result is unchanged.
+Body limits apply before MCP formatting, so both representations contain the
+same truncated content and evidence. They are not a total response wire-size
+limit: MCP includes both the JSON and its escaped text representation.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set

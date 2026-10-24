@@ -50,7 +50,9 @@ Malformed modern envelopes omit unreadable IDs even after legacy initialization.
 
 The tool list is deterministic for the process configuration. It uses JSON
 Schema 2020-12-compatible object input schemas and tool annotations. Results
-contain JSON serialized in a text content block; no output schema is advertised.
+contain JSON serialized in a text content block. Modern requests and negotiated
+`2025-06-18` sessions also expose the identical `structuredContent` value and
+per-tool output schemas; older sessions omit those fields.
 Read-only, drafts-only and Jev settings determine availability through the same
 code used by the CLI. Client capability claims cannot widen that availability.
 
