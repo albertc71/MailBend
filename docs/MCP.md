@@ -17,7 +17,8 @@ subsequent requests without modern metadata in that process. An unsupported
 legacy initialization version is offered `2025-06-18`. Modern requests can
 interleave with that legacy session, but never inherit its version, identity or
 capabilities and never change its negotiated revision. Before initialization,
-a metadata-free request other than `initialize` fails with invalid params.
+a metadata-free tool request fails with invalid params. Legacy `ping` is also
+allowed before initialization, but does not establish a legacy session.
 Notifications cannot initialize a session. A modern marker with a missing or
 malformed value cannot fall back to legacy handling.
 

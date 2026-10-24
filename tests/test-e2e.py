@@ -597,6 +597,10 @@ def mcp_modern(srv):
     check("modern MCP: notifications have no replies", len(res) == 13, res)
     res, _ = mcp_session(srv, [modern_request(1, "tools/list")], legacy=False)
     check("modern MCP: discovery is optional", len(res[0].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
+    res, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}], legacy=False)
+    check("legacy ping before initialization cannot establish a legacy session",
+          res[0].get("result") == {} and res[1].get("error", {}).get("code") == -32602, res)
 
     # Each request must stand alone; preceding valid metadata supplies nothing.
     malformed = []
@@ -649,14 +653,16 @@ def mcp_modern(srv):
         reqs = [init, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
                 modern_request(3), {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
                                     "params": {"name": "mail_search", "arguments": {"limit": 1}}},
-                modern_request(5, _meta={"io.modelcontextprotocol/protocolVersion": None})]
+                modern_request(5, _meta={"io.modelcontextprotocol/protocolVersion": None}),
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/list"}]
         res, _ = mcp_session(srv, reqs, legacy=False)
         check(f"MCP legacy {version}: initialization, list, call and modern interleaving",
               res[0].get("result", {}).get("protocolVersion") == version and
               len(res[1]["result"]["tools"]) == TOOL_COUNT and "resultType" not in res[1]["result"] and
               res[2]["result"].get("resultType") == "complete" and
               res[3]["result"].get("isError") is False and "resultType" not in res[3]["result"] and
-              res[4].get("error", {}).get("code") == -32602, res)
+              res[4].get("error", {}).get("code") == -32602 and
+              len(res[5].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
 
     # The same guards serve both eras; metadata cannot enable a forbidden tool.
     for env, forbidden, hidden, args in [

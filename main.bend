@@ -250,10 +250,11 @@ def respond_era(
         return legacy_after(legacy, method, p)
 
 # Explicit modern metadata always selects modern handling. Without it, only
-# initialize or an established legacy revision selects the legacy contract.
+# initialize, legacy ping or an established revision selects the legacy contract.
 def is_modern(legacy: Maybe<&2, String>, +method: String, p: J.Json) -> Bool:
   MCP.is_modern_marked(p) || String.eq(method, "server/discover") ||
-  (Bool.not(Maybe.is_some(&2, String, legacy)) && Bool.not(String.eq(method, "initialize")))
+  (Bool.not(Maybe.is_some(&2, String, legacy)) &&
+    Bool.not(String.eq(method, "initialize") || String.eq(method, "ping")))
 
 # Parameters that are not an object are refused, not read as none.
 def respond_with(

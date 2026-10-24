@@ -48,6 +48,8 @@ def main() -> IO(Unit):
     IO.print(show_args(Main.command_args(["mailbend", "call", "mail_get", "{}"])))
     IO.print(show_args(Main.command_args(["mailbend"])))
     IO.print(show_args(Main.command_args([])))
+    next : Maybe<&2, String> <- Main.handle_line(None{}, "{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"ping\"}")
+    ignored : Maybe<&2, String> <- Main.handle_line(next, "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/list\"}")
     Main.cli(["version"])
 
 #|{"jsonrpc":"2.0","id":1,"result":{}}
@@ -78,4 +80,6 @@ def main() -> IO(Unit):
 #|call|mail_get|{}
 #|
 #|
+#|{"jsonrpc":"2.0","id":20,"result":{}}
+#|{"jsonrpc":"2.0","id":21,"error":{"code":-32602,"message":"invalid params: required MCP metadata is malformed"}}
 #|mailbend 0.1.0
