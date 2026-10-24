@@ -1306,13 +1306,17 @@ def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, 
 # Read response projections
 # -------------------------
 
-def Laws.projection_keeps_nonbody(mode, key, not_text, not_html):
+def Laws.projection_keeps_nonbody(mode, key, not_text, not_html, not_content):
   %Equal.sym(Bool, String.eq(key, "text"), False{}, not_text) :
     {Bool.not((_ && (String.eq(mode, "html") || String.eq(mode, "metadata"))) ||
       (String.eq(key, "html") &&
-        (String.eq(mode, "text") || String.eq(mode, "metadata")))) == True{} : Bool}
+        (String.eq(mode, "text") || String.eq(mode, "metadata"))) ||
+      (String.eq(key, "content") && String.eq(mode, "metadata"))) == True{} : Bool}
   %Equal.sym(Bool, String.eq(key, "html"), False{}, not_html) :
-    {Bool.not(_ && (String.eq(mode, "text") || String.eq(mode, "metadata"))) == True{} : Bool}
+    {Bool.not((_ && (String.eq(mode, "text") || String.eq(mode, "metadata"))) ||
+      (String.eq(key, "content") && String.eq(mode, "metadata"))) == True{} : Bool}
+  %Equal.sym(Bool, String.eq(key, "content"), False{}, not_content) :
+    {Bool.not(_ && String.eq(mode, "metadata")) == True{} : Bool}
   {==}
 
 def Laws.response_body_fields_are_exact(key):

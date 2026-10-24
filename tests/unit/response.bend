@@ -64,9 +64,53 @@ def error_unchanged(o: T.Out) -> Bool:
     case _:
       False{}
 
+def selected_fixture(media: String, encoding: String, content: String) -> J.Json:
+  J.obj([J.kv("uid", J.num(7)), J.kv("uidvalidity", J.num(99)),
+    J.kv("section", J.str("2.1")), J.kv("scope", J.str("selected_part")),
+    J.kv("complete", J.bool(True{})), J.kv("message_complete", J.bool(False{})),
+    J.kv("content_type", J.str(media)), J.kv("content_encoding", J.str(encoding)),
+    J.kv("content", J.str(content)),
+    J.kv("jev", J.obj([J.kv("status", J.str("unchecked"))]))])
+
+def result(r: Result<&2, &2, String, J.Json>) -> J.Json:
+  match r:
+    case Done{j}:
+      j
+    case _:
+      J.JNull{}
+
+def selected_short(+j: J.Json, max: U32) -> Bool:
+  +response = T.object_field(j, "response")
+  U32.is_le(C.utf8_len(J.show(j)), max) && T.bool_arg(j, "complete", False{}) &&
+    Bool.not(T.bool_arg(j, "message_complete", True{})) &&
+    T.bool_arg(response, "output_truncated", False{}) &&
+    Bool.not(T.bool_arg(response, "content_complete", True{})) &&
+    String.eq(J.show(T.object_field(j, "jev")), "{\"status\":\"unchecked\"}")
+
+def binary_budget(+j: J.Json, +max: U32) -> Bool:
+  +out = result(R.apply(j, "full", max))
+  +content = T.str_arg(out, "content", "?")
+  U32.is_le(C.utf8_len(J.show(out)), max) &&
+    (String.is_empty(content) || String.eq(content, T.str_arg(j, "content", "?"))) &&
+    String.eq(C.b64_encode(C.b64_decode(content), False{}), content)
+
+def binary_budgets(n: Nat, +j: J.Json, +max: U32) -> Bool:
+  match n:
+    case 0n:
+      True{}
+    case 1n+k:
+      binary_budget(j, max) && binary_budgets(k, j, (max + 1 : U32))
+
 def main() -> IO(Unit):
   +j = fixture()
   +mixed = J.arr([j, J.JNull{}, J.bool(False{}), J.num(12), J.obj([]), J.arr([])])
+  +part = selected_fixture("Text/Plain; charset=utf-8", "text", "é😀quoted history")
+  +html = selected_fixture("text/html; charset=utf-8", "text", "<p>é😀quoted</p>")
+  +binary = selected_fixture("application/octet-stream", "base64",
+    C.b64_encode("abcdefghijklmnopqrstuvwxyz0123456789", False{}))
+  +small = (R.bytes(R.with_notice(R.empty_body(part), "full", 1000, False{})) + 1 : U32)
+  +binary_small = (R.bytes(R.with_notice(R.empty_body(binary), "full", 1000, False{})) + 1 : U32)
+  +metadata = result(R.apply(part, "metadata", 0))
   do IO<Unit>:
     say("exact escaped UTF-8 size", U32.is_eq(R.bytes(mixed), C.utf8_len(J.show(mixed))))
     say("default untouched", default_out(T.projected.if(False{}, T.Ok{j}, J.obj([])), j))
@@ -88,6 +132,30 @@ def main() -> IO(Unit):
     say("unknown projection rejected", Bool.not(String.is_empty(T.call_problem(
       "mail_get", J.obj([J.kv("uid", J.num(1)),
         J.kv("projection", J.str("jsonpath"))])))))
+    say("selected metadata omits content", Maybe.is_none(&2, J.Json,
+      J.get(metadata, "content")) && Bool.not(T.bool_arg(T.object_field(metadata, "response"),
+        "content_complete", True{})) && Bool.not(T.bool_arg(T.object_field(metadata, "response"),
+        "output_truncated", True{})))
+    say("selected text projection", Maybe.is_some(&2, J.Json,
+      J.get(R.select(part, "text"), "content")) &&
+      Maybe.is_none(&2, J.Json, J.get(R.select(html, "text"), "content")))
+    say("selected HTML projection", Maybe.is_some(&2, J.Json,
+      J.get(R.select(html, "html"), "content")) &&
+      Maybe.is_none(&2, J.Json, J.get(R.select(part, "html"), "content")))
+    say("binary excluded from text and HTML", Maybe.is_none(&2, J.Json,
+      J.get(R.select(binary, "text"), "content")) &&
+      Maybe.is_none(&2, J.Json, J.get(R.select(binary, "html"), "content")))
+    say("selected text completeness", selected_short(result(R.apply(part, "full", small)), small))
+    say("selected binary completeness", selected_short(
+      result(R.apply(binary, "full", binary_small)), binary_small))
+    say("binary budgets preserve valid base64", binary_budgets(100n, binary, binary_small))
+    say("selected text byte boundaries", budgets(80n, part, small))
+    say("selected default untouched", default_out(T.projected.if(False{},
+      T.Ok{part}, J.obj([])), part))
+    say("binary full content complete", T.bool_arg(T.object_field(
+      result(R.apply(binary, "full", 65536)), "response"), "content_complete", False{}) &&
+      String.eq(T.str_arg(result(R.apply(binary, "full", 65536)), "content", "?"),
+        T.str_arg(binary, "content", "")))
 
 #|exact escaped UTF-8 size: true
 #|default untouched: true
@@ -102,3 +170,13 @@ def main() -> IO(Unit):
 #|errors untouched: true
 #|zero budget rejected: true
 #|unknown projection rejected: true
+#|selected metadata omits content: true
+#|selected text projection: true
+#|selected HTML projection: true
+#|binary excluded from text and HTML: true
+#|selected text completeness: true
+#|selected binary completeness: true
+#|binary budgets preserve valid base64: true
+#|selected text byte boundaries: true
+#|selected default untouched: true
+#|binary full content complete: true

@@ -17,21 +17,22 @@ multibyte CLI and MCP tests; cross-page cursor retry tests; unchanged Jev input;
 response-byte and character measurements without token-saving claims; full
 contributor checks and independent review before the draft PR.
 
-Status: implementation, 13 focused checks, 86 synthetic projection checks,
-rebuilt helpers/core and `bend PROOF.bend --verdict` pass. Full contributor
-checks are in progress after recovery from concurrent-build OOM. The focused cases cover exact escaped UTF-8 size, default compatibility,
-field selection, tiny-budget rejection, scalar boundaries and protected fields.
+Status: the final selected-part extension passes the proven kernel, 23 focused
+unit checks, all 13 unit suites and 89 CLI/MCP projection cases. The broader
+contributor run passed 21 transport cases, 14 cloud-network cases, 99 Rust tests
+with fmt/clippy, and 834 e2e cases before that additive extension. Native code and
+protocol plans are unchanged by it. CI and council outcomes are tracked in [PR #43](https://github.com/albertc71/MailBend/pull/43).
 
 ## Verification scope
 
 Existing safety laws remain unchanged. Three added laws prove the generic non-body
-selection predicate, fix the body classifier to exactly text/HTML, and preserve every
+selection predicate, fix the body classifier to exactly text/HTML/selected content, and preserve every
 non-body JSON value and byte allowance while fitting. Full list/result assembly and the whole-response
 budget and cursor invariants are validated by unit and synthetic e2e tests;
 this work does not claim a universally quantified byte-budget or IO theorem.
-The parent coordinates the requested independent formal-verification council and
-simplification review. An extra simplifier spawn was unavailable at the shared
-agent limit; no review completion is claimed here.
+Independent Astra source review found no correctness defect. Opus and Sol
+assurance/readability reviews clarified the proof boundary: helper predicates and
+single-field fitting are proved; complete traversal and IO behavior are tested.
 
 ## User flow
 
@@ -131,7 +132,40 @@ the restored proofs pass. Final `bend PROOF.bend --verdict` passed with all thre
 
 The final proven-kernel check, all 13 unit suites, all 21 transport cases,
 all 14 cloud-network cases, and Rust fmt/clippy (`-D warnings`)/99 tests pass.
-Full e2e is running. The Windows checkout's cloud-launcher shebang had CRLF and
+Full e2e passed all 834 cases. The Windows checkout's cloud-launcher shebang had CRLF and
 was normalized locally; e2e temporary storage was moved to ext4 `/tmp` because
 Windows-mounted directories cannot create the FIFO required by existing sandbox
-tests. No checks were weakened. CI and final council confirmation remain pending.
+tests. No checks were weakened. CI and council outcomes are tracked in PR #43.
+
+The MCP projection fixture now initializes protocol `2025-06-18`, sends the
+initialized notification and then calls the tool. It selects the tool response
+by ID and excludes the handshake from wire-byte measurements. All 89 focused
+cases pass after this compatibility change; measurements above are unchanged.
+
+Readability review retained the structural byte estimator because it counts the
+projected tree before final serialization without constructing a second complete
+JSON result string. Tests compare the estimator to actual escaped UTF-8 output.
+The four-read validation guard is retained to preserve unknown-tool errors and
+avoid changing unrelated validation contracts. Summary arrays have no body fields;
+projection deliberately leaves them intact, as the schema and README state.
+
+## Selected-part integration
+
+The parent explicitly extended the projection contract to the selected MIME-part
+result from the parallel selective-read change. `content` is therefore an explicit
+third body field in the classifier and selection law premises; no other metadata
+becomes shorten-able. Text and HTML projection follow normalized MIME media type.
+Binary base64 is all-or-nothing. Selected-only `response.content_complete` reports
+returned-content completeness, while `complete` preserves fetched-part completeness.
+Metadata omission is intentional selection, not output truncation. Identity,
+section, source evidence and Jev remain intact. Additional pure result fixtures
+cover text/HTML/multibyte/base64, omission, default compatibility and byte boundaries.
+
+The selected-part extension was rebuilt and rechecked by the proven kernel:
+`ALL PROOFS CHECK`. All 13 unit suites and all 89 compiled CLI/MCP projection
+checks pass with the updated source. Both real-source Jev mutations still fail
+the helper laws. A third real-source mutation routed binary content through the
+text-prefix fitter: the valid-base64/all-or-nothing unit assertion failed, as
+expected. All mutations were restored byte-for-byte before final validation.
+Independent Sol and Astra source reviews found no new blocker in this delta;
+SHA-bound CI and review confirmation are tracked in PR #43.

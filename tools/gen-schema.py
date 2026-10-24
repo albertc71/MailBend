@@ -79,12 +79,16 @@ READ_PROJECTION = {
     "projection": param(
         "string", "Body fields to return; default full preserves text and HTML. "
         "text omits html, html omits text, metadata omits both. Headers, summaries, "
-        "identity, completeness and Jev stay unchanged. Does not change fetching or Jev input.",
+        "identity, completeness and Jev stay unchanged. Selected-part content follows its MIME "
+        "type: text keeps text/* except text/html, html keeps text/html, metadata omits content. "
+        "Does not change fetching or Jev input.",
         enum=["full", "text", "html", "metadata"]),
     "max_response_bytes": param(
         "integer", "Optional UTF-8 byte budget for shared result JSON, including JSON escaping; "
         "excludes CLI newline and MCP envelope/escaping. No default limit. Only body strings "
-        "are shortened. All selected summaries/cursors/Jev results are retained; an impossible "
+        "are shortened; selected binary content is kept whole or replaced by empty valid base64, "
+        "never sliced. Selected-part response.content_complete describes returned content; "
+        "complete remains fetched-part completeness. All summaries/cursors/Jev results remain; an impossible "
         "budget is an error (errors are outside the budget). Retry with a larger budget or "
         "smaller limit and the same checkpoint. response.output_truncated is separate from "
         "fetched-message truncated.", minimum=1, maximum=16777216),

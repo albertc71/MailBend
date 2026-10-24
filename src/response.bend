@@ -3,6 +3,7 @@
 import Base
 import ./codec.bend as C
 import ./json.bend as J
+import ./mime.bend as M
 
 # Exact UTF-8 size of shared JSON, including its quotes and escapes.
 def bytes.separator(j: J.Json) -> U32:
@@ -33,13 +34,14 @@ def bytes(j: J.Json) -> U32:
     case J.JKv{k, v}:
       ((3 + C.utf8_len(J.esc(k)) : U32) + bytes(v) : U32)
 
-# Projection only selects the two body fields. Everything else, including
+# Projection only selects body text, HTML or selected-part content. Everything else, including
 # every selected summary and every Jev answer, remains untouched.
 def keep(+mode: String, +key: String) -> Bool:
   Bool.not((String.eq(key, "text") &&
     (String.eq(mode, "html") || String.eq(mode, "metadata"))) ||
     (String.eq(key, "html") &&
-    (String.eq(mode, "text") || String.eq(mode, "metadata"))))
+    (String.eq(mode, "text") || String.eq(mode, "metadata"))) ||
+    (String.eq(key, "content") && String.eq(mode, "metadata")))
 
 def fields.put(yes: Bool, kv: J.Json, rest: List<&2, J.Json>) -> List<&2, J.Json>:
   match yes:
@@ -48,28 +50,48 @@ def fields.put(yes: Bool, kv: J.Json, rest: List<&2, J.Json>) -> List<&2, J.Json
     case False{}:
       rest
 
-def fields(xs: List<&2, J.Json>, +mode: String) -> List<&2, J.Json>:
+def fields(xs: List<&2, J.Json>, +mode: String, +content: Bool) -> List<&2, J.Json>:
   match xs:
     case Nil{}:
       []
     case +kv <> t:
       match kv:
-        case J.JKv{key, v}:
-          fields.put(keep(mode, key), kv, fields(t, mode))
+        case J.JKv{+key, v}:
+          fields.put(keep(mode, key) && (Bool.not(String.eq(key, "content")) || content),
+            kv, fields(t, mode, content))
         case _:
-          kv <> fields(t, mode)
+          kv <> fields(t, mode, content)
 
-def select(j: J.Json, mode: String) -> J.Json:
+def text(j: J.Json, key: String) -> String:
+  Maybe.default(&2, String, J.as_str(J.get(j, key)), "")
+
+def selected(j: J.Json) -> Bool:
+  String.eq(text(j, "scope"), "selected_part")
+
+def content_allowed(mode: String, +media: String) -> Bool:
+  match mode:
+    case "full":
+      True{}
+    case "text":
+      String.starts_with(media, "text/") && Bool.not(String.eq(media, "text/html"))
+    case "html":
+      String.eq(media, "text/html")
+    case _:
+      False{}
+
+def select(+j: J.Json, +mode: String) -> J.Json:
   match j:
     case J.JObj{xs}:
-      J.obj(fields(J.unchain(xs), mode))
+      media = M.main_value(text(j, "content_type"))
+      content = Bool.not(selected(j)) || content_allowed(mode, media)
+      J.obj(fields(J.unchain(xs), mode, content))
     case _:
       j
 
 # Only top-level body strings are shortened. In particular this never
 # descends into messages, attachments, Jev answers or error objects.
 def body_key(+k: String) -> Bool:
-  String.eq(k, "text") || String.eq(k, "html")
+  String.eq(k, "text") || String.eq(k, "html") || String.eq(k, "content")
 
 def empty_field(kv: J.Json) -> J.Json:
   match kv:
@@ -137,6 +159,25 @@ def fit_field(kv: J.Json, left: U32) -> Field:
     case _:
       Field{kv, left, False{}}
 
+# Base64 content is indivisible: preserve it whole or return the valid empty
+# encoding with an explicit output-truncation notice. Never slice a quartet.
+def fit_field.binary(kv: J.Json, +left: U32) -> Field:
+  match kv:
+    case J.JKv{"content", J.JStr{+s}}:
+      +n = C.utf8_len(J.esc(s))
+      +fits = U32.is_le(n, left)
+      Field{J.kv("content", J.str(Bool.pick(String, fits, s, ""))),
+        Bool.pick(U32, fits, (left - n : U32), left), Bool.not(fits)}
+    case _:
+      fit_field(kv, left)
+
+def fit_field.encoded(binary: Bool, kv: J.Json, left: U32) -> Field:
+  match binary:
+    case True{}:
+      fit_field.binary(kv, left)
+    case False{}:
+      fit_field(kv, left)
+
 def fit_field.left(f: Field) -> U32:
   Field{_, left, _} = f
   left
@@ -149,28 +190,38 @@ def fit_fields.put(f: Field, rest: Fields) -> Fields:
   Fields{items, more} = rest
   Fields{kv <> items, cut || more}
 
-def fit_fields(xs: List<&2, J.Json>, left: U32) -> Fields:
+def fit_fields(xs: List<&2, J.Json>, left: U32, +binary: Bool) -> Fields:
   match xs:
     case Nil{}:
       Fields{[], False{}}
     case kv <> t:
-      +f = fit_field(kv, left)
-      fit_fields.put(f, fit_fields(t, fit_field.left(f)))
+      +f = fit_field.encoded(binary, kv, left)
+      fit_fields.put(f, fit_fields(t, fit_field.left(f), binary))
 
-def notice(mode: String, max: U32, cut: Bool) -> J.Json:
-  J.kv("response", J.obj([
+def notice(mode: String, max: U32, cut: Bool, extra: List<&2, J.Json>) -> J.Json:
+  J.kv("response", J.obj(List.append(&2, J.Json, [
     J.kv("projection", J.str(mode)),
     J.kv("max_bytes", J.num(max)),
     J.kv("budget_scope", J.str("result_json_utf8")),
     J.kv("output_truncated", J.bool(cut)),
     J.kv("request_more", J.str("Use projection=full and raise max_response_bytes; " ++
       "raise max_bytes if truncated=true. For lists, reduce limit and keep the same checkpoint."))
-  ]))
+  ], extra)))
 
-def with_notice(j: J.Json, mode: String, max: U32, cut: Bool) -> J.Json:
+def content_notice.if(yes: Bool, +j: J.Json, cut: Bool) -> List<&2, J.Json>:
+  match yes:
+    case True{}:
+      complete = Maybe.default(&2, Bool, J.as_bool(J.get(j, "complete")), False{})
+      [J.kv("content_complete", J.bool(complete && Bool.not(cut) &&
+        Maybe.is_some(&2, J.Json, J.get(j, "content"))))]
+    case False{}:
+      []
+
+def with_notice(+j: J.Json, mode: String, max: U32, +cut: Bool) -> J.Json:
   match j:
     case J.JObj{xs}:
-      J.obj(List.append(&2, J.Json, J.unchain(xs), [notice(mode, max, cut)]))
+      extra = content_notice.if(selected(j), j, cut)
+      J.obj(List.append(&2, J.Json, J.unchain(xs), [notice(mode, max, cut, extra)]))
     case _:
       j
 
@@ -178,10 +229,11 @@ def fit.put(f: Fields, mode: String, max: U32) -> J.Json:
   Fields{items, cut} = f
   with_notice(J.obj(items), mode, max, cut)
 
-def fit(j: J.Json, mode: String, max: U32, left: U32) -> J.Json:
+def fit(+j: J.Json, mode: String, max: U32, left: U32) -> J.Json:
   match j:
     case J.JObj{xs}:
-      fit.put(fit_fields(J.unchain(xs), left), mode, max)
+      fit.put(fit_fields(J.unchain(xs), left,
+        selected(j) && String.eq(text(j, "content_encoding"), "base64")), mode, max)
     case _:
       j
 
@@ -197,7 +249,8 @@ def bounded.if(over: Bool, j: J.Json, mode: String, +max: U32, floor: U32)
 
 def bounded(+j: J.Json, +mode: String, +max: U32) -> Result<&2, &2, String, J.Json>:
   # false is one byte longer than true, so the immutable floor reserves
-  # enough space for either output_truncated value without a size fixed point.
+  # enough space for either flag; selected content_complete changes the other
+  # way, consuming that spare byte when a fetched-complete part is shortened.
   +floor = bytes(with_notice(empty_body(j), mode, max, False{}))
   bounded.if(U32.is_gt(floor, max), j, mode, max, floor)
 

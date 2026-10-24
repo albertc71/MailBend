@@ -120,6 +120,17 @@ body by projection never makes a truncated fetch complete. To retrieve more,
 select `full`, raise `max_response_bytes`, and raise the fetch `max_bytes` if
 `truncated` is true.
 
+For selected MIME-part results (`scope: "selected_part"`), `metadata` omits
+`content`; `text` retains `text/*` content except `text/html`, and `html` retains
+only `text/html` (MIME type matching ignores case and parameters). `full` retains
+any part. Decoded text is shortened at Unicode scalar boundaries. Binary base64
+is kept whole or replaced with the valid empty string; it is never partially
+sliced. On opted-in selected results, `response.content_complete` describes the
+**returned** content and is false when omitted or shortened. The existing
+`complete` still describes the **fetched part**, while `message_complete` and
+all section/identity/Jev metadata remain unchanged. Intentional projection
+omission leaves `output_truncated` false; budget shortening sets it true.
+
 The budget never drops summaries or advances an arrival cursor past omitted
 messages. If protected fields and the response notice alone will not fit,
 the call fails explicitly with the minimum required budget. Raise the budget,
@@ -426,8 +437,7 @@ maps each rule to the code and checks that enforce it.
 
 Response projection laws also prove that the per-field selection predicate
 keeps non-body fields, and fitting one non-body field preserves its value and
-byte allowance. A separate law fixes the body classifier to exactly `text` and
-`html`, so safety fields cannot silently become shorten-able. Full result/list assembly, whole-response
+byte allowance. A separate law fixes the body classifier to exactly `text`, `html` and selected-part `content`, so safety fields cannot silently become shorten-able. Full result/list assembly, whole-response
 byte bounds, cursor paging and unchanged Jev inputs are tested; those are not
 claimed as universally quantified budget or IO proofs.
 

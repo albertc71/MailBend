@@ -53,13 +53,20 @@ def run(t, work):
                         r['response']['output_truncated'] == cut and r['truncated'] is False, r)
                 request = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
                            'params': {'name': 'mail_get', 'arguments': args}}
-                m = subprocess.run([t.LAUNCHER, 'mcp'], input=json.dumps(request) + '\n',
+                initialize = {'jsonrpc': '2.0', 'id': 0, 'method': 'initialize',
+                              'params': {'protocolVersion': '2025-06-18', 'capabilities': {},
+                                         'clientInfo': {'name': 'projection-test', 'version': '1'}}}
+                initialized = {'jsonrpc': '2.0', 'method': 'notifications/initialized'}
+                requests = '\n'.join(json.dumps(x) for x in (initialize, initialized, request)) + '\n'
+                m = subprocess.run([t.LAUNCHER, 'mcp'], input=requests,
                                    capture_output=True, text=True, env=srv.env(), timeout=120)
                 t.outputs.extend([m.stdout, m.stderr])
-                inner = json.loads(m.stdout)['result']['content'][0]['text']
+                # Measure only the tools/call response; the handshake is separate.
+                tool_wire = next(line for line in m.stdout.splitlines() if json.loads(line).get('id') == 1)
+                inner = json.loads(tool_wire)['result']['content'][0]['text']
                 t.check(f'projection {name}/{mode}: MCP/CLI parity', json.loads(inner) == r and
                         len(inner.encode()) <= 1200)
-                print('MEASURE', name, mode, len(line.encode()), len(line), len(m.stdout.encode()))
+                print('MEASURE', name, mode, len(line.encode()), len(line), len(tool_wire.encode()) + 1)
             c, r = t.tool(srv, 'mail_get', {'uid': 1, 'projection': 'metadata',
                                           'max_bytes': 1024, 'max_response_bytes': 1200})
             t.check(f'projection {name}: fetched truncation survives', c == 0 and r.get('truncated') is True, r)

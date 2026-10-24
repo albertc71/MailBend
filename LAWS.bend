@@ -7,7 +7,8 @@
 # src/jev.bend: what it sends to TypeSafe, how it reads a missing answer,
 # the triage filing table, and the gates, the pure functions through which
 # alone the tools reach an SMTP envelope or a delete plan. PROOF.bend proves
-# every law; `bend PROOF.bend` is the gate. The laws cover these values and
+# every law, including read-response field selection and fitting;
+# `bend PROOF.bend` is the gate. The laws cover these values and
 # their rendering only; "What the proofs cover" in README.md says what is
 # left to tests.
 
@@ -997,19 +998,20 @@ law outgoing_headers_state_has_no_body:
 # Read response projections
 # -------------------------
 
-# LAW: projection cannot omit a field other than the two body fields.
+# LAW: projection cannot omit a field other than body text, HTML or selected content.
 law projection_keeps_nonbody:
   for mode: String
   for key: String
   for not_text: {String.eq(key, "text") == False{} : Bool}
   for not_html: {String.eq(key, "html") == False{} : Bool}
+  for not_content: {String.eq(key, "content") == False{} : Bool}
   {Response.keep(mode, key) == True{} : Bool}
 
 # LAW: the budget's body classifier cannot expand to safety or identity fields.
 law response_body_fields_are_exact:
   for key: String
   {Response.body_key(key) ==
-    (String.eq(key, "text") || String.eq(key, "html")) : Bool}
+    (String.eq(key, "text") || String.eq(key, "html") || String.eq(key, "content")) : Bool}
 
 # LAW: fitting a non-body field preserves its complete value, consumes no
 # allowance and never claims it was shortened. This includes Jev and cursor data.
