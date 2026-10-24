@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Require the real Bend cursor test to detect an inclusive-boundary mutation.
+
+Copies production Bend modules and the cursor test into a temporary directory;
+the checkout is never modified. Baseline output must match its checked-in
+expectations. Changing the production U32.is_lt boundary to U32.is_le must
+still compile/run, but must violate the tested exclusion of the boundary UID.
+This source mutation check complements, rather than proves, universal laws.
+"""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def run(root):
+    env = dict(os.environ, BEND_NO_TELEMETRY="1")
+    return subprocess.run(["bend", "tests/unit/search-cursor.bend"], cwd=root,
+                          capture_output=True, text=True, env=env, timeout=120)
+
+
+def main():
+    expected = "".join(line[2:] + "\n" for line in
+                       (ROOT / "tests/unit/search-cursor.bend").read_text(encoding="utf-8").splitlines()
+                       if line.startswith("#|"))
+    baseline = run(ROOT)
+    assert baseline.returncode == 0 and baseline.stdout == expected, (
+        "baseline cursor property test failed", baseline.stdout, baseline.stderr)
+    with tempfile.TemporaryDirectory(prefix="mailbend-search-mutation-") as directory:
+        root = Path(directory)
+        shutil.copytree(ROOT / "src", root / "src")
+        (root / "tests/unit").mkdir(parents=True)
+        shutil.copy2(ROOT / "tests/unit/search-cursor.bend", root / "tests/unit/search-cursor.bend")
+        source = root / "src/search-cursor.bend"
+        text = source.read_text(encoding="utf-8")
+        old, new = "U32.is_lt(u, before)", "U32.is_le(u, before)"
+        assert text.count(old) == 1, "production boundary moved: update this mutation explicitly"
+        source.write_text(text.replace(old, new), encoding="utf-8")
+        broken = run(root)
+        assert broken.returncode == 0, ("mutation did not run", broken.stdout, broken.stderr)
+        assert broken.stdout != expected and "[4294967295,2,1]\n" in broken.stdout, (
+            "inclusive production boundary was not detected", broken.stdout)
+    print("PASS actual Bend boundary mutation rejected: maximum boundary UID repeated")
+
+
+if __name__ == "__main__":
+    main()

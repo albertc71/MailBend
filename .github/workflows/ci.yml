@@ -99,7 +99,9 @@ jobs:
         run: sh tests/run-unit.sh
 
       - name: Bounded exhaustive search-pagination model
-        run: python3 tests/formal/search-pagination-model.py
+        run: |
+          python3 tests/formal/search-pagination-model.py
+          python3 tests/formal/check-search-boundary-mutation.py
 
       - name: Transport tests
         run: bash tests/test-transport.sh

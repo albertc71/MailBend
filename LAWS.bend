@@ -138,6 +138,15 @@ law search_page_examines:
   {Ops.has_prefix("a1 EXAMINE ", I.script(Ops.plan_search_page(mbox, keys, cursor))) ==
     True{} : Bool}
 
+# LAW: continuation searches pin UIDVALIDITY before searching with the unchanged keys.
+law search_continuation_pins_identity:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for uidv: U32
+  for before: U32
+  {Ops.plan_search_page(mbox, keys, SC.Continue{uidv, before}) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{keys}] : List<&2, I.Cmd>}
+
 # LAW: for every mailbox, UID and size limit, the get plan writes nothing
 law get_writes_nothing:
   for mbox: String

@@ -77,6 +77,9 @@ def Laws.search_page_examines(mbox, keys, cursor):
     case SC.Continue{uidv, before}:
       {==}
 
+def Laws.search_continuation_pins_identity(mbox, keys, uidv, before):
+  {==}
+
 def Laws.get_writes_nothing(mbox, uid, max):
   {==}
 
