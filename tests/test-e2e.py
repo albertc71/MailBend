@@ -139,7 +139,6 @@ def flags(state, box, uid):
 
 
 def main():
-    mcp_headless()
     work = tempfile.mkdtemp(prefix="e2e-", dir=str(ROOT / "build") if (ROOT / "build").exists() else None)
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
@@ -155,6 +154,7 @@ def main():
 
 
 def run_all(work):
+    mcp_headless()
     srv = Server(work)
     try:
         reads(srv)
@@ -554,13 +554,17 @@ os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
     env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
     env["MAILBEND_READ_ONLY"] = "1"
     data = "".join(json.dumps(r) + "\n" for r in requests)
-    for launcher in (ROOT / "scripts/mailbend", ROOT / "scripts/mailbend-cloud"):
-        p = subprocess.run([sys.executable, "-c", probe, str(launcher)], input=data,
-                           text=True, capture_output=True, env=env, cwd="/",
-                           start_new_session=True, timeout=180)
-        outputs.extend([p.stdout, p.stderr])
+    for launcher in (pathlib.Path(LAUNCHER), ROOT / "scripts/mailbend-cloud"):
         tag = f"headless {launcher.name}: "
-        check(tag + "starts without a controlling terminal and exits on EOF",
+        try:
+            p = subprocess.run([sys.executable, "-c", probe, str(launcher)], input=data,
+                               text=True, capture_output=True, env=env, cwd="/",
+                               start_new_session=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            check(tag + "responds and exits within 180 seconds", False)
+            continue
+        outputs.extend([p.stdout, p.stderr])
+        check(tag + "starts without a controlling terminal, exits on EOF, and adds no stderr",
               p.returncode == 0 and p.stderr == "no controlling terminal\n", p.stderr)
         try:
             replies = [json.loads(line) for line in p.stdout.splitlines()]

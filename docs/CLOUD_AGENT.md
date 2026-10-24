@@ -141,26 +141,31 @@ separate from DNS errors.
 
 ### Connector fails to load with ENXIO
 
-[Issue #30](https://github.com/albertc71/MailBend/issues/30) reports Grok
-Bot's `user-mailbend` connector failing during tool discovery with
+[Issue #30](https://github.com/albertc71/MailBend/issues/30) reports
 `failed_to_load`, `Connection closed` and `No such device or address`
-(`ENXIO`). In that report, a standalone MCP initialize request succeeded
-with piped stdio and no controlling terminal. MailBend does not require a
-terminal. The end-to-end suite also checks initialize and tools/list through
-both launchers in a new session, without credentials or a controlling terminal.
+(`ENXIO`) during Grok Bot tool discovery, despite standalone MCP success.
+MailBend does not require a terminal. Use the direct launcher and
+`args: ["mcp"]` shown above. The custom `mailbend-mcp-host.py` in that
+report is not shipped by this repository.
 
-The reported evidence points to the client's launch path or its custom
-wrapper environment. It does not identify the exact failing client call.
-The custom `mailbend-mcp-host.py` mentioned in the report is not shipped by
-this repository. Use the direct launcher and `args: ["mcp"]` shown above to
-remove that extra variable. Tool discovery needs no mail credentials, so a
-discovery failure alone does not establish a mail authentication problem.
+To compare standalone discovery without a controlling terminal, run on Linux:
 
-If standalone discovery works but the connector still fails, collect the
-client's launch error and exit status for the platform maintainer. Do not
-dump environment values or credentials. Allocating a pseudo-terminal is
-not a verified repair and can change the stdio protocol. No fix in the
-Grok Bot runner has been verified here.
+```sh
+MAILBEND_READ_ONLY=1 setsid --wait /workspace/MailBend/scripts/mailbend-cloud mcp <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"discovery-check","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+EOF
+```
+
+Expect two JSON-RPC results, with IDs 1 and 2, and exit status zero.
+The notification produces no reply. Discovery needs no mail credentials and
+does not contact the mailbox. If this succeeds but the connector still fails,
+collect the client's launch error and exit status for the platform maintainer.
+If it fails, check the launcher path, build readiness and client environment.
+Do not dump environment values or credentials. A pseudo-terminal is not a
+verified repair and can change the stdio protocol. The exact failing Grok
+client call remains unresolved in the linked issue.
 
 The supported fallback is the CLI, with the same environment and safety
 settings as the MCP server:
