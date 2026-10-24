@@ -11,7 +11,7 @@ Usage:
         [--noisy-store] [--flags-first] [--fetch-no-flags UID[,UID]] [--file-sent MAILBOX]
         [--bodystructure real|omit|corrupt]
 
-Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls) on
+Binds IMAP (implicit TLS) and SMTP (STARTTLS, unless --no-starttls; implicit TLS with --smtp-implicit) on
 127.0.0.1 with OS-assigned ports, prints one line
 
     READY imap=<port> smtp=<port> [silent=<port>]
@@ -1325,13 +1325,13 @@ class IMAPSession:
 
 
 class SMTPSession:
-    def __init__(self, sock, state: State, logger: Logger, ssl_ctx, starttls_offered: bool):
+    def __init__(self, sock, state: State, logger: Logger, ssl_ctx, starttls_offered: bool, implicit=False):
         self.conn = Conn(sock)
         self.state = state
         self.logger = logger
         self.ssl_ctx = ssl_ctx
         self.starttls_offered = starttls_offered
-        self.tls_active = False
+        self.tls_active = implicit
         self.authenticated = False
         self.mail_from = None
         self.rcpt_to = []
@@ -1595,6 +1595,7 @@ def main():
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     ap.add_argument('--cut-goodbye', action='store_true',
                     help='cut the LOGOUT and QUIT replies off mid-line, then close')
+    ap.add_argument('--smtp-implicit', action='store_true', help='SMTP TLS before the greeting')
     ap.add_argument('--file-sent', help='append every message accepted over SMTP to this mailbox, seen')
     ap.add_argument('--bodystructure', choices=['real', 'omit', 'corrupt'], default='real',
                     help='answer FETCH BODYSTRUCTURE, leave it out, or answer a malformed one')
@@ -1684,8 +1685,10 @@ def main():
 
     def smtp_handler(conn):
         try:
-            SMTPSession(conn, state, logger, ctx, not args.no_starttls).run()
-        except (ConnectionClosed, ProtocolError):
+            if args.smtp_implicit:
+                conn = ctx.wrap_socket(conn, server_side=True)
+            SMTPSession(conn, state, logger, ctx, not args.no_starttls, args.smtp_implicit).run()
+        except (ConnectionClosed, ProtocolError, ssl.SSLError, OSError):
             pass
         finally:
             try:

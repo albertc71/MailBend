@@ -1,4 +1,4 @@
-//! The SMTP session: greeting, EHLO, mandatory STARTTLS, EHLO again, quiet
+//! The SMTP session: verified implicit TLS or STARTTLS, EHLO, quiet
 //! AUTH, then the envelope and message; the first rejection stops the run.
 //! QUIT is best effort.
 
@@ -11,6 +11,7 @@ use zeroize::Zeroizing;
 use crate::connection::Connection;
 use crate::creds::Credentials;
 use crate::limits::MAX_OUTPUT;
+use crate::settings::SmtpTlsMode;
 use crate::smtp::envelope::Step;
 use crate::smtp::reply::{has_auth, has_extension, parse_line};
 use crate::{Exit, Outcome};
@@ -34,10 +35,11 @@ pub fn run(
     conn: &mut Connection,
     tls: &Arc<ClientConfig>,
     host: &str,
+    mode: SmtpTlsMode,
     creds: &Credentials,
     steps: &[Step<'_>],
 ) -> Result<Outcome, Exit> {
-    let ehlo = negotiate_tls(conn, tls, host)?;
+    let ehlo = negotiate_tls(conn, tls, host, mode)?;
     authenticate(conn, &ehlo, creds)?;
     let rejected_with = send_envelope(conn, steps)?;
     // After 421 the server has already closed the connection.
@@ -78,18 +80,25 @@ fn reply_code(conn: &mut Connection) -> Result<u16, Exit> {
     read_reply(conn).map(|reply| reply.code)
 }
 
-/// Greeting, EHLO, STARTTLS (which the server must offer) and EHLO again
-/// over TLS. Returns the second EHLO reply, which lists the AUTH
-/// mechanisms.
+/// Establish verified TLS before authentication. Implicit mode handshakes
+/// before any SMTP bytes; STARTTLS repeats EHLO after upgrading. Returns
+/// only the protected EHLO reply, which lists the AUTH mechanisms.
 fn negotiate_tls(
     conn: &mut Connection,
     tls: &Arc<ClientConfig>,
     host: &str,
+    mode: SmtpTlsMode,
 ) -> Result<Vec<u8>, Exit> {
+    if mode == SmtpTlsMode::Implicit {
+        conn.start_tls(tls, host)?;
+    }
     if reply_code(conn)? != SERVICE_READY {
         return Err(Exit::protocol("server refused the connection"));
     }
     let ehlo = hello(conn, "EHLO rejected")?;
+    if mode == SmtpTlsMode::Implicit {
+        return Ok(ehlo);
+    }
     if !has_extension(&ehlo, b"STARTTLS") {
         return Err(Exit::connect("server does not offer STARTTLS"));
     }

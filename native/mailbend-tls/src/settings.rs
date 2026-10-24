@@ -20,6 +20,25 @@ pub enum Protocol {
     Smtp,
 }
 
+/// SMTP encryption is explicit and never inferred from a port.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmtpTlsMode {
+    StartTls,
+    Implicit,
+}
+
+impl SmtpTlsMode {
+    fn from_env() -> Result<Self, Exit> {
+        match std::env::var("MAILBEND_SMTP_TLS_MODE").as_deref() {
+            Err(std::env::VarError::NotPresent) | Ok("starttls") => Ok(Self::StartTls),
+            Ok("implicit") => Ok(Self::Implicit),
+            _ => Err(Exit::usage(
+                "MAILBEND_SMTP_TLS_MODE must be starttls or implicit",
+            )),
+        }
+    }
+}
+
 /// Where a protocol's settings live, and their defaults (iCloud Mail).
 struct Service {
     host_var: &'static str,
@@ -52,6 +71,7 @@ impl Protocol {
 
 #[derive(Debug)]
 pub struct Settings {
+    pub smtp_tls_mode: SmtpTlsMode,
     /// The mail server's name: verified in its certificate and sent as SNI.
     pub host: String,
     pub port: u16,
@@ -69,6 +89,10 @@ pub struct Settings {
 
 impl Settings {
     pub fn from_env(protocol: Protocol) -> Result<Settings, Exit> {
+        let smtp_tls_mode = match protocol {
+            Protocol::Smtp => SmtpTlsMode::from_env()?,
+            Protocol::Imap => SmtpTlsMode::StartTls,
+        };
         let service = protocol.service();
         let host =
             text_setting(service.host_var)?.unwrap_or_else(|| service.default_host.to_string());
@@ -100,6 +124,7 @@ impl Settings {
         let timeout = timeout().map_err(Exit::usage)?;
         let ca_file = ca_file_setting();
         Ok(Settings {
+            smtp_tls_mode,
             host,
             port,
             connect_ip,

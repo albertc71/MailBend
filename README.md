@@ -163,10 +163,27 @@ deleting it resets the count, which is a local user action, not one the
 agent can take through MailBend.
 
 Other providers require compatible password-authenticated IMAP over implicit
-TLS and SMTP with STARTTLS. Set `MAILBEND_IMAP_HOST`, `MAILBEND_IMAP_PORT`,
+TLS and SMTP with STARTTLS or explicit implicit TLS. Set `MAILBEND_IMAP_HOST`,
+`MAILBEND_IMAP_PORT`,
 `MAILBEND_SMTP_HOST` and `MAILBEND_SMTP_PORT` for that provider, and supply its
-accepted password or app password. OAuth and implicit SMTPS are unsupported;
-other providers have not been live-tested here.
+accepted password or app password. `MAILBEND_SMTP_TLS_MODE` accepts exactly
+`starttls` (default when unset) or `implicit`. Implicit mode verifies TLS before
+reading the SMTP greeting or sending SMTP commands. Set the provider's port
+explicitly (commonly 465 for implicit TLS); the default remains 587 in both
+modes. Ports never select a mode, and failures never fall back to another mode
+or plaintext. Empty or unknown mode values are configuration errors.
+OAuth is unsupported.
+
+| Profile | Transport | Validation |
+| --- | --- | --- |
+| iCloud Mail, existing default profile | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |
+| Local synthetic server | SMTP STARTTLS and implicit TLS | Automated transport and end-to-end tests |
+| Other provider/account combinations | Either implemented SMTP mode | Not live-tested; no target accounts supplied |
+
+Implicit SMTP support was accepted to cover password-authenticated endpoints
+without STARTTLS. This adds a protocol mode, not a provider compatibility
+claim. Any later live-provider test requires separately authorized accounts
+and explicit disposable recipients.
 
 The role folders are Drafts, Trash, Sent, Junk and Archive. Each role
 resolves independently, in this order: a nonempty explicit override, a
@@ -251,7 +268,7 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 ## Safety
 
 - **TLS is always verified**: certificate chain and host name, TLS 1.2+, with
-  no option to turn verification off. SMTP requires STARTTLS.
+  no option to turn verification off. SMTP uses STARTTLS by default or explicit implicit TLS.
 - **Credentials stay in the helper.** Only `mailbend-tls` reads the password
   and sends it only to the verified server, so no tool result or log
   contains it. This is a code-level separation, not an OS boundary:
@@ -362,6 +379,10 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ### What the proofs cover
 
+The bounded [SMTP TLS-ordering model](docs/verification/smtp-tls/SKILL.md) separately
+checks authentication ordering in an explicit abstraction of both transport modes.
+It does not prove the Rust transport or cryptography.
+
 The laws are about the pure IMAP command plans, the SMTP envelope, Jev's
 requests and gates (the functions through which Jev can block a send or
 delete), and their rendering. They prove that a headers-mode Jev request
@@ -391,7 +412,7 @@ flowchart LR
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]
   helper -- "transcript on stdout" --> core
   helper <--> imap[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
-  helper <--> smtp[("SMTP STARTTLS<br/>default smtp.mail.me.com:587")]
+  helper <--> smtp[("SMTP verified TLS<br/>default STARTTLS smtp.mail.me.com:587")]
   secrets[["MAILBEND_APP_PASSWORD"]] -. "read by the helper only" .-> helper
   core -- "dir, path, byte budget" --> reader["mailbend-attach (Rust)<br/>no credentials, openat2"]
   reader -- "file bytes" --> core
@@ -439,8 +460,8 @@ before relying on a complete link.
 ## Known limits
 
 - Linux only (file access through `openat2` needs Linux 5.6+), with
-  password login over IMAP implicit TLS and SMTP STARTTLS; no OAuth, no
-  implicit SMTPS.
+  password login over IMAP implicit TLS and SMTP STARTTLS or explicit implicit
+  TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on

@@ -415,7 +415,7 @@ TOOLS = [
          "draft.",
          CHANGES, COMPOSE),
     tool("mail_send",
-         "Compose and send a message over SMTP (STARTTLS, verified). From is "
+         "Compose and send a message over SMTP (verified TLS). From is "
          "MAILBEND_EMAIL." + SEND_RULES,
          SENDS, COMPOSE),
     tool("mail_reply",
