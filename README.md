@@ -250,6 +250,52 @@ Register the MCP server (stdio) with your agent, using the absolute path:
 The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` (or
 `MAILBEND_PASSWORD_FILE`) from its environment.
 
+MCP supports `2026-07-28` discovery and per-request metadata, alongside legacy
+initialization for `2025-06-18`, `2025-03-26` and `2024-11-05`. It advertises only
+tools. See [MCP compatibility](docs/MCP.md) for request requirements, errors,
+capabilities and the conformance test mapping.
+
+MCP revisions `2025-06-18` and `2026-07-28` return the same JSON object in `structuredContent`
+and serialized text, and advertise a per-tool `outputSchema`. The older
+`2025-03-26` and `2024-11-05` revisions
+retain text-only results and omit output schemas. The CLI result is unchanged.
+Body limits apply before MCP formatting, so both representations contain the
+same truncated content and evidence. They are not a total response wire-size
+limit: MCP includes both the JSON and its escaped text representation.
+
+### SMTP outcomes
+
+Sends (`mail_send`, and replies/forwards sent rather than saved as drafts)
+report `smtp_outcome`, `smtp_phase`, `smtp_reason`, and `next_action` once
+an SMTP attempt is made or a send gate refuses it. Argument/configuration
+errors found before composing a send remain ordinary errors.
+
+| `smtp_outcome` | Meaning | Next action |
+| --- | --- | --- |
+| `accepted` | The SMTP server acknowledged DATA. This is not proof of recipient delivery. | Do not resend. |
+| `not_sent` | The attempt stopped before message data, or the server explicitly rejected DATA. | Resolve the reported problem before a new attempt. |
+| `unknown` | DATA may have reached the server but acceptance was not confirmed, or helper progress is missing. | Never retry automatically; check server records or ask the recipient. |
+
+`not_sent` and `unknown` preserve a nonzero CLI exit and MCP `isError: true`,
+with the full JSON details and any Jev/secret-scan evidence. No SMTP attempt
+is automatically replayed. Recipient refusal aborts before DATA even if
+other recipients were accepted. Process interruption without evidence is
+conservatively unknown; interruption of the entire CLI/MCP process can
+prevent any result from reaching the caller and must also be treated as
+uncertain.
+
+Accepted results retain `sent`, `message_id`, `recipients`, and `server_reply`.
+The Message-ID is locally generated, not proof of delivery; failed or unknown
+results omit it. A failed QUIT does not undo acceptance. With
+`MAILBEND_SAVE_SENT=1`, `sent_copy` separately reports filing: failure to file
+never changes SMTP acceptance, and a missing Sent copy never proves that a
+message was not delivered.
+
+Phases are `before_smtp`, `before_data`, `data_reply`, or `unknown`; reasons
+are `local_refusal`, `helper_not_started`, `stopped_before_data`,
+`explicit_rejection`, `acceptance_unconfirmed`, `missing_progress`, or
+`accepted_by_server`.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
@@ -387,7 +433,8 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ### What the proofs cover
 
-The laws are about the pure IMAP command plans, the SMTP envelope, Jev's
+The laws are about the pure IMAP command plans, the SMTP envelope and outcome
+interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
 delete), and their rendering. They prove that a headers-mode Jev request
 holds no message text, and that a gate can only take a send or delete away,
@@ -395,7 +442,10 @@ never change it. The gate laws cover the pure functions
 `Jev.outbound_checked` and `Jev.delete_checked`; the IO that calls them is
 covered by the end-to-end tests and a CI check that no other code reaches
 `S.outbound` or `smtp_run`, uses `plan_delete` without `delete_checked`, or
-makes an expunge outside `src/ops.bend` and `src/imap.bend`. The native
+makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome laws prove that unconfirmed or missing progress stays unknown
+for every exit code and transcript, and that confirmed acceptance survives a
+later process failure. Native progress production itself remains a tested IO
+boundary. The native
 helpers, TLS, MIME parsing, the agent's choices and the runtime
 configuration are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
@@ -477,7 +527,7 @@ before relying on a complete link.
 - Each character of a fetched message is a separate value in memory, so
   very large messages (the 16 MiB `mail_get` / 25 MiB forward caps) use a
   lot of RAM.
-- Retrying a `mail_send` that timed out may send the message twice.
+- Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
 

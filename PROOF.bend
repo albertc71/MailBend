@@ -1313,3 +1313,12 @@ def Laws.secret_scan_blocks(part, reason, gate, allow, rcpts, from, msg):
 
 def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, text):
   {==}
+
+# SMTP outcome evidence
+# ---------------------
+
+def Laws.smtp_unconfirmed_is_unknown(code, out, err):
+  ({==}, {==})
+
+def Laws.smtp_acceptance_survives_exit(code, out, err):
+  {==}

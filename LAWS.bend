@@ -8,8 +8,8 @@
 # the triage filing table, and the gates, the pure functions through which
 # alone the tools reach an SMTP envelope or a delete plan. PROOF.bend proves
 # every law; `bend PROOF.bend` is the gate. The laws cover these values and
-# their rendering only; "What the proofs cover" in README.md says what is
-# left to tests.
+# their rendering and SMTP outcome interpretation; "What the proofs cover"
+# in README.md says what is left to tests.
 
 import Base
 import ./src/codec.bend as C
@@ -20,6 +20,7 @@ import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
+import ./src/tools.bend as Tools
 
 # Tool classes
 # ------------
@@ -1019,3 +1020,34 @@ law outgoing_headers_state_has_no_body:
   {Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, text) ==
     Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, "")
     : String}
+
+# SMTP outcome evidence
+# ---------------------
+
+# The observable SMTP outcome, including the successful internal result.
+def smtp_outcome(o: Tools.Out) -> String:
+  match o:
+    case Tools.Ok{j}:
+      "accepted"
+    case Tools.Partial{j}:
+      Tools.str_arg(j, "smtp_outcome", "missing")
+    case Tools.Err{m}:
+      "error"
+
+# LAW: once DATA started without a final acknowledgement, or progress is
+# missing, every exit code and server transcript remains unknown.
+law smtp_unconfirmed_is_unknown:
+  for code: U32
+  for out: String
+  for err: String
+  ({smtp_outcome(Tools.smtp_code.phase("data_started", code, out, err)) == "unknown" : String} &
+   {smtp_outcome(Tools.smtp_code.phase("", code, out, err)) == "unknown" : String})
+
+# LAW: a final DATA acceptance stays successful for every later process
+# exit code; a failed QUIT or interruption cannot turn it into a refusal.
+law smtp_acceptance_survives_exit:
+  for code: U32
+  for out: String
+  for err: String
+  {Tools.smtp_code.phase("data_accepted", code, out, err) ==
+    Tools.Ok{J.str(S.last_ok(String.lines(out), ""))} : Tools.Out}

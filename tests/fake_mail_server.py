@@ -1537,6 +1537,8 @@ class SMTPSession:
         if self.mail_from is None or not self.rcpt_to:
             self.send('503 5.5.1 need MAIL and RCPT first\r\n')
             return
+        if 'before-data-close@example.com' in self.rcpt_to:
+            raise ConnectionClosed()
         self.send('354 Start mail input; end with <CRLF>.<CRLF>\r\n')
         lines = []
         while True:
@@ -1551,6 +1553,11 @@ class SMTPSession:
             lines.append(text)
         data = ('\r\n'.join(lines) + '\r\n') if lines else ''
         self.logger.log('smtp', f'<message {len(data)} bytes>')
+        if 'final-reject@example.com' in self.rcpt_to:
+            self.send('554 5.7.1 message refused\r\n')
+            return
+        lose_reply = 'lost-reply@example.com' in self.rcpt_to
+        bare_reply = 'bare-reply@example.com' in self.rcpt_to
         with self.state.lock:
             self.state.data['sent'].append({'mail_from': self.mail_from, 'rcpt_to': list(self.rcpt_to), 'data': data})
             n = len(self.state.data['sent'])
@@ -1561,7 +1568,9 @@ class SMTPSession:
                 filed['uidnext'] += 1
             self.state.save()
         self.mail_from, self.rcpt_to = None, []
-        self.send(f'250 2.0.0 OK queued as FAKE{n}\r\n')
+        if lose_reply:
+            raise ConnectionClosed()
+        self.send('250\r\n' if bare_reply else f'250 2.0.0 OK queued as FAKE{n}\r\n')
 
 
 # --------------------------------------------------------------------------
