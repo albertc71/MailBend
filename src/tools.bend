@@ -12,6 +12,7 @@ import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
+import ./search-cursor.bend as SC
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 
@@ -1561,12 +1562,13 @@ def search_headers.if(
   folder: String,
   uidv: Maybe<&2, U32>,
   total: U32,
-  uids: List<&2, U32>
+  uids: List<&2, U32>,
+  page: List<&2, J.Json>
 ) -> Shown:
   match same:
     case True{}:
       +ms = newest_first(fetched_msgs(lines, uids, False{}))
-      Listed{list_out(folder, uidv, total, summaries(ms)), ms}
+      Listed{with_fields(list_out(folder, uidv, total, summaries(ms)), page), ms}
     case False{}:
       Listed{Err{moved_msg()}, []}
 
@@ -1577,49 +1579,98 @@ def search_headers(
   folder: String,
   +uidv: Maybe<&2, U32>,
   total: U32,
-  uids: List<&2, U32>
+  uids: List<&2, U32>,
+  page: List<&2, J.Json>
 ) -> Shown:
   match r:
     case Fail{m}:
       Listed{Err{m}, []}
     case Done{+lines}:
       search_headers.if(same_uidv(uidv, I.ok_code(lines, "UIDVALIDITY")), lines, folder, uidv,
-        total, uids)
+        total, uids, page)
 
 def search_fetch(
   +uids: List<&2, U32>,
   +folder: String,
   uidv: Maybe<&2, U32>,
-  total: U32
+  total: U32,
+  page: List<&2, J.Json>
 ) -> IO(Shown):
   match uids:
     case Nil{}:
-      pure_shown(list_out(folder, uidv, total, []))
+      pure_shown(with_fields(list_out(folder, uidv, total, []), page))
     case h <> t:
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_headers(folder, uids))
-        return search_headers(r, folder, uidv, total, uids)
+        return search_headers(r, folder, uidv, total, uids, page)
 
-def search_found(r: Run(), folder: String, limit: U32) -> IO(Shown):
+def search_page.fields(
+  bounded: Bool, +more: Bool, binding: String, uidv: U32, selected: List<&2, U32>
+) -> List<&2, J.Json>:
+  match bounded:
+    case False{}:
+      [J.kv("has_more", J.bool(more)), J.kv("next_cursor", J.JNull{}),
+       J.kv("pagination_unavailable", J.str("search folder and criteria exceed the " ++
+         Nat.show(SC.max_binding_chars()) ++ "-character cursor binding limit"))]
+    case True{}:
+      [J.kv("has_more", J.bool(more)),
+       J.kv("next_cursor", SC.next(more, binding, uidv, selected))]
+
+# Advance by the last selected UID even if a message disappears before FETCH.
+# Otherwise an empty FETCH could strand a caller on the same page forever.
+def search_page(
+  +uids: List<&2, U32>, folder: String, +uidv: Maybe<&2, U32>, total: U32,
+  +limit: U32, +binding: String
+) -> IO(Shown):
+  +selected = List.take(&2, U32, desc(uids), U32.to_nat(limit))
+  +more = Nat.is_gt(List.length(&2, U32, uids), U32.to_nat(limit))
+  page = search_page.fields(SC.fits(binding, SC.max_binding_chars()), more, binding,
+    Maybe.default(&2, U32, uidv, 0), selected)
+  search_fetch(selected, folder, uidv, total, page)
+
+def search_found.if(
+  same: Bool, +lines: List<&2, I.RLine>, folder: String, limit: U32,
+  cursor: SC.Cursor, binding: String
+) -> IO(Shown):
+  match same:
+    case False{}:
+      pure_shown(Err{SC.identity_problem(cursor)})
+    case True{}:
+      +uids = I.search_uids(lines)
+      search_page(SC.eligible(cursor, uids), folder, I.ok_code(lines, "UIDVALIDITY"),
+        U32.from_nat(List.length(&2, U32, uids)), limit, binding)
+
+def search_found(
+  r: Run(), folder: String, limit: U32, +cursor: SC.Cursor, binding: String
+) -> IO(Shown):
   match r:
     case Fail{m}:
       pure_shown(Err{m})
     case Done{+lines}:
-      +uids = I.search_uids(lines)
-      search_fetch(List.take(&2, U32, desc(uids), U32.to_nat(limit)), folder,
-        I.ok_code(lines, "UIDVALIDITY"), U32.from_nat(List.length(&2, U32, uids)))
+      search_found.if(SC.same(cursor, I.ok_code(lines, "UIDVALIDITY")), lines,
+        folder, limit, cursor, binding)
 
-def search_keys(ks: Keys(), +folder: String, limit: U32) -> IO(Shown):
+def search_run(
+  c: SC.ResultCursor(), +folder: String, keys: List<&2, I.Key>, limit: U32, binding: String
+) -> IO(Shown):
+  match c:
+    case Fail{m}:
+      pure_shown(Err{m})
+    case Done{+cursor}:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_search_page(folder, keys, cursor))
+        search_found(r, folder, limit, cursor, binding)
+
+def search_keys(ks: Keys(), args: J.Json, +folder: String, limit: U32) -> IO(Shown):
   match ks:
     case Fail{m}:
       pure_shown(Err{m})
-    case Done{keys}:
-      do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_search(folder, keys))
-        search_found(r, folder, limit)
+    case Done{+keys}:
+      +binding = SC.binding(folder, I.search_args(keys))
+      search_run(SC.read(J.get(args, "cursor"), binding), folder, keys, limit, binding)
 
 def t_search(+args: J.Json) -> IO(Shown):
-  search_keys(keys_of(args), folder_arg(args), clamp(u32_arg(args, "limit", 20), 1, 200))
+  search_keys(keys_of(args), args, folder_arg(args), clamp(u32_arg(args, "limit", 20), 1, 200))
 
 # mail_get
 # --------

@@ -15,6 +15,7 @@ import Base
 import ./src/codec.bend as C
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/search-cursor.bend as SC
 import ./src/mime.bend as M
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
@@ -150,6 +151,30 @@ law part_guarded:
       I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
         I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
 
+# LAW: every search page is read-only, including its UIDVALIDITY expectation.
+law search_page_writes_nothing:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for cursor: SC.Cursor
+  {I.any_writes(Ops.plan_search_page(mbox, keys, cursor)) == False{} : Bool}
+
+# LAW: every search page starts by opening the folder read-only.
+law search_page_examines:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for cursor: SC.Cursor
+  {Ops.has_prefix("a1 EXAMINE ", I.script(Ops.plan_search_page(mbox, keys, cursor))) ==
+    True{} : Bool}
+
+# LAW: continuation searches pin UIDVALIDITY before searching with the unchanged keys.
+law search_continuation_pins_identity:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for uidv: U32
+  for before: U32
+  {Ops.plan_search_page(mbox, keys, SC.Continue{uidv, before}) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{keys}] : List<&2, I.Cmd>}
+
 # LAW: for every mailbox, UID and size limit, the get plan writes nothing
 law get_writes_nothing:
   for mbox: String
@@ -237,6 +262,17 @@ law get_script_examines:
 law fetch_items_never_set_seen:
   for item: I.Item
   {Ops.peek_safe(I.item_str(item)) == True{} : Bool}
+
+# LAW: summary headers render only the exact read-only header section.
+law search_headers_render_exactly:
+  {I.item_str(I.IHeaders{}) ==
+    "BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO " ++
+      "REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)]" : String}
+
+# LAW: a full-message read renders exactly its caller's byte bound, with no suffix command.
+law full_fetch_renders_exactly:
+  for max: U32
+  {I.item_str(I.IFull{max}) == "BODY.PEEK[]<0." ++ U32.show(max) ++ ">" : String}
 
 # Marking and flagging
 # --------------------

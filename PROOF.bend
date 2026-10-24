@@ -12,6 +12,8 @@ import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/imap.bend as I
 import ./src/sections.bend as Part
+
+import ./src/search-cursor.bend as SC
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
@@ -70,6 +72,23 @@ def Laws.part_writes_nothing(mbox, uid, uidv, section, max):
   {==}
 
 def Laws.part_guarded(mbox, uid, uidv, section, max):
+  {==}
+
+def Laws.search_page_writes_nothing(mbox, keys, cursor):
+  match cursor:
+    case SC.Start{}:
+      {==}
+    case SC.Continue{uidv, before}:
+      {==}
+
+def Laws.search_page_examines(mbox, keys, cursor):
+  match cursor:
+    case SC.Start{}:
+      {==}
+    case SC.Continue{uidv, before}:
+      {==}
+
+def Laws.search_continuation_pins_identity(mbox, keys, uidv, before):
   {==}
 
 def Laws.get_writes_nothing(mbox, uid, max):
@@ -177,6 +196,12 @@ def Laws.fetch_items_never_set_seen(item):
       {==}
     case I.IPart{section, max}:
       {==}
+
+def Laws.search_headers_render_exactly():
+  {==}
+
+def Laws.full_fetch_renders_exactly(max):
+  {==}
 
 # Marking and flagging
 # --------------------

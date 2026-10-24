@@ -192,6 +192,8 @@ def show_atts(a: T.Attachments()) -> String:
 
 def check_switches() -> IO(Unit):
   do IO<Unit>:
+    IO.print(J.show(J.obj(T.search_page.fields(False{}, True{}, "", 7, [3, 2]))))
+    IO.print(J.show(J.obj(T.search_page.fields(False{}, False{}, "", 7, [3, 2, 1]))))
     IO.print(T.env_pick(Done{""}, "d") ++ " " ++ T.env_pick(Done{"v"}, "d") ++ " " ++
       T.env_pick(Fail{(2, "unset")}, "d"))
     IO.print(String.join([
@@ -447,11 +449,11 @@ def check_search() -> IO(Unit):
       "|" ++ show_u32s(T.desc([3, 9, 1])) ++ "|" ++ show_u32s(T.asc([3, 9, 1])) ++
       "|" ++ show_bool(T.uid_in(3, [1, 3])) ++ " " ++ show_bool(T.uid_in(2, [1, 3])))
     IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(show_shown(T.search_headers(T.imap_code(3, [], "mailbend-tls: down"),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(J.show(T.summary(message(5, raw_message()))))
 
 def check_get() -> IO(Unit):
@@ -1330,6 +1332,8 @@ def main() -> IO(Unit):
     check_classify()
     check_triage()
 
+#|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
+#|{"has_more":false,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
 #|config True False off|config False True off|bad r|bad d|config False False off
