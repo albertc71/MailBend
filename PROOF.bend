@@ -184,6 +184,12 @@ def Laws.fetch_items_never_set_seen(item):
     case I.IFull{max}:
       {==}
 
+def Laws.search_headers_render_exactly():
+  {==}
+
+def Laws.full_fetch_renders_exactly(max):
+  {==}
+
 # Marking and flagging
 # --------------------
 

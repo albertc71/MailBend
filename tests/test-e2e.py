@@ -217,8 +217,9 @@ def search_pagination(work):
     fixture["mailboxes"]["INBOX"]["messages"] = [dict(sample, uid=i) for i in range(1, 406)]
     srv = Server(work, fixture=fixture)
     try:
-        seen, token = [], None
-        for page in range(4):
+        seen, token, pages = [], None, 0
+        for _ in range(4):
+            pages += 1
             args = {"subject": "page fixture", "limit": 200}
             if token is not None:
                 args["cursor"] = token
@@ -230,7 +231,7 @@ def search_pagination(work):
             if not r.get("has_more"):
                 break
         check("search pages: traverse 405 stable matches once and terminate", seen == list(range(405, 0, -1))
-              and token is None and page == 2 and r.get("has_more") is False, (len(seen), r))
+              and token is None and pages == 3 and r.get("has_more") is False, (len(seen), r))
         c, first = tool(srv, "mail_search", {"unseen": True, "limit": 200})
         cursor = first.get("next_cursor")
         check("search pages: first cursor exists", c == 0 and isinstance(cursor, str), first)
@@ -273,15 +274,21 @@ def search_pagination(work):
 
     for name, tweaks in (
             ("stale", {"uidvalidity": 99}),
+            ("invalid_identity", {"uidvalidity": 0}),
             ("empty", {"messages": []}),
             ("maximum", {"messages": [dict(sample, uid=4294967295), dict(sample, uid=1)]})):
         scenario = copy.deepcopy(fixture)
         scenario["mailboxes"]["INBOX"].update(tweaks)
         srv = Server(work, fixture=scenario)
         try:
-            args = {"unseen": True, "cursor": cursor} if name != "maximum" else {"limit": 1}
+            args = ({"limit": 1} if name in ("maximum", "invalid_identity") else
+                    {"unseen": True, "cursor": cursor})
             c, r = tool(srv, "mail_search", args)
-            if name == "stale":
+            if name == "invalid_identity":
+                check("search pages: first call refuses missing identity without claiming a reset", c != 0
+                      and "positive UIDVALIDITY" in r.get("error", "")
+                      and not any(" UID FETCH " in x for x in srv.log_lines()), r)
+            elif name == "stale":
                 check("search pages: changed UIDVALIDITY refuses continuation before SEARCH", c != 0
                       and "UIDVALIDITY" in r.get("error", "")
                       and not any(" UID SEARCH " in x or " UID FETCH " in x for x in srv.log_lines()), r)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require the real Bend cursor test to detect an inclusive-boundary mutation.
+"""Require real Bend checks to reject cursor, guard and fetch-renderer mutations.
 
 Copies production Bend modules and the cursor test into a temporary directory;
 the checkout is never modified. Baseline output must match its checked-in
@@ -19,6 +19,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def require(condition, detail):
+    if not condition:
+        raise AssertionError(detail)
+
+
 def run(root, entry="tests/unit/search-cursor.bend"):
     env = dict(os.environ, BEND_NO_TELEMETRY="1")
     return subprocess.run(["bend", entry], cwd=root,
@@ -30,8 +35,8 @@ def main():
                        (ROOT / "tests/unit/search-cursor.bend").read_text(encoding="utf-8").splitlines()
                        if line.startswith("#|"))
     baseline = run(ROOT)
-    assert baseline.returncode == 0 and baseline.stdout == expected, (
-        "baseline cursor property test failed", baseline.stdout, baseline.stderr)
+    require(baseline.returncode == 0 and baseline.stdout == expected,
+            ("baseline cursor property test failed", baseline.stdout, baseline.stderr))
     with tempfile.TemporaryDirectory(prefix="mailbend-search-mutation-") as directory:
         root = Path(directory)
         shutil.copytree(ROOT / "src", root / "src")
@@ -40,21 +45,22 @@ def main():
         source = root / "src/search-cursor.bend"
         text = source.read_text(encoding="utf-8")
         old, new = "U32.is_lt(u, before)", "U32.is_le(u, before)"
-        assert text.count(old) == 1, "production boundary moved: update this mutation explicitly"
+        require(text.count(old) == 1, "production boundary moved: update this mutation explicitly")
         source.write_text(text.replace(old, new), encoding="utf-8")
         broken = run(root)
-        assert broken.returncode == 0, ("mutation did not run", broken.stdout, broken.stderr)
-        assert broken.stdout != expected and "[4294967295,2,1]\n" in broken.stdout, (
-            "inclusive production boundary was not detected", broken.stdout)
+        require(broken.returncode == 0, ("mutation did not run", broken.stdout, broken.stderr))
+        require(broken.stdout != expected and "[4294967295,2,1]\n" in broken.stdout,
+                ("inclusive production boundary was not detected", broken.stdout))
         source.write_text(text, encoding="utf-8")
         for name in ("LAWS.bend", "PROOF.bend"):
             shutil.copy2(ROOT / name, root / name)
         baseline_proof = run(root, "PROOF.bend")
-        assert baseline_proof.returncode == 0, (baseline_proof.stdout, baseline_proof.stderr)
+        require(baseline_proof.returncode == 0 and "ALL PROOFS CHECK" in baseline_proof.stdout,
+                (baseline_proof.stdout, baseline_proof.stderr))
         ops = root / "src/ops.bend"
         original = ops.read_text(encoding="utf-8")
         plan = "[I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{keys}]"
-        assert original.count(plan) == 1, "continuation plan moved: update mutations explicitly"
+        require(original.count(plan) == 1, "continuation plan moved: update mutations explicitly")
         mutations = {
             "wrong caller mailbox": plan.replace("CExamine{mbox}", 'CExamine{"Other"}'),
             "mailbox switch after guard": plan.replace("I.CSearch{keys}",
@@ -63,9 +69,32 @@ def main():
         for name, replacement in mutations.items():
             ops.write_text(original.replace(plan, replacement), encoding="utf-8")
             rejected = run(root, "PROOF.bend")
-            assert rejected.returncode != 0 and "search_continuation_pins_identity" in (
-                rejected.stdout + rejected.stderr), (name, rejected.stdout, rejected.stderr)
+            require(rejected.returncode != 0 and "search_continuation_pins_identity" in (
+                rejected.stdout + rejected.stderr), (name, rejected.stdout, rejected.stderr))
             print(f"PASS actual Bend plan mutation rejected by exact identity law: {name}")
+        ops.write_text(original, encoding="utf-8")
+        imap = root / "src/imap.bend"
+        renderer = imap.read_text(encoding="utf-8")
+        render_mutations = (
+            ('"BODY.PEEK[HEADER.FIELDS (" ++ header_fields() ++ ")]"',
+             '"BODY.PEEK[HEADER.FIELDS (" ++ header_fields() ++ ")] BODY[]"',
+             "search_headers_render_exactly"),
+            ('"BODY.PEEK[]<0." ++ U32.show(max) ++ ">"',
+             '"BODY.PEEK[]<0." ++ U32.show(0) ++ ">"',
+             "full_fetch_renders_exactly"),
+        )
+        for old, new, law in render_mutations:
+            require(renderer.count(old) == 1, "fetch renderer moved: update mutation explicitly")
+            imap.write_text(renderer.replace(old, new), encoding="utf-8")
+            rejected = run(root, "PROOF.bend")
+            require(rejected.returncode != 0 and law in rejected.stdout + rejected.stderr,
+                    (law, rejected.stdout, rejected.stderr))
+            print(f"PASS actual Bend fetch-renderer mutation rejected: {law}")
+        imap.write_text(renderer, encoding="utf-8")
+        restored = run(root, "PROOF.bend")
+        require(restored.returncode == 0 and "ALL PROOFS CHECK" in restored.stdout,
+                ("restored source failed", restored.stdout, restored.stderr))
+        print("PASS restored production contracts: ALL PROOFS CHECK")
     print("PASS actual Bend boundary mutation rejected: maximum boundary UID repeated")
 
 

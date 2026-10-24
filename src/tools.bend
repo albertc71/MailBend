@@ -1540,7 +1540,7 @@ def search_found.if(
 ) -> IO(Shown):
   match same:
     case False{}:
-      pure_shown(Err{"search cursor UIDVALIDITY changed or is missing; restart without cursor"})
+      pure_shown(Err{SC.identity_problem(cursor)})
     case True{}:
       +uids = I.search_uids(lines)
       search_page(SC.eligible(cursor, uids), folder, I.ok_code(lines, "UIDVALIDITY"),
@@ -1573,7 +1573,8 @@ def search_keys.if(
 ) -> IO(Shown):
   match bounded:
     case False{}:
-      pure_shown(Err{"search folder and criteria exceed the 4000-character cursor binding limit"})
+      pure_shown(Err{"search folder and criteria exceed the " ++
+        Nat.show(SC.max_binding_chars()) ++ "-character cursor binding limit"})
     case True{}:
       search_run(SC.read(J.get(args, "cursor"), binding), folder, keys, limit, binding)
 
@@ -1583,7 +1584,7 @@ def search_keys(ks: Keys(), args: J.Json, +folder: String, limit: U32) -> IO(Sho
       pure_shown(Err{m})
     case Done{+keys}:
       +binding = SC.binding(folder, I.search_args(keys))
-      search_keys.if(SC.fits(binding, 4000n), args, folder, keys, limit, binding)
+      search_keys.if(SC.fits(binding, SC.max_binding_chars()), args, folder, keys, limit, binding)
 
 def t_search(+args: J.Json) -> IO(Shown):
   search_keys(keys_of(args), args, folder_arg(args), clamp(u32_arg(args, "limit", 20), 1, 200))

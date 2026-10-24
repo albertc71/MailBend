@@ -12,6 +12,13 @@ type Cursor is Data:
 def ResultCursor() -> Data:
   Result<&2, &2, String, Cursor>
 
+# Leave room for the version and two ten-digit integers in the wire token.
+def max_token_chars() -> Nat:
+  4096n
+
+def max_binding_chars() -> Nat:
+  4000n
+
 # Stop inspecting once the bound is exceeded, before splitting any token.
 def fits(s: String, fuel: Nat) -> Bool:
   match s fuel:
@@ -43,6 +50,8 @@ def parsed(
 ) -> ResultCursor():
   match v b:
     case Some{+uidv} Some{+before}:
+      # Exact roundtrip rejects noncanonical numbers/version, trailing data,
+      # and any different binding, even when the binding itself contains colons.
       parsed.if(Bool.not(U32.is_zero(uidv)) && U32.is_gt(before, 1) &&
         String.eq(raw, token(binding, uidv, before)), uidv, before)
     case _ _:
@@ -50,7 +59,7 @@ def parsed(
 
 def parts(xs: List<&2, String>, raw: String, binding: String) -> ResultCursor():
   match xs:
-    case version <> v <> b <> rest:
+    case _ <> v <> b <> _:
       parsed(U32.read(v), U32.read(b), raw, binding)
     case _:
       invalid()
@@ -67,7 +76,7 @@ def read(m: Maybe<&2, J.Json>, binding: String) -> ResultCursor():
     case None{}:
       Done{Start{}}
     case Some{J.JStr{+raw}}:
-      read.if(fits(raw, 4096n), raw, binding)
+      read.if(fits(raw, max_token_chars()), raw, binding)
     case _:
       invalid()
 
@@ -94,6 +103,13 @@ def same(c: Cursor, now: Maybe<&2, U32>) -> Bool:
       U32.is_eq(known, v)
     case _ _:
       False{}
+
+def identity_problem(c: Cursor) -> String:
+  match c:
+    case Start{}:
+      "folder did not report a positive UIDVALIDITY; cannot safely paginate this search"
+    case Continue{v, b}:
+      "search cursor UIDVALIDITY changed or is missing; restart without cursor"
 
 def next(more: Bool, binding: String, uidv: U32, uids: List<&2, U32>) -> J.Json:
   match more:

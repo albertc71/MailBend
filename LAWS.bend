@@ -235,6 +235,17 @@ law fetch_items_never_set_seen:
   for item: I.Item
   {Ops.peek_safe(I.item_str(item)) == True{} : Bool}
 
+# LAW: summary headers render only the exact read-only header section.
+law search_headers_render_exactly:
+  {I.item_str(I.IHeaders{}) ==
+    "BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO " ++
+      "REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)]" : String}
+
+# LAW: a full-message read renders exactly its caller's byte bound, with no suffix command.
+law full_fetch_renders_exactly:
+  for max: U32
+  {I.item_str(I.IFull{max}) == "BODY.PEEK[]<0." ++ U32.show(max) ++ ">" : String}
+
 # Marking and flagging
 # --------------------
 

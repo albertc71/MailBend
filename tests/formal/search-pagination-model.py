@@ -119,6 +119,8 @@ def verify(broken=False):
 
 
 def main():
+    if not __debug__:
+        raise SystemExit("State verification requires assertions; run Python without -O")
     args = argparse.ArgumentParser(description=__doc__)
     args.add_argument("--broken-boundary", action="store_true")
     options = args.parse_args()

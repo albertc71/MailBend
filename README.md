@@ -314,7 +314,9 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
   bounded traversal, not a mailbox snapshot. If a selected message vanishes
   before FETCH, the cursor still advances past it; follow `has_more` even for
   an empty page. UIDVALIDITY is checked across pages and again between SEARCH
-  and FETCH. `total` remains the current full-query match count, not a frozen
+  and FETCH. A missing or zero UIDVALIDITY is refused even on the first call: a
+  server must identify the mailbox incarnation to support safe pagination.
+  `total` remains the current full-query match count, not a frozen
   count or the remaining number of pages. Every page still enumerates matching
   UIDs with UID SEARCH; pagination bounds fetched summaries and response size,
   not server search work. `mail_get_new` retains its separate arrival cursor.
