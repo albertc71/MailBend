@@ -11,6 +11,8 @@ import Base
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/sections.bend as Part
+
 import ./src/search-cursor.bend as SC
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
@@ -61,6 +63,15 @@ def Laws.folder_scan_writes_nothing():
   {==}
 
 def Laws.search_writes_nothing(mbox, keys):
+  {==}
+
+def Laws.parts_write_nothing(mbox, uid):
+  {==}
+
+def Laws.part_writes_nothing(mbox, uid, uidv, section, max):
+  {==}
+
+def Laws.part_guarded(mbox, uid, uidv, section, max):
   {==}
 
 def Laws.search_page_writes_nothing(mbox, keys, cursor):
@@ -182,6 +193,8 @@ def Laws.fetch_items_never_set_seen(item):
     case I.IStructure{}:
       {==}
     case I.IFull{max}:
+      {==}
+    case I.IPart{section, max}:
       {==}
 
 def Laws.search_headers_render_exactly():
@@ -1324,4 +1337,13 @@ def Laws.secret_scan_blocks(part, reason, gate, allow, rcpts, from, msg):
   ({==}, {==})
 
 def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, text):
+  {==}
+
+# SMTP outcome evidence
+# ---------------------
+
+def Laws.smtp_unconfirmed_is_unknown(code, out, err):
+  ({==}, {==})
+
+def Laws.smtp_acceptance_survives_exit(code, out, err):
   {==}

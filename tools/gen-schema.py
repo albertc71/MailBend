@@ -44,7 +44,247 @@ def tool(name, description, annotations, properties=None, required=()):
         properties["dry_run"] = DRY_RUN
     return {"name": name, "description": description,
             "inputSchema": inputs(properties, required),
+            "outputSchema": output_schema(name),
             "annotations": annotations}
+
+
+# Output contracts mirror the Bend constructors, including evidence-bearing
+# failures. A Partial is not necessarily a mutation: a gate can block it first.
+S = param("string")
+B = param("boolean")
+N = param("integer", minimum=0)
+NS = param(["string", "null"])
+NN = param(["integer", "null"], minimum=0)
+YES = {"const": True}
+NO = {"const": False}
+
+
+def array(items):
+    return param("array", items=items)
+
+
+def record(properties, optional=None):
+    return inputs({**properties, **(optional or {})}, properties)
+
+
+def union(*variants):
+    return {"anyOf": list(variants)}
+
+
+STRINGS = array(S)
+NUMBERS = array(N)
+BAND = param("string", enum=["low", "mid", "high", "unknown"])
+CONTENT = param("string", enum=["headers", "body"])
+KEEP = record({k: BAND for k in
+               ("record", "security", "personal", "open_action", "needed_again")})
+# Gate signals use question IDs (including per-UID IDs); the values are bands.
+SIGNALS = {"type": "object", "properties": {
+    **{k: BAND for k in ("reply_needed", "action_required", "deadline_present",
+                         "priority", "disposable")},
+    "suggested_action": S, "keep": KEEP, "suspected_injection": YES,
+    "category": NS, "new_category": S, "needs_new_category": YES,
+}, "additionalProperties": BAND}
+JEV = record({"status": param("string", enum=["checked", "unchecked"]),
+              "model": S, "content": CONTENT,
+              "derived_from_untrusted_content": YES,
+              "decision": param("string", enum=["proceeded", "blocked"]),
+              "reasons": STRINGS, "signals": SIGNALS})
+ANNOTATION = {"jev": JEV}
+ATTACHMENT = record({"filename": S, "content_type": S, "size": N})
+SUMMARY_FIELDS = {**{k: S for k in ("date", "from", "to", "cc", "subject",
+                                   "message_id", "internal_date")},
+                  "uid": N, "size": N, "flags": STRINGS, "seen": B, "flagged": B}
+SUMMARY = record(SUMMARY_FIELDS, ANNOTATION)
+GET = record({**{k: S for k in ("folder", "internal_date", "from", "to", "cc",
+                              "reply_to", "subject", "date", "message_id",
+                              "in_reply_to", "references", "text", "html")},
+              "uid": N, "uidvalidity": NN, "flags": STRINGS, "seen": B,
+              "size": N, "truncated": B, "html_available": B,
+              "attachments": array(ATTACHMENT)}, ANNOTATION)
+CLASSIFIED_FIELDS = {"uid": N, "category": NS, "jev": JEV}
+CLASSIFIED_OPTIONAL = {"new_category": S, "needs_new_category": YES,
+                       "body_truncated": YES}
+CLASSIFIED = record(CLASSIFIED_FIELDS, CLASSIFIED_OPTIONAL)
+REQUESTS = array(record({"messages": N, "bytes": N, "input_tokens": NN}))
+QUOTE = {"quoted_original_truncated": B, "quoted_bytes": N, "original_bytes": N}
+GATE = {"jev": JEV, "body_truncated": YES,
+        "secret_scan": param("string", enum=["clean", "found", "incomplete"])}
+ERROR = record({"error": S})
+CHANGED = {"ok": YES, "folder": S, "changed": NUMBERS, "missing": NUMBERS}
+MOVE_FIELDS = {"folder": S, "destination": S,
+               "method": param("string", enum=["UID MOVE", "UID COPY + UID EXPUNGE"])}
+MOVE = record({**CHANGED, **MOVE_FIELDS})
+MOVE_PARTIAL = record({**MOVE_FIELDS, "ok": NO, "partial": YES, "message": S})
+FLAG_STOPPED = record({"ok": NO, "partial": YES, "folder": S,
+                       "acknowledged": STRINGS, "unconfirmed": STRINGS, "message": S})
+DRAFT = record({"ok": YES, "saved_to": S, "uid": NN, "message_id": S})
+SENT = record({"ok": YES, "sent": YES, "message_id": S, "recipients": N,
+               "server_reply": S}, {**GATE, "sent_copy": S})
+BLOCKED = record({"ok": NO, "error": S}, GATE)
+
+
+def preview(kind, payload, extra=None):
+    return record({"dry_run": YES, kind: payload}, extra)
+
+
+IMAP_PREVIEW = preview("imap", STRINGS)
+SMTP_PREVIEW = preview("smtp", record({"from": S, "rcpt": STRINGS,
+                                       "data": S, "sent_copy": B}), GATE)
+
+
+def extended(shape, fields):
+    """Add required evidence while retaining the original closed record."""
+    return {**shape, "properties": {**shape["properties"], **fields},
+            "required": [*shape["required"], *fields]}
+
+
+def smtp_evidence(outcome, phase, reason):
+    return {"smtp_outcome": {"const": outcome}, "smtp_phase": {"const": phase},
+            "smtp_reason": {"const": reason}, "next_action": S}
+
+
+SMTP_ACCEPTED = extended(SENT, smtp_evidence("accepted", "data_reply", "accepted_by_server"))
+SMTP_FAILURES = [extended(shape, smtp_evidence(outcome, phase, reason))
+    for outcome, phase, reason in [
+        ("not_sent", "before_smtp", "local_refusal"),
+        ("not_sent", "before_smtp", "helper_not_started"),
+        ("not_sent", "before_data", "stopped_before_data"),
+        ("not_sent", "data_reply", "explicit_rejection"),
+        ("unknown", "data_reply", "acceptance_unconfirmed"),
+        ("unknown", "unknown", "missing_progress")]
+    for shape in (record({"error": S}, GATE), BLOCKED)]
+PARTS = record({"folder": S, "uid": N, "uidvalidity": NN,
+    "parts": array(record({"section": S, "content_type": S, "filename": S,
+                            "transfer_encoding": S, "encoded_size": N, "attachment": B}))})
+SELECTED = record({"folder": S, "uid": N, "uidvalidity": N, "section": S,
+    "content_type": S, "complete": YES, "scope": {"const": "selected_part"},
+    "message_complete": NO, "content": S,
+    "content_encoding": param("string", enum=["text", "base64"])}, ANNOTATION)
+
+
+def projected(shape, mode):
+    """Only the declared body fields can be absent in a projected result."""
+    omit = {"full": (), "text": ("html",), "html": ("text",),
+            "metadata": ("text", "html")}[mode]
+    fields = {k: v for k, v in shape["properties"].items() if k not in omit}
+    notice = record({"projection": {"const": mode}, "max_bytes": N,
+        "budget_scope": {"const": "result_json_utf8"}, "output_truncated": B,
+        "request_more": S})
+    result = {**shape, "properties": {**fields, "response": notice},
+              "required": [k for k in shape["required"] if k not in omit] + ["response"]}
+    if "scope" not in fields:
+        return result
+    result["properties"]["response"] = extended(notice, {"content_complete": B})
+    if mode == "full":
+        return result
+    absent = {**result, "properties": {k: v for k, v in result["properties"].items()
+                                     if k != "content"},
+              "required": [k for k in result["required"] if k != "content"]}
+    if mode == "metadata":
+        return absent
+    media = r"^\s*[tT][eE][xX][tT]/"
+    html = r"[hH][tT][mM][lL]\s*(?:;|$)"
+    pattern = media + (f"(?!{html})" if mode == "text" else html)
+    result["properties"]["content_type"] = param("string", pattern=pattern)
+    absent["properties"]["content_type"] = {"type": "string", "not": {"pattern": pattern}}
+    return union(result, absent)
+
+
+def output_schema(name):
+    """Every advertised tool has its own success and failure variants."""
+    variants = [ERROR]
+    if name == "mail_probe":
+        variants += [record({"ok": YES, "account": S, "imap_host": S,
+                             "tls_verified": YES, "capabilities": STRINGS,
+                             "idle": B, "move": B, "uidplus": B,
+                             "special_use": record({k: NS for k in
+                                 ("inbox", "drafts", "sent", "trash", "junk", "archive")}),
+                             "folder_count": N})]
+    elif name == "mail_list_folders":
+        variants += [record({"folders": array(record({"name": S, "delimiter": S,
+                         "attributes": STRINGS, "special_use": NS, "selectable": B}))})]
+    elif name == "mail_search":
+        search = record({"folder": S, "uidvalidity": NN, "total": N,
+                         "messages": array(SUMMARY)})
+        variants += [search, extended(search, {"has_more": B, "next_cursor": NS}),
+                     extended(search, {"has_more": B, "next_cursor": {"const": None},
+                         "pagination_unavailable": {"const":
+                             "search folder and criteria exceed the 4000-character cursor binding limit"}})]
+    elif name == "mail_get":
+        variants += [GET, PARTS, SELECTED]
+    elif name == "mail_get_new":
+        variants += [record({"folder": S, "uidvalidity": N, "uidvalidity_changed": B,
+                             "next_since_uid": N, "has_more": B, "messages": array(SUMMARY)})]
+    elif name == "mail_refresh":
+        variants += [record({"folder": S, "uidvalidity": NN, "reset_required": B,
+                             "complete": B, "present": array(record({"uid": N, "flags": STRINGS})),
+                             "absent": NUMBERS, "unknown": NUMBERS, "reason": S})]
+    elif name == "mail_get_thread":
+        placed = record({**SUMMARY_FIELDS, "folder": S, "uidvalidity": NN,
+                         "parent": NS}, ANNOTATION)
+        variants += [record({"folder": S, "uid": N, "searched": STRINGS,
+                             "messages": array(placed)})]
+    elif name == "mail_classify":
+        variants += [record({"folder": S, "uidvalidity": NN, "content": CONTENT,
+                             "categories": STRINGS, "candidates": STRINGS,
+                             "messages": array(CLASSIFIED), "not_found": NUMBERS,
+                             "requests": REQUESTS})]
+    elif name == "mail_triage":
+        filing = record({**CLASSIFIED_FIELDS, "verdict": S, "vetoes": STRINGS,
+                         "destination": NS}, CLASSIFIED_OPTIONAL)
+        facts = {"folder": S, "uidvalidity": N, "content": CONTENT,
+                 "categories": STRINGS, "messages": array(filing),
+                 "not_found": NUMBERS, "requests": REQUESTS}
+        moves = array(union(MOVE, MOVE_PARTIAL,
+                           record({"ok": NO, "destination": S, "error": S})))
+        variants += [record({**facts, "moves": moves}),
+                     record({**facts, "ok": NO, "partial": YES, "message": S,
+                             "moves": moves}),
+                     record({**facts, "ok": NO, "error": S}),
+                     record({**facts, "dry_run": YES, "imap": STRINGS})]
+    elif name == "mail_get_attachment":
+        variants += [record({"folder": S, "uid": N, "filename": S,
+                             "content_type": S, "size": N, "path": S}),
+                     preview("file", record({"path": S, "data": S}))]
+    elif name in ("mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag"):
+        key = "seen" if name.startswith("mail_mark_") else "flagged"
+        value = name in ("mail_mark_read", "mail_flag")
+        optional = {"colour": S, "colour_kept": union(B, {"const": "unverified"}),
+                    "colour_not_kept": NUMBERS} if name == "mail_flag" else {}
+        fields = {**CHANGED, key: {"const": value}}
+        if key == "flagged":
+            fields["flags"] = array(record({"uid": N,
+                "flags": param(["array", "null"], items=S)}))
+            variants += [FLAG_STOPPED]
+        variants += [record(fields, optional), IMAP_PREVIEW]
+    elif name in ("mail_move", "mail_label", "mail_trash"):
+        variants += [MOVE, MOVE_PARTIAL, IMAP_PREVIEW]
+    elif name == "mail_delete":
+        variants += [record({**CHANGED, "permanently_deleted": YES}, ANNOTATION),
+                     preview("imap", STRINGS, ANNOTATION),
+                     record({"ok": NO, "error": S}, ANNOTATION)]
+    elif name in ("mail_create_folder", "mail_rename_folder"):
+        fields = {"folder": S} if name == "mail_create_folder" else {"from": S, "to": S}
+        variants += [record({"ok": YES, **fields, "subscribed": B}, {"note": S}),
+                     IMAP_PREVIEW]
+    elif name == "mail_save_draft":
+        variants += [DRAFT, IMAP_PREVIEW]
+    elif name in ("mail_send", "mail_reply", "mail_forward"):
+        successes = [SENT, SMTP_ACCEPTED, SMTP_PREVIEW]
+        if name != "mail_send":
+            successes += [DRAFT, IMAP_PREVIEW]
+        if name == "mail_reply":
+            # reply_want appends quote evidence only to successful results.
+            successes = [{**v, "properties": {**v["properties"], **QUOTE},
+                          "required": [*v["required"], *QUOTE]} for v in successes]
+        variants += [*successes, BLOCKED, *SMTP_FAILURES]
+    else:
+        raise ValueError(f"missing output schema for {name}")
+    if name in ("mail_get", "mail_search", "mail_get_new", "mail_get_thread"):
+        # Error and Partial results bypass response projection.
+        variants += [projected(v, mode) for v in variants[1:]
+                     for mode in ("full", "text", "html", "metadata")]
+    return {"type": "object", "anyOf": variants}
 
 
 # Annotations
@@ -155,7 +395,11 @@ SEND_RULES = (
     "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is "
     "reached. With MAILBEND_SAVE_SENT the result's sent_copy says whether a "
     "copy was saved to the Sent folder; a failed copy does not fail the "
-    "send. With MAILBEND_TYPESAFE on, the message is first scanned locally "
+    "send. SMTP attempts report smtp_outcome (accepted, not_sent, unknown), "
+    "smtp_phase, smtp_reason and next_action. Accepted means accepted by the "
+    "SMTP server, not recipient delivery. Never automatically retry unknown; "
+    "a missing Sent copy does not prove non-delivery. With MAILBEND_TYPESAFE on, "
+    "the message is first scanned locally "
     "for secrets, then checked by Jev; a secret, unreadable text, a Jev "
     "block or a TypeSafe failure stops the send (the result has secret_scan "
     "and jev). Saving a draft (mail_save_draft) is never checked.")
@@ -216,9 +460,17 @@ TOOLS = [
          ANNOTATED_READS,
          {"folder": FOLDER,
           "uid": UID,
+          "uidvalidity": UIDVALIDITY,
+          "section": param("string", "Optional: list for section metadata, text/html for the first "
+                           "inline part, or a numeric section from list. Requires uidvalidity. "
+                           "Fetches only that part; incomplete or malformed content fails. "
+                           "Omit for the compatible whole-message prefix. Selected reads "
+                           "return content with selected_part scope. Jev annotations respect the "
+                           "configured mode and cover only selected text, never unrelated bodies."),
           "max_bytes": param(
               "integer",
-              "Read at most this many bytes of the message. Default 262144.",
+              "Whole-message prefix or selected encoded-part window. Default 262144; "
+              "a selected part must be smaller than this window.",
               minimum=1024, maximum=16777216)},
          ["uid"]),
     tool("mail_get_new",
@@ -295,7 +547,8 @@ TOOLS = [
          "Save one attachment of a message as a new file in "
          "MAILBEND_DOWNLOAD_DIR (downloads are off without it) and return its "
          "path. The message is read as mail_get reads it, so it stays "
-         "unread; it must be at most 25 MB. The file name is the "
+         "unread. With section and uidvalidity only that part is read (under 25 MB "
+         "encoded); otherwise the complete message must fit 25 MB. The file name is the "
          "attachment's (or filename) without any directory, control or "
          "invisible format characters or leading dots. An existing file is "
          "never replaced: the call fails, so pass another filename. Not "
@@ -303,6 +556,9 @@ TOOLS = [
          CHANGES,
          {"folder": FOLDER,
           "uid": UID,
+          "uidvalidity": UIDVALIDITY,
+          "section": param("string", "Numeric section from mail_get(section=list). Requires "
+                           "uidvalidity; replaces index. Only complete decoded files are saved."),
           "index": param(
               "integer",
               "The attachment's position in mail_get's attachments, from 0.",
@@ -311,7 +567,7 @@ TOOLS = [
               "string",
               "Name to save the file as. Default: the attachment's file "
               "name.")},
-         ["uid", "index"]),
+         ["uid"]),
     tool("mail_mark_read",
          "Mark messages as read (add the \\Seen flag).",
          SETS_FLAGS, MESSAGES, MESSAGES_REQUIRED),
@@ -466,7 +722,7 @@ LITERAL_WIDTH = LINE_WIDTH - len('    "",')
 
 HEADER = """\
 # The MCP tool list that tools/list returns: each tool's name, description,
-# input schema and annotations, as JSON text.
+# input/output schemas and annotations, as JSON text.
 #
 # Generated by tools/gen-schema.py; edit that file, not this one, then run
 # python3 tools/gen-schema.py. Each tool's JSON is split into short literals,

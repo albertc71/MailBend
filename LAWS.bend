@@ -8,8 +8,8 @@
 # the triage filing table, and the gates, the pure functions through which
 # alone the tools reach an SMTP envelope or a delete plan. PROOF.bend proves
 # every law; `bend PROOF.bend` is the gate. The laws cover these values and
-# their rendering only; "What the proofs cover" in README.md says what is
-# left to tests.
+# their rendering and SMTP outcome interpretation; "What the proofs cover"
+# in README.md says what is left to tests.
 
 import Base
 import ./src/codec.bend as C
@@ -21,6 +21,7 @@ import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
+import ./src/tools.bend as Tools
 
 # Tool classes
 # ------------
@@ -122,6 +123,33 @@ law search_writes_nothing:
   for mbox: String
   for keys: List<&2, I.Key>
   {I.any_writes(Ops.plan_search(mbox, keys)) == False{} : Bool}
+
+# LAW: metadata discovery and selected section reads never change mail.
+law parts_write_nothing:
+  for mbox: String
+  for uid: U32
+  {I.any_writes(Ops.plan_parts(mbox, uid)) == False{} : Bool}
+
+law part_writes_nothing:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  for section: List<&2, U32>
+  for max: U32
+  {I.any_writes(Ops.plan_part(mbox, uid, uidv, section, max)) == False{} : Bool}
+
+# LAW: a selected read checks the discovered generation before requesting
+# the exact UID and numeric section; it also refetches the metadata.
+law part_guarded:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  for section: List<&2, U32>
+  for max: U32
+  {Ops.plan_part(mbox, uid, uidv, section, max) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
+        I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
 
 # LAW: every search page is read-only, including its UIDVALIDITY expectation.
 law search_page_writes_nothing:
@@ -1028,3 +1056,34 @@ law outgoing_headers_state_has_no_body:
   {Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, text) ==
     Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, "")
     : String}
+
+# SMTP outcome evidence
+# ---------------------
+
+# The observable SMTP outcome, including the successful internal result.
+def smtp_outcome(o: Tools.Out) -> String:
+  match o:
+    case Tools.Ok{j}:
+      "accepted"
+    case Tools.Partial{j}:
+      Tools.str_arg(j, "smtp_outcome", "missing")
+    case Tools.Err{m}:
+      "error"
+
+# LAW: once DATA started without a final acknowledgement, or progress is
+# missing, every exit code and server transcript remains unknown.
+law smtp_unconfirmed_is_unknown:
+  for code: U32
+  for out: String
+  for err: String
+  ({smtp_outcome(Tools.smtp_code.phase("data_started", code, out, err)) == "unknown" : String} &
+   {smtp_outcome(Tools.smtp_code.phase("", code, out, err)) == "unknown" : String})
+
+# LAW: a final DATA acceptance stays successful for every later process
+# exit code; a failed QUIT or interruption cannot turn it into a refusal.
+law smtp_acceptance_survives_exit:
+  for code: U32
+  for out: String
+  for err: String
+  {Tools.smtp_code.phase("data_accepted", code, out, err) ==
+    Tools.Ok{J.str(S.last_ok(String.lines(out), ""))} : Tools.Out}

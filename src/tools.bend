@@ -7,6 +7,7 @@ import ./codec.bend as C
 import ./json.bend as J
 import ./imap.bend as I
 import ./mime.bend as M
+import ./sections.bend as Part
 import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
@@ -581,23 +582,103 @@ def helper_lost(p: Proc) -> Bool:
 def ok_at(lines: List<&2, I.RLine>, n: U32) -> Bool:
   String.eq(I.status(lines, n), "OK")
 
-# The server's queue confirmation, or why it refused the message: the helper
-# exits with 5 when it did.
-def smtp_code(code: U32, out: String, err: String) -> Out:
+def smtp_phase.step(line: String, phase: String) -> String:
+  match line:
+    case "mailbend-smtp: before_data":
+      "before_data"
+    case "mailbend-smtp: data_started":
+      "data_started"
+    case "mailbend-smtp: data_accepted":
+      "data_accepted"
+    case "mailbend-smtp: data_rejected":
+      "data_rejected"
+    case _:
+      phase
+
+# Outcome and bounded protocol phase/reason; guidance belongs to Bend.
+def smtp_fields(outcome: String, phase: String, reason: String, next: String) ->
+  List<&2, J.Json>:
+  [J.kv("smtp_outcome", J.str(outcome)), J.kv("smtp_phase", J.str(phase)),
+    J.kv("smtp_reason", J.str(reason)), J.kv("next_action", J.str(next))]
+
+def smtp_failure(msg: String, +outcome: String, phase: String, reason: String) -> Out:
+  next = Bool.pick(String, String.eq(outcome, "unknown"),
+    "Do not retry automatically. Check server records or ask the recipient; a missing " ++
+      "Sent copy does not prove non-delivery.",
+    "SMTP did not accept this message. Resolve the reported problem before a new attempt.")
+  Partial{J.obj(J.kv("error", J.str(msg)) <> smtp_fields(outcome, phase, reason, next))}
+
+# A local refusal before the SMTP attempt, retaining any Jev/scan evidence.
+def send_not_attempted(o: Out) -> Out:
+  match o:
+    case Err{m}:
+      smtp_failure(m, "not_sent", "before_smtp", "local_refusal")
+    case Partial{j}:
+      with_fields_first(Partial{j}, smtp_fields("not_sent", "before_smtp", "local_refusal",
+        "Resolve the reported refusal before a new attempt."))
+    case Ok{j}:
+      Ok{j}
+
+# Fixed native progress comes only from stderr, never from server replies.
+# Keep the latest marker; absence is not proof that DATA was never sent.
+def smtp_phase(lines: List<&2, String>, phase: String) -> String:
+  match lines:
+    case Nil{}:
+      phase
+    case line <> rest:
+      smtp_phase(rest, smtp_phase.step(String.trim(line), phase))
+
+# Progress is a separate machine channel, not part of the human error.
+def smtp_diagnostics(lines: List<&2, String>) -> List<&2, String>:
+  match lines:
+    case Nil{}:
+      []
+    case +line <> rest:
+      List.filter.put(String, line, smtp_diagnostics(rest),
+        Bool.not(String.starts_with(line, "mailbend-smtp: ")))
+
+def smtp_error(code: U32, out: String, err: String) -> String:
   match code:
     case 0:
-      Ok{J.str(S.last_ok(String.lines(out), ""))}
+      "the helper reported completion without acceptance evidence"
     case 5:
-      Err{"the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")}
+      "the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")
     case _:
-      Err{helper_error(code, err)}
+      helper_error(code, err)
+
+# Native data_started/data_accepted/data_rejected map to public data_reply;
+# before_data stays before_data, and missing progress is unknown. Only the
+# data_accepted marker is acceptance evidence, regardless of process exit.
+def smtp_code.phase(phase: String, code: U32, out: String, err: String) -> Out:
+  match phase:
+    case "data_accepted":
+      Ok{J.str(S.last_ok(String.lines(out), ""))}
+    case "before_data":
+      smtp_failure(smtp_error(code, out, err), "not_sent", "before_data", "stopped_before_data")
+    case "data_rejected":
+      smtp_failure("the SMTP server refused the message: " ++ S.last_error(String.lines(out), ""),
+        "not_sent", "data_reply", "explicit_rejection")
+    case "data_started":
+      smtp_failure(helper_error(code, err), "unknown", "data_reply", "acceptance_unconfirmed")
+    case _:
+      smtp_failure("SMTP progress is missing; acceptance is unknown: " ++
+        smtp_error(code, out, err),
+        "unknown", "unknown", "missing_progress")
+
+def smtp_code(code: U32, out: String, +err: String) -> Out:
+  smtp_code.phase(smtp_phase(String.lines(err), ""), code, out,
+    String.join(smtp_diagnostics(String.lines(err)), "\n"))
 
 def smtp_result(p: Proc) -> Out:
   match p:
     case ProcOk{code, out, err}:
       smtp_code(code, out, err)
-    case _:
-      Err{"cannot run the TLS helper: " ++ proc_failure(p)}
+    case ProcRefused{m}:
+      smtp_failure("cannot run the TLS helper: " ++ m,
+        "not_sent", "before_smtp", "helper_not_started")
+    case ProcFail{code, m}:
+      smtp_failure("cannot run the TLS helper: " ++ m,
+        "unknown", "unknown", "missing_progress")
 
 def smtp_run(envelope: String) -> IO(Out):
   do IO<Out>:
@@ -1404,6 +1485,7 @@ type Shown is Data:
   Listed{out: Out, msgs: List<&2, I.Msg>}
   Threaded{out: Out, msgs: List<&2, I.Msg>, folders: Folders}
   Whole{out: Out, msg: I.Msg, max: U32}
+  Selected{out: Out, fetched: Jev.Fetched}
 
 def pure_shown(o: Out) -> IO(Shown):
   IO.pure(Shown, Listed{o, []})
@@ -1697,9 +1779,212 @@ def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32) -> IO(Sh
     case Fail{m}:
       pure_shown(Err{m})
 
+# Explicit selected reads leave the legacy whole-message rendering unchanged.
+def part_metadata.first(ms: List<&2, I.Msg>) -> Result<&2, &2, String, List<&2, Part.Part>>:
+  match ms:
+    case Nil{}:
+      Fail{"no BODYSTRUCTURE for the requested UID"}
+    case I.Msg{id, flags, date, size, headers, body, st} <> t:
+      Part.parts(st)
+
+def part_metadata.present(m: I.Msg) -> Bool:
+  match m:
+    case I.Msg{id, flags, date, size, headers, body, I.VList{xs}}:
+      True{}
+    case _:
+      False{}
+
+def part_metadata.filter(ms: List<&2, I.Msg>, +uid: U32) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      List.filter.put(I.Msg, m, part_metadata.filter(t, uid),
+        U32.is_eq(msg_uid(m), uid) && part_metadata.present(m))
+
+def part_metadata(lines: List<&2, I.RLine>, uid: U32)
+  -> Result<&2, &2, String, List<&2, Part.Part>>:
+  part_metadata.first(part_metadata.filter(I.fetched(lines), uid))
+
+def part_found(p: Maybe<&2, Part.Part>) -> Result<&2, &2, String, Part.Part>:
+  match p:
+    case Some{p}:
+      Done{p}
+    case None{}:
+      Fail{"no matching MIME section"}
+
+def part_json(p: Part.Part) -> J.Json:
+  Part.Part{+path, +ct, +cd, +encoding, +size} = p
+  J.obj([J.kv("section", J.str(I.section_str(path))),
+    J.kv("content_type", J.str(ct)), J.kv("filename", J.str(M.file_name(ct, cd))),
+    J.kv("transfer_encoding", J.str(encoding)), J.kv("encoded_size", J.num(size)),
+    J.kv("attachment", J.bool(Part.is_file(Part.Part{path, ct, cd, encoding, size})))])
+
+def parts_json(ps: List<&2, Part.Part>) -> List<&2, J.Json>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      part_json(p) <> parts_json(t)
+
+# One discovery validator serves metadata listing and selected content reads.
+def part_listed(r: Run(), +uid: U32, +uidv: U32)
+  -> Result<&2, &2, String, List<&2, Part.Part>>:
+  do Result<&2, &2, String, List<&2, Part.Part>>:
+    +lines : List<&2, I.RLine> <- r
+    Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
+    part_metadata(lines, uid)
+
+def part_discovered(r: Run(), uid: U32, uidv: U32, wanted: String)
+  -> Result<&2, &2, String, Part.Part>:
+  do Result<&2, &2, String, Part.Part>:
+    ps : List<&2, Part.Part> <- part_listed(r, uid, uidv)
+    part_found(Part.select(ps, wanted))
+
+def part_same(a: Part.Part, b: Part.Part) -> Bool:
+  Part.Part{ap, ac, ad, ae, az} = a
+  Part.Part{bp, bc, bd, be, bz} = b
+  String.eq(I.section_str(ap), I.section_str(bp)) && String.eq(ac, bc) &&
+    String.eq(ad, bd) && String.eq(ae, be) && U32.is_eq(az, bz)
+
+def part_raw(v: Maybe<&2, String>) -> Result<&2, &2, String, String>:
+  match v:
+    case Some{s}:
+      Done{s}
+    case None{}:
+      Fail{"missing selected section or unexpected partial origin"}
+
+def part_bytes(r: Run(), +uid: U32, +uidv: U32, +p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  do Result<&2, &2, String, String>:
+    +lines : List<&2, I.RLine> <- r
+    Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
+    ps : List<&2, Part.Part> <- part_metadata(lines, uid)
+    current : Part.Part <- part_found(Part.select(ps, I.section_str(Part.path(p))))
+    Part.check(part_same(p, current), "MIME section metadata changed between sessions")
+    raw : String <- part_raw(Part.fetched(lines, uid,
+      "BODY[" ++ I.section_str(Part.path(p)) ++ "]<0>"))
+    Part.decode(p, raw, max)
+
+def part_content.fields(text: Bool, ct: String, bytes: String) -> List<&2, J.Json>:
+  match text:
+    case True{}:
+      [J.kv("content", J.str(M.leaf.text(ct, bytes))),
+        J.kv("content_encoding", J.str("text"))]
+    case False{}:
+      [J.kv("content", J.str(C.b64_encode(bytes, False{}))),
+        J.kv("content_encoding", J.str("base64"))]
+
+def part_content(r: Result<&2, &2, String, String>, p: Part.Part,
+  folder: String, uid: U32, uidv: U32) -> Out:
+  match r:
+    case Fail{why}:
+      Err{why}
+    case Done{bytes}:
+      Part.Part{path, +ct, cd, encoding, size} = p
+      ok_obj(List.append(&2, J.Json,
+        [J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
+          J.kv("uidvalidity", J.num(uidv)), J.kv("section", J.str(I.section_str(path))),
+          J.kv("content_type", J.str(ct)), J.kv("complete", J.bool(True{})),
+          J.kv("scope", J.str("selected_part")), J.kv("message_complete", J.bool(False{}))],
+        part_content.fields(String.starts_with(M.main_value(ct), "text/"), ct, bytes)))
+
+def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
+  match readable p:
+    case True{} Part.Part{path, +ct, cd, encoding, size}:
+      +text = M.leaf.text(ct, bytes)
+      parts = Bool.pick(M.Parts, String.eq(M.main_value(ct), "text/html"),
+        M.Parts{"", text, []}, M.Parts{text, "", []})
+      Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
+        "; message incomplete]\n" ++ Jev.plain_text(M.readable_text(parts)), True{})
+    case False{} Part.Part{path, ct, cd, encoding, size}:
+      Jev.Text{"[Selected MIME section " ++ I.section_str(path) ++
+        "; no text body fetched]", Jev.Partial{}}
+
+def part_get.text(+p: Part.Part, bytes: String) -> Jev.Text:
+  Part.Part{path, ct, cd, encoding, size} = p
+  part_get.text.if(String.starts_with(M.main_value(ct), "text/"), p, bytes)
+
+# The whole message was not read: Jev may annotate only the selected text,
+# marked partial, plus independently fetched parent headers and metadata.
+def part_get.shown(
+  r: Result<&2, &2, String, String>, ms: List<&2, I.Msg>, +p: Part.Part,
+  folder: String, uid: U32, uidv: U32
+) -> Shown:
+  match r ms:
+    case Fail{why} _:
+      Listed{Err{why}, []}
+    case _ Nil{}:
+      Listed{Err{"missing selected message metadata"}, []}
+    case Done{+bytes} m <> t:
+      text = part_get.text(p, bytes)
+      Selected{part_content(Done{bytes}, p, folder, uid, uidv),
+        Jev.Fetched{Jev.facts_of(m), text}}
+
+def part_get.fetched(r: Run(), +p: Part.Part, folder: String,
+  +uid: U32, +uidv: U32, max: U32) -> Shown:
+  match r:
+    case Fail{why}:
+      Listed{Err{why}, []}
+    case Done{+lines}:
+      part_get.shown(part_bytes(Done{lines}, uid, uidv, p, max),
+        part_metadata.filter(I.fetched(lines), uid), p, folder, uid, uidv)
+
+def part_get.fetch(r: Result<&2, &2, String, Part.Part>, +folder: String,
+  +uid: U32, +uidv: U32, +max: U32) -> IO(Shown):
+  match r:
+    case Fail{why}:
+      pure_shown(Err{why})
+    case Done{+p}:
+      do IO<Shown>:
+        lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p), max))
+        return part_get.fetched(lines, p, folder, uid, uidv, max)
+
+def part_get.list(r: Result<&2, &2, String, List<&2, Part.Part>>,
+  folder: String, uid: U32, uidv: U32) -> Out:
+  match r:
+    case Fail{why}:
+      Err{why}
+    case Done{ps}:
+      ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
+        J.kv("uidvalidity", J.num(uidv)), J.kv("parts", J.arr(parts_json(ps)))])
+
+def part_get.after(list: Bool, r: Run(), +folder: String, +uid: U32, +uidv: U32,
+  wanted: String, max: U32) -> IO(Shown):
+  match list:
+    case True{}:
+      pure_shown(part_get.list(part_listed(r, uid, uidv), folder, uid, uidv))
+    case False{}:
+      part_get.fetch(part_discovered(r, uid, uidv, wanted), folder, uid, uidv, max)
+
+def part_get.run(list: Bool, +folder: String, +uid: U32, uidv: U32,
+  wanted: String, max: U32) -> IO(Shown):
+  do IO<Shown>:
+    r : Run() <- imap_run(Ops.plan_parts(folder, uid))
+    part_get.after(list, r, folder, uid, uidv, wanted, max)
+
+def part_get(u: Result<&2, &2, String, U32>, folder: String, uidv: U32,
+  +wanted: String, max: U32) -> IO(Shown):
+  match u uidv:
+    case Fail{why} _:
+      pure_shown(Err{why})
+    case _ 0:
+      pure_shown(Err{uidv_missing()})
+    case Done{uid} _:
+      part_get.run(String.eq(wanted, "list"), folder, uid, uidv, wanted, max)
+
+def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String) -> IO(Shown):
+  match whole:
+    case True{}:
+      get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args), max)
+    case False{}:
+      part_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
+        wanted, max)
+
 def t_get(+args: J.Json) -> IO(Shown):
-  get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args),
-    clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
+  +wanted = str_arg(args, "section", "")
+  t_get.if(String.is_empty(wanted), args,
+    clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216), wanted)
 
 # mail_get_new
 # ------------
@@ -4345,7 +4630,11 @@ def sent_out(o: Out, msgid: String, n: U32) -> Out:
         J.kv("sent", J.bool(True{})),
         J.kv("message_id", J.str(msgid)),
         J.kv("recipients", J.num(n)),
-        J.kv("server_reply", reply)
+        J.kv("server_reply", reply),
+        J.kv("smtp_outcome", J.str("accepted")),
+        J.kv("smtp_phase", J.str("data_reply")),
+        J.kv("smtp_reason", J.str("accepted_by_server")),
+        J.kv("next_action", J.str("Do not resend. SMTP acceptance is not recipient delivery."))
       ])
 
 # The Sent copy
@@ -4527,7 +4816,7 @@ def send_allowed.copy(o: Out, save: Bool, msgid: String, copy: M.Draft, boundary
     case Partial{j} _:
       pure_out(Partial{j})
 
-# A delivered message's result, with what became of its Sent copy.
+# An SMTP-accepted message's result, with what became of its Sent copy.
 def send_allowed.fin(o: Out, s: Sent) -> IO(Out):
   Sent{+msgid, n, save, copy, boundary} = s
   send_allowed.copy(sent_out(o, msgid, n), save, msgid, copy, boundary)
@@ -4535,7 +4824,7 @@ def send_allowed.fin(o: Out, s: Sent) -> IO(Out):
 def send_allowed.if(problem: String, envelope: String, s: Sent) -> IO(Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t} ++ "; nothing was sent"})
+      pure_out(send_not_attempted(Err{SCon{h, t} ++ "; nothing was sent"}))
     case SNil{}:
       do IO<Out>:
         o : Out <- smtp_run(envelope)
@@ -4596,12 +4885,12 @@ def send_allowed(
   match envelope:
     case None{}:
       Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
-      pure_out(send_refused(blocked, allow, rcpts, report))
+      pure_out(send_not_attempted(send_refused(blocked, allow, rcpts, report)))
     case Some{e}:
       Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       do IO<Out>:
         o : Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
-        return with_fields(o, report)
+        return with_fields_first(o, report)
 
 # The send once the gates have decided: the envelope comes only from
 # Jev.outbound_checked, which gives S.outbound's only when the secret scan
@@ -4710,7 +4999,7 @@ def send_jev.put(
       send_scanned(scan, c, Jev.Outgoing{fields, attach_names(atts), about},
         Jev.outgoing_vetoes(about), text, r)
     case h <> t:
-      pure_out(Err{unlisted_msg(h <> t)})
+      pure_out(send_not_attempted(Err{unlisted_msg(h <> t)}))
 
 # With Jev on, a send passes the allowlist, then the local secret scan of
 # its content, then Jev's veto questions, before its envelope is built.
@@ -5242,10 +5531,62 @@ def download(r: Result<&2, &2, String, Download>) -> IO(Out):
     case Done{q}:
       download.fetch(q)
 
+def part_download.attach(r: Result<&2, &2, String, String>, p: Part.Part,
+  filename: String) -> Result<&2, &2, String, M.Attach>:
+  match r:
+    case Fail{why}:
+      Fail{why}
+    case Done{bytes}:
+      Part.Part{path, +ct, cd, encoding, size} = p
+      save_as(M.Attach{M.file_name(ct, cd), M.main_value(ct), bytes}, filename)
+
+def part_download.fetch(r: Result<&2, &2, String, Part.Part>, d: Downloads,
+  +folder: String, +uid: U32, +uidv: U32, filename: String, dry: Bool) -> IO(Out):
+  match r:
+    case Fail{why}:
+      pure_out(Err{why})
+    case Done{+p}:
+      do IO<Out>:
+        lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p),
+          max_attachment()))
+        download.put(part_download.attach(part_bytes(lines, uid, uidv, p,
+          max_attachment()), p, filename), d, folder, uid, dry)
+
+type PartDownload is Data:
+  PartDownload{downloads: Downloads, uid: U32}
+
+def part_download.request(s: Result<&2, &2, String, Downloads>, +args: J.Json)
+  -> Result<&2, &2, String, PartDownload>:
+  do Result<&2, &2, String, PartDownload>:
+    d : Downloads <- s
+    uid : U32 <- single_uid(uids_arg(args), "mail_get_attachment")
+    Part.check(Bool.not(U32.is_zero(uidv_arg(args))), uidv_missing())
+    return PartDownload{d, uid}
+
+def part_download(r: Result<&2, &2, String, PartDownload>, +args: J.Json) -> IO(Out):
+  match r:
+    case Fail{why}:
+      pure_out(Err{why})
+    case Done{PartDownload{d, +uid}}:
+      +folder = folder_arg(args)
+      +uidv = uidv_arg(args)
+      do IO<Out>:
+        lines : Run() <- imap_run(Ops.plan_parts(folder, uid))
+        part_download.fetch(part_discovered(lines, uid, uidv, str_arg(args, "section", "")),
+          d, folder, uid, uidv, str_arg(args, "filename", ""), dry_arg(args))
+
+def t_get_attachment.if(whole: Bool, s: Result<&2, &2, String, Downloads>,
+  +args: J.Json) -> IO(Out):
+  match whole:
+    case True{}:
+      download(download_request(s, args))
+    case False{}:
+      part_download(part_download.request(s, args), args)
+
 def t_get_attachment(+args: J.Json) -> IO(Out):
   do IO<Out>:
     s : Result<&2, &2, String, Downloads> <- downloads()
-    download(download_request(s, args))
+    t_get_attachment.if(String.is_empty(str_arg(args, "section", "")), s, args)
 
 # Classifying with Jev
 # ====================
@@ -6264,6 +6605,8 @@ def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
     case Jev.On{c} Threaded{Ok{J.JObj{fields}}, m <> t, folders}:
       annotate.ask(Done{folders},
         Annotation{fields, True{}, Jev.Headers{}, listed_fetched(m <> t, 1)})
+    case Jev.On{c} Selected{Ok{J.JObj{fields}}, fetched}:
+      annotate.list(Annotation{fields, False{}, c, [fetched]})
     case Jev.On{+c} Whole{Ok{J.JObj{fields}}, m, max}:
       annotate.list(Annotation{fields, False{}, c, [whole_fetched(c, m, max)]})
     case _ Listed{o, ms}:
@@ -6271,6 +6614,8 @@ def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
     case _ Threaded{o, ms, folders}:
       pure_out(o)
     case _ Whole{o, m, max}:
+      pure_out(o)
+    case _ Selected{o, fetched}:
       pure_out(o)
 
 def annotated(jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
