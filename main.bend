@@ -98,13 +98,45 @@ def initialize_result(params: J.Json) -> J.Json:
 # tools/call
 # ----------
 
-# The tool's JSON result as text content, flagged when the tool failed.
-def call_result(+o: T.Out) -> J.Json:
-  text = J.str(J.show(result_json(o)))
+# Serialize the same result value as text and, when negotiated, structured content.
+def call_result_for(structured: Bool, +o: T.Out) -> J.Json:
+  +value = result_json(o)
+  text = J.str(J.show(value))
   content = J.obj([J.kv("type", J.str("text")), J.kv("text", text)])
-  J.obj([
+  fields : List<&2, J.Json> = [
     J.kv("content", J.arr([content])), J.kv("isError", J.bool(is_error(o)))
-  ])
+  ]
+  J.obj(List.append(&2, J.Json, fields,
+    Bool.pick(List<&2, J.Json>, structured, [J.kv("structuredContent", value)], [])))
+
+def call_result(o: T.Out) -> J.Json:
+  call_result_for(True{}, o)
+
+# outputSchema arrived with structuredContent in MCP 2025-06-18.
+def legacy_fields(xs: List<&2, J.Json>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JKv{"outputSchema", _} <> t:
+      legacy_fields(t)
+    case h <> t:
+      h <> legacy_fields(t)
+
+def legacy_tools(xs: List<&2, J.Json>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JObj{items} <> t:
+      J.obj(legacy_fields(J.unchain(items))) <> legacy_tools(t)
+    case h <> t:
+      h <> legacy_tools(t)
+
+def tools_for(structured: Bool, ts: J.Json) -> J.Json:
+  match structured ts:
+    case False{} J.JArr{items}:
+      J.arr(legacy_tools(J.unchain(items)))
+    case _ _:
+      ts
 
 # Method parameters and tool arguments are an object, or absent (read as {}).
 # Anything else is None, so it is refused rather than read as no arguments.
@@ -118,7 +150,7 @@ def object_or_empty(m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
       None{}
 
 # Runs the tool when its arguments are an object.
-def run_tool(id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
+def run_tool(structured: Bool, id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
   match args:
     case None{}:
       IO.print(rpc_error(id, "-32602",
@@ -126,24 +158,24 @@ def run_tool(id: J.Json, name: String, args: Maybe<&2, J.Json>) -> IO(Unit):
     case Some{a}:
       do IO<Unit>:
         o : T.Out <- T.call(name, a)
-        IO.print(rpc_result(id, call_result(o)))
+        IO.print(rpc_result(id, call_result_for(structured, o)))
 
-def call_tool(id: J.Json, +params: J.Json) -> IO(Unit):
+def call_tool(structured: Bool, id: J.Json, +params: J.Json) -> IO(Unit):
   args = object_or_empty(J.get(params, "arguments"))
-  run_tool(id, T.str_arg(params, "name", ""), args)
+  run_tool(structured, id, T.str_arg(params, "name", ""), args)
 
 # Requests
 # --------
 
 # Answers a request by its method. `params` is an object.
-def respond(id: J.Json, +method: String, params: J.Json) -> IO(Unit):
+def respond(structured: Bool, id: J.Json, +method: String, params: J.Json) -> IO(Unit):
   match method:
     case "tools/call":
-      call_tool(id, params)
+      call_tool(structured, id, params)
     case "tools/list":
       do IO<Unit>:
         ts : J.Json <- offered_tools()
-        IO.print(rpc_result(id, J.obj([J.kv("tools", ts)])))
+        IO.print(rpc_result(id, J.obj([J.kv("tools", tools_for(structured, ts))])))
     case "initialize":
       IO.print(rpc_result(id, initialize_result(params)))
     case "ping":
@@ -153,23 +185,23 @@ def respond(id: J.Json, +method: String, params: J.Json) -> IO(Unit):
 
 # Parameters that are not an object are refused, not read as none.
 def respond_with(
-  id: J.Json, method: String, params: Maybe<&2, J.Json>
+  structured: Bool, id: J.Json, method: String, params: Maybe<&2, J.Json>
 ) -> IO(Unit):
   match params:
     case None{}:
       IO.print(rpc_error(id, "-32602",
         "invalid params: \"params\" must be an object"))
     case Some{p}:
-      respond(id, method, p)
+      respond(structured, id, method, p)
 
 # A request carries an id; a notification (no id) gets no answer.
-def request(+req: J.Json, id: Maybe<&2, J.Json>) -> IO(Unit):
+def request(structured: Bool, +req: J.Json, id: Maybe<&2, J.Json>) -> IO(Unit):
   match id:
     case None{}:
       IO.pure(Unit, Unit{})
     case Some{i}:
       method = T.str_arg(req, "method", "")
-      respond_with(i, method, object_or_empty(J.get(req, "params")))
+      respond_with(structured, i, method, object_or_empty(J.get(req, "params")))
 
 # A JSON-RPC id is a string, a number or null.
 def id_ok(id: Maybe<&2, J.Json>) -> Bool:
@@ -204,20 +236,20 @@ def envelope_ok(+req: J.Json) -> Bool:
 
 # A message failing the envelope check is answered with -32600, under its
 # id when that id is valid.
-def message.if(+req: J.Json, valid: Bool) -> IO(Unit):
+def message.if(structured: Bool, +req: J.Json, valid: Bool) -> IO(Unit):
   match valid:
     case True{}:
-      request(req, J.get(req, "id"))
+      request(structured, req, J.get(req, "id"))
     case False{}:
       IO.print(rpc_error(id_or_null(J.get(req, "id")), "-32600",
         "invalid request: expected a JSON-RPC 2.0 object with a string method"))
 
-def message(m: Maybe<&2, J.Json>) -> IO(Unit):
+def message(structured: Bool, m: Maybe<&2, J.Json>) -> IO(Unit):
   match m:
     case None{}:
       IO.print(rpc_error(J.JNull{}, "-32700", "parse error"))
     case Some{+req}:
-      message.if(req, envelope_ok(req))
+      message.if(structured, req, envelope_ok(req))
 
 # Lines
 # -----
@@ -239,40 +271,64 @@ def is_blank(s: String) -> Bool:
     case _:
       False{}
 
-def handle_text.if(text: String, blank: Bool) -> IO(Unit):
+# Only a valid initialize request changes the negotiated output contract.
+# Until then the legacy representation is used, preserving pre-init calls.
+def negotiated(structured: Bool, +req: J.Json) -> Bool:
+  params = Maybe.default(&2, J.Json, object_or_empty(J.get(req, "params")), J.JNull{})
+  valid = envelope_ok(req) && Maybe.is_some(&2, J.Json, J.get(req, "id")) &&
+    String.eq(T.str_arg(req, "method", ""), "initialize") &&
+    Maybe.is_some(&2, J.Json, object_or_empty(J.get(req, "params")))
+  +asked = T.str_arg(params, "protocolVersion", "")
+  modern = String.eq(asked, latest_version()) || Bool.not(known_version(asked))
+  Bool.pick(Bool, valid, modern, structured)
+
+def handle_text.put(+structured: Bool, parsed: Maybe<&2, J.Json>) -> IO(Bool):
+  match parsed:
+    case None{}:
+      do IO<Bool>:
+        message(structured, None{})
+        return structured
+    case Some{+req}:
+      do IO<Bool>:
+        message(structured, Some{req})
+        return negotiated(structured, req)
+
+def handle_text.if(structured: Bool, text: String, blank: Bool) -> IO(Bool):
   match blank:
     case True{}:
-      IO.pure(Unit, Unit{})
+      IO.pure(Bool, structured)
     case False{}:
-      message(J.parse(text))
+      handle_text.put(structured, J.parse(text))
 
-def handle_text(+text: String) -> IO(Unit):
-  handle_text.if(text, is_blank(text))
-
-# JSON-RPC messages are UTF-8: a line that does not round-trip through the
-# decoder (invalid bytes become U+FFFD) is a parse error, not a request.
-def handle_line.if(text: String, valid: Bool) -> IO(Unit):
+# Decode a whole UTF-8 line exactly once; invalid bytes cannot change state.
+def handle_line.if(structured: Bool, +text: String, valid: Bool) -> IO(Bool):
   match valid:
     case True{}:
-      handle_text(text)
+      handle_text.if(structured, text, is_blank(text))
     case False{}:
-      IO.print(rpc_error(J.JNull{}, "-32700",
-        "parse error: the line is not valid UTF-8"))
+      do IO<Bool>:
+        IO.print(rpc_error(J.JNull{}, "-32700",
+          "parse error: the line is not valid UTF-8"))
+        return structured
 
-# Answers one complete line of UTF-8 bytes. It is decoded only once whole, so
-# a read that ends inside a multi-byte character cannot corrupt it.
-def handle_line(+line: String) -> IO(Unit):
+def handle_line_for(structured: Bool, +line: String) -> IO(Bool):
   +text = C.utf8_decode(line)
-  handle_line.if(text, String.eq(C.utf8_encode(text), line))
+  handle_line.if(structured, text, String.eq(C.utf8_encode(text), line))
 
-def handle_lines(ls: List<&2, String>) -> IO(Unit):
+# A standalone line has no negotiated session (also used by front-end tests).
+def handle_line(line: String) -> IO(Unit):
+  do IO<Unit>:
+    next : Bool <- handle_line_for(False{}, line)
+    return Unit{}
+
+def handle_lines(ls: List<&2, String>, structured: Bool) -> IO(Bool):
   match ls:
     case Nil{}:
-      IO.pure(Unit, Unit{})
+      IO.pure(Bool, structured)
     case l <> t:
-      do IO<Unit>:
-        handle_line(l)
-        handle_lines(t)
+      do IO<Bool>:
+        next : Bool <- handle_line_for(structured, l)
+        handle_lines(t, next)
 
 # Serving stdin
 # -------------
@@ -307,15 +363,15 @@ def StdinRead() -> Type:
 # Bend's own server demos) rather than counting down a fuel that would end a
 # long session.
 @unsafe
-def serve(f: File, parts: List<&2, String>, n: U32) -> IO(Unit):
+def serve(f: File, parts: List<&2, String>, n: U32, structured: Bool) -> IO(Unit):
   do IO<Unit>:
     m : StdinRead() <- File.read_bytes(f, 65536)
-    serve.read(m, parts, n)
+    serve.read(m, parts, n, structured)
 
 # A failed read ends the session; an empty one (end of input) answers the
 # unfinished line first.
 @unsafe
-def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32) -> IO(Unit):
+def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32, structured: Bool) -> IO(Unit):
   (f, r) = m
   match r:
     case Fail{e}:
@@ -324,27 +380,27 @@ def serve.read(m: StdinRead(), parts: List<&2, String>, n: U32) -> IO(Unit):
       match xs:
         case Nil{}:
           do IO<Unit>:
-            handle_line(pending(parts))
+            next : Bool <- handle_line_for(structured, pending(parts))
             File.close(f)
         case h <> t:
-          serve.chunk(f, String.split(C.bytes_str(xs), '\n'), parts, n)
+          serve.chunk(f, String.split(C.bytes_str(xs), '\n'), parts, n, structured)
 
 # `pieces` is the chunk split at its newlines. Its first piece ends the
 # unfinished line, which is refused once it is longer than the cap.
 @unsafe
 def serve.chunk(
-  f: File, pieces: List<&2, String>, parts: List<&2, String>, n: U32
+  f: File, pieces: List<&2, String>, parts: List<&2, String>, n: U32, structured: Bool
 ) -> IO(Unit):
   match pieces:
     case Nil{}:
-      serve(f, parts, n)
+      serve(f, parts, n, structured)
     case +p <> rest:
       +length = (n + C.byte_len(p) : U32)
-      serve.chunk.if(f, rest, p <> parts, length, U32.is_gt(length, line_cap()))
+      serve.chunk.if(f, rest, p <> parts, length, structured, U32.is_gt(length, line_cap()))
 
 @unsafe
 def serve.chunk.if(
-  f: File, rest: List<&2, String>, parts: List<&2, String>, n: U32, over: Bool
+  f: File, rest: List<&2, String>, parts: List<&2, String>, n: U32, structured: Bool, over: Bool
 ) -> IO(Unit):
   match over:
     case True{}:
@@ -352,27 +408,27 @@ def serve.chunk.if(
         IO.print(too_long())
         File.close(f)
     case False{}:
-      serve.rest(f, rest, parts, n)
+      serve.rest(f, rest, parts, n, structured)
 
 # `rest` holds the pieces of the chunk after its first newline, if any.
 @unsafe
 def serve.rest(
-  f: File, +rest: List<&2, String>, parts: List<&2, String>, n: U32
+  f: File, +rest: List<&2, String>, parts: List<&2, String>, n: U32, structured: Bool
 ) -> IO(Unit):
   match rest:
     case Nil{}:
-      serve(f, parts, n)
+      serve(f, parts, n, structured)
     case h <> t:
       do IO<Unit>:
-        handle_line(pending(parts))
-        handle_lines(complete_lines(rest))
+        next : Bool <- handle_line_for(structured, pending(parts))
+        agreed : Bool <- handle_lines(complete_lines(rest), next)
         +unfinished : String = last_line(rest)
-        serve(f, [unfinished], C.byte_len(unfinished))
+        serve(f, [unfinished], C.byte_len(unfinished), agreed)
 
 def mcp() -> IO(Unit):
   do IO<Unit>:
     f : File <- IO.try(File, File.open("/dev/stdin", "r"))
-    serve(f, [], 0)
+    serve(f, [], 0, False{})
 
 # CLI
 # ===
@@ -431,7 +487,7 @@ def cli(args: List<&2, String>) -> IO(Unit):
     case "tools" <> Nil{}:
       do IO<Unit>:
         ts : J.Json <- offered_tools()
-        IO.print(J.show(ts))
+        IO.print(J.show(tools_for(False{}, ts)))
     case "call" <> name <> Nil{}:
       call_cli(name, "{}")
     case "call" <> name <> raw <> Nil{}:
