@@ -644,6 +644,9 @@ def smtp_error(code: U32, out: String, err: String) -> String:
     case _:
       helper_error(code, err)
 
+# Native data_started/data_accepted/data_rejected map to public data_reply;
+# before_data stays before_data, and missing progress is unknown. Only the
+# data_accepted marker is acceptance evidence, regardless of process exit.
 def smtp_code.phase(phase: String, code: U32, out: String, err: String) -> Out:
   match phase:
     case "data_accepted":

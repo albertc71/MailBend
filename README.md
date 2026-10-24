@@ -395,7 +395,8 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ### What the proofs cover
 
-The laws are about the pure IMAP command plans, the SMTP envelope, Jev's
+The laws are about the pure IMAP command plans, the SMTP envelope and outcome
+interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
 delete), and their rendering. They prove that a headers-mode Jev request
 holds no message text, and that a gate can only take a send or delete away,
@@ -403,7 +404,10 @@ never change it. The gate laws cover the pure functions
 `Jev.outbound_checked` and `Jev.delete_checked`; the IO that calls them is
 covered by the end-to-end tests and a CI check that no other code reaches
 `S.outbound` or `smtp_run`, uses `plan_delete` without `delete_checked`, or
-makes an expunge outside `src/ops.bend` and `src/imap.bend`. The native
+makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome laws prove that unconfirmed or missing progress stays unknown
+for every exit code and transcript, and that confirmed acceptance survives a
+later process failure. Native progress production itself remains a tested IO
+boundary. The native
 helpers, TLS, MIME parsing, the agent's choices and the runtime
 configuration are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in

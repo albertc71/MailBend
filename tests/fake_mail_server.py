@@ -1533,6 +1533,7 @@ class SMTPSession:
             self.send('554 5.7.1 message refused\r\n')
             return
         lose_reply = 'lost-reply@example.com' in self.rcpt_to
+        bare_reply = 'bare-reply@example.com' in self.rcpt_to
         with self.state.lock:
             self.state.data['sent'].append({'mail_from': self.mail_from, 'rcpt_to': list(self.rcpt_to), 'data': data})
             n = len(self.state.data['sent'])
@@ -1545,7 +1546,7 @@ class SMTPSession:
         self.mail_from, self.rcpt_to = None, []
         if lose_reply:
             raise ConnectionClosed()
-        self.send(f'250 2.0.0 OK queued as FAKE{n}\r\n')
+        self.send('250\r\n' if bare_reply else f'250 2.0.0 OK queued as FAKE{n}\r\n')
 
 
 # --------------------------------------------------------------------------

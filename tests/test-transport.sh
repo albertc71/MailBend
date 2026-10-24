@@ -541,17 +541,17 @@ case21() {
 }
 
 # Fixed SMTP evidence distinguishes refusal from loss of the final reply.
-case22() {
-  start_server case22 --echo-login || { fail 22 "server did not start"; return; }
+case_smtp_progress() {
+  start_server smtp-progress --echo-login || { fail smtp-progress "server did not start"; return; }
   body=$'Subject: outcome\r\n\r\nsynthetic\r\n'
-  for entry in before-data-close:6:before_data final-reject:5:data_rejected lost-reply:6:data_started; do
+  for entry in before-data-close:6:before_data final-reject:5:data_rejected lost-reply:6:data_started bare-reply:0:data_accepted; do
     IFS=: read -r rcpt expected phase <<< "$entry"
     call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<'"$rcpt"$'@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
     last=$(grep '^mailbend-smtp: ' "$ERR" | tail -1)
     if [ "$CODE" -eq "$expected" ] && [ "$last" = "mailbend-smtp: $phase" ]; then
-      pass "22 SMTP $rcpt progress"
+      pass "SMTP $rcpt progress"
     else
-      fail "22 SMTP $rcpt progress" "exit=$CODE last=$last"
+      fail "SMTP $rcpt progress" "exit=$CODE last=$last"
     fi
   done
   stop_server
@@ -600,7 +600,7 @@ case18
 case19
 case20
 case21
-case22
+case_smtp_progress
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"

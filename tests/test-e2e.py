@@ -1688,6 +1688,7 @@ def smtp_outcomes(work):
             ("final-reject@example.com", "not_sent", "explicit_rejection", 0),
             ("lost-reply@example.com", "unknown", "acceptance_unconfirmed", 1),
             ("friend@example.com", "accepted", "accepted_by_server", 1),
+            ("bare-reply@example.com", "accepted", "accepted_by_server", 1),
         ]:
             for use_mcp in (False, True):
                 before = len(srv.st()["sent"])
@@ -1707,8 +1708,9 @@ def smtp_outcomes(work):
                 check(f"SMTP {recipient} via {'MCP' if use_mcp else 'CLI'} preserves outcome",
                       r.get("smtp_outcome") == expected and r.get("smtp_reason") == reason
                       and failed == (expected != "accepted")
-                      and len(srv.st()["sent"]) == before + recorded
-                      and sum(line.startswith("MAIL FROM:") for line in commands) == 1, r)
+                      and len(srv.st()["sent"]) == before + recorded, r)
+                check("SMTP attempts are never automatically replayed",
+                      sum(line.startswith("MAIL FROM:") for line in commands) == 1, commands)
                 if expected == "accepted":
                     check("accepted DATA survives failed QUIT and failed Sent filing",
                           r.get("sent") is True and r.get("message_id")
@@ -1717,6 +1719,9 @@ def smtp_outcomes(work):
                     check("failed or unknown SMTP never attempts Sent filing",
                           "sent_copy" not in r and "message_id" not in r
                           and not any(" APPEND " in x["line"] for x in srv.log_records()[start:]), r)
+                if recipient == "bare-reply@example.com":
+                    check("bare final DATA acceptance preserves the actual server reply",
+                          r.get("server_reply") == "250", r)
                 if recipient == "reject@example.com":
                     check("one refused recipient aborts before DATA despite earlier accepted recipient",
                           "DATA" not in commands and "550" in r.get("error", ""), commands)
