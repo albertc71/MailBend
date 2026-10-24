@@ -40,6 +40,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="mailbend-search-mutation-") as directory:
         root = Path(directory)
         shutil.copytree(ROOT / "src", root / "src")
+        # Root proofs may import shared models from this directory. Exclude
+        # scratch projects if TMPDIR happens to point into the source tree.
+        shutil.copytree(ROOT / "tests/formal", root / "tests/formal",
+                        ignore=shutil.ignore_patterns("__pycache__", "mailbend-search-mutation-*"))
         (root / "tests/unit").mkdir(parents=True)
         shutil.copy2(ROOT / "tests/unit/search-cursor.bend", root / "tests/unit/search-cursor.bend")
         source = root / "src/search-cursor.bend"
