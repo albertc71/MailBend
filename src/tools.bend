@@ -7,6 +7,7 @@ import ./codec.bend as C
 import ./json.bend as J
 import ./imap.bend as I
 import ./mime.bend as M
+import ./sections.bend as Part
 import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
@@ -1646,9 +1647,173 @@ def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32) -> IO(Sh
     case Fail{m}:
       pure_shown(Err{m})
 
+# Explicit selected reads leave the legacy whole-message rendering unchanged.
+def part_metadata.first(ms: List<&2, I.Msg>) -> Result<&2, &2, String, List<&2, Part.Part>>:
+  match ms:
+    case Nil{}:
+      Fail{"no BODYSTRUCTURE for the requested UID"}
+    case I.Msg{id, flags, date, size, headers, body, st} <> t:
+      Part.parts(st)
+
+def part_metadata.present(m: I.Msg) -> Bool:
+  match m:
+    case I.Msg{id, flags, date, size, headers, body, I.VList{xs}}:
+      True{}
+    case _:
+      False{}
+
+def part_metadata.filter(ms: List<&2, I.Msg>, +uid: U32) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      List.filter.put(I.Msg, m, part_metadata.filter(t, uid),
+        U32.is_eq(msg_uid(m), uid) && part_metadata.present(m))
+
+def part_metadata(lines: List<&2, I.RLine>, uid: U32)
+  -> Result<&2, &2, String, List<&2, Part.Part>>:
+  part_metadata.first(part_metadata.filter(I.fetched(lines), uid))
+
+def part_found(p: Maybe<&2, Part.Part>) -> Result<&2, &2, String, Part.Part>:
+  match p:
+    case Some{p}:
+      Done{p}
+    case None{}:
+      Fail{"no matching MIME section"}
+
+def part_json(p: Part.Part) -> J.Json:
+  Part.Part{+path, +ct, +cd, +encoding, +size} = p
+  J.obj([J.kv("section", J.str(I.section_str(path))),
+    J.kv("content_type", J.str(ct)), J.kv("filename", J.str(M.file_name(ct, cd))),
+    J.kv("transfer_encoding", J.str(encoding)), J.kv("encoded_size", J.num(size)),
+    J.kv("attachment", J.bool(Part.is_file(Part.Part{path, ct, cd, encoding, size})))])
+
+def parts_json(ps: List<&2, Part.Part>) -> List<&2, J.Json>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      part_json(p) <> parts_json(t)
+
+def part_discovered(r: Run(), +uid: U32, +uidv: U32, wanted: String)
+  -> Result<&2, &2, String, Part.Part>:
+  do Result<&2, &2, String, Part.Part>:
+    +lines : List<&2, I.RLine> <- r
+    Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
+    ps : List<&2, Part.Part> <- part_metadata(lines, uid)
+    part_found(Part.select(ps, wanted))
+
+def part_same(a: Part.Part, b: Part.Part) -> Bool:
+  Part.Part{ap, ac, ad, ae, az} = a
+  Part.Part{bp, bc, bd, be, bz} = b
+  String.eq(I.section_str(ap), I.section_str(bp)) && String.eq(ac, bc) &&
+    String.eq(ad, bd) && String.eq(ae, be) && U32.is_eq(az, bz)
+
+def part_raw(v: Maybe<&2, String>) -> Result<&2, &2, String, String>:
+  match v:
+    case Some{s}:
+      Done{s}
+    case None{}:
+      Fail{"missing selected section or unexpected partial origin"}
+
+def part_bytes(r: Run(), +uid: U32, +uidv: U32, +p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  do Result<&2, &2, String, String>:
+    +lines : List<&2, I.RLine> <- r
+    Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
+    ps : List<&2, Part.Part> <- part_metadata(lines, uid)
+    current : Part.Part <- part_found(Part.select(ps, I.section_str(Part.path(p))))
+    Part.check(part_same(p, current), "MIME section metadata changed between sessions")
+    raw : String <- part_raw(Part.fetched(lines, uid,
+      "BODY[" ++ I.section_str(Part.path(p)) ++ "]<0>"))
+    Part.decode(p, raw, max)
+
+def part_content.fields(text: Bool, ct: String, bytes: String) -> List<&2, J.Json>:
+  match text:
+    case True{}:
+      [J.kv("content", J.str(M.leaf.text(ct, bytes))),
+        J.kv("content_encoding", J.str("text"))]
+    case False{}:
+      [J.kv("content", J.str(C.b64_encode(bytes, False{}))),
+        J.kv("content_encoding", J.str("base64"))]
+
+def part_content(r: Result<&2, &2, String, String>, p: Part.Part,
+  folder: String, uid: U32, uidv: U32) -> Out:
+  match r:
+    case Fail{why}:
+      Err{why}
+    case Done{bytes}:
+      Part.Part{path, +ct, cd, encoding, size} = p
+      ok_obj(List.append(&2, J.Json,
+        [J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
+          J.kv("uidvalidity", J.num(uidv)), J.kv("section", J.str(I.section_str(path))),
+          J.kv("content_type", J.str(ct)), J.kv("complete", J.bool(True{}))],
+        part_content.fields(String.starts_with(M.main_value(ct), "text/"), ct, bytes)))
+
+def part_get.fetch(r: Result<&2, &2, String, Part.Part>, +folder: String,
+  +uid: U32, +uidv: U32, +max: U32) -> IO(Shown):
+  match r:
+    case Fail{why}:
+      pure_shown(Err{why})
+    case Done{+p}:
+      do IO<Shown>:
+        lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p), max))
+        return Listed{part_content(part_bytes(lines, uid, uidv, p, max), p,
+          folder, uid, uidv), []}
+
+def part_get.list.put(r: Result<&2, &2, String, List<&2, Part.Part>>, valid: Bool,
+  folder: String, uid: U32, uidv: U32) -> Out:
+  match r valid:
+    case _ False{}:
+      Err{stale_msg()}
+    case Fail{why} True{}:
+      Err{why}
+    case Done{ps} True{}:
+      ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
+        J.kv("uidvalidity", J.num(uidv)), J.kv("parts", J.arr(parts_json(ps)))])
+
+def part_get.list(r: Run(), folder: String, +uid: U32, +uidv: U32) -> Out:
+  match r:
+    case Fail{why}:
+      Err{why}
+    case Done{+lines}:
+      part_get.list.put(part_metadata(lines, uid),
+        uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), folder, uid, uidv)
+
+def part_get.run(list: Bool, +folder: String, +uid: U32, +uidv: U32,
+  wanted: String, max: U32) -> IO(Shown):
+  match list:
+    case True{}:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_parts(folder, uid))
+        return Listed{part_get.list(r, folder, uid, uidv), []}
+    case False{}:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_parts(folder, uid))
+        part_get.fetch(part_discovered(r, uid, uidv, wanted), folder, uid, uidv, max)
+
+def part_get(u: Result<&2, &2, String, U32>, folder: String, uidv: U32,
+  +wanted: String, max: U32) -> IO(Shown):
+  match u uidv:
+    case Fail{why} _:
+      pure_shown(Err{why})
+    case _ 0:
+      pure_shown(Err{uidv_missing()})
+    case Done{uid} _:
+      part_get.run(String.eq(wanted, "list"), folder, uid, uidv, wanted, max)
+
+def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String) -> IO(Shown):
+  match whole:
+    case True{}:
+      get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args), max)
+    case False{}:
+      part_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
+        wanted, max)
+
 def t_get(+args: J.Json) -> IO(Shown):
-  get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args),
-    clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
+  +wanted = str_arg(args, "section", "")
+  t_get.if(String.is_empty(wanted), args,
+    clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216), wanted)
 
 # mail_get_new
 # ------------
@@ -5191,10 +5356,62 @@ def download(r: Result<&2, &2, String, Download>) -> IO(Out):
     case Done{q}:
       download.fetch(q)
 
+def part_download.attach(r: Result<&2, &2, String, String>, p: Part.Part,
+  filename: String) -> Result<&2, &2, String, M.Attach>:
+  match r:
+    case Fail{why}:
+      Fail{why}
+    case Done{bytes}:
+      Part.Part{path, +ct, cd, encoding, size} = p
+      save_as(M.Attach{M.file_name(ct, cd), M.main_value(ct), bytes}, filename)
+
+def part_download.fetch(r: Result<&2, &2, String, Part.Part>, d: Downloads,
+  +folder: String, +uid: U32, +uidv: U32, filename: String, dry: Bool) -> IO(Out):
+  match r:
+    case Fail{why}:
+      pure_out(Err{why})
+    case Done{+p}:
+      do IO<Out>:
+        lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p),
+          max_attachment()))
+        download.put(part_download.attach(part_bytes(lines, uid, uidv, p,
+          max_attachment()), p, filename), d, folder, uid, dry)
+
+type PartDownload is Data:
+  PartDownload{downloads: Downloads, uid: U32}
+
+def part_download.request(s: Result<&2, &2, String, Downloads>, +args: J.Json)
+  -> Result<&2, &2, String, PartDownload>:
+  do Result<&2, &2, String, PartDownload>:
+    d : Downloads <- s
+    uid : U32 <- single_uid(uids_arg(args), "mail_get_attachment")
+    Part.check(Bool.not(U32.is_zero(uidv_arg(args))), uidv_missing())
+    return PartDownload{d, uid}
+
+def part_download(r: Result<&2, &2, String, PartDownload>, +args: J.Json) -> IO(Out):
+  match r:
+    case Fail{why}:
+      pure_out(Err{why})
+    case Done{PartDownload{d, +uid}}:
+      +folder = folder_arg(args)
+      +uidv = uidv_arg(args)
+      do IO<Out>:
+        lines : Run() <- imap_run(Ops.plan_parts(folder, uid))
+        part_download.fetch(part_discovered(lines, uid, uidv, str_arg(args, "section", "")),
+          d, folder, uid, uidv, str_arg(args, "filename", ""), dry_arg(args))
+
+def t_get_attachment.if(whole: Bool, s: Result<&2, &2, String, Downloads>,
+  +args: J.Json) -> IO(Out):
+  match whole:
+    case True{}:
+      download(download_request(s, args))
+    case False{}:
+      part_download(part_download.request(s, args), args)
+
 def t_get_attachment(+args: J.Json) -> IO(Out):
   do IO<Out>:
     s : Result<&2, &2, String, Downloads> <- downloads()
-    download(download_request(s, args))
+    t_get_attachment.if(String.is_empty(str_arg(args, "section", "")), s, args)
 
 # Classifying with Jev
 # ====================

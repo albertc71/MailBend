@@ -113,12 +113,12 @@ def main() -> IO(Unit):
 #|mail_probe | readOnlyHint,idempotentHint | required - | -
 #|mail_list_folders | readOnlyHint,idempotentHint | required - | -
 #|mail_search | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string from:string to:string cc:string subject:string body:string text:string since:string before:string unseen:boolean seen:boolean flagged:boolean limit:integer
-#|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer max_bytes:integer
+#|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string max_bytes:integer
 #|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string since_uid:integer uidvalidity:integer limit:integer
 #|mail_get_thread | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer
 #|mail_classify | readOnlyHint,openWorldHint | required uids | folder:string uids:array candidates:array
 #|mail_triage | openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
-#|mail_get_attachment | - | required uid,index | folder:string uid:integer index:integer filename:string dry_run:boolean
+#|mail_get_attachment | - | required uid | folder:string uid:integer uidvalidity:integer section:string index:integer filename:string dry_run:boolean
 #|mail_mark_read | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
 #|mail_mark_unread | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
 #|mail_flag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer colour:string[red|orange|yellow|green|blue|purple|grey] dry_run:boolean
@@ -133,5 +133,5 @@ def main() -> IO(Unit):
 #|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
-#|38876 characters
-#|hash 1217870553
+#|39957 characters
+#|hash 2377661939

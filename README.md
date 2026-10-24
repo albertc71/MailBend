@@ -80,6 +80,28 @@ never marks mail as read. Tools that change messages take the `uidvalidity`
 that came with the UIDs and report which UIDs were `changed` or `missing`.
 `scripts/mailbend tools` prints each tool's full description and schema.
 
+For large MIME messages, `mail_get` accepts `section: "list"` to discover
+parts without reading their bodies, `section: "text"` or `"html"` for the
+first inline part of that type, or a numeric section such as `"2.1"` from
+the list. Supply the folder, UID and its `uidvalidity` from a prior search.
+Selected reads return `content`, `content_encoding`, `content_type`, `section`
+and `complete`. Content is decoded text for text media and base64 for other
+media, as indicated by `content_encoding`. Selected reads fail explicitly if
+the encoded part does not fit `max_bytes`, its
+metadata changes, or transfer decoding is incomplete. They do not request
+Jev annotations. Omit `section` to retain the original whole-message prefix.
+
+`mail_get_attachment` also accepts a listed numeric `section` and
+`uidvalidity` instead of `index`. It fetches only that part, even when another
+attachment makes the message exceed 25 MB. The encoded part must be smaller
+than the existing 25 MB fetch window, and only a complete decoded file can
+be saved. Sandbox isolation and no-overwrite behavior are unchanged. Section
+IDs are IMAP MIME paths scoped to the folder, UIDVALIDITY and UID; rediscover
+them after any identity change. Nested multipart paths follow wire order;
+a `message/rfc822` attachment is one opaque part containing the complete
+attached message. Legacy `index` remains the zero-based attachment order
+reported by the whole-message `mail_get`; it is not a section number.
+
 Every tool that changes or sends mail, or saves a file, also takes
 `dry_run: true`: it runs only the tool's read-only checks and returns what it
 would do (the `imap` commands, the `smtp` sender and recipients, or the

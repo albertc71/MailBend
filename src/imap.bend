@@ -65,6 +65,7 @@ type Item is Data:
   IHeaders{}
   IStructure{}
   IFull{max: U32}
+  IPart{section: List<&2, U32>, max: U32}
 
 type Cmd is Data:
   CCapability{}
@@ -604,6 +605,16 @@ def header_fields() -> String:
   "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID " ++
     "LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE"
 
+# Numeric components cannot inject IMAP syntax.
+def section_str(xs: List<&2, U32>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case n <> Nil{}:
+      U32.show(n)
+    case n <> t:
+      U32.show(n) ++ "." ++ section_str(t)
+
 def item_str(i: Item) -> String:
   match i:
     case IUid{}:
@@ -620,6 +631,8 @@ def item_str(i: Item) -> String:
       "BODYSTRUCTURE"
     case IFull{max}:
       "BODY.PEEK[]<0." ++ U32.show(max) ++ ">"
+    case IPart{section, max}:
+      "BODY.PEEK[" ++ section_str(section) ++ "]<0." ++ U32.show(max) ++ ">"
 
 def items_str(xs: List<&2, Item>) -> String:
   match xs:

@@ -611,13 +611,13 @@ def structure_disposition(part):
 
 def body_structure(part) -> str:
     """The BODYSTRUCTURE of a parsed message or part, with extension data."""
-    if part.is_multipart():
+    if part.get_content_maintype() == "multipart":
         subparts = ''.join(body_structure(p) for p in part.get_payload())
         return '(' + subparts + ' ' + imap_quote(part.get_content_subtype().upper()) + ' ' + \
             structure_params(part.get_params()[1:]) + ' NIL NIL NIL)'
     maintype, subtype = part.get_content_maintype(), part.get_content_subtype()
     payload = part.get_payload()
-    text = payload if isinstance(payload, str) else ''
+    text = payload if isinstance(payload, str) else ''.join(p.as_string() for p in payload)
     encoding = (part.get('Content-Transfer-Encoding') or '7BIT').strip().upper()
     params = part.get_params()[1:] if part.get('Content-Type') else [('charset', 'us-ascii')]
     fields = [imap_quote(maintype.upper()), imap_quote(subtype.upper()), structure_params(params),
@@ -655,8 +655,22 @@ def render_section(spec: bytes, m: dict):
         lines = split_header_lines(header_block)
         kept = [ln for ln in lines if ln.split(':', 1)[0].strip().lower() in names]
         content = ''.join(ln + '\r\n' for ln in kept) + '\r\n'
+    elif re.fullmatch(r"[1-9][0-9]*(?:\.[1-9][0-9]*)*", inside):
+        part = email.message_from_string(m['raw'])
+        for component in map(int, inside.split('.')):
+            if part.get_content_maintype() == 'multipart':
+                payload = part.get_payload()
+                part = payload[component - 1] if component <= len(payload) else None
+            elif component != 1:
+                part = None
+            if part is None:
+                break
+        payload = part.get_payload() if part is not None else ''
+        content = payload if isinstance(payload, str) else ''.join(p.as_string() for p in payload)
     else:
         content = ''
+    if m.get("section_truncate") and inside and inside[0].isdigit():
+        content = content[:-1]
     if start is not None:
         s = int(start)
         content = content[s:s + int(count)] if count is not None else content[s:]
@@ -999,6 +1013,8 @@ class IMAPSession:
                     parts.append('BODYSTRUCTURE ' + structure)
             else:
                 name, content, sets_seen = render_section(spec, m)
+                if m.get("measure_sections"):
+                    self.logger.log("imap-section-bytes", f"{name} {len(content)}")
                 if sets_seen and not self.readonly and '\\Seen' not in m['flags']:
                     m['flags'].append('\\Seen')
                     seen_added = True
@@ -1018,6 +1034,7 @@ class IMAPSession:
         items_raw = args[1] if isinstance(args[1], list) else [args[1]]
         items = normalize_fetch_items(items_raw)
         out_lines = []
+        cut_literal = False
         with self.state.lock:
             messages = self.state.data['mailboxes'][mbox]['messages']
             messages.sort(key=lambda m: m['uid'])
@@ -1029,6 +1046,10 @@ class IMAPSession:
                 if self.state.flags_first:
                     out_lines.append(f'* {seq} FETCH (UID {m["uid"]} FLAGS ({" ".join(m["flags"])}))\r\n')
                 line, seen_added = self.build_fetch_response(seq, m, items)
+                literal = re.search(r"BODY\[[0-9.]+\]<0> \{[0-9]+\}\r\n", line)
+                if m.get("cut_section_literal") and literal:
+                    line = line[:literal.end() + 1]
+                    cut_literal = True
                 mutated = mutated or seen_added
                 out_lines.append(line)
                 if self.state.noisy_store:
@@ -1037,6 +1058,9 @@ class IMAPSession:
                 self.state.save()
         for line in out_lines:
             self.send(line)
+        if cut_literal:
+            self.done = True
+            return
         self.send(f'{tag} OK FETCH completed\r\n')
 
     def cmd_store(self, tag, args):

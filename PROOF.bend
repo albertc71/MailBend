@@ -11,6 +11,7 @@ import Base
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/sections.bend as Part
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
@@ -60,6 +61,15 @@ def Laws.folder_scan_writes_nothing():
   {==}
 
 def Laws.search_writes_nothing(mbox, keys):
+  {==}
+
+def Laws.parts_write_nothing(mbox, uid):
+  {==}
+
+def Laws.part_writes_nothing(mbox, uid, uidv, section, max):
+  {==}
+
+def Laws.part_guarded(mbox, uid, uidv, section, max):
   {==}
 
 def Laws.get_writes_nothing(mbox, uid, max):
@@ -164,6 +174,8 @@ def Laws.fetch_items_never_set_seen(item):
     case I.IStructure{}:
       {==}
     case I.IFull{max}:
+      {==}
+    case I.IPart{section, max}:
       {==}
 
 # Marking and flagging

@@ -122,6 +122,32 @@ law search_writes_nothing:
   for keys: List<&2, I.Key>
   {I.any_writes(Ops.plan_search(mbox, keys)) == False{} : Bool}
 
+# LAW: metadata discovery and selected section reads never change mail.
+law parts_write_nothing:
+  for mbox: String
+  for uid: U32
+  {I.any_writes(Ops.plan_parts(mbox, uid)) == False{} : Bool}
+
+law part_writes_nothing:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  for section: List<&2, U32>
+  for max: U32
+  {I.any_writes(Ops.plan_part(mbox, uid, uidv, section, max)) == False{} : Bool}
+
+# LAW: a selected read checks the discovered generation before requesting
+# the exact UID and numeric section; it also refetches the metadata.
+law part_guarded:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  for section: List<&2, U32>
+  for max: U32
+  {Ops.plan_part(mbox, uid, uidv, section, max) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+      I.CFetch{[uid], [I.IUid{}, I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
+
 # LAW: for every mailbox, UID and size limit, the get plan writes nothing
 law get_writes_nothing:
   for mbox: String
