@@ -299,6 +299,79 @@ path component) the
 helper reads the password from that file instead, and it is in no
 environment. Setting both is refused.
 
+### Authentication scope: retain password-only support
+
+MailBend retains password-only authentication. The supported need is a small,
+headless Linux connector for the existing iCloud app-password profile and
+compatible password-authenticated IMAP/SMTP accounts. No OAuth provider or
+account/tenant class is selected for an experiment. Accounts whose provider or
+tenant requires OAuth remain unsupported; do not weaken that account's
+security policy to make it fit MailBend.
+
+This is a scope decision, not a claim that OAuth is incompatible with IMAP or
+SMTP. There is no accepted OAuth-specific user need sufficient to justify
+owning consent, token expiry, refresh coordination and revocation alongside
+the current connector. The current authentication owners are
+[`Credentials::load`](../native/mailbend-tls/src/creds.rs),
+[IMAP `login`](../native/mailbend-tls/src/imap/session.rs) and
+[SMTP `authenticate`](../native/mailbend-tls/src/smtp/session.rs).
+The existing password profile and native boundaries remain authoritative.
+
+The acceptable operational burden is manual provisioning, replacement and
+revocation of a provider-accepted password by the operator, using the existing
+[configuration instructions](../README.md#configure). On headless Linux,
+provision the credential through the host's secret configuration or the
+existing protected password file; any provider-side account setup happens
+separately in the provider's interface. MailBend offers no OAuth consent URL,
+device-code flow, token input or refresh service. Operators grant and revoke
+access through their provider's credential controls; after revocation, replace
+or remove the local credential as appropriate. Do not place credentials in
+prompts, mail, tool arguments or logs. An OAuth-required account needs another
+connector until a new scope decision is accepted.
+
+Alternatives rejected for the current scope:
+
+- **Externally provisioned short-lived OAuth tokens:** avoids maintaining an
+  acquisition service inside MailBend, but still needs an explicit token input,
+  expiry/failure contract and an operator-owned renewal mechanism. Passing a
+  token through a password setting does not implement OAuth.
+- **Maintained acquisition and refresh:** could reduce repeated operator work,
+  but adds consent, scopes, refresh-token custody, concurrent refresh and
+  revocation responsibilities. No daemon, database, helper or credential store
+  is authorized by this decision.
+- **Graph/EWS mail operations:** would change the protocol and policy boundary,
+  rather than settle authentication. Product/mail policy stays in Bend;
+  native code must not choose mail operations.
+
+Reopening this decision requires a concrete user need and one named
+provider/account/tenant class. Before any implementation, an accepted design
+must compare external token provisioning with maintained acquisition/refresh;
+identify exactly which component acquires, reads, stores and refreshes every
+secret; specify scopes, consent and revocation, headless setup, expiry,
+concurrent refresh and failure behaviour; and explicitly approve any changed
+storage/reader boundary. Only the TLS/auth boundary may consume mail
+credentials. Tokens must never enter Bend results, Jev, attachment tooling,
+prompts or logs. An authentication failure must not silently fall back to a
+weaker mechanism or bypass verified TLS.
+
+No OAuth experiment or credential-flow implementation is accepted now. If one
+is accepted later, its synthetic test contract must cover:
+
+| Scenario | Required result |
+| --- | --- |
+| Expired, revoked or rejected token | Fail authentication before any mail operation; redact the credential and do not fall back to password authentication. |
+| Refresh denied, unavailable or malformed | Fail closed with a safe diagnostic; no stale-token reuse or mail operation after failure. |
+| Simultaneous refresh attempts | Coordinate deterministically under the approved ownership design, without stale overwrites or secret leakage; test the chosen concurrency contract. |
+| Server lacks the selected OAuth authentication capability | Refuse the unsupported mechanism before sending its credential; no weaker fallback. |
+| Server or token service echoes secrets, including encoded forms | No access token, refresh token or client secret appears in transcripts, diagnostics, tool results or logs. |
+| Existing password profile | Preserve its authentication and safety contracts through regression tests. |
+
+These are requirements for a future proposal, not tests claimed to exist or
+pass today. A later implementation must run the
+[contributor checks](../CONTRIBUTING.md#checks), including native, transport
+and synthetic end-to-end tests. A live-provider test requires separate explicit
+authorization; this decision requires no real-account access.
+
 ## Semantics
 
 | Operation | Protocol |
