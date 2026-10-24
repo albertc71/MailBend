@@ -46,8 +46,8 @@ fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
     let sock = connect_any(&addresses, &deadline).map_err(|_| ("connect", "failed"))?;
     set_timeouts(&sock, settings.timeout).map_err(|_| ("connect", "failed"))?;
     let mut conn = Connection::diagnostic(sock);
-    // Empty plans mean authentication and orderly disconnect only. Normal
-    // send parsing remains unchanged and never accepts an empty envelope.
+    // Empty plans mean authentication and orderly disconnect only.
+    // Diagnostics bypass envelope parsing and never accept message input.
     let result = match protocol {
         Protocol::Imap => imap::session::run(&mut conn, &tls, &settings.host, &credentials, &[]),
         Protocol::Smtp => smtp::session::run(&mut conn, &tls, &settings.host, &credentials, &[]),

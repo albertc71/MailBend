@@ -43,6 +43,7 @@ def stages() -> List<&2, String>:
 def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.Json:
   +ok = List.contains(~String, ~String.eq, lines, stage ++ " ok")
   +bad = List.contains(~String, ~String.eq, lines, stage ++ " failed")
+  skipped = List.contains(~String, ~String.eq, lines, stage ++ " skipped")
   +invalid = List.contains(~String, ~String.eq, lines, stage ++ " invalid")
   +tls = List.contains(~String, ~String.eq, lines, stage ++ " unsupported_tls")
   +auth = List.contains(~String, ~String.eq, lines, stage ++ " unsupported_auth")
@@ -52,7 +53,8 @@ def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.
     Bool.pick(String, invalid, "invalid_configuration",
     Bool.pick(String, tls, "unsupported_tls",
     Bool.pick(String, auth, "unsupported_auth",
-    Bool.pick(String, bad, "failed", "not_checked")))))
+    Bool.pick(String, bad, "failed",
+    Bool.pick(String, skipped, "skipped", "not_checked"))))))
   fact(protocol, stage, status, reason)
 
 def stage_facts(
@@ -189,7 +191,16 @@ def run.config(c: T.Config, imap: Bool, smtp: Bool) -> IO(T.Out):
         f : List<&2, J.Json> <- folders(auth_ok(i))
         return result(List.append(&2, J.Json, i, List.append(&2, J.Json, s, f)))
 
+# Validate the send-copy switch without invoking sending or reserving quota.
+def run.save_sent(c: T.Config, save: T.Flag, imap: Bool, smtp: Bool) -> IO(T.Out):
+  match save:
+    case T.FlagBad{msg}:
+      run.config(T.ConfigBad{msg}, imap, smtp)
+    case _:
+      run.config(c, imap, smtp)
+
 def run(imap: Bool, smtp: Bool) -> IO(T.Out):
   do IO<T.Out>:
     c : T.Config <- T.config()
-    run.config(c, imap, smtp)
+    save : T.Flag <- T.flag("MAILBEND_SAVE_SENT")
+    run.save_sent(c, save, imap, smtp)

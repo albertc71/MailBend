@@ -28,6 +28,7 @@ def main() -> IO(Unit):
       T.ProcOk{0, "configuration ok\ncredentials ok\ntrust_store ok\n", ""}))))
     IO.print(Bool.show(D.auth_ok(D.transport_result("imap", False{},
       T.ProcOk{0, "configuration ok\ncredentials ok\ntrust_store ok\n", ""}))))
+    IO.print(T.str_arg(D.stage_fact("imap", "dns", ["dns skipped"]), "reason", ""))
     +clean : String = "configuration ok\ncredentials ok\ntrust_store ok\n"
     IO.print(Bool.show(String.eq(
       J.show(J.arr(D.transport_facts("imap", clean, False{}))),
@@ -41,4 +42,5 @@ def main() -> IO(Unit):
 #|False
 #|True
 #|False
+#|skipped
 #|True

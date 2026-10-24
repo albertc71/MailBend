@@ -197,7 +197,8 @@ def setup_diagnostics(work):
         check("diagnostics: a silent greeting times out and leaves authentication skipped", code != 0
               and time.monotonic() - started < 10 and diagnosed(checks, "smtp", "greeting", "failed")
               and diagnosed(checks, "smtp", "authentication", "skipped"))
-        for switch in ("MAILBEND_READ_ONLY", "MAILBEND_DRAFTS_ONLY", "MAILBEND_TYPESAFE"):
+        for switch in ("MAILBEND_READ_ONLY", "MAILBEND_DRAFTS_ONLY", "MAILBEND_TYPESAFE",
+                       "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_SAVE_SENT"):
             start = len(srv.log_lines())
             code, checks = diagnose(srv, "--imap", "--smtp", **{switch: "private-server-marker"})
             check("diagnostics: malformed " + switch + " fails before network", code != 0
@@ -219,7 +220,7 @@ def setup_diagnostics(work):
                                MAILBEND_IMAP_CONNECT_IP="127.0.0.1")
         check("diagnostics: TLS failure and skipped DNS override are distinct", code != 0
               and diagnosed(checks, "imap", "tls", "failed")
-              and diagnosed(checks, "imap", "dns", "skipped"))
+              and diagnosed(checks, "imap", "dns", "skipped", "skipped"))
         import socket
         with socket.socket() as unused:
             unused.bind(("127.0.0.1", 0))
