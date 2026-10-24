@@ -39,7 +39,11 @@ keep TLS framing and sandboxed file publication in the existing native helpers.
   sandbox cases passed 28/28 using the native Linux `/tmp` filesystem. The
   initial Windows-mounted test directory correctly failed the O_TMPFILE
   requirement; the optional test-directory override leaves sandbox rules intact.
-- Full end-to-end and native checks, final CI and independent review are in progress.
+- Full end-to-end checks: 767 passed, zero failed. Native formatting, clippy
+  with warnings denied, and all native tests passed.
+- Astra and Sol independently cleared the corrected source at `7bb1297`; the
+  later evidence-only commit leaves that source unchanged. Final CI status is
+  tracked in [PR #36](https://github.com/albertc71/MailBend/pull/36).
 - Readability review simplified discovery validation, documented generated-path
   matching, and replaced a generic transport test name to avoid integration
   collisions. The common whole-message annotation policy is retained for
