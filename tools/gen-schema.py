@@ -132,6 +132,64 @@ SMTP_PREVIEW = preview("smtp", record({"from": S, "rcpt": STRINGS,
                                        "data": S, "sent_copy": B}), GATE)
 
 
+def extended(shape, fields):
+    """Add required evidence while retaining the original closed record."""
+    return {**shape, "properties": {**shape["properties"], **fields},
+            "required": [*shape["required"], *fields]}
+
+
+def smtp_evidence(outcome, phase, reason):
+    return {"smtp_outcome": {"const": outcome}, "smtp_phase": {"const": phase},
+            "smtp_reason": {"const": reason}, "next_action": S}
+
+
+SMTP_ACCEPTED = extended(SENT, smtp_evidence("accepted", "data_reply", "accepted_by_server"))
+SMTP_FAILURES = [extended(shape, smtp_evidence(outcome, phase, reason))
+    for outcome, phase, reason in [
+        ("not_sent", "before_smtp", "local_refusal"),
+        ("not_sent", "before_smtp", "helper_not_started"),
+        ("not_sent", "before_data", "stopped_before_data"),
+        ("not_sent", "data_reply", "explicit_rejection"),
+        ("unknown", "data_reply", "acceptance_unconfirmed"),
+        ("unknown", "unknown", "missing_progress")]
+    for shape in (record({"error": S}, GATE), BLOCKED)]
+PARTS = record({"folder": S, "uid": N, "uidvalidity": NN,
+    "parts": array(record({"section": S, "content_type": S, "filename": S,
+                            "transfer_encoding": S, "encoded_size": N, "attachment": B}))})
+SELECTED = record({"folder": S, "uid": N, "uidvalidity": N, "section": S,
+    "content_type": S, "complete": YES, "scope": {"const": "selected_part"},
+    "message_complete": NO, "content": S,
+    "content_encoding": param("string", enum=["text", "base64"])}, ANNOTATION)
+
+
+def projected(shape, mode):
+    """Only the declared body fields can be absent in a projected result."""
+    omit = {"full": (), "text": ("html",), "html": ("text",),
+            "metadata": ("text", "html")}[mode]
+    fields = {k: v for k, v in shape["properties"].items() if k not in omit}
+    notice = record({"projection": {"const": mode}, "max_bytes": N,
+        "budget_scope": {"const": "result_json_utf8"}, "output_truncated": B,
+        "request_more": S})
+    result = {**shape, "properties": {**fields, "response": notice},
+              "required": [k for k in shape["required"] if k not in omit] + ["response"]}
+    if "scope" not in fields:
+        return result
+    result["properties"]["response"] = extended(notice, {"content_complete": B})
+    if mode == "full":
+        return result
+    absent = {**result, "properties": {k: v for k, v in result["properties"].items()
+                                     if k != "content"},
+              "required": [k for k in result["required"] if k != "content"]}
+    if mode == "metadata":
+        return absent
+    media = r"^\s*[tT][eE][xX][tT]/"
+    html = r"[hH][tT][mM][lL]\s*(?:;|$)"
+    pattern = media + (f"(?!{html})" if mode == "text" else html)
+    result["properties"]["content_type"] = param("string", pattern=pattern)
+    absent["properties"]["content_type"] = {"type": "string", "not": {"pattern": pattern}}
+    return union(result, absent)
+
+
 def output_schema(name):
     """Every advertised tool has its own success and failure variants."""
     variants = [ERROR]
@@ -146,13 +204,21 @@ def output_schema(name):
         variants += [record({"folders": array(record({"name": S, "delimiter": S,
                          "attributes": STRINGS, "special_use": NS, "selectable": B}))})]
     elif name == "mail_search":
-        variants += [record({"folder": S, "uidvalidity": NN, "total": N,
-                             "messages": array(SUMMARY)})]
+        search = record({"folder": S, "uidvalidity": NN, "total": N,
+                         "messages": array(SUMMARY)})
+        variants += [search, extended(search, {"has_more": B, "next_cursor": NS}),
+                     extended(search, {"has_more": B, "next_cursor": {"const": None},
+                         "pagination_unavailable": {"const":
+                             "search folder and criteria exceed the 4000-character cursor binding limit"}})]
     elif name == "mail_get":
-        variants += [GET]
+        variants += [GET, PARTS, SELECTED]
     elif name == "mail_get_new":
         variants += [record({"folder": S, "uidvalidity": N, "uidvalidity_changed": B,
                              "next_since_uid": N, "has_more": B, "messages": array(SUMMARY)})]
+    elif name == "mail_refresh":
+        variants += [record({"folder": S, "uidvalidity": NN, "reset_required": B,
+                             "complete": B, "present": array(record({"uid": N, "flags": STRINGS})),
+                             "absent": NUMBERS, "unknown": NUMBERS, "reason": S})]
     elif name == "mail_get_thread":
         placed = record({**SUMMARY_FIELDS, "folder": S, "uidvalidity": NN,
                          "parent": NS}, ANNOTATION)
@@ -204,16 +270,20 @@ def output_schema(name):
     elif name == "mail_save_draft":
         variants += [DRAFT, IMAP_PREVIEW]
     elif name in ("mail_send", "mail_reply", "mail_forward"):
-        successes = [SENT, SMTP_PREVIEW]
+        successes = [SENT, SMTP_ACCEPTED, SMTP_PREVIEW]
         if name != "mail_send":
             successes += [DRAFT, IMAP_PREVIEW]
         if name == "mail_reply":
             # reply_want appends quote evidence only to successful results.
             successes = [{**v, "properties": {**v["properties"], **QUOTE},
                           "required": [*v["required"], *QUOTE]} for v in successes]
-        variants += [*successes, BLOCKED]
+        variants += [*successes, BLOCKED, *SMTP_FAILURES]
     else:
         raise ValueError(f"missing output schema for {name}")
+    if name in ("mail_get", "mail_search", "mail_get_new", "mail_get_thread"):
+        # Error and Partial results bypass response projection.
+        variants += [projected(v, mode) for v in variants[1:]
+                     for mode in ("full", "text", "html", "metadata")]
     return {"type": "object", "anyOf": variants}
 
 

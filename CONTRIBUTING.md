@@ -40,6 +40,7 @@ bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK
 sh tests/run-unit.sh
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
+python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
