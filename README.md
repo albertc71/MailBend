@@ -225,6 +225,14 @@ Register the MCP server (stdio) with your agent, using the absolute path:
 The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` (or
 `MAILBEND_PASSWORD_FILE`) from its environment.
 
+MCP revision `2025-06-18` returns the same JSON object in `structuredContent`
+and serialized text, and advertises a per-tool `outputSchema`. The older
+`2025-03-26` and `2024-11-05` revisions, and calls before initialization,
+retain text-only results and omit output schemas. The CLI result is unchanged.
+Body limits apply before MCP formatting, so both representations contain the
+same truncated content and evidence. They are not a total response wire-size
+limit: MCP includes both the JSON and its escaped text representation.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set

@@ -67,9 +67,9 @@ def main() -> IO(Unit):
 #|{"jsonrpc":"2.0","id":13,"result":{"content":[{"type":"text","text":"{\"error\":\"unknown tool: nope\"}"}],"isError":true}}
 #|{"jsonrpc":"2.0","id":14,"result":{"content":[{"type":"text","text":"{\"error\":\"\\\"uid\\\" is required\"}"}],"isError":true}}
 #|{"jsonrpc":"2.0","id":15,"result":{"content":[{"type":"text","text":"{\"error\":\"unknown tool: \"}"}],"isError":true}}
-#|{"content":[{"type":"text","text":"{\"ok\":true}"}],"isError":false}
-#|{"content":[{"type":"text","text":"{\"error\":\"no\"}"}],"isError":true}
-#|{"content":[{"type":"text","text":"{\"partial\":true}"}],"isError":true}
+#|{"content":[{"type":"text","text":"{\"ok\":true}"}],"isError":false,"structuredContent":{"ok":true}}
+#|{"content":[{"type":"text","text":"{\"error\":\"no\"}"}],"isError":true,"structuredContent":{"error":"no"}}
+#|{"content":[{"type":"text","text":"{\"partial\":true}"}],"isError":true,"structuredContent":{"partial":true}}
 #|call|mail_get|{}
 #|
 #|

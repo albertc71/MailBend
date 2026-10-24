@@ -28,7 +28,9 @@ discuss larger changes before writing them.
 Run these before opening a pull request. CI runs the same on Linux x64,
 plus `cargo deny check`, a fuzz smoke run and the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
-need the Rust release pinned in `native/rust-toolchain.toml`.
+need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
+schema checks need Python `jsonschema` (`sudo apt-get install python3-jsonschema`
+on Ubuntu).
 
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
@@ -39,6 +41,7 @@ sh tests/run-unit.sh
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
 python3 tests/test-e2e.py
+MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
