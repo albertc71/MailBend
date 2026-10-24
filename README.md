@@ -306,13 +306,16 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
   `has_more: false` and `next_cursor: null` explicitly end the traversal;
   do not pass null or an empty cursor to restart. Tokens are opaque, at most
   4,096 characters, with a folder/normalized-criteria binding limited to
-  4,000 characters. They contain the criteria, so handle them like the query.
+  4,000 characters. Longer queries still return their initial page, with truthful
+  `has_more`, `next_cursor: null` and a `pagination_unavailable` reason; they cannot
+  be continued. A supplied cursor for such a query is rejected before network
+  work. Tokens contain the criteria, so handle them like the query.
   Each page re-evaluates the query and selects UIDs strictly below the previous
   page's last selected UID. Stable matches are visited once; arrivals and moves
   into the folder above that boundary are excluded. Removed messages disappear,
   and changed flags affect matching only in the still-unvisited range. This is
   bounded traversal, not a mailbox snapshot. If a selected message vanishes
-  before FETCH, the cursor still advances past it; follow `has_more` even for
+  before FETCH, the cursor still advances past it; follow `next_cursor` even for
   an empty page. UIDVALIDITY is checked across pages and again between SEARCH
   and FETCH. A missing or zero UIDVALIDITY is refused even on the first call: a
   server must identify the mailbox incarnation to support safe pagination.

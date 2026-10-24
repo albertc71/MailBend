@@ -226,7 +226,8 @@ def search_pagination(work):
             c, r = tool(srv, "mail_search", args)
             seen.extend(m["uid"] for m in r.get("messages", []))
             check("search pages: each response bounded with full-query total", c == 0
-                  and len(r.get("messages", [])) <= 200 and r.get("total") == 405, r)
+                  and len(r.get("messages", [])) <= 200 and r.get("total") == 405
+                  and "pagination_unavailable" not in r, r)
             token = r.get("next_cursor")
             if not r.get("has_more"):
                 break
@@ -248,6 +249,28 @@ def search_pagination(work):
         log = srv.log_lines()
         check("search pages: EXAMINE and BODY.PEEK only", not any(" SELECT " in x for x in log)
               and all("BODY.PEEK" in x for x in log if " UID FETCH " in x), log[-8:])
+    finally:
+        srv.stop()
+
+    # Legacy initial searches may exceed the bounded continuation binding.
+    long_subject = "long" * 1001
+    large = copy.deepcopy(fixture)
+    large["mailboxes"]["INBOX"]["messages"] = [dict(sample, uid=i,
+        raw="From: Alice <alice@example.test>\r\nSubject: " + long_subject + "\r\n\r\nbody")
+        for i in range(1, 4)]
+    srv = Server(work, fixture=large)
+    try:
+        for limit in (2, 5):
+            c, r = tool(srv, "mail_search", {"subject": long_subject, "limit": limit})
+            check("search pages: oversized initial query preserves page and reports unavailable cursor",
+                  c == 0 and r.get("total") == 3
+                  and [m["uid"] for m in r.get("messages", [])] == [3, 2, 1][:limit]
+                  and r.get("has_more") == (limit < 3) and r.get("next_cursor") is None
+                  and "4000-character" in r.get("pagination_unavailable", ""), r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"subject": long_subject, "cursor": cursor})
+        check("search pages: oversized query with cursor refuses before network", c != 0
+              and "cursor" in r.get("error", "") and len(srv.log_lines()) == start, r)
     finally:
         srv.stop()
 

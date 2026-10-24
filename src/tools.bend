@@ -1522,17 +1522,29 @@ def search_fetch(
         r : Run() <- imap_run(Ops.plan_headers(folder, uids))
         return search_headers(r, folder, uidv, total, uids, page)
 
+def search_page.fields(
+  bounded: Bool, +more: Bool, binding: String, uidv: U32, selected: List<&2, U32>
+) -> List<&2, J.Json>:
+  match bounded:
+    case False{}:
+      [J.kv("has_more", J.bool(more)), J.kv("next_cursor", J.JNull{}),
+       J.kv("pagination_unavailable", J.str("search folder and criteria exceed the " ++
+         Nat.show(SC.max_binding_chars()) ++ "-character cursor binding limit"))]
+    case True{}:
+      [J.kv("has_more", J.bool(more)),
+       J.kv("next_cursor", SC.next(more, binding, uidv, selected))]
+
 # Advance by the last selected UID even if a message disappears before FETCH.
 # Otherwise an empty FETCH could strand a caller on the same page forever.
 def search_page(
   +uids: List<&2, U32>, folder: String, +uidv: Maybe<&2, U32>, total: U32,
-  +limit: U32, binding: String
+  +limit: U32, +binding: String
 ) -> IO(Shown):
   +selected = List.take(&2, U32, desc(uids), U32.to_nat(limit))
   +more = Nat.is_gt(List.length(&2, U32, uids), U32.to_nat(limit))
-  next = SC.next(more, binding, Maybe.default(&2, U32, uidv, 0), selected)
-  search_fetch(selected, folder, uidv, total,
-    [J.kv("has_more", J.bool(more)), J.kv("next_cursor", next)])
+  page = search_page.fields(SC.fits(binding, SC.max_binding_chars()), more, binding,
+    Maybe.default(&2, U32, uidv, 0), selected)
+  search_fetch(selected, folder, uidv, total, page)
 
 def search_found.if(
   same: Bool, +lines: List<&2, I.RLine>, folder: String, limit: U32,
@@ -1567,24 +1579,13 @@ def search_run(
         r : Run() <- imap_run(Ops.plan_search_page(folder, keys, cursor))
         search_found(r, folder, limit, cursor, binding)
 
-def search_keys.if(
-  bounded: Bool, args: J.Json, folder: String, keys: List<&2, I.Key>,
-  limit: U32, +binding: String
-) -> IO(Shown):
-  match bounded:
-    case False{}:
-      pure_shown(Err{"search folder and criteria exceed the " ++
-        Nat.show(SC.max_binding_chars()) ++ "-character cursor binding limit"})
-    case True{}:
-      search_run(SC.read(J.get(args, "cursor"), binding), folder, keys, limit, binding)
-
 def search_keys(ks: Keys(), args: J.Json, +folder: String, limit: U32) -> IO(Shown):
   match ks:
     case Fail{m}:
       pure_shown(Err{m})
     case Done{+keys}:
       +binding = SC.binding(folder, I.search_args(keys))
-      search_keys.if(SC.fits(binding, SC.max_binding_chars()), args, folder, keys, limit, binding)
+      search_run(SC.read(J.get(args, "cursor"), binding), folder, keys, limit, binding)
 
 def t_search(+args: J.Json) -> IO(Shown):
   search_keys(keys_of(args), args, folder_arg(args), clamp(u32_arg(args, "limit", 20), 1, 200))

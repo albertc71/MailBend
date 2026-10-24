@@ -190,6 +190,8 @@ def show_atts(a: T.Attachments()) -> String:
 
 def check_switches() -> IO(Unit):
   do IO<Unit>:
+    IO.print(J.show(J.obj(T.search_page.fields(False{}, True{}, "", 7, [3, 2]))))
+    IO.print(J.show(J.obj(T.search_page.fields(False{}, False{}, "", 7, [3, 2, 1]))))
     IO.print(T.env_pick(Done{""}, "d") ++ " " ++ T.env_pick(Done{"v"}, "d") ++ " " ++
       T.env_pick(Fail{(2, "unset")}, "d"))
     IO.print(String.join([
@@ -1328,6 +1330,8 @@ def main() -> IO(Unit):
     check_classify()
     check_triage()
 
+#|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
+#|{"has_more":false,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
 #|config True False off|config False True off|bad r|bad d|config False False off

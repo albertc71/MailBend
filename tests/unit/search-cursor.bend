@@ -27,7 +27,10 @@ def nums(xs: List<&2, U32>) -> List<&2, J.Json>:
 
 def main() -> IO(Unit):
   +binding = SC.binding("INBOX", "ALL")
+  +oversized = String.join(List.replicate(String, 4001n, "x"), "")
   do IO<Unit>:
+    IO.print(result(SC.read(None{}, oversized)))
+    IO.print(result(SC.read(Some{J.str(SC.token(oversized, 7, 2))}, oversized)))
     IO.print(result(SC.read(None{}, binding)))
     IO.print(parse(SC.token(binding, 7, 4294967295)))
     IO.print(parse("s1:7:2:[\"INBOX\",\"ALL\"]"))
@@ -50,6 +53,8 @@ def main() -> IO(Unit):
     IO.print(Bool.show(SC.same(SC.Start{}, None{})))
     IO.print(J.show(J.str(I.script(Ops.plan_search_page("INBOX", [], SC.Continue{7, 2})))))
 
+#|start
+#|invalid
 #|start
 #|7:4294967295
 #|7:2

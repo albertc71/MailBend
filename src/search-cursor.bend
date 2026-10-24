@@ -71,12 +71,12 @@ def read.if(bounded: Bool, +raw: String, binding: String) -> ResultCursor():
     case False{}:
       invalid()
 
-def read(m: Maybe<&2, J.Json>, binding: String) -> ResultCursor():
+def read(m: Maybe<&2, J.Json>, +binding: String) -> ResultCursor():
   match m:
     case None{}:
       Done{Start{}}
     case Some{J.JStr{+raw}}:
-      read.if(fits(raw, max_token_chars()), raw, binding)
+      read.if(fits(raw, max_token_chars()) && fits(binding, max_binding_chars()), raw, binding)
     case _:
       invalid()
 
