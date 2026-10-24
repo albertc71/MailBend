@@ -67,6 +67,7 @@ class Server:
         assert line and line[0] == "READY", line
         ports = dict(kv.split("=") for kv in line[1:])
         self.imap, self.smtp = ports["imap"], ports["smtp"]
+        self.silent = ports.get("silent")
 
     def env(self, **over):
         e = dict(os.environ)
@@ -138,6 +139,114 @@ def flags(state, box, uid):
     return set(msgs(state, box)[uid]["flags"])
 
 
+def diagnose(srv, *flags, **env):
+    p = subprocess.run([LAUNCHER, "diagnose", *flags], capture_output=True, text=True,
+                       env=srv.env(**env), timeout=135)
+    outputs.extend([p.stdout, p.stderr])
+    out = json.loads(p.stdout)
+    check("diagnostics: result is bounded and redacted", len(p.stdout) < 12000
+          and out.get("redacted") is True
+          and not any(secret in p.stdout + p.stderr for secret in
+                      (PASSWORD, FIX["user"], "AUTH <redacted>", "private-server-marker",
+                       base64.b64encode(("\0" + FIX["user"] + "\0" + PASSWORD).encode()).decode())))
+    return p.returncode, out["checks"]
+
+
+def diagnosed(checks, protocol, stage, status, reason=None):
+    return any(c["protocol"] == protocol and c["stage"] == stage and c["status"] == status
+               and (reason is None or c["reason"] == reason) for c in checks)
+
+
+def setup_diagnostics(work):
+    fixture = copy.deepcopy(FIX)
+    fixture["smtp_greeting"] = "private-server-marker " + PASSWORD
+    srv = Server(work, fixture=fixture, extra=["--echo-login", "--silent-port"])
+    try:
+        before = srv.st()
+        code, checks = diagnose(srv)
+        check("diagnostics: default checks local setup without network", code == 0
+              and not srv.log_lines() and diagnosed(checks, "smtp", "authentication", "skipped"))
+        code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_READ_ONLY="1",
+                               MAILBEND_DRAFTS_ONLY="1", MAILBEND_MAX_SENDS_PER_DAY="1",
+                               MAILBEND_STATE_DIR=os.path.join(work, "diagnostic-counter"))
+        check("diagnostics: explicit IMAP and SMTP authenticate under both safety modes", code == 0
+              and all(diagnosed(checks, protocol, "authentication", "ok") for protocol in ("imap", "smtp")))
+        smtp = [r["line"] for r in srv.log_records() if r["proto"] == "smtp"]
+        check("diagnostics: SMTP only greets, negotiates TLS, authenticates and quits",
+              smtp == ["EHLO [127.0.0.1]", "STARTTLS", "EHLO [127.0.0.1]", "AUTH <redacted>", "QUIT"], smtp)
+        check("diagnostics: no writes, sends or quota reservation", srv.st() == before
+              and not os.path.exists(os.path.join(work, "diagnostic-counter")))
+        native = subprocess.run([str(ROOT / "bin" / "mailbend-tls"), "diagnose-smtp"],
+                                env=srv.env(), capture_output=True, text=True, timeout=35)
+        outputs.extend([native.stdout, native.stderr])
+        check("diagnostics: native output contains only fixed transport facts", native.returncode == 0
+              and not native.stderr and native.stdout.splitlines() == [stage + " ok" for stage in
+                  ("configuration", "credentials", "trust_store", "dns", "connect", "greeting",
+                   "ehlo", "tls", "ehlo_tls", "authentication")], "unexpected native fact stream")
+        check("diagnostics: direct native check still sends no message", srv.st() == before)
+        start = len(srv.log_lines())
+        p = subprocess.run([LAUNCHER, "diagnose", "--smtp=false"], env=srv.env(),
+                           capture_output=True, text=True, timeout=10)
+        check("diagnostics: unknown flags never authorize network", p.returncode == 2
+              and len(srv.log_lines()) == start)
+        code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_TYPESAFE_API_KEY="private-server-marker")
+        check("diagnostics: a TypeSafe key in the environment is refused without disclosure",
+              code != 0 and len(srv.log_lines()) == start)
+        started = time.monotonic()
+        code, checks = diagnose(srv, "--smtp", MAILBEND_SMTP_PORT=srv.silent, MAILBEND_TIMEOUT_MS="200")
+        check("diagnostics: a silent greeting times out and leaves authentication skipped", code != 0
+              and time.monotonic() - started < 10 and diagnosed(checks, "smtp", "greeting", "failed")
+              and diagnosed(checks, "smtp", "authentication", "skipped"))
+        for switch in ("MAILBEND_READ_ONLY", "MAILBEND_DRAFTS_ONLY", "MAILBEND_TYPESAFE"):
+            start = len(srv.log_lines())
+            code, checks = diagnose(srv, "--imap", "--smtp", **{switch: "private-server-marker"})
+            check("diagnostics: malformed " + switch + " fails before network", code != 0
+                  and len(srv.log_lines()) == start
+                  and diagnosed(checks, "local", "configuration", "failed"))
+        for path in ("relative-helper", "/nonexistent/private-server-marker"):
+            code, checks = diagnose(srv, MAILBEND_TLS_HELPER=path)
+            check("diagnostics: missing or relative helper is distinct", code != 0
+                  and diagnosed(checks, "imap", "helper", "failed", "unavailable"))
+        for env, stage in (({"MAILBEND_IMAP_PORT": "bad"}, "configuration"),
+                           ({"MAILBEND_APP_PASSWORD": ""}, "credentials"),
+                           ({"MAILBEND_CA_FILE": "/missing/private-server-marker"}, "trust_store")):
+            code, checks = diagnose(srv, **env)
+            check("diagnostics: invalid " + stage, code != 0 and diagnosed(checks, "imap", stage, "failed"))
+        code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_APP_PASSWORD="wrong-fixture-password")
+        check("diagnostics: authentication refusals are distinct", code != 0
+              and all(diagnosed(checks, protocol, "authentication", "failed") for protocol in ("imap", "smtp")))
+        code, checks = diagnose(srv, "--imap", MAILBEND_IMAP_HOST="untrusted.example",
+                               MAILBEND_IMAP_CONNECT_IP="127.0.0.1")
+        check("diagnostics: TLS failure and skipped DNS override are distinct", code != 0
+              and diagnosed(checks, "imap", "tls", "failed")
+              and diagnosed(checks, "imap", "dns", "skipped"))
+        import socket
+        with socket.socket() as unused:
+            unused.bind(("127.0.0.1", 0))
+            port = str(unused.getsockname()[1])
+            code, checks = diagnose(srv, "--imap", MAILBEND_IMAP_PORT=port)
+            check("diagnostics: connection refusal", code != 0 and diagnosed(checks, "imap", "connect", "failed"))
+            code, checks = diagnose(srv, "--imap", MAILBEND_DOH_URL=f"https://127.0.0.1:{port}/dns-query",
+                                   https_proxy=None, HTTPS_PROXY=None, all_proxy=None, ALL_PROXY=None)
+            check("diagnostics: resolver failure", code != 0 and diagnosed(checks, "imap", "dns", "failed"))
+    finally:
+        srv.stop()
+    scenarios = [(["--no-starttls"], None, "smtp", "tls", "failed", "unsupported_tls"),
+                 ([], {**FIX, "smtp_auth": "XOAUTH2"}, "smtp", "authentication", "failed", "unsupported_auth"),
+                 (["--special-return-fails"], None, "imap", "folders", "failed", None)]
+    ambiguous = copy.deepcopy(FIX)
+    ambiguous["mailboxes"]["PrivateDrafts"] = empty_mailbox(["\\Drafts"])
+    scenarios.append(([], ambiguous, "imap", "folders", "uncertain", "drafts_unresolved"))
+    for extra, fixture, protocol, stage, status, reason in scenarios:
+        srv = Server(work, extra=extra, fixture=fixture)
+        try:
+            code, checks = diagnose(srv, "--" + protocol)
+            check("diagnostics: " + (reason or "role discovery failure"), code != 0
+                  and diagnosed(checks, protocol, stage, status, reason))
+        finally:
+            srv.stop()
+
+
 def main():
     work = tempfile.mkdtemp(prefix="e2e-", dir=str(ROOT / "build") if (ROOT / "build").exists() else None)
     try:
@@ -154,6 +263,7 @@ def main():
 
 
 def run_all(work):
+    setup_diagnostics(work)
     srv = Server(work)
     try:
         reads(srv)

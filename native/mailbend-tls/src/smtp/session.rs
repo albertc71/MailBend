@@ -38,7 +38,9 @@ pub fn run(
     steps: &[Step<'_>],
 ) -> Result<Outcome, Exit> {
     let ehlo = negotiate_tls(conn, tls, host)?;
+    conn.enter_stage("authentication");
     authenticate(conn, &ehlo, creds)?;
+    conn.enter_stage("commands");
     let rejected_with = send_envelope(conn, steps)?;
     // After 421 the server has already closed the connection.
     if rejected_with != Some(SERVICE_CLOSING) {
@@ -86,10 +88,13 @@ fn negotiate_tls(
     tls: &Arc<ClientConfig>,
     host: &str,
 ) -> Result<Vec<u8>, Exit> {
+    conn.enter_stage("greeting");
     if reply_code(conn)? != SERVICE_READY {
         return Err(Exit::protocol("server refused the connection"));
     }
+    conn.enter_stage("ehlo");
     let ehlo = hello(conn, "EHLO rejected")?;
+    conn.enter_stage("tls");
     if !has_extension(&ehlo, b"STARTTLS") {
         return Err(Exit::connect("server does not offer STARTTLS"));
     }
@@ -98,6 +103,7 @@ fn negotiate_tls(
         return Err(Exit::connect("STARTTLS refused"));
     }
     conn.start_tls(tls, host)?;
+    conn.enter_stage("ehlo_tls");
     hello(conn, "EHLO after STARTTLS rejected")
 }
 

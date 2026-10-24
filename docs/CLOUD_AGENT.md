@@ -75,6 +75,52 @@ or source freshness. After updating MailBend source, run full setup again. This 
 is on-demand recovery, not a guaranteed boot hook. No personal post-rebuild
 setup hook is documented in the sources checked on 2026-10-04.
 
+## Redacted setup diagnostics
+
+```sh
+scripts/mailbend-cloud diagnose                 # local configuration only
+scripts/mailbend-cloud diagnose --imap          # explicit IMAP TLS/login and role checks
+scripts/mailbend-cloud diagnose --smtp          # explicit SMTP STARTTLS/login, no message
+scripts/mailbend-cloud diagnose --imap --smtp   # both; either flag order is accepted
+```
+
+The local check validates safety switches, mail settings, credentials and trust
+store through the TLS helper. Only that helper reads the mail password. It does
+not contact TypeSafe or read its key, test attachments, reserve the send counter,
+or fix configuration. Missing or unusable TLS helper paths are reported separately.
+Use `setup-cloud.sh --check` for credential-free installation readiness.
+
+Each JSON check has bounded `protocol`, `stage`, `status`, `reason` and `guidance`
+fields. Status is `ok`, `failed`, `uncertain` or `skipped`. An omitted network flag,
+an earlier failure, a protocol-inapplicable stage, or DNS bypassed by a numeric
+connection override is **skipped**, never successful. IMAP role checks return
+only role labels and resolution status, not folder names. Missing, ambiguous or
+unselectable roles remain uncertain; failed discovery or invalid overrides fail.
+The original `mail_probe` response is unchanged and can be inspected locally
+when you need folder names.
+
+Diagnostics separate DNS/DoH lookup, TCP connection, TLS, greeting/EHLO and
+authentication failures. MailBend supports IMAP implicit TLS with password LOGIN,
+and SMTP STARTTLS with AUTH PLAIN or LOGIN. Missing STARTTLS or unsupported SMTP
+AUTH mechanisms have explicit reasons; OAuth and implicit-TLS SMTP are unsupported.
+The SMTP check uses only greeting, EHLO, STARTTLS, AUTH and best-effort QUIT.
+IMAP discovery uses only authenticated CAPABILITY/LIST queries and logout.
+Both are permitted with read-only/drafts-only enabled; malformed switches stop
+all network work. This grants no sending permission or exception to send gates.
+
+Every helper invocation has a 30-second total limit and a 1 MiB captured-output
+cap, in addition to transport timeouts. Both network flags can use up to four
+sequential helper invocations (two transport checks and two folder queries).
+Timeouts or broken helpers fail without exposing captured process output.
+Exit status is 1 for failed or uncertain checks, 0 otherwise; always inspect
+skipped checks. Success does not establish mailbox-write permission, recipient
+acceptance, available send quota or end-to-end delivery.
+
+The JSON is shareable: it contains no account, hosts, IPs, paths, folder names,
+server diagnostics, AUTH payloads, credentials or message content. Guidance is
+fixed text, never a server error. Keep credentials in secret settings, and share
+this result rather than environment dumps or raw helper transcripts.
+
 ## What survives an update
 
 Cursor distinguishes a software-only update, which keeps installed apps,
