@@ -11,7 +11,8 @@ iCloud Mail is the default and live-tested profile:
 
 Other compatible providers use the same architecture with configured IMAP
 and SMTP hosts and ports. IMAP requires implicit TLS and SMTP requires
-STARTTLS; OAuth and implicit SMTPS are unsupported. Other providers have not
+STARTTLS; [OAuth remains outside the supported scope](#authentication-scope-retain-password-only-support),
+while implicit SMTPS is unsupported. Other providers have not
 been live-tested here. Live iCloud results are in
 [CLOUD_AGENT.md](CLOUD_AGENT.md#live-icloud-record).
 
@@ -344,13 +345,16 @@ Alternatives rejected for the current scope:
   native code must not choose mail operations.
 
 Reopening this decision requires a concrete user need and one named
-provider/account/tenant class. Before any implementation, an accepted design
-must compare external token provisioning with maintained acquisition/refresh;
-identify exactly which component acquires, reads, stores and refreshes every
-secret; specify scopes, consent and revocation, headless setup, expiry,
-concurrent refresh and failure behaviour; and explicitly approve any changed
-storage/reader boundary. Only the TLS/auth boundary may consume mail
-credentials. Tokens must never enter Bend results, Jev, attachment tooling,
+provider/account/tenant class. Before implementation, the accepted design must:
+
+- Compare external token provisioning with maintained acquisition and refresh.
+- Identify which component acquires, reads, stores and refreshes every secret.
+- Specify scopes, consent, revocation, headless setup, expiry, concurrent
+  refresh and failure behaviour.
+- Explicitly approve any changed storage or reader boundary.
+
+Only the TLS/auth boundary may consume mail credentials.
+Tokens must never enter Bend results, Jev, attachment tooling,
 prompts or logs. An authentication failure must not silently fall back to a
 weaker mechanism or bypass verified TLS.
 
