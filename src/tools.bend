@@ -580,23 +580,100 @@ def helper_lost(p: Proc) -> Bool:
 def ok_at(lines: List<&2, I.RLine>, n: U32) -> Bool:
   String.eq(I.status(lines, n), "OK")
 
-# The server's queue confirmation, or why it refused the message: the helper
-# exits with 5 when it did.
-def smtp_code(code: U32, out: String, err: String) -> Out:
+def smtp_phase.step(line: String, phase: String) -> String:
+  match line:
+    case "mailbend-smtp: before_data":
+      "before_data"
+    case "mailbend-smtp: data_started":
+      "data_started"
+    case "mailbend-smtp: data_accepted":
+      "data_accepted"
+    case "mailbend-smtp: data_rejected":
+      "data_rejected"
+    case _:
+      phase
+
+# Outcome and bounded protocol phase/reason; guidance belongs to Bend.
+def smtp_fields(outcome: String, phase: String, reason: String, next: String) ->
+  List<&2, J.Json>:
+  [J.kv("smtp_outcome", J.str(outcome)), J.kv("smtp_phase", J.str(phase)),
+    J.kv("smtp_reason", J.str(reason)), J.kv("next_action", J.str(next))]
+
+def smtp_failure(msg: String, +outcome: String, phase: String, reason: String) -> Out:
+  next = Bool.pick(String, String.eq(outcome, "unknown"),
+    "Do not retry automatically. Check server records or ask the recipient; a missing " ++
+      "Sent copy does not prove non-delivery.",
+    "SMTP did not accept this message. Resolve the reported problem before a new attempt.")
+  Partial{J.obj(J.kv("error", J.str(msg)) <> smtp_fields(outcome, phase, reason, next))}
+
+# A local refusal before the SMTP attempt, retaining any Jev/scan evidence.
+def send_not_attempted(o: Out) -> Out:
+  match o:
+    case Err{m}:
+      smtp_failure(m, "not_sent", "before_smtp", "local_refusal")
+    case Partial{j}:
+      with_fields_first(Partial{j}, smtp_fields("not_sent", "before_smtp", "local_refusal",
+        "Resolve the reported refusal before a new attempt."))
+    case Ok{j}:
+      Ok{j}
+
+# Fixed native progress comes only from stderr, never from server replies.
+# Keep the latest marker; absence is not proof that DATA was never sent.
+def smtp_phase(lines: List<&2, String>, phase: String) -> String:
+  match lines:
+    case Nil{}:
+      phase
+    case line <> rest:
+      smtp_phase(rest, smtp_phase.step(String.trim(line), phase))
+
+# Progress is a separate machine channel, not part of the human error.
+def smtp_diagnostics(lines: List<&2, String>) -> List<&2, String>:
+  match lines:
+    case Nil{}:
+      []
+    case +line <> rest:
+      List.filter.put(String, line, smtp_diagnostics(rest),
+        Bool.not(String.starts_with(line, "mailbend-smtp: ")))
+
+def smtp_error(code: U32, out: String, err: String) -> String:
   match code:
     case 0:
-      Ok{J.str(S.last_ok(String.lines(out), ""))}
+      "the helper reported completion without acceptance evidence"
     case 5:
-      Err{"the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")}
+      "the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")
     case _:
-      Err{helper_error(code, err)}
+      helper_error(code, err)
+
+def smtp_code.phase(phase: String, code: U32, out: String, err: String) -> Out:
+  match phase:
+    case "data_accepted":
+      Ok{J.str(S.last_ok(String.lines(out), ""))}
+    case "before_data":
+      smtp_failure(smtp_error(code, out, err), "not_sent", "before_data", "stopped_before_data")
+    case "data_rejected":
+      smtp_failure("the SMTP server refused the message: " ++ S.last_error(String.lines(out), ""),
+        "not_sent", "data_reply", "explicit_rejection")
+    case "data_started":
+      smtp_failure(helper_error(code, err), "unknown", "data_reply", "acceptance_unconfirmed")
+    case _:
+      smtp_failure("SMTP progress is missing; acceptance is unknown: " ++
+        smtp_error(code, out, err),
+        "unknown", "unknown", "missing_progress")
+
+def smtp_code(code: U32, out: String, +err: String) -> Out:
+  smtp_code.phase(smtp_phase(String.lines(err), ""), code, out,
+    String.join(smtp_diagnostics(String.lines(err)), "\n"))
 
 def smtp_result(p: Proc) -> Out:
   match p:
     case ProcOk{code, out, err}:
       smtp_code(code, out, err)
-    case _:
-      Err{"cannot run the TLS helper: " ++ proc_failure(p)}
+    case ProcRefused{m}:
+      smtp_failure("cannot run the TLS helper: " ++ m,
+        "not_sent", "before_smtp", "helper_not_started")
+    case ProcFail{code, m}:
+      smtp_failure("cannot run the TLS helper: " ++ m,
+        "unknown", "unknown", "missing_progress")
 
 def smtp_run(envelope: String) -> IO(Out):
   do IO<Out>:
@@ -4294,7 +4371,11 @@ def sent_out(o: Out, msgid: String, n: U32) -> Out:
         J.kv("sent", J.bool(True{})),
         J.kv("message_id", J.str(msgid)),
         J.kv("recipients", J.num(n)),
-        J.kv("server_reply", reply)
+        J.kv("server_reply", reply),
+        J.kv("smtp_outcome", J.str("accepted")),
+        J.kv("smtp_phase", J.str("data_reply")),
+        J.kv("smtp_reason", J.str("accepted_by_server")),
+        J.kv("next_action", J.str("Do not resend. SMTP acceptance is not recipient delivery."))
       ])
 
 # The Sent copy
@@ -4476,7 +4557,7 @@ def send_allowed.copy(o: Out, save: Bool, msgid: String, copy: M.Draft, boundary
     case Partial{j} _:
       pure_out(Partial{j})
 
-# A delivered message's result, with what became of its Sent copy.
+# An SMTP-accepted message's result, with what became of its Sent copy.
 def send_allowed.fin(o: Out, s: Sent) -> IO(Out):
   Sent{+msgid, n, save, copy, boundary} = s
   send_allowed.copy(sent_out(o, msgid, n), save, msgid, copy, boundary)
@@ -4484,7 +4565,7 @@ def send_allowed.fin(o: Out, s: Sent) -> IO(Out):
 def send_allowed.if(problem: String, envelope: String, s: Sent) -> IO(Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t} ++ "; nothing was sent"})
+      pure_out(send_not_attempted(Err{SCon{h, t} ++ "; nothing was sent"}))
     case SNil{}:
       do IO<Out>:
         o : Out <- smtp_run(envelope)
@@ -4545,12 +4626,12 @@ def send_allowed(
   match envelope:
     case None{}:
       Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
-      pure_out(send_refused(blocked, allow, rcpts, report))
+      pure_out(send_not_attempted(send_refused(blocked, allow, rcpts, report)))
     case Some{e}:
       Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       do IO<Out>:
         o : Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
-        return with_fields(o, report)
+        return with_fields_first(o, report)
 
 # The send once the gates have decided: the envelope comes only from
 # Jev.outbound_checked, which gives S.outbound's only when the secret scan
@@ -4659,7 +4740,7 @@ def send_jev.put(
       send_scanned(scan, c, Jev.Outgoing{fields, attach_names(atts), about},
         Jev.outgoing_vetoes(about), text, r)
     case h <> t:
-      pure_out(Err{unlisted_msg(h <> t)})
+      pure_out(send_not_attempted(Err{unlisted_msg(h <> t)}))
 
 # With Jev on, a send passes the allowlist, then the local secret scan of
 # its content, then Jev's veto questions, before its envelope is built.

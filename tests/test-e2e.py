@@ -170,6 +170,7 @@ def run_all(work):
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
+    smtp_outcomes(work)
     downloads(work)
     threads(work)
     flags_first_reads(work)
@@ -1676,6 +1677,65 @@ def daily_limit(srv, work):
     c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", XDG_STATE_HOME=xdg)
     check("daily limit: the counter defaults to $XDG_STATE_HOME/mailbend", c == 0
           and pathlib.Path(xdg, "mailbend", "sends").is_file(), r)
+
+
+def smtp_outcomes(work):
+    srv = Server(work, extra=["--echo-login", "--cut-goodbye"])
+    try:
+        for recipient, expected, reason, recorded in [
+            ("before-data-close@example.com", "not_sent", "stopped_before_data", 0),
+            ("reject@example.com", "not_sent", "stopped_before_data", 0),
+            ("final-reject@example.com", "not_sent", "explicit_rejection", 0),
+            ("lost-reply@example.com", "unknown", "acceptance_unconfirmed", 1),
+            ("friend@example.com", "accepted", "accepted_by_server", 1),
+        ]:
+            for use_mcp in (False, True):
+                before = len(srv.st()["sent"])
+                start = len(srv.log_records())
+                args = {**SEND, "to": ["first@example.com", recipient]}
+                env = {"MAILBEND_SAVE_SENT": "1", "MAILBEND_SENT_FOLDER": "Nowhere"}
+                if use_mcp:
+                    replies, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1,
+                        "method": "tools/call", "params": {"name": "mail_send", "arguments": args}}], **env)
+                    result = replies[0]["result"]
+                    r = json.loads(result["content"][0]["text"])
+                    failed = result.get("isError") is True
+                else:
+                    c, r = tool(srv, "mail_send", args, **env)
+                    failed = c != 0
+                commands = [x["line"] for x in srv.log_records()[start:] if x["proto"] == "smtp"]
+                check(f"SMTP {recipient} via {'MCP' if use_mcp else 'CLI'} preserves outcome",
+                      r.get("smtp_outcome") == expected and r.get("smtp_reason") == reason
+                      and failed == (expected != "accepted")
+                      and len(srv.st()["sent"]) == before + recorded
+                      and sum(line.startswith("MAIL FROM:") for line in commands) == 1, r)
+                if expected == "accepted":
+                    check("accepted DATA survives failed QUIT and failed Sent filing",
+                          r.get("sent") is True and r.get("message_id")
+                          and r.get("sent_copy", "").startswith("failed:"), r)
+                else:
+                    check("failed or unknown SMTP never attempts Sent filing",
+                          "sent_copy" not in r and "message_id" not in r
+                          and not any(" APPEND " in x["line"] for x in srv.log_records()[start:]), r)
+                if recipient == "reject@example.com":
+                    check("one refused recipient aborts before DATA despite earlier accepted recipient",
+                          "DATA" not in commands and "550" in r.get("error", ""), commands)
+                if expected == "unknown":
+                    check("unknown outcome gives duplicate-safe guidance",
+                          "Do not retry automatically" in r.get("next_action", "")
+                          and "missing Sent copy" in r.get("next_action", ""), r)
+        helper = pathlib.Path(work) / "interrupted-smtp-helper"
+        calls = pathlib.Path(work) / "interrupted-smtp-calls"
+        for phase, expected in [("before_data", "not_sent"), ("data_started", "unknown"), ("", "unknown")]:
+            calls.write_text("")
+            marker = f"printf 'mailbend-smtp: {phase}\\n' >&2\n" if phase else ""
+            helper.write_text(f"#!/bin/sh\nprintf 'call\\n' >> '{calls}'\n" + marker + "kill -KILL $$\n")
+            helper.chmod(0o700)
+            c, r = tool(srv, "mail_send", SEND, MAILBEND_TLS_HELPER=str(helper))
+            check(f"interrupted helper {phase or 'without evidence'} is {expected} and never replayed",
+                  c != 0 and r.get("smtp_outcome") == expected and calls.read_text().splitlines() == ["call"], r)
+    finally:
+        srv.stop()
 
 
 def sent_message(srv, box, message_id):
@@ -3268,6 +3328,11 @@ def gates_vetoes(srv, work, key_file, attach_dir):
         check("gates: a clean forward asks whether the original may be shared, and goes",
               c == 0 and set(body.get("questions", {})) == {"recipients", "disclosure", "forward"}, (r, body))
         check("gates: only the sends Jev cleared were delivered", sent_count(srv) == n + 4, sent_count(srv) - n)
+        for recipient, expected in [("final-reject@example.com", "not_sent"), ("lost-reply@example.com", "unknown")]:
+            c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "to": [recipient]}, **env)
+            check(f"gates: SMTP {expected} preserves Jev and scan evidence",
+                  c != 0 and r.get("smtp_outcome") == expected and r.get("secret_scan") == "clean"
+                  and r.get("jev", {}).get("decision") == "proceeded" and len(asked) == 1, r)
     finally:
         ts.stop()
 

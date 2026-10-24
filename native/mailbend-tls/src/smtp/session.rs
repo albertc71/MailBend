@@ -2,6 +2,7 @@
 //! AUTH, then the envelope and message; the first rejection stops the run.
 //! QUIT is best effort.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use base64ct::{Base64, Encoding};
@@ -23,6 +24,16 @@ const AUTH_SUCCEEDED: u16 = 235;
 const OK: u16 = 250;
 const AUTH_CHALLENGE: u16 = 334;
 const START_MAIL_INPUT: u16 = 354;
+
+/// Private, fixed protocol evidence on stderr, separate from server text.
+/// Fail closed if progress cannot be written: a stale pre-DATA marker must
+/// never survive a write of message bytes. Flush before crossing that boundary.
+pub(crate) fn progress(phase: &str) -> Result<(), Exit> {
+    let mut err = std::io::stderr().lock();
+    writeln!(err, "mailbend-smtp: {phase}")
+        .and_then(|()| err.flush())
+        .map_err(|_| Exit::protocol("cannot report SMTP progress"))
+}
 
 /// A complete reply: its code and all of its lines.
 struct Reply {
@@ -55,12 +66,17 @@ pub fn run(
 /// paused for authentication.
 fn read_reply(conn: &mut Connection) -> Result<Reply, Exit> {
     let mut lines = Vec::new();
+    let mut first_code = None;
     loop {
         let line = conn
             .read_line()?
             .ok_or_else(|| Exit::protocol("connection closed while waiting for a reply"))?;
         conn.emit(&line)?;
         let parsed = parse_line(&line)?;
+        if first_code.is_some_and(|code| code != parsed.code) {
+            return Err(Exit::protocol("inconsistent SMTP reply codes"));
+        }
+        first_code = Some(parsed.code);
         if (lines.len() + line.len()) as u64 > MAX_OUTPUT {
             return Err(Exit::protocol("SMTP reply exceeds the output limit"));
         }
@@ -180,8 +196,18 @@ fn send_envelope(conn: &mut Connection, steps: &[Step<'_>]) -> Result<Option<u16
                 if code != START_MAIL_INPUT {
                     return Ok(Some(code));
                 }
+                progress("data_started")?;
                 conn.write(message)?;
-                reply_code(conn)?
+                let code = reply_code(conn)?;
+                // Keep the final reply available beside its evidence even
+                // if the process is interrupted during best-effort QUIT.
+                conn.flush_transcript();
+                match code {
+                    250 => progress("data_accepted")?,
+                    400..=599 => progress("data_rejected")?,
+                    _ => return Err(Exit::protocol("unexpected final DATA reply")),
+                }
+                code
             }
         };
         if code / 100 != 2 {
@@ -210,6 +236,23 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn inconsistent_multiline_reply_is_not_acceptance() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().expect("accept");
+            peer.write_all(b"550-refused\r\n250 accepted\r\n")
+                .expect("reply");
+        });
+        let mut conn = Connection::new(TcpStream::connect(addr).expect("connect"));
+        assert_eq!(
+            conn.quietly(reply_code),
+            Err(Exit::protocol("inconsistent SMTP reply codes"))
+        );
+        server.join().expect("server");
+    }
 
     #[test]
     fn an_endless_reply_is_refused_while_authenticating() {

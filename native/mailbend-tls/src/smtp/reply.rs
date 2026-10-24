@@ -14,7 +14,9 @@ pub struct ReplyLine {
 /// Parses `line`: three digits, then a separator.
 pub fn parse_line(line: &[u8]) -> Result<ReplyLine, Exit> {
     match line {
-        [a, b, c, separator, ..] if [a, b, c].iter().all(|d| d.is_ascii_digit()) => {
+        [a, b, c, separator, ..]
+            if [a, b, c].iter().all(|d| d.is_ascii_digit()) && matches!(separator, b' ' | b'-') =>
+        {
             let digit = |d: &u8| u16::from(d - b'0');
             Ok(ReplyLine {
                 code: digit(a) * 100 + digit(b) * 10 + digit(c),
@@ -71,6 +73,7 @@ mod tests {
         );
         assert!(parse_line(b"25\r\n").is_err());
         assert!(parse_line(b"abc d\r\n").is_err());
+        assert!(parse_line(b"250xnot a reply\r\n").is_err());
     }
 
     #[test]
