@@ -1013,7 +1013,7 @@ class IMAPSession:
                     parts.append('BODYSTRUCTURE ' + structure)
             else:
                 name, content, sets_seen = render_section(spec, m)
-                if m.get("measure_sections"):
+                if m.get("measure_sections") and not name.startswith("BODY[HEADER"):
                     self.logger.log("imap-section-bytes", f"{name} {len(content)}")
                 if sets_seen and not self.readonly and '\\Seen' not in m['flags']:
                     m['flags'].append('\\Seen')

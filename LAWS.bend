@@ -146,7 +146,8 @@ law part_guarded:
   for max: U32
   {Ops.plan_part(mbox, uid, uidv, section, max) ==
     [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
-      I.CFetch{[uid], [I.IUid{}, I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
+        I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
 
 # LAW: for every mailbox, UID and size limit, the get plan writes nothing
 law get_writes_nothing:

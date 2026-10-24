@@ -1404,6 +1404,7 @@ type Shown is Data:
   Listed{out: Out, msgs: List<&2, I.Msg>}
   Threaded{out: Out, msgs: List<&2, I.Msg>, folders: Folders}
   Whole{out: Out, msg: I.Msg, max: U32}
+  Selected{out: Out, fetched: Jev.Fetched}
 
 def pure_shown(o: Out) -> IO(Shown):
   IO.pure(Shown, Listed{o, []})
@@ -1695,12 +1696,18 @@ def parts_json(ps: List<&2, Part.Part>) -> List<&2, J.Json>:
     case p <> t:
       part_json(p) <> parts_json(t)
 
-def part_discovered(r: Run(), +uid: U32, +uidv: U32, wanted: String)
-  -> Result<&2, &2, String, Part.Part>:
-  do Result<&2, &2, String, Part.Part>:
+# One discovery validator serves metadata listing and selected content reads.
+def part_listed(r: Run(), +uid: U32, +uidv: U32)
+  -> Result<&2, &2, String, List<&2, Part.Part>>:
+  do Result<&2, &2, String, List<&2, Part.Part>>:
     +lines : List<&2, I.RLine> <- r
     Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
-    ps : List<&2, Part.Part> <- part_metadata(lines, uid)
+    part_metadata(lines, uid)
+
+def part_discovered(r: Run(), uid: U32, uidv: U32, wanted: String)
+  -> Result<&2, &2, String, Part.Part>:
+  do Result<&2, &2, String, Part.Part>:
+    ps : List<&2, Part.Part> <- part_listed(r, uid, uidv)
     part_found(Part.select(ps, wanted))
 
 def part_same(a: Part.Part, b: Part.Part) -> Bool:
@@ -1747,8 +1754,50 @@ def part_content(r: Result<&2, &2, String, String>, p: Part.Part,
       ok_obj(List.append(&2, J.Json,
         [J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
           J.kv("uidvalidity", J.num(uidv)), J.kv("section", J.str(I.section_str(path))),
-          J.kv("content_type", J.str(ct)), J.kv("complete", J.bool(True{}))],
+          J.kv("content_type", J.str(ct)), J.kv("complete", J.bool(True{})),
+          J.kv("scope", J.str("selected_part")), J.kv("message_complete", J.bool(False{}))],
         part_content.fields(String.starts_with(M.main_value(ct), "text/"), ct, bytes)))
+
+def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
+  match readable p:
+    case True{} Part.Part{path, +ct, cd, encoding, size}:
+      +text = M.leaf.text(ct, bytes)
+      parts = Bool.pick(M.Parts, String.eq(M.main_value(ct), "text/html"),
+        M.Parts{"", text, []}, M.Parts{text, "", []})
+      Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
+        "; message incomplete]\n" ++ Jev.plain_text(M.readable_text(parts)), True{})
+    case False{} Part.Part{path, ct, cd, encoding, size}:
+      Jev.Text{"[Selected MIME section " ++ I.section_str(path) ++
+        "; no text body fetched]", Jev.Partial{}}
+
+def part_get.text(+p: Part.Part, bytes: String) -> Jev.Text:
+  Part.Part{path, ct, cd, encoding, size} = p
+  part_get.text.if(String.starts_with(M.main_value(ct), "text/"), p, bytes)
+
+# The whole message was not read: Jev may annotate only the selected text,
+# marked partial, plus independently fetched parent headers and metadata.
+def part_get.shown(
+  r: Result<&2, &2, String, String>, ms: List<&2, I.Msg>, +p: Part.Part,
+  folder: String, uid: U32, uidv: U32
+) -> Shown:
+  match r ms:
+    case Fail{why} _:
+      Listed{Err{why}, []}
+    case _ Nil{}:
+      Listed{Err{"missing selected message metadata"}, []}
+    case Done{+bytes} m <> t:
+      text = part_get.text(p, bytes)
+      Selected{part_content(Done{bytes}, p, folder, uid, uidv),
+        Jev.Fetched{Jev.facts_of(m), text}}
+
+def part_get.fetched(r: Run(), +p: Part.Part, folder: String,
+  +uid: U32, +uidv: U32, max: U32) -> Shown:
+  match r:
+    case Fail{why}:
+      Listed{Err{why}, []}
+    case Done{+lines}:
+      part_get.shown(part_bytes(Done{lines}, uid, uidv, p, max),
+        part_metadata.filter(I.fetched(lines), uid), p, folder, uid, uidv)
 
 def part_get.fetch(r: Result<&2, &2, String, Part.Part>, +folder: String,
   +uid: U32, +uidv: U32, +max: U32) -> IO(Shown):
@@ -1758,39 +1807,30 @@ def part_get.fetch(r: Result<&2, &2, String, Part.Part>, +folder: String,
     case Done{+p}:
       do IO<Shown>:
         lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p), max))
-        return Listed{part_content(part_bytes(lines, uid, uidv, p, max), p,
-          folder, uid, uidv), []}
+        return part_get.fetched(lines, p, folder, uid, uidv, max)
 
-def part_get.list.put(r: Result<&2, &2, String, List<&2, Part.Part>>, valid: Bool,
+def part_get.list(r: Result<&2, &2, String, List<&2, Part.Part>>,
   folder: String, uid: U32, uidv: U32) -> Out:
-  match r valid:
-    case _ False{}:
-      Err{stale_msg()}
-    case Fail{why} True{}:
-      Err{why}
-    case Done{ps} True{}:
-      ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
-        J.kv("uidvalidity", J.num(uidv)), J.kv("parts", J.arr(parts_json(ps)))])
-
-def part_get.list(r: Run(), folder: String, +uid: U32, +uidv: U32) -> Out:
   match r:
     case Fail{why}:
       Err{why}
-    case Done{+lines}:
-      part_get.list.put(part_metadata(lines, uid),
-        uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), folder, uid, uidv)
+    case Done{ps}:
+      ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
+        J.kv("uidvalidity", J.num(uidv)), J.kv("parts", J.arr(parts_json(ps)))])
 
-def part_get.run(list: Bool, +folder: String, +uid: U32, +uidv: U32,
+def part_get.after(list: Bool, r: Run(), +folder: String, +uid: U32, +uidv: U32,
   wanted: String, max: U32) -> IO(Shown):
   match list:
     case True{}:
-      do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_parts(folder, uid))
-        return Listed{part_get.list(r, folder, uid, uidv), []}
+      pure_shown(part_get.list(part_listed(r, uid, uidv), folder, uid, uidv))
     case False{}:
-      do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_parts(folder, uid))
-        part_get.fetch(part_discovered(r, uid, uidv, wanted), folder, uid, uidv, max)
+      part_get.fetch(part_discovered(r, uid, uidv, wanted), folder, uid, uidv, max)
+
+def part_get.run(list: Bool, +folder: String, +uid: U32, uidv: U32,
+  wanted: String, max: U32) -> IO(Shown):
+  do IO<Shown>:
+    r : Run() <- imap_run(Ops.plan_parts(folder, uid))
+    part_get.after(list, r, folder, uid, uidv, wanted, max)
 
 def part_get(u: Result<&2, &2, String, U32>, folder: String, uidv: U32,
   +wanted: String, max: U32) -> IO(Shown):
@@ -6430,6 +6470,8 @@ def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
     case Jev.On{c} Threaded{Ok{J.JObj{fields}}, m <> t, folders}:
       annotate.ask(Done{folders},
         Annotation{fields, True{}, Jev.Headers{}, listed_fetched(m <> t, 1)})
+    case Jev.On{c} Selected{Ok{J.JObj{fields}}, fetched}:
+      annotate.list(Annotation{fields, False{}, c, [fetched]})
     case Jev.On{+c} Whole{Ok{J.JObj{fields}}, m, max}:
       annotate.list(Annotation{fields, False{}, c, [whole_fetched(c, m, max)]})
     case _ Listed{o, ms}:
@@ -6437,6 +6479,8 @@ def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
     case _ Threaded{o, ms, folders}:
       pure_out(o)
     case _ Whole{o, m, max}:
+      pure_out(o)
+    case _ Selected{o, fetched}:
       pure_out(o)
 
 def annotated(jev: Jev.Switch, read: IO(Shown)) -> IO(Out):

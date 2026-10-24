@@ -136,6 +136,8 @@ def select.if(ok: Bool, p: Part, rest: Maybe<&2, Part>) -> Maybe<&2, Part>:
     case False{}:
       rest
 
+# Caller text is compared only with generated numeric paths (or text/html),
+# never parsed into or interpolated in an IMAP command. Noncanonical paths fail.
 def select(xs: List<&2, Part>, +wanted: String) -> Maybe<&2, Part>:
   match xs:
     case Nil{}:

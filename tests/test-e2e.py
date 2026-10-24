@@ -139,7 +139,8 @@ def flags(state, box, uid):
 
 
 def main():
-    work = tempfile.mkdtemp(prefix="e2e-", dir=str(ROOT / "build") if (ROOT / "build").exists() else None)
+    work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
+                            (str(ROOT / "build") if (ROOT / "build").exists() else None))
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
@@ -3476,7 +3477,7 @@ def selected_parts(work):
         check("sections: complete selected attachment", c == 0 and path.read_bytes() == b"hello", r)
         c, r = tool(srv, "mail_get_attachment", dict(common, section="3"),
                     MAILBEND_DOWNLOAD_DIR=str(download_dir))
-        check("sections: no overwrite", c != 0 and path.read_bytes() == b"hello", r)
+        check("sections: no overwrite", c != 0 and path.exists() and path.read_bytes() == b"hello", r)
         for args in [dict(common, section="1] STORE 1 +FLAGS (\\Seen)"),
                      dict(common, section="0"), dict(common, section="01"),
                      dict(common, section="3", uidvalidity=uidv + 1),
@@ -3486,9 +3487,11 @@ def selected_parts(work):
         records = srv.log_records()
         lines = [x["line"] for x in records if x["proto"] == "imap"]
         sizes = [x["line"] for x in records if x["proto"] == "imap-section-bytes"]
-        check("sections: measured payload sizes", sizes == ["BODY[2.1]<0> 12",
-              "BODY[2.2]<0> 16", "BODY[3]<0> 8", "BODY[3]<0> 8",
-              "BODY[3]<0> 8", "BODY[3]<0> 8"], sizes)
+        expected_sizes = {"BODY[2.1]<0>": 12, "BODY[2.2]<0>": 16, "BODY[3]<0>": 8}
+        measured = [(name, int(size)) for name, size in (line.split() for line in sizes)]
+        check("sections: measured payload sizes", {name for name, _ in measured} ==
+              set(expected_sizes) and all(expected_sizes.get(name) == size
+                                         for name, size in measured), sizes)
         check("sections: only selected PEEK and read-only metadata", not any(
             " SELECT " in x or "BODY.PEEK[]" in x or "BODY[" in x or
             "BODY.PEEK[1]" in x or " STORE " in x for x in lines), lines[-20:])
@@ -3506,6 +3509,26 @@ def selected_parts(work):
                             if x["proto"] == "imap-section-bytes"]
                 print("MEASURE " + label + " peak RSS KiB=" + measurement.read_text().strip() +
                       "; payload bytes=" + repr(payloads))
+        key_file = typesafe_key_file(work)
+        for scenario, mode in [("ok", "headers"), ("ok", "body"), ("status:503", "body")]:
+            ts = TypeSafe(work, scenario)
+            try:
+                c, r = tool(srv, "mail_get", dict(common, section="text"),
+                            **jev_env(ts, key_file, MAILBEND_TYPESAFE_CONTENT=mode,
+                                      MAILBEND_TYPESAFE_ZERO_RETENTION="1"))
+                expected_status = "checked" if scenario == "ok" else "unchecked"
+                check("sections: Jev " + mode + " " + scenario + " preserves content and scope",
+                      c == 0 and r.get("content") == "small text" and
+                      r.get("scope") == "selected_part" and r.get("message_complete") is False and
+                      r.get("jev", {}).get("status") == expected_status, r)
+                states = [email for q in ts.requests() for email in q["body"]["state"]["emails"]]
+                check("sections: Jev " + mode + " sees only permitted selected facts",
+                      states and all(("text" not in email if mode == "headers" else
+                                      "small text" in email.get("text", "") and
+                                      "message incomplete" in email.get("text", ""))
+                                     for email in states) and "ZZZZ" not in json.dumps(states), states)
+            finally:
+                ts.stop()
         print("MEASURE selected fixture: unrelated encoded bytes=" + str(len(huge)) +
               "; selected text=12, html=16, attachment=8 encoded bytes")
     finally:
@@ -3532,7 +3555,8 @@ def selected_parts_errors(work):
             c, r = tool(srv, "mail_get_attachment",
                         {"uid": 1, "uidvalidity": uidv, "section": "1"},
                         MAILBEND_DOWNLOAD_DIR=str(target))
-            check("sections: malformed/truncated " + encoding + " never saved",
+            check("sections: " + encoding + (" cut literal" if cut else
+                  " size mismatch" if truncate else " malformed transfer") + " never saved",
                   c != 0 and not (target / "broken.bin").exists(), r)
         finally:
             srv.stop()

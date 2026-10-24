@@ -42,6 +42,12 @@ python3 tests/test-e2e.py
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
+When the checkout is on a filesystem without Linux `O_TMPFILE` support
+(for example WSL's `/mnt/c`), run the end-to-end fixtures on a native Linux
+filesystem: `MAILBEND_TEST_TMPDIR=/tmp python3 tests/test-e2e.py`. This changes
+only the temporary fixture directory; the attachment sandbox checks remain
+in force.
+
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in
 `tests/unit/schema.bend`.

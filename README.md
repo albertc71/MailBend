@@ -88,8 +88,11 @@ Selected reads return `content`, `content_encoding`, `content_type`, `section`
 and `complete`. Content is decoded text for text media and base64 for other
 media, as indicated by `content_encoding`. Selected reads fail explicitly if
 the encoded part does not fit `max_bytes`, its
-metadata changes, or transfer decoding is incomplete. They do not request
-Jev annotations. Omit `section` to retain the original whole-message prefix.
+metadata changes, or transfer decoding is incomplete. Results explicitly mark
+`scope: "selected_part"` and `message_complete: false`. Jev annotations respect
+the configured headers/body mode and use only selected text, marked partial;
+they do not fetch unrelated bodies. Omit `section` for the original whole-message
+prefix. Metadata-only `section: "list"` does not request annotations.
 
 `mail_get_attachment` also accepts a listed numeric `section` and
 `uidvalidity` instead of `index`. It fetches only that part, even when another

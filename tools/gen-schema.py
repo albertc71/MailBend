@@ -216,10 +216,12 @@ TOOLS = [
                            "inline part, or a numeric section from list. Requires uidvalidity. "
                            "Fetches only that part; incomplete or malformed content fails. "
                            "Omit for the compatible whole-message prefix. Selected reads "
-                           "return content and do not request Jev annotations."),
+                           "return content with selected_part scope. Jev annotations respect the "
+                           "configured mode and cover only selected text, never unrelated bodies."),
           "max_bytes": param(
               "integer",
-              "Read at most this many bytes of the message. Default 262144.",
+              "Whole-message prefix or selected encoded-part window. Default 262144; "
+              "a selected part must be smaller than this window.",
               minimum=1024, maximum=16777216)},
          ["uid"]),
     tool("mail_get_new",

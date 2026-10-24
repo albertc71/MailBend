@@ -4,6 +4,7 @@ import Base
 import ../../src/imap.bend as I
 import ../../src/sections.bend as P
 import ../../src/tools.bend as T
+import ../../src/jev.bend as Jev
 
 def part() -> P.Part:
   P.Part{[1], "text/plain", "", "7bit", 5}
@@ -25,6 +26,14 @@ def show(r: Result<&2, &2, String, String>) -> String:
 def read(raw: String) -> String:
   show(T.part_bytes(Done{I.frame(raw)}, 7, 9, part(), 1024))
 
+def annotation(t: Jev.Text) -> String:
+  match t:
+    case Jev.Text{+text, Jev.Partial{}}:
+      "partial " ++ Bool.show(String.contains(text, "hello")) ++ " " ++
+        Bool.show(String.contains(text, "message incomplete"))
+    case _:
+      "unexpected complete message"
+
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(read(transcript(9, 7, 5, 0, "hello")))
@@ -34,6 +43,11 @@ def main() -> IO(Unit):
     IO.print(read(transcript(9, 7, 5, 1, "hello")))
     IO.print(read(transcript(9, 7, 5, 0, "hell")))
     IO.print(read("* 1 FETCH (UID 7 FLAGS ())\r\n" ++ transcript(9, 7, 5, 0, "hello")))
+    IO.print(annotation(T.part_get.text(part(), "hello")))
+    IO.print(annotation(T.part_get.text(P.Part{[1], "text/plain", "attachment",
+      "7bit", 5}, "hello")))
+    IO.print(annotation(T.part_get.text(P.Part{[1], "application/octet-stream", "attachment",
+      "binary", 5}, "hello")))
 
 #|hello
 #|error
@@ -42,3 +56,6 @@ def main() -> IO(Unit):
 #|error
 #|error
 #|hello
+#|partial True True
+#|partial True True
+#|partial False False

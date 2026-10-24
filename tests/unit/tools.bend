@@ -107,6 +107,8 @@ def show_shown(s: T.Shown) -> String:
         Maybe.default(&2, String, sent, "unknown")
     case T.Whole{o, m, max}:
       show_out(o) ++ " | whole " ++ show_msgs([m]) ++ U32.show(max)
+    case T.Selected{o, fetched}:
+      show_out(o) ++ " | selected part"
 
 def show_change(c: T.FolderChange) -> String:
   match c:
