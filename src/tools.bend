@@ -2682,12 +2682,22 @@ def refresh_flags.msg(vs: List<&2, I.Value>) -> List<&2, I.Msg>:
     case _:
       []
 
+# The general parser closes unfinished lists for partial-message recovery.
+# Metadata evidence must instead end outside every list, string and literal.
+def refresh_flags.tokens(t: I.Tokenizer) -> List<&2, I.Msg>:
+  match t:
+    case I.Tokenizer{I.TPlain{}, vs <> Nil{}, Nil{}}:
+      refresh_flags.msg(List.reverse(&2, I.Value, vs))
+    case _:
+      []
+
 def refresh_flags(lines: List<&2, I.RLine>) -> List<&2, I.Msg>:
   match lines:
     case Nil{}:
       []
     case I.RLine{text, lits} <> t:
-      List.append(&2, I.Msg, refresh_flags.msg(I.tokens(String.drop(text, 2n), lits)),
+      List.append(&2, I.Msg, refresh_flags.tokens(
+        I.tokens.go(String.drop(text, 2n), I.Tokenizer{I.TPlain{}, [[]], lits})),
         refresh_flags(t))
 
 # Partition only the caller's identities. Null flags mean unknown, even

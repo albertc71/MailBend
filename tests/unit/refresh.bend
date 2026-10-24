@@ -46,6 +46,8 @@ def main() -> IO(Unit):
       J.kv("uidvalidity", J.num(7))])))
     IO.print(result(base() ++ "* 1 FETCH (UID 1 FLAGS ())\r\na2 OK fetched\r\n" ++
       "* SEARCH 1\r\na3 OK searched\r\n", 0))
+    IO.print(result(base() ++ "* 1 FETCH (UID 1 FLAGS ()\r\na2 OK fetched\r\n" ++
+      "* SEARCH 1\r\na3 OK searched\r\n", 0))
     IO.print(result(base() ++ "* 1 FETCH (UID 1 FLAGS NIL)\r\na2 OK fetched\r\n" ++
       "* SEARCH 1\r\na3 OK searched\r\n", 0))
     IO.print(result(base() ++ "* 1 FETCH (UID 1 FLAGS (()))\r\na2 OK fetched\r\n" ++
@@ -72,6 +74,7 @@ def main() -> IO(Unit):
 #|error "uids" must be an array of positive integer UIDs
 #|error mail_refresh takes at most 100 UIDs
 #|{"folder":"INBOX","uidvalidity":7,"reset_required":false,"complete":true,"present":[{"uid":1,"flags":[]}],"absent":[2],"unknown":[],"reason":""}
+#|{"folder":"INBOX","uidvalidity":7,"reset_required":false,"complete":false,"present":[],"absent":[2],"unknown":[1],"reason":""}
 #|{"folder":"INBOX","uidvalidity":7,"reset_required":false,"complete":false,"present":[],"absent":[2],"unknown":[1],"reason":""}
 #|{"folder":"INBOX","uidvalidity":7,"reset_required":false,"complete":false,"present":[],"absent":[2],"unknown":[1],"reason":""}
 #|{"folder":"INBOX","uidvalidity":7,"reset_required":false,"complete":true,"present":[{"uid":1,"flags":["\\Seen"]}],"absent":[2],"unknown":[],"reason":""}
