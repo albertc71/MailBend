@@ -29,6 +29,7 @@ pub enum SmtpTlsMode {
 
 impl SmtpTlsMode {
     fn from_env() -> Result<Self, Exit> {
+        // Unlike text_setting, an explicitly empty mode must not mean unset.
         match std::env::var("MAILBEND_SMTP_TLS_MODE").as_deref() {
             Err(std::env::VarError::NotPresent) | Ok("starttls") => Ok(Self::StartTls),
             Ok("implicit") => Ok(Self::Implicit),
@@ -71,6 +72,7 @@ impl Protocol {
 
 #[derive(Debug)]
 pub struct Settings {
+    /// SMTP only; IMAP ignores this field and does not read the SMTP mode.
     pub smtp_tls_mode: SmtpTlsMode,
     /// The mail server's name: verified in its certificate and sent as SNI.
     pub host: String,

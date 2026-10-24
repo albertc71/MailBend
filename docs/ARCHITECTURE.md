@@ -10,9 +10,12 @@ iCloud Mail is the default and live-tested profile:
 - login: the iCloud address and an Apple app-specific password
 
 Other compatible providers use the same architecture with configured IMAP
-and SMTP hosts and ports. IMAP requires implicit TLS and SMTP requires
-STARTTLS; OAuth and implicit SMTPS are unsupported. Other providers have not
-been live-tested here. Live iCloud results are in
+and SMTP hosts and ports. IMAP requires implicit TLS. SMTP defaults to
+STARTTLS; `MAILBEND_SMTP_TLS_MODE=implicit` opts into verified TLS before
+any SMTP bytes. The port is configured independently, with no mode inference
+or fallback. OAuth is unsupported. Both SMTP modes are synthetically tested;
+other provider/account combinations have not been live-tested here. Live
+iCloud results are in
 [CLOUD_AGENT.md](CLOUD_AGENT.md#live-icloud-record).
 
 ## Diagrams
@@ -64,7 +67,7 @@ flowchart TB
   end
 
   imapsrv[("IMAP implicit TLS<br/>default imap.mail.me.com:993")]
-  smtpsrv[("SMTP STARTTLS required<br/>default smtp.mail.me.com:587")]
+  smtpsrv[("SMTP verified TLS<br/>default STARTTLS smtp.mail.me.com:587")]
   files[("MAILBEND_ATTACH_DIR<br/>attachments off without it")]
   sends[("MAILBEND_STATE_DIR/sends<br/>daily send count")]
   downloads[("MAILBEND_DOWNLOAD_DIR<br/>downloads off without it")]
@@ -209,7 +212,7 @@ sequenceDiagram
     else proceeded
       C->>R: count: reserve one send (when a daily limit is set)
       C->>H: SMTP envelope on stdin
-      H->>S: STARTTLS, AUTH, MAIL FROM, RCPT TO, DATA
+      H->>S: Verified TLS (STARTTLS or implicit), AUTH, MAIL FROM, RCPT TO, DATA
       H-->>C: transcript
       C-->>A: result with secret_scan and jev
     end
@@ -318,7 +321,7 @@ environment. Setting both is refused.
 | rename folder | `CAPABILITY`, `RENAME`, a `SUBSCRIBE` of the new name of each moved folder that was subscribed, then an `UNSUBSCRIBE` of each old name |
 | delete | confirmation word, then `CAPABILITY` + `=EXPECT-WORD UIDPLUS`, the guard, `\Deleted` + `UID EXPUNGE` of exactly those UIDs; else refused |
 | save draft / reply-as-draft / forward-as-draft | `APPEND` to the resolved Drafts folder with `(\Draft \Seen)` |
-| send / reply / forward | MIME composition + SMTP via STARTTLS |
+| send / reply / forward | MIME composition + SMTP over verified TLS |
 | classify | `CAPABILITY` + `LIST` (the folders to choose among), then `EXAMINE` + `UID FETCH (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (...)] BODYSTRUCTURE)`, with `BODY.PEEK[]<0.max>` too in body mode; then requests to TypeSafe through `mailbend-typesafe` |
 | triage | as classify, plus read-only searches of Sent for mail to each candidate's sender and a second read of the candidates' flags; then one move plan per destination folder |
 

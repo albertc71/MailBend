@@ -64,6 +64,21 @@ def safe(events: List<&2, SmtpEvent>, +verified: Bool) -> Bool:
         case _:
           safe(t, verified)
 
+# Implicit mode protects the greeting and every SMTP command, not only AUTH.
+
+def protected(events: List<&2, SmtpEvent>, +verified: Bool) -> Bool:
+  match events:
+    case Nil{}:
+      True{}
+    case h <> t:
+      match h:
+        case Verified{}:
+          protected(t, True{})
+        case Failed{}:
+          ended(t)
+        case _:
+          verified && protected(t, verified)
+
 def has_auth(events: List<&2, SmtpEvent>) -> Bool:
   match events:
     case Nil{}:
@@ -100,4 +115,15 @@ def handshake_failure_cannot_authenticate(mode):
     case StartTls{}:
       {==}
     case Implicit{}:
+      {==}
+
+law implicit_smtp_requires_verified_tls:
+  for verified: Bool
+  {protected(implicit_trace(verified), False{}) == True{} : Bool}
+
+def implicit_smtp_requires_verified_tls(verified):
+  match verified:
+    case True{}:
+      {==}
+    case False{}:
       {==}

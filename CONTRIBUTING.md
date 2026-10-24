@@ -35,12 +35,18 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
+python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 sh tests/run-unit.sh
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
 python3 tests/test-e2e.py
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+The [bounded SMTP model](docs/verification/smtp-tls/SKILL.md) checks an
+abstraction of authentication ordering, not the Rust implementation or
+cryptography. Its mutation check verifies that broken model transitions fail.
+The transport suite exercises the actual helper.
 
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in

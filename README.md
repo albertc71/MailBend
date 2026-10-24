@@ -163,7 +163,7 @@ deleting it resets the count, which is a local user action, not one the
 agent can take through MailBend.
 
 Other providers require compatible password-authenticated IMAP over implicit
-TLS and SMTP with STARTTLS or explicit implicit TLS. Set `MAILBEND_IMAP_HOST`,
+TLS and SMTP with STARTTLS or opt-in implicit TLS. Set `MAILBEND_IMAP_HOST`,
 `MAILBEND_IMAP_PORT`,
 `MAILBEND_SMTP_HOST` and `MAILBEND_SMTP_PORT` for that provider, and supply its
 accepted password or app password. `MAILBEND_SMTP_TLS_MODE` accepts exactly
@@ -268,7 +268,8 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 ## Safety
 
 - **TLS is always verified**: certificate chain and host name, TLS 1.2+, with
-  no option to turn verification off. SMTP uses STARTTLS by default or explicit implicit TLS.
+  no option to turn verification off. SMTP uses STARTTLS by default;
+  `MAILBEND_SMTP_TLS_MODE=implicit` opts into implicit TLS.
 - **Credentials stay in the helper.** Only `mailbend-tls` reads the password
   and sends it only to the verified server, so no tool result or log
   contains it. This is a code-level separation, not an OS boundary:
@@ -460,7 +461,7 @@ before relying on a complete link.
 ## Known limits
 
 - Linux only (file access through `openat2` needs Linux 5.6+), with
-  password login over IMAP implicit TLS and SMTP STARTTLS or explicit implicit
+  password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked

@@ -1567,7 +1567,7 @@ def implicit_smtp(work):
         limit = {"MAILBEND_MAX_SENDS_PER_DAY": "1",
                  "MAILBEND_STATE_DIR": os.path.join(os.path.realpath(work), "implicit-send-state")}
         c, r = tool(srv, "mail_send", SEND, **env, **limit)
-        check("implicit SMTP: checked send delivered", c == 0 and sent_count(srv) == 1
+        check("implicit SMTP: checked send accepted", c == 0 and sent_count(srv) == 1
               and r.get("jev", {}).get("decision") == "proceeded", r)
         c, r = tool(srv, "mail_send", SEND, **limit)
         check("implicit SMTP: daily counter blocks next send", c != 0 and "daily send limit" in r.get("error", "")

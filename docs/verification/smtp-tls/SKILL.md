@@ -11,7 +11,7 @@ Run `bend PROOF.bend --verdict` from the repository root, using the pinned Bend 
 
 ## Coverage and correspondence
 
-The model in `tests/formal/smtp-tls.bend` covers two modes and two TLS results, four complete traces with at most six events, plus their prefixes. It proves `auth_requires_verified_tls` and `handshake_failure_cannot_authenticate` for every model input. `safe` checks each event as it consumes the trace, so an early SMTP rejection that truncates a trace also cannot expose AUTH before verification.
+The model in `tests/formal/smtp-tls.bend` covers two modes and two TLS results, four complete traces with at most six events, plus their prefixes. It proves `auth_requires_verified_tls`, `handshake_failure_cannot_authenticate`, and `implicit_smtp_requires_verified_tls` for every model input. The third property requires verification before the greeting and every SMTP command in implicit mode, not only before AUTH. `safe` checks each event as it consumes the trace, so an early SMTP rejection that truncates a trace also cannot expose AUTH before verification.
 
 - `implicit_trace` corresponds to `negotiate_tls` in `native/mailbend-tls/src/smtp/session.rs`: `Connection::start_tls` succeeds before greeting/EHLO, then `run` calls `authenticate`.
 - `starttls_trace` corresponds to greeting/EHLO/STARTTLS, successful `Connection::start_tls`, second EHLO, then `run` calling `authenticate`.
@@ -23,8 +23,8 @@ This is an abstraction proof, not a proof of Rust, rustls, cryptography, certifi
 
 ## Mutation check and maintenance
 
-Run `python3 tests/formal/check-smtp-tls.py` to reproduce the following checks without editing production code. On a scratch copy of the model, remove `Verified{}` from the successful implicit trace. The first property must fail. On another scratch copy, replace the failed implicit trace with `[Failed{}, Auth{}]`; both properties must fail. Restore the model and require both properties to pass. Never change the checker or a law to make the broken transition pass.
+Run `python3 tests/formal/check-smtp-tls.py` to reproduce the following checks without editing production code. On a scratch copy of the model, remove `Verified{}` from the successful implicit trace. The first property must fail. On another scratch copy, replace the failed implicit trace with `[Failed{}, Auth{}]`; the authentication properties must fail. A third scratch copy moves `Greeting{}` before `Verified{}` in the successful implicit trace; the implicit SMTP property must fail even though AUTH remains after verification. Restore the model and require all properties to pass. Never change the checker or a law to make the broken transition pass.
 
 Review the correspondence above whenever any named Rust function or model changes. A model counterexample can mean either unsafe product ordering or an incorrect abstraction: inspect the actual source and real-helper tests before deciding which. Use `/maintain-formal-verification-skill` to update coverage after changes that did not recheck it.
 
-Coverage baseline: `787d1a3` plus this SMTP mode change. Record the final reviewed commit in the PR verification evidence; move that reference forward only after source/model correspondence and mutation checks are repeated.
+Source/model correspondence last confirmed at `c618041aefd12f45974e6e26b027370cf4efcf80`. Review subsequent changes to the named functions before reusing that evidence, and advance this reference only after confirming the correspondence and rerunning the mutation checks. Final revision checks are recorded in CI and the PR verification evidence.

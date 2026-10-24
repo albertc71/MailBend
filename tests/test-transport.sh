@@ -582,17 +582,17 @@ assert ('STARTTLS' in lines) == (sys.argv[2] == 'starttls')
 PY
     then pass "$mode SMTP negotiation and send"; else fail "$mode SMTP negotiation and send" "exit=$CODE"; fi
     stop_server
-    start_server "smtp-reject-$mode" $extra || return
+    start_server "smtp-reject-$mode" $extra || { fail "$mode RCPT rejection" "server did not start"; return; }
     call_smtp $'MAIL FROM:<user@example.com>\r\nRCPT TO:<reject@example.com>\r\nDATA\r\nSubject: mode\r\n\r\nhello\r\n.\r\n' MAILBEND_SMTP_TLS_MODE="$mode"
     if [ "$CODE" -eq 5 ] && ! grep -aq '"line": "DATA"' "$LOG_FILE"; then pass "$mode RCPT rejection prevents DATA"; else fail "$mode RCPT rejection" "exit=$CODE"; fi
     stop_server
     for cert in wronghost expired selfsigned; do
-      start_server "smtp-$mode-$cert" $extra --cert-name "$cert" || return
+      start_server "smtp-$mode-$cert" $extra --cert-name "$cert" || { fail "$mode rejects $cert" "server did not start"; return; }
       call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode"
       if [ "$CODE" -eq 3 ] && ! grep -aq 'AUTH' "$LOG_FILE"; then pass "$mode rejects $cert before AUTH"; else fail "$mode rejects $cert" "exit=$CODE"; fi
       stop_server
     done
-    start_server "smtp-silent-$mode" --silent-port || return
+    start_server "smtp-silent-$mode" --silent-port || { fail "$mode silent endpoint" "server did not start"; return; }
     start=$SECONDS
     call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode" MAILBEND_SMTP_PORT="$SILENT_PORT" MAILBEND_TIMEOUT_MS=300
     elapsed=$((SECONDS - start))
@@ -602,7 +602,7 @@ PY
   for mode in starttls implicit; do
     extra="--smtp-implicit"
     [ "$mode" = implicit ] && extra=""
-    start_server "smtp-wrong-$mode" $extra || return
+    start_server "smtp-wrong-$mode" $extra || { fail "$mode wrong endpoint" "server did not start"; return; }
     start=$SECONDS
     call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode" MAILBEND_TIMEOUT_MS=300
     elapsed=$((SECONDS - start))
