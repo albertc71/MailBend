@@ -214,11 +214,17 @@ class State:
         self.session_flags = False
         self.noisy_store = False
         self.fetch_no_flags = set()
+        self.fetch_bad_flags = set()
+        self.search_response = "normal"
+        self.remove_after_fetch = set()
+        self.measure_responses = False
         self.flags_first = False
         self.cut_goodbye = False
         self.file_sent = None
         self.bodystructure = 'real'
         self.seen = {}
+        self.examine_count = 0
+        self.examine_changes = fixture.get("examine_changes", [])
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -611,13 +617,13 @@ def structure_disposition(part):
 
 def body_structure(part) -> str:
     """The BODYSTRUCTURE of a parsed message or part, with extension data."""
-    if part.is_multipart():
+    if part.get_content_maintype() == "multipart":
         subparts = ''.join(body_structure(p) for p in part.get_payload())
         return '(' + subparts + ' ' + imap_quote(part.get_content_subtype().upper()) + ' ' + \
             structure_params(part.get_params()[1:]) + ' NIL NIL NIL)'
     maintype, subtype = part.get_content_maintype(), part.get_content_subtype()
     payload = part.get_payload()
-    text = payload if isinstance(payload, str) else ''
+    text = payload if isinstance(payload, str) else ''.join(p.as_string() for p in payload)
     encoding = (part.get('Content-Transfer-Encoding') or '7BIT').strip().upper()
     params = part.get_params()[1:] if part.get('Content-Type') else [('charset', 'us-ascii')]
     fields = [imap_quote(maintype.upper()), imap_quote(subtype.upper()), structure_params(params),
@@ -655,8 +661,22 @@ def render_section(spec: bytes, m: dict):
         lines = split_header_lines(header_block)
         kept = [ln for ln in lines if ln.split(':', 1)[0].strip().lower() in names]
         content = ''.join(ln + '\r\n' for ln in kept) + '\r\n'
+    elif re.fullmatch(r"[1-9][0-9]*(?:\.[1-9][0-9]*)*", inside):
+        part = email.message_from_string(m['raw'])
+        for component in map(int, inside.split('.')):
+            if part.get_content_maintype() == 'multipart':
+                payload = part.get_payload()
+                part = payload[component - 1] if component <= len(payload) else None
+            elif component != 1:
+                part = None
+            if part is None:
+                break
+        payload = part.get_payload() if part is not None else ''
+        content = payload if isinstance(payload, str) else ''.join(p.as_string() for p in payload)
     else:
         content = ''
+    if m.get("section_truncate") and inside and inside[0].isdigit():
+        content = content[:-1]
     if start is not None:
         s = int(start)
         content = content[s:s + int(count)] if count is not None else content[s:]
@@ -702,6 +722,8 @@ class IMAPSession:
     def send(self, text: str):
         if not self.muted:
             self.conn.write(text.encode('latin-1'))
+            if self.state.measure_responses:
+                self.logger.log('imap-bytes', str(len(text)))
 
     def run(self):
         self.send('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] fake ready\r\n')
@@ -938,6 +960,15 @@ class IMAPSession:
                 self.mailbox = None
                 self.send(f'{tag} NO [NONEXISTENT] no such mailbox\r\n')
                 return
+            if readonly:
+                self.state.examine_count += 1
+                for change in self.state.examine_changes:
+                    if change['at'] == self.state.examine_count:
+                        if 'uidvalidity' in change:
+                            mb['uidvalidity'] = change['uidvalidity']
+                        removed = change.get('remove_uids', [])
+                        mb['messages'] = [m for m in mb['messages'] if m['uid'] not in removed]
+                        self.state.save()
             count, uidvalidity, uidnext = len(mb['messages']), mb['uidvalidity'], mb['uidnext']
         self.mailbox, self.readonly = name, readonly
         self.send(self.FLAGS_LINE)
@@ -971,7 +1002,13 @@ class IMAPSession:
                 self.send(f'{tag} BAD unknown search key {unknown}\r\n')
                 return
             matched = sorted(m['uid'] for m in messages if all(p(m) for p in preds))
-        self.send('* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n')
+        response = '* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n'
+        if self.state.search_response == 'malformed':
+            self.send('* SEARCH invalid\r\n')
+        elif self.state.search_response != 'missing':
+            self.send(response)
+            if self.state.search_response == 'duplicate':
+                self.send(response)
         self.send(f'{tag} OK SEARCH completed\r\n')
 
     def build_fetch_response(self, seq, m, items):
@@ -984,6 +1021,8 @@ class IMAPSession:
                 if word == 'UID':
                     parts.append(f'UID {m["uid"]}')
                     have_uid = True
+                elif word == 'FLAGS' and m['uid'] in self.state.fetch_bad_flags:
+                    parts.append('FLAGS NIL')
                 elif word == 'FLAGS' and m['uid'] not in self.state.fetch_no_flags:
                     parts.append('FLAGS (' + ' '.join(m['flags']) + ')')
                 elif word == 'INTERNALDATE':
@@ -999,6 +1038,8 @@ class IMAPSession:
                     parts.append('BODYSTRUCTURE ' + structure)
             else:
                 name, content, sets_seen = render_section(spec, m)
+                if m.get("measure_sections") and not name.startswith("BODY[HEADER"):
+                    self.logger.log("imap-section-bytes", f"{name} {len(content)}")
                 if sets_seen and not self.readonly and '\\Seen' not in m['flags']:
                     m['flags'].append('\\Seen')
                     seen_added = True
@@ -1018,6 +1059,7 @@ class IMAPSession:
         items_raw = args[1] if isinstance(args[1], list) else [args[1]]
         items = normalize_fetch_items(items_raw)
         out_lines = []
+        cut_literal = False
         with self.state.lock:
             messages = self.state.data['mailboxes'][mbox]['messages']
             messages.sort(key=lambda m: m['uid'])
@@ -1029,6 +1071,10 @@ class IMAPSession:
                 if self.state.flags_first:
                     out_lines.append(f'* {seq} FETCH (UID {m["uid"]} FLAGS ({" ".join(m["flags"])}))\r\n')
                 line, seen_added = self.build_fetch_response(seq, m, items)
+                literal = re.search(r"BODY\[[0-9.]+\]<0> \{[0-9]+\}\r\n", line)
+                if m.get("cut_section_literal") and literal:
+                    line = line[:literal.end() + 1]
+                    cut_literal = True
                 mutated = mutated or seen_added
                 out_lines.append(line)
                 if self.state.noisy_store:
@@ -1037,7 +1083,16 @@ class IMAPSession:
                 self.state.save()
         for line in out_lines:
             self.send(line)
+        if cut_literal:
+            self.done = True
+            return
         self.send(f'{tag} OK FETCH completed\r\n')
+        if self.state.remove_after_fetch:
+            with self.state.lock:
+                mb = self.state.data['mailboxes'][mbox]
+                mb['messages'] = [m for m in mb['messages']
+                                  if m['uid'] not in self.state.remove_after_fetch]
+                self.state.save()
 
     def cmd_store(self, tag, args):
         mbox = self.require_selected(tag)
@@ -1513,6 +1568,8 @@ class SMTPSession:
         if self.mail_from is None or not self.rcpt_to:
             self.send('503 5.5.1 need MAIL and RCPT first\r\n')
             return
+        if 'before-data-close@example.com' in self.rcpt_to:
+            raise ConnectionClosed()
         self.send('354 Start mail input; end with <CRLF>.<CRLF>\r\n')
         lines = []
         while True:
@@ -1527,6 +1584,11 @@ class SMTPSession:
             lines.append(text)
         data = ('\r\n'.join(lines) + '\r\n') if lines else ''
         self.logger.log('smtp', f'<message {len(data)} bytes>')
+        if 'final-reject@example.com' in self.rcpt_to:
+            self.send('554 5.7.1 message refused\r\n')
+            return
+        lose_reply = 'lost-reply@example.com' in self.rcpt_to
+        bare_reply = 'bare-reply@example.com' in self.rcpt_to
         with self.state.lock:
             self.state.data['sent'].append({'mail_from': self.mail_from, 'rcpt_to': list(self.rcpt_to), 'data': data})
             n = len(self.state.data['sent'])
@@ -1537,7 +1599,9 @@ class SMTPSession:
                 filed['uidnext'] += 1
             self.state.save()
         self.mail_from, self.rcpt_to = None, []
-        self.send(f'250 2.0.0 OK queued as FAKE{n}\r\n')
+        if lose_reply:
+            raise ConnectionClosed()
+        self.send('250\r\n' if bare_reply else f'250 2.0.0 OK queued as FAKE{n}\r\n')
 
 
 # --------------------------------------------------------------------------
@@ -1591,6 +1655,12 @@ def main():
                     help='answer every STORE with FETCH updates and repeat FETCH answers')
     ap.add_argument('--flags-first', action='store_true',
                     help='precede every FETCH answer with an unsolicited update holding only UID and FLAGS')
+    ap.add_argument('--search-response', choices=['normal', 'missing', 'malformed', 'duplicate'],
+                    default='normal')
+    ap.add_argument('--remove-after-fetch', type=lambda v: {int(u) for u in v.split(',')}, default=set())
+    ap.add_argument('--measure-responses', action='store_true')
+    ap.add_argument('--fetch-bad-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
+                    help='return malformed FLAGS NIL for these UIDs')
     ap.add_argument('--fetch-no-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     ap.add_argument('--cut-goodbye', action='store_true',
@@ -1618,6 +1688,10 @@ def main():
     state.session_flags = args.session_flags
     state.noisy_store = args.noisy_store
     state.fetch_no_flags = args.fetch_no_flags
+    state.fetch_bad_flags = args.fetch_bad_flags
+    state.search_response = args.search_response
+    state.remove_after_fetch = args.remove_after_fetch
+    state.measure_responses = args.measure_responses
     state.flags_first = args.flags_first
     state.cut_goodbye = args.cut_goodbye
     state.file_sent = args.file_sent

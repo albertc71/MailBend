@@ -309,6 +309,7 @@ def main() -> IO(Unit):
 #|mail_search ro=True destructive=False back=mail_search
 #|mail_get ro=True destructive=False back=mail_get
 #|mail_get_new ro=True destructive=False back=mail_get_new
+#|mail_refresh ro=True destructive=False back=mail_refresh
 #|mail_get_thread ro=True destructive=False back=mail_get_thread
 #|mail_classify ro=True destructive=False back=mail_classify
 #|mail_triage ro=False destructive=False back=mail_triage
@@ -327,15 +328,15 @@ def main() -> IO(Unit):
 #|mail_send ro=False destructive=False back=mail_send
 #|mail_reply ro=False destructive=False back=mail_reply
 #|mail_forward ro=False destructive=False back=mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_classify
 #|mail_get
 #|mail_forward
 #|none
 #|none
 #|mail_get_new,mail_search
 #|[]
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_get_thread,mail_classify
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_classify
 #|TrueFalseTrueFalse
 #|reads
 #|a1 CAPABILITY | a2 LIST "" "*"

@@ -11,6 +11,9 @@ import Base
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/sections.bend as Part
+
+import ./src/search-cursor.bend as SC
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
@@ -35,7 +38,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_seven():
+def Laws.read_only_tools_are_exactly_eight():
   {==}
 
 def Laws.tools_listed_per_config(drafts):
@@ -63,6 +66,32 @@ def Laws.folder_scan_writes_nothing():
 def Laws.search_writes_nothing(mbox, keys):
   {==}
 
+def Laws.parts_write_nothing(mbox, uid):
+  {==}
+
+def Laws.part_writes_nothing(mbox, uid, uidv, section, max):
+  {==}
+
+def Laws.part_guarded(mbox, uid, uidv, section, max):
+  {==}
+
+def Laws.search_page_writes_nothing(mbox, keys, cursor):
+  match cursor:
+    case SC.Start{}:
+      {==}
+    case SC.Continue{uidv, before}:
+      {==}
+
+def Laws.search_page_examines(mbox, keys, cursor):
+  match cursor:
+    case SC.Start{}:
+      {==}
+    case SC.Continue{uidv, before}:
+      {==}
+
+def Laws.search_continuation_pins_identity(mbox, keys, uidv, before):
+  {==}
+
 def Laws.get_writes_nothing(mbox, uid, max):
   {==}
 
@@ -84,6 +113,9 @@ def get_new_writes_nothing.if(at_end: Bool, -mbox: String, -since: U32)
 
 def Laws.get_new_writes_nothing(mbox, since):
   get_new_writes_nothing.if(U32.is_eq(since, Ops.max_uid()), mbox, since)
+
+def Laws.refresh_plan(mbox, uids, uidv):
+  ({==}, {==})
 
 # The thread plans are lists over folders and keys, so their law rests on
 # lemmas by induction over those lists: the searches add no write to what
@@ -166,6 +198,14 @@ def Laws.fetch_items_never_set_seen(item):
       {==}
     case I.IFull{max}:
       {==}
+    case I.IPart{section, max}:
+      {==}
+
+def Laws.search_headers_render_exactly():
+  {==}
+
+def Laws.full_fetch_renders_exactly(max):
+  {==}
 
 # Marking and flagging
 # --------------------
@@ -180,6 +220,9 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
       {==}
     case False{}:
       {==}
+
+def Laws.mark_changes_only_seen(mbox, uids, seen, uidv):
+  {==}
 
 def flag_never_deletes.put(
   -mbox: String, -uids: List<&2, U32>, bits: I.Bits, -uidv: U32)
@@ -1301,6 +1344,18 @@ def Laws.secret_scan_blocks(part, reason, gate, allow, rcpts, from, msg):
   ({==}, {==})
 
 def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, text):
+  {==}
+
+# SMTP outcome evidence
+# ---------------------
+
+def Laws.smtp_unconfirmed_is_unknown(code, out, err):
+  ({==}, {==})
+
+def Laws.smtp_acceptance_survives_exit(code, out, err):
+  {==}
+
+def Laws.expunge_renders_exact_uid_set(uids):
   {==}
 
 # Read response projections
