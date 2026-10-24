@@ -46,6 +46,7 @@ tools, malformed calls and invalid cursors produce `-32602`; unsupported methods
 produce `-32601`. Valid tool calls that fail input validation, configuration,
 safety checks or mail execution return `isError: true` in a complete tool result.
 Partial mail changes retain their existing error payload and partial indication.
+Malformed modern envelopes omit unreadable IDs even after legacy initialization.
 
 The tool list is deterministic for the process configuration. It uses JSON
 Schema 2020-12-compatible object input schemas and tool annotations. Results

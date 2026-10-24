@@ -50,6 +50,9 @@ def main() -> IO(Unit):
     IO.print(show_args(Main.command_args([])))
     next : Maybe<&2, String> <- Main.handle_line(None{}, "{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"ping\"}")
     ignored : Maybe<&2, String> <- Main.handle_line(next, "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/list\"}")
+    invalid : Maybe<&2, String> <- Main.handle_line(None{}, "{\"jsonrpc\":\"1.0\",\"id\":1.5,\"method\":\"server/discover\"}")
+    legacy_line("{\"jsonrpc\":\"1.0\",\"id\":null,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}")
+    legacy_line("{\"jsonrpc\":\"1.0\",\"id\":null,\"method\":\"ping\"}")
     Main.cli(["version"])
 
 #|{"jsonrpc":"2.0","id":1,"result":{}}
@@ -82,4 +85,7 @@ def main() -> IO(Unit):
 #|
 #|{"jsonrpc":"2.0","id":20,"result":{}}
 #|{"jsonrpc":"2.0","id":21,"error":{"code":-32602,"message":"invalid params: required MCP metadata is malformed"}}
+#|{"jsonrpc":"2.0","error":{"code":-32600,"message":"invalid request: expected a JSON-RPC 2.0 object with a valid MCP id and string method"}}
+#|{"jsonrpc":"2.0","error":{"code":-32600,"message":"invalid request: expected a JSON-RPC 2.0 object with a valid MCP id and string method"}}
+#|{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request: expected a JSON-RPC 2.0 object with a string method"}}
 #|mailbend 0.1.0

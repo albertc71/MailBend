@@ -641,6 +641,17 @@ def mcp_modern(srv):
     res, _ = mcp_session(srv, ["not-json", modern_request("recovered")], legacy=False)
     check("modern MCP: parse error omits unreadable id and next request recovers",
           res[0].get("error", {}).get("code") == -32700 and "id" not in res[0] and "result" in res[1], res)
+    bad_fraction = modern_request(1.5)
+    bad_fraction["jsonrpc"] = "1.0"
+    bad_null = modern_request(None)
+    bad_null["jsonrpc"] = "1.0"
+    init = {"jsonrpc": "2.0", "id": "init", "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"}}
+    res, _ = mcp_session(srv, [bad_fraction, init, bad_null, bad_fraction,
+        {"jsonrpc": "1.0", "id": None, "method": "ping"}, modern_request("recovered")], legacy=False)
+    check("modern MCP: malformed envelopes use their own era for error ids",
+          all(r.get("error", {}).get("code") == -32600 and "id" not in r for r in [res[0], res[2], res[3]]) and
+          "id" in res[4] and res[4]["id"] is None and "result" in res[5], res)
     res, _ = mcp_session(srv, [
         {"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": []},

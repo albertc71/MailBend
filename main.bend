@@ -209,21 +209,13 @@ def modern_request.version(id: J.Json, method: String, p: J.Json, supported: Boo
     case True{}:
       modern_request.method(id, method, p)
 
+# After envelope/id validation: metadata shape, version, method, then params.
 def modern_request.meta(id: J.Json, method: String, +p: J.Json, valid: Bool) -> IO(Unit):
   match valid:
     case False{}:
       IO.print(rpc_error(id, "-32602", "invalid params: required MCP metadata is malformed"))
     case True{}:
       modern_request.version(id, method, p, String.eq(MCP.requested(p), MCP.modern_version()))
-
-# Validation order: id, metadata shape, supported version, method, then params.
-def modern_request(id: J.Json, method: String, +p: J.Json, valid: Bool) -> IO(Unit):
-  match valid:
-    case False{}:
-      IO.print(rpc_unidentified(None{}, "-32600",
-        "invalid request: MCP id must be a string or integer"))
-    case True{}:
-      modern_request.meta(id, method, p, MCP.metadata_ok(p))
 
 # Only legacy initialization changes connection state. Modern metadata never
 # inherits or changes that state, even when modern and legacy calls interleave.
@@ -237,12 +229,12 @@ def legacy_after(
       legacy
 
 def respond_era(
-  legacy: Maybe<&2, String>, +id: J.Json, +method: String, +p: J.Json, modern: Bool
+  legacy: Maybe<&2, String>, id: J.Json, +method: String, +p: J.Json, modern: Bool
 ) -> IO(Maybe<&2, String>):
   match modern:
     case True{}:
       do IO<Maybe<&2, String>>:
-        modern_request(id, method, p, MCP.id_ok(id))
+        modern_request.meta(id, method, p, MCP.metadata_ok(p))
         return legacy
     case False{}:
       do IO<Maybe<&2, String>>:
@@ -312,6 +304,31 @@ def envelope_ok(+req: J.Json) -> Bool:
   method_ok = Maybe.is_some(&2, String, J.as_str(J.get(req, "method")))
   version_ok && method_ok && id_ok(J.get(req, "id"))
 
+# Even a malformed envelope can identify its era. Modern metadata must never
+# inherit a legacy session's permissive JSON-RPC ids or null-id error format.
+def modern_message(legacy: Maybe<&2, String>, +req: J.Json) -> Bool:
+  params = Maybe.default(&2, J.Json, J.get(req, "params"), J.obj([]))
+  is_modern(legacy, T.str_arg(req, "method", ""), params)
+
+def envelope_ok_for(legacy: Maybe<&2, String>, +req: J.Json) -> Bool:
+  modern = modern_message(legacy, req)
+  modern_id = Bool.not(MCP.has(req, "id")) || MCP.id_ok(id_or_null(J.get(req, "id")))
+  envelope_ok(req) && (Bool.not(modern) || modern_id)
+
+def invalid_request.if(id: J.Json, omit: Bool) -> String:
+  match omit:
+    case True{}:
+      rpc_unidentified(None{}, "-32600",
+        "invalid request: expected a JSON-RPC 2.0 object with a valid MCP id and string method")
+    case False{}:
+      rpc_error(id, "-32600",
+        "invalid request: expected a JSON-RPC 2.0 object with a string method")
+
+def invalid_request(legacy: Maybe<&2, String>, +req: J.Json) -> String:
+  modern = modern_message(legacy, req)
+  +id = id_or_null(J.get(req, "id"))
+  invalid_request.if(id, modern && Bool.not(MCP.id_ok(id)))
+
 # A message failing the envelope check is answered with -32600, under its
 # id when that id is valid.
 def message.if(+legacy: Maybe<&2, String>, +req: J.Json, valid: Bool) -> IO(Maybe<&2, String>):
@@ -320,8 +337,7 @@ def message.if(+legacy: Maybe<&2, String>, +req: J.Json, valid: Bool) -> IO(Mayb
       request(legacy, req, J.get(req, "id"))
     case False{}:
       do IO<Maybe<&2, String>>:
-        IO.print(rpc_invalid_id(legacy, id_or_null(J.get(req, "id")), "-32600",
-          "invalid request: expected a JSON-RPC 2.0 object with a string method"))
+        IO.print(invalid_request(legacy, req))
         return legacy
 
 def message(+legacy: Maybe<&2, String>, m: Maybe<&2, J.Json>) -> IO(Maybe<&2, String>):
@@ -331,7 +347,7 @@ def message(+legacy: Maybe<&2, String>, m: Maybe<&2, J.Json>) -> IO(Maybe<&2, St
         IO.print(rpc_unidentified(legacy, "-32700", "parse error"))
         return legacy
     case Some{+req}:
-      message.if(legacy, req, envelope_ok(req))
+      message.if(legacy, req, envelope_ok_for(legacy, req))
 
 # Lines
 # -----
