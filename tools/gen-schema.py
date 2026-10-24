@@ -395,7 +395,11 @@ SEND_RULES = (
     "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is "
     "reached. With MAILBEND_SAVE_SENT the result's sent_copy says whether a "
     "copy was saved to the Sent folder; a failed copy does not fail the "
-    "send. With MAILBEND_TYPESAFE on, the message is first scanned locally "
+    "send. SMTP attempts report smtp_outcome (accepted, not_sent, unknown), "
+    "smtp_phase, smtp_reason and next_action. Accepted means accepted by the "
+    "SMTP server, not recipient delivery. Never automatically retry unknown; "
+    "a missing Sent copy does not prove non-delivery. With MAILBEND_TYPESAFE on, "
+    "the message is first scanned locally "
     "for secrets, then checked by Jev; a secret, unreadable text, a Jev "
     "block or a TypeSafe failure stops the send (the result has secret_scan "
     "and jev). Saving a draft (mail_save_draft) is never checked.")
