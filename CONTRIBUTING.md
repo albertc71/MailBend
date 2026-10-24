@@ -28,7 +28,9 @@ discuss larger changes before writing them.
 Run these before opening a pull request. CI runs the same on Linux x64,
 plus `cargo deny check`, a fuzz smoke run and the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
-need the Rust release pinned in `native/rust-toolchain.toml`.
+need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
+schema checks need Python `jsonschema` (`sudo apt-get install python3-jsonschema`
+on Ubuntu).
 
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
@@ -39,7 +41,9 @@ python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected
 sh tests/run-unit.sh
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
+python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
+MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
@@ -47,6 +51,12 @@ The [bounded SMTP model](docs/verification/smtp-tls/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
 The transport suite exercises the actual helper.
+
+When the checkout is on a filesystem without Linux `O_TMPFILE` support
+(for example WSL's `/mnt/c`), run the end-to-end fixtures on a native Linux
+filesystem: `MAILBEND_TEST_TMPDIR=/tmp python3 tests/test-e2e.py`. This changes
+only the temporary fixture directory; the attachment sandbox checks remain
+in force.
 
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in

@@ -63,10 +63,22 @@ settings and the key file. The checks, including the cargo ones, are in
 
 ## Contract
 
+Diagnostic modes emit only fixed `stage reason` lines, with `ok`, `invalid`,
+`failed`, `skipped`, `unsupported_tls` or `unsupported_auth` reasons; they exit
+0 when the diagnostic itself runs, even when a check fails. They never emit
+server transcripts or error messages. Bend allow-lists the tokens, renders the
+public JSON, decides which checks run and bounds each invocation to 30 seconds
+and 1 MiB. Local modes check settings, credentials and CA loading without a
+socket. Network modes authenticate with an empty operation plan and disconnect;
+they cannot parse an SMTP envelope or reserve a send. Folder discovery remains
+in Bend using its existing read-only plans and separate bounded sessions.
+
 ```text
 mailbend-tls imap   < tagged IMAP commands   > server transcript
 mailbend-tls smtp   < SMTP envelope + DATA   > server transcript
 mailbend-tls --check  # credential-free local runtime check; no network
+mailbend-tls diagnose-config-imap|diagnose-config-smtp  # local settings/credentials/CA
+mailbend-tls diagnose-imap|diagnose-smtp  # explicit TLS/authentication only, no mail
 mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
 mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
@@ -213,6 +225,15 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
   (at most 120 MiB after encoding); one SMTP reply is held to 60 MiB too,
   also during authentication, when it is not copied to the transcript.
+- **SMTP progress**: stderr contains fixed `mailbend-smtp: <phase>` lines,
+  separate from server text and authentication. Phases are `before_data`
+  before setup, `data_started` flushed before any message bytes are written,
+  and `data_accepted` or `data_rejected` after a complete, consistent final
+  DATA reply (250 or 4xx/5xx). No AUTH payload or response is recorded.
+  Failure to write/flush progress stops the session before proceeding.
+  Bend interprets the latest marker even after process interruption; absent
+  evidence is unknown. Exit status alone never proves SMTP acceptance.
+  QUIT remains best effort after acceptance or refusal.
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
 

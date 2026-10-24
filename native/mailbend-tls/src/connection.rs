@@ -58,11 +58,12 @@ struct Transcript {
     /// recorded, so a server that echoes the credentials cannot pass them
     /// to the core.
     quiet: bool,
+    redacted: bool,
 }
 
 impl Transcript {
     fn record(&mut self, bytes: &[u8]) -> Result<(), Exit> {
-        if self.quiet {
+        if self.quiet || self.redacted {
             return Ok(());
         }
         self.total += bytes.len() as u64;
@@ -80,6 +81,7 @@ impl Transcript {
 pub struct Connection {
     reader: BufReader<Transport>,
     transcript: Transcript,
+    pub(crate) stage: &'static str,
 }
 
 impl Connection {
@@ -91,8 +93,24 @@ impl Connection {
                 total: 0,
                 encoded: Vec::new(),
                 quiet: false,
+                redacted: false,
             },
+            stage: "connect",
         }
+    }
+
+    pub(crate) fn diagnostic(sock: TcpStream) -> Self {
+        let mut conn = Self::new(sock);
+        conn.transcript.redacted = true;
+        conn
+    }
+
+    /// Only fixed transport facts escape a diagnostic session.
+    pub(crate) fn enter_stage(&mut self, stage: &'static str) {
+        if self.transcript.redacted {
+            println!("{} ok", self.stage);
+        }
+        self.stage = stage;
     }
 
     /// Starts TLS on the plain socket. No bytes may be waiting: anything

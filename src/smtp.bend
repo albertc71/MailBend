@@ -132,11 +132,12 @@ def last_error(lines: List<&2, String>, found: String) -> String:
       is_error = String.starts_with(line, "4") || String.starts_with(line, "5")
       last_error(rest, kept_reply(line, found, is_error))
 
-# The text of the last "250 " reply (the queue confirmation after DATA).
+# The last completed 250 reply, including a bare code without optional text.
 def last_ok(lines: List<&2, String>, found: String) -> String:
   match lines:
     case Nil{}:
       found
     case +line <> rest:
-      is_ok = String.starts_with(line, "250 ")
+      is_ok = String.starts_with(line, "250 ") || String.eq(line, "250") ||
+        String.eq(line, "250\r")
       last_ok(rest, kept_reply(line, found, is_ok))

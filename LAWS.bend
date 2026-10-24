@@ -7,24 +7,28 @@
 # src/jev.bend: what it sends to TypeSafe, how it reads a missing answer,
 # the triage filing table, and the gates, the pure functions through which
 # alone the tools reach an SMTP envelope or a delete plan. PROOF.bend proves
-# every law; `bend PROOF.bend` is the gate. The laws cover these values and
-# their rendering only; "What the proofs cover" in README.md says what is
-# left to tests.
+# every law, including read-response field selection and fitting.
+# The laws cover these values, rendering and SMTP outcome interpretation;
+# "What the proofs cover" in README.md says what is left to tests.
 
 import Base
 import ./src/codec.bend as C
 import ./src/json.bend as J
 import ./src/imap.bend as I
+import ./src/search-cursor.bend as SC
 import ./src/mime.bend as M
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
+import ./src/tools.bend as Tools
+
+import ./src/response.bend as Response
 
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly seven tools
+# Reading is read-only, and permanent deletion is not. Exactly eight tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
 # mail_classify only asks TypeSafe about messages; mail_triage asks it, then
@@ -50,10 +54,10 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these seven, in this order
-law read_only_tools_are_exactly_seven:
+# LAW: the read-only tools are exactly these eight, in this order
+law read_only_tools_are_exactly_eight:
   {Ops.read_only_names(Ops.all_ops()) ==
-    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
       "mail_get_thread", "mail_classify"]
     : List<&2, String>}
 
@@ -64,34 +68,34 @@ law read_only_tools_are_exactly_seven:
 law tools_listed_per_config:
   for drafts: Bool
   ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_send",
        "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_reply",
        "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_classify"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread"] : List<&2, String>})
 
 # Read plans
@@ -122,6 +126,57 @@ law search_writes_nothing:
   for keys: List<&2, I.Key>
   {I.any_writes(Ops.plan_search(mbox, keys)) == False{} : Bool}
 
+# LAW: metadata discovery and selected section reads never change mail.
+law parts_write_nothing:
+  for mbox: String
+  for uid: U32
+  {I.any_writes(Ops.plan_parts(mbox, uid)) == False{} : Bool}
+
+law part_writes_nothing:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  for section: List<&2, U32>
+  for max: U32
+  {I.any_writes(Ops.plan_part(mbox, uid, uidv, section, max)) == False{} : Bool}
+
+# LAW: a selected read checks the discovered generation before requesting
+# the exact UID and numeric section; it also refetches the metadata.
+law part_guarded:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  for section: List<&2, U32>
+  for max: U32
+  {Ops.plan_part(mbox, uid, uidv, section, max) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
+        I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
+
+# LAW: every search page is read-only, including its UIDVALIDITY expectation.
+law search_page_writes_nothing:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for cursor: SC.Cursor
+  {I.any_writes(Ops.plan_search_page(mbox, keys, cursor)) == False{} : Bool}
+
+# LAW: every search page starts by opening the folder read-only.
+law search_page_examines:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for cursor: SC.Cursor
+  {Ops.has_prefix("a1 EXAMINE ", I.script(Ops.plan_search_page(mbox, keys, cursor))) ==
+    True{} : Bool}
+
+# LAW: continuation searches pin UIDVALIDITY before searching with the unchanged keys.
+law search_continuation_pins_identity:
+  for mbox: String
+  for keys: List<&2, I.Key>
+  for uidv: U32
+  for before: U32
+  {Ops.plan_search_page(mbox, keys, SC.Continue{uidv, before}) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{keys}] : List<&2, I.Cmd>}
+
 # LAW: for every mailbox, UID and size limit, the get plan writes nothing
 law get_writes_nothing:
   for mbox: String
@@ -146,6 +201,18 @@ law get_new_writes_nothing:
   for mbox: String
   for since: U32
   {I.any_writes(Ops.plan_new(mbox, since)) == False{} : Bool}
+
+# LAW: refresh is read-only, pins identity before reading UIDs, and uses
+# only metadata FETCH followed by a caller-bounded UID SEARCH.
+law refresh_plan:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  ({I.any_writes(Ops.plan_refresh(mbox, uids, uidv)) == False{} : Bool} &
+   {Ops.plan_refresh(mbox, uids, uidv) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+     I.CFetch{uids, [I.IUid{}, I.IFlags{}]}, I.CSearch{[I.KUids{uids}]}]
+    : List<&2, I.Cmd>})
 
 # LAW: for every folder list, key list and UIDs per folder, the plans that
 # read a thread write nothing
@@ -210,6 +277,17 @@ law fetch_items_never_set_seen:
   for item: I.Item
   {Ops.peek_safe(I.item_str(item)) == True{} : Bool}
 
+# LAW: summary headers render only the exact read-only header section.
+law search_headers_render_exactly:
+  {I.item_str(I.IHeaders{}) ==
+    "BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO " ++
+      "REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)]" : String}
+
+# LAW: a full-message read renders exactly its caller's byte bound, with no suffix command.
+law full_fetch_renders_exactly:
+  for max: U32
+  {I.item_str(I.IFull{max}) == "BODY.PEEK[]<0." ++ U32.show(max) ++ ">" : String}
+
 # Marking and flagging
 # --------------------
 
@@ -240,6 +318,16 @@ law flag_never_deletes:
    {Bool.or(
       I.any_marks_deleted(Ops.plan_unflag(mbox, uids, uidv)),
       I.any_expunges(Ops.plan_unflag(mbox, uids, uidv))) == False{} : Bool})
+
+# LAW: marking read or unread changes mail only by one store of the
+# caller's Seen value, for exactly the caller's UIDs; no other flag changes.
+law mark_changes_only_seen:
+  for mbox: String
+  for uids: List<&2, U32>
+  for seen: Bool
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_mark(mbox, uids, seen, uidv)) ==
+    [I.CStore{uids, seen, I.FSeen{}}] : List<&2, I.Cmd>}
 
 # LAW: every store that flagging and unflagging make is on \Flagged or a
 # colour bit
@@ -432,6 +520,11 @@ law delete_changes_exactly:
 law expunge_renders_uid_expunge:
   for uids: List<&2, U32>
   {Ops.has_prefix("UID EXPUNGE ", I.cmd_str(I.CExpunge{uids})) == True{} : Bool}
+
+# LAW: UID EXPUNGE renders exactly the supplied set, with no suffix command.
+law expunge_renders_exact_uid_set:
+  for uids: List<&2, U32>
+  {I.cmd_str(I.CExpunge{uids}) == "UID EXPUNGE " ++ I.uid_set(uids) : String}
 
 # LAW: unless the confirmation is exactly "permanently-delete", deletion
 # does nothing at all
@@ -992,3 +1085,62 @@ law outgoing_headers_state_has_no_body:
   {Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, text) ==
     Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, "")
     : String}
+
+# SMTP outcome evidence
+# ---------------------
+
+# The observable SMTP outcome, including the successful internal result.
+def smtp_outcome(o: Tools.Out) -> String:
+  match o:
+    case Tools.Ok{j}:
+      "accepted"
+    case Tools.Partial{j}:
+      Tools.str_arg(j, "smtp_outcome", "missing")
+    case Tools.Err{m}:
+      "error"
+
+# LAW: once DATA started without a final acknowledgement, or progress is
+# missing, every exit code and server transcript remains unknown.
+law smtp_unconfirmed_is_unknown:
+  for code: U32
+  for out: String
+  for err: String
+  ({smtp_outcome(Tools.smtp_code.phase("data_started", code, out, err)) == "unknown" : String} &
+   {smtp_outcome(Tools.smtp_code.phase("", code, out, err)) == "unknown" : String})
+
+# LAW: a final DATA acceptance stays successful for every later process
+# exit code; a failed QUIT or interruption cannot turn it into a refusal.
+law smtp_acceptance_survives_exit:
+  for code: U32
+  for out: String
+  for err: String
+  {Tools.smtp_code.phase("data_accepted", code, out, err) ==
+    Tools.Ok{J.str(S.last_ok(String.lines(out), ""))} : Tools.Out}
+
+# Read response projections
+# -------------------------
+
+# LAW: projection cannot omit a field other than body text, HTML or selected content.
+law projection_keeps_nonbody:
+  for mode: String
+  for key: String
+  for not_text: {String.eq(key, "text") == False{} : Bool}
+  for not_html: {String.eq(key, "html") == False{} : Bool}
+  for not_content: {String.eq(key, "content") == False{} : Bool}
+  {Response.keep(mode, key) == True{} : Bool}
+
+# LAW: the budget's body classifier cannot expand to safety or identity fields.
+law response_body_fields_are_exact:
+  for key: String
+  {Response.body_key(key) ==
+    (String.eq(key, "text") || String.eq(key, "html") || String.eq(key, "content")) : Bool}
+
+# LAW: fitting a non-body field preserves its complete value, consumes no
+# allowance and never claims it was shortened. This includes Jev and cursor data.
+law response_preserves_nonbody:
+  for key: String
+  for value: J.Json
+  for left: U32
+  for nonbody: {Response.body_key(key) == False{} : Bool}
+  {Response.fit_field(J.kv(key, value), left) ==
+    Response.Field{J.kv(key, value), left, False{}} : Response.Field}
