@@ -107,6 +107,8 @@ def show_shown(s: T.Shown) -> String:
         Maybe.default(&2, String, sent, "unknown")
     case T.Whole{o, m, max}:
       show_out(o) ++ " | whole " ++ show_msgs([m]) ++ U32.show(max)
+    case T.Selected{o, fetched}:
+      show_out(o) ++ " | selected part"
 
 def show_change(c: T.FolderChange) -> String:
   match c:
@@ -190,6 +192,8 @@ def show_atts(a: T.Attachments()) -> String:
 
 def check_switches() -> IO(Unit):
   do IO<Unit>:
+    IO.print(J.show(J.obj(T.search_page.fields(False{}, True{}, "", 7, [3, 2]))))
+    IO.print(J.show(J.obj(T.search_page.fields(False{}, False{}, "", 7, [3, 2, 1]))))
     IO.print(T.env_pick(Done{""}, "d") ++ " " ++ T.env_pick(Done{"v"}, "d") ++ " " ++
       T.env_pick(Fail{(2, "unset")}, "d"))
     IO.print(String.join([
@@ -271,11 +275,11 @@ def check_runs() -> IO(Unit):
     IO.print(show_bool(T.ok_at(I.frame(failed_transcript()), 1)) ++ " " ++
       show_bool(T.ok_at(I.frame(failed_transcript()), 2)) ++ " " ++
       show_bool(T.ok_at(I.frame(failed_transcript()), 3)))
-    IO.print(show_out(T.smtp_code(0, "250 2.1.0 ok\r\n250 2.0.0 queued as X\r\n221 bye\r\n", "")))
-    IO.print(show_out(T.smtp_code(5, "250 ok\r\n550 5.1.1 no such user\r\n", "")))
-    IO.print(show_out(T.smtp_code(3, "", "mailbend-tls: tls failed")))
+    IO.print(show_out(T.smtp_code(0, "250 2.1.0 ok\r\n250 2.0.0 queued as X\r\n221 bye\r\n", "mailbend-smtp: data_accepted\n")))
+    IO.print(show_out(T.smtp_code(5, "250 ok\r\n550 5.1.1 no such user\r\n", "mailbend-smtp: before_data\n")))
+    IO.print(show_out(T.smtp_code(3, "", "mailbend-smtp: before_data\nmailbend-tls: tls failed")))
     IO.print(show_out(T.smtp_result(T.ProcRefused{"no path"})))
-    IO.print(show_out(T.smtp_result(T.ProcOk{0, "250 sent\r\n", ""})))
+    IO.print(show_out(T.smtp_result(T.ProcOk{0, "250 sent\r\n", "mailbend-smtp: data_accepted\n"})))
 
 # Dry runs
 # --------
@@ -445,11 +449,11 @@ def check_search() -> IO(Unit):
       "|" ++ show_u32s(T.desc([3, 9, 1])) ++ "|" ++ show_u32s(T.asc([3, 9, 1])) ++
       "|" ++ show_bool(T.uid_in(3, [1, 3])) ++ " " ++ show_bool(T.uid_in(2, [1, 3])))
     IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(7)), ""),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(show_shown(T.search_headers(T.imap_code(0, I.frame(headers_transcript(8)), ""),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(show_shown(T.search_headers(T.imap_code(3, [], "mailbend-tls: down"),
-      "INBOX", Some{7}, 12, [4, 5])))
+      "INBOX", Some{7}, 12, [4, 5], [])))
     IO.print(J.show(T.summary(message(5, raw_message()))))
 
 def check_get() -> IO(Unit):
@@ -1328,6 +1332,8 @@ def main() -> IO(Unit):
     check_classify()
     check_triage()
 
+#|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
+#|{"has_more":false,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|d v d
 #|off|off|off|on|on|bad X must be 1, true, 0, false or empty|bad X must be 1, true, 0, false or empty
 #|config True False off|config False True off|bad r|bad d|config False False off
@@ -1370,9 +1376,9 @@ def main() -> IO(Unit):
 #|5 0
 #|True False False
 #|ok "250 2.0.0 queued as X"
-#|err the SMTP server refused the message: 550 5.1.1 no such user
-#|err connection or TLS verification failed: tls failed
-#|err cannot run the TLS helper: no path
+#|partial {"error":"the SMTP server refused the message: 550 5.1.1 no such user","smtp_outcome":"not_sent","smtp_phase":"before_data","smtp_reason":"stopped_before_data","next_action":"SMTP did not accept this message. Resolve the reported problem before a new attempt."}
+#|partial {"error":"connection or TLS verification failed: tls failed","smtp_outcome":"not_sent","smtp_phase":"before_data","smtp_reason":"stopped_before_data","next_action":"SMTP did not accept this message. Resolve the reported problem before a new attempt."}
+#|partial {"error":"cannot run the TLS helper: no path","smtp_outcome":"not_sent","smtp_phase":"before_smtp","smtp_reason":"helper_not_started","next_action":"SMTP did not accept this message. Resolve the reported problem before a new attempt."}
 #|ok "250 sent"
 #|ok {"dry_run":true,"imap":["a1 CAPABILITY","a2 SELECT \"INBOX\"","=EXPECT * OK [UIDVALIDITY 7]","a3 UID STORE 3 +FLAGS.SILENT (\\Deleted)","a4 UID EXPUNGE 3","a5 APPEND \"Drafts\" (\\Draft) <13 bytes>"]}
 #|ok {"dry_run":true,"smtp":{"from":"me@my.org","rcpt":["a@x.com","b@y.com"],"data":"<27 bytes>","sent_copy":true}}
@@ -1522,7 +1528,7 @@ def main() -> IO(Unit):
 #|From: me@my.org\r\nTo: "A" <a@x.com>\r\nCc: c@y.com\r\nSubject: Subject\r\nDate: Tue, 14 Nov 2023 22:13:20 +0000\r\nMessage-ID: <6553f100.00000001000000ff@my.org>\r\nIn-Reply-To: <irt@x>\r\nReferences: <r@x>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nBody
 #|42 null null
 #|ok {"ok":true,"saved_to":"Drafts","uid":42,"message_id":"<m@x>"}
-#|ok {"ok":true,"sent":true,"message_id":"<m@x>","recipients":2,"server_reply":"250 ok"} | err refused | partial null
+#|ok {"ok":true,"sent":true,"message_id":"<m@x>","recipients":2,"server_reply":"250 ok","smtp_outcome":"accepted","smtp_phase":"data_reply","smtp_reason":"accepted_by_server","next_action":"Do not resend. SMTP acceptance is not recipient delivery."} | err refused | partial null
 #|[MAILBEND_EMAIL is not a valid address][every recipient must be an address like name@example.com or "Name <name@example.com>"][at least one recipient (to, cc or bcc) is needed][][]
 #|Re: hello| RE: hello|fwd: x|Re: 
 #|> a\n> \n> b\n|

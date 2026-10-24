@@ -81,6 +81,31 @@ never marks mail as read. Tools that change messages take the `uidvalidity`
 that came with the UIDs and report which UIDs were `changed` or `missing`.
 `scripts/mailbend tools` prints each tool's full description and schema.
 
+For large MIME messages, `mail_get` accepts `section: "list"` to discover
+parts without reading their bodies, `section: "text"` or `"html"` for the
+first inline part of that type, or a numeric section such as `"2.1"` from
+the list. Supply the folder, UID and its `uidvalidity` from a prior search.
+Selected reads return `content`, `content_encoding`, `content_type`, `section`
+and `complete`. Content is decoded text for text media and base64 for other
+media, as indicated by `content_encoding`. Selected reads fail explicitly if
+the encoded part does not fit `max_bytes`, its
+metadata changes, or transfer decoding is incomplete. Results explicitly mark
+`scope: "selected_part"` and `message_complete: false`. Jev annotations respect
+the configured headers/body mode and use only selected text, marked partial;
+they do not fetch unrelated bodies. Omit `section` for the original whole-message
+prefix. Metadata-only `section: "list"` does not request annotations.
+
+`mail_get_attachment` also accepts a listed numeric `section` and
+`uidvalidity` instead of `index`. It fetches only that part, even when another
+attachment makes the message exceed 25 MB. The encoded part must be smaller
+than the existing 25 MB fetch window, and only a complete decoded file can
+be saved. Sandbox isolation and no-overwrite behavior are unchanged. Section
+IDs are IMAP MIME paths scoped to the folder, UIDVALIDITY and UID; rediscover
+them after any identity change. Nested multipart paths follow wire order;
+a `message/rfc822` attachment is one opaque part containing the complete
+attached message. Legacy `index` remains the zero-based attachment order
+reported by the whole-message `mail_get`; it is not a section number.
+
 Every tool that changes or sends mail, or saves a file, also takes
 `dry_run: true`: it runs only the tool's read-only checks and returns what it
 would do (the `imap` commands, the `smtp` sender and recipients, or the
@@ -226,6 +251,52 @@ Register the MCP server (stdio) with your agent, using the absolute path:
 The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` (or
 `MAILBEND_PASSWORD_FILE`) from its environment.
 
+MCP supports `2026-07-28` discovery and per-request metadata, alongside legacy
+initialization for `2025-06-18`, `2025-03-26` and `2024-11-05`. It advertises only
+tools. See [MCP compatibility](docs/MCP.md) for request requirements, errors,
+capabilities and the conformance test mapping.
+
+MCP revisions `2025-06-18` and `2026-07-28` return the same JSON object in `structuredContent`
+and serialized text, and advertise a per-tool `outputSchema`. The older
+`2025-03-26` and `2024-11-05` revisions
+retain text-only results and omit output schemas. The CLI result is unchanged.
+Body limits apply before MCP formatting, so both representations contain the
+same truncated content and evidence. They are not a total response wire-size
+limit: MCP includes both the JSON and its escaped text representation.
+
+### SMTP outcomes
+
+Sends (`mail_send`, and replies/forwards sent rather than saved as drafts)
+report `smtp_outcome`, `smtp_phase`, `smtp_reason`, and `next_action` once
+an SMTP attempt is made or a send gate refuses it. Argument/configuration
+errors found before composing a send remain ordinary errors.
+
+| `smtp_outcome` | Meaning | Next action |
+| --- | --- | --- |
+| `accepted` | The SMTP server acknowledged DATA. This is not proof of recipient delivery. | Do not resend. |
+| `not_sent` | The attempt stopped before message data, or the server explicitly rejected DATA. | Resolve the reported problem before a new attempt. |
+| `unknown` | DATA may have reached the server but acceptance was not confirmed, or helper progress is missing. | Never retry automatically; check server records or ask the recipient. |
+
+`not_sent` and `unknown` preserve a nonzero CLI exit and MCP `isError: true`,
+with the full JSON details and any Jev/secret-scan evidence. No SMTP attempt
+is automatically replayed. Recipient refusal aborts before DATA even if
+other recipients were accepted. Process interruption without evidence is
+conservatively unknown; interruption of the entire CLI/MCP process can
+prevent any result from reaching the caller and must also be treated as
+uncertain.
+
+Accepted results retain `sent`, `message_id`, `recipients`, and `server_reply`.
+The Message-ID is locally generated, not proof of delivery; failed or unknown
+results omit it. A failed QUIT does not undo acceptance. With
+`MAILBEND_SAVE_SENT=1`, `sent_copy` separately reports filing: failure to file
+never changes SMTP acceptance, and a missing Sent copy never proves that a
+message was not delivered.
+
+Phases are `before_smtp`, `before_data`, `data_reply`, or `unknown`; reasons
+are `local_refusal`, `helper_not_started`, `stopped_before_data`,
+`explicit_rejection`, `acceptance_unconfirmed`, `missing_progress`, or
+`accepted_by_server`.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
@@ -348,6 +419,30 @@ synthetic cost measurements and experiment decision are in
 - **Folder targets must be resolved.** Overrides, advertised roles and
   conventional names follow the per-role precedence above; ambiguous or
   unselectable targets never trigger a guessed mutation.
+- **Search pages move toward older UIDs.** `mail_search` keeps its newest-first
+  first page (default 20, at most 200 summaries). Pass its `next_cursor` as
+  `cursor`, with the same folder and criteria; `limit` may change. A mismatched,
+  malformed or stale UIDVALIDITY cursor fails: restart by omitting `cursor`.
+  `has_more: false` and `next_cursor: null` explicitly end the traversal;
+  do not pass null or an empty cursor to restart. Tokens are opaque, at most
+  4,096 characters, with a folder/normalized-criteria binding limited to
+  4,000 characters. Longer queries still return their initial page, with truthful
+  `has_more`, `next_cursor: null` and a `pagination_unavailable` reason; they cannot
+  be continued. A supplied cursor for such a query is rejected before network
+  work. Tokens contain the criteria, so handle them like the query.
+  Each page re-evaluates the query and selects UIDs strictly below the previous
+  page's last selected UID. Stable matches are visited once; arrivals and moves
+  into the folder above that boundary are excluded. Removed messages disappear,
+  and changed flags affect matching only in the still-unvisited range. This is
+  bounded traversal, not a mailbox snapshot. If a selected message vanishes
+  before FETCH, the cursor still advances past it; follow `next_cursor` even for
+  an empty page. UIDVALIDITY is checked across pages and again between SEARCH
+  and FETCH. A missing or zero UIDVALIDITY is refused even on the first call: a
+  server must identify the mailbox incarnation to support safe pagination.
+  `total` remains the current full-query match count, not a frozen
+  count or the remaining number of pages. Every page still enumerates matching
+  UIDs with UID SEARCH; pagination bounds fetched summaries and response size,
+  not server search work. `mail_get_new` retains its separate arrival cursor.
 - **Labels are folders, and no tool deletes one.** On iCloud a label is a
   folder: `mail_label` is the proven move plan (so every move law holds for
   it), and moving the messages back to INBOX removes the label.
@@ -411,7 +506,8 @@ synthetic cost measurements and experiment decision are in
 
 ### What the proofs cover
 
-The laws are about the pure IMAP command plans, the SMTP envelope, Jev's
+The laws are about the pure IMAP command plans, the SMTP envelope and outcome
+interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
 delete), and their rendering. They prove that a headers-mode Jev request
 holds no message text, and that a gate can only take a send or delete away,
@@ -419,7 +515,10 @@ never change it. The gate laws cover the pure functions
 `Jev.outbound_checked` and `Jev.delete_checked`; the IO that calls them is
 covered by the end-to-end tests and a CI check that no other code reaches
 `S.outbound` or `smtp_run`, uses `plan_delete` without `delete_checked`, or
-makes an expunge outside `src/ops.bend` and `src/imap.bend`. The native
+makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome laws prove that unconfirmed or missing progress stays unknown
+for every exit code and transcript, and that confirmed acceptance survives a
+later process failure. Native progress production itself remains a tested IO
+boundary. The native
 helpers, TLS, MIME parsing, the agent's choices and the runtime
 configuration are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
@@ -502,7 +601,7 @@ before relying on a complete link.
 - Each character of a fetched message is a separate value in memory, so
   very large messages (the 16 MiB `mail_get` / 25 MiB forward caps) use a
   lot of RAM.
-- Retrying a `mail_send` that timed out may send the message twice.
+- Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
 

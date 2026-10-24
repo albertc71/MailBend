@@ -209,6 +209,15 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   and 60 MiB per transcript before stdout's byte-to-UTF-8 encoding
   (at most 120 MiB after encoding); one SMTP reply is held to 60 MiB too,
   also during authentication, when it is not copied to the transcript.
+- **SMTP progress**: stderr contains fixed `mailbend-smtp: <phase>` lines,
+  separate from server text and authentication. Phases are `before_data`
+  before setup, `data_started` flushed before any message bytes are written,
+  and `data_accepted` or `data_rejected` after a complete, consistent final
+  DATA reply (250 or 4xx/5xx). No AUTH payload or response is recorded.
+  Failure to write/flush progress stops the session before proceeding.
+  Bend interprets the latest marker even after process interruption; absent
+  evidence is unknown. Exit status alone never proves SMTP acceptance.
+  QUIT remains best effort after acceptance or refusal.
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
 

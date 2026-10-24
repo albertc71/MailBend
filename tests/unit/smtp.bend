@@ -46,7 +46,7 @@ def main() -> IO(Unit):
     IO.print(S.last_error(String.lines("220 hi\n 550 indented\n250 ok"), "none"))
     IO.print("[" ++ S.last_error([], "") ++ "] " ++ S.last_error(["4"], "x") ++ " " ++ S.last_error(["5xx"], "x"))
     IO.print(S.last_ok(String.lines("220 hi\n250-PIPELINING\n250 OK queued as 12 \r\n354 go\n 250 indented"), "none"))
-    IO.print(S.last_ok(String.lines("220 hi\n250\n250-x\n550 no"), "none"))
+    IO.print(S.last_ok(String.lines("220 hi\n250 earlier\n250\r\n250-x\n550 no"), "none"))
     IO.print("[" ++ S.last_ok([], "") ++ "] [" ++ S.last_ok(["250 "], "x") ++ "]")
     IO.print(allows([], ["a@x.com", "a%b@x.com", ""]))
     IO.print(allows(["@x.com"], ["a@x.com", "A@X.COM", "a@sub.x.com", "a@x.com.evil", "a@xx.com", "x.com@y.org", "a%b@x.com", "a!b@x.com", "a:b@x.com"]))
@@ -70,7 +70,7 @@ def main() -> IO(Unit):
 #|none
 #|[] 4 5xx
 #|250 OK queued as 12
-#|none
+#|250
 #|[] [250]
 #|True True True 
 #|True True False False False False False False False 

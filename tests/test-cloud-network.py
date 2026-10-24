@@ -322,11 +322,16 @@ class CloudNetworkTests(unittest.TestCase):
     def test_long_lived_mcp_refreshes_doh_each_call(self):
         with self.mail_server() as (ports, _), dns_server(self.certs) as dns:
             env = self.mail_env(ports, MAILBEND_DOH_URL=dns.url, MAILBEND_READ_ONLY="1")
-            # One core process, two calls, despite still-valid DNS TTLs.
+            # One initialized core process, two calls, despite still-valid DNS TTLs.
             requests = [json.dumps({
+                "jsonrpc": "2.0", "id": 0, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "cloud-network-test", "version": "1"}}
+            }), json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"})]
+            requests.extend(json.dumps({
                 "jsonrpc": "2.0", "id": request_id, "method": "tools/call",
                 "params": {"name": "mail_probe", "arguments": {}}
-            }) for request_id in (1, 2)]
+            }) for request_id in (1, 2))
             mcp = subprocess.run(
                 [str(CLOUD_LAUNCHER), "mcp"], env=env,
                 input=("\n".join(requests) + "\n").encode(), capture_output=True, timeout=20
@@ -334,8 +339,9 @@ class CloudNetworkTests(unittest.TestCase):
             self.assert_no_fixture_secret(mcp)
             self.assertEqual(mcp.returncode, 0)
             replies = [json.loads(line) for line in mcp.stdout.splitlines()]
-            self.assertEqual([reply["id"] for reply in replies], [1, 2])
-            for reply in replies:
+            self.assertEqual([reply["id"] for reply in replies], [0, 1, 2])
+            self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-06-18")
+            for reply in replies[1:]:
                 result = json.loads(reply["result"]["content"][0]["text"])
                 self.assertTrue(result["ok"] and result["tls_verified"])
             question_types = self.assert_mail_queries(dns.queries)

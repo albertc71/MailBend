@@ -9,6 +9,7 @@ any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 """
 import base64
 import copy
+import importlib.util
 import json
 import os
 import pwd
@@ -21,6 +22,8 @@ import sys
 import tempfile
 import threading
 import time
+
+from jsonschema import Draft202012Validator
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
@@ -36,6 +39,25 @@ FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
 TOOL_COUNT = 22
 READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread"]
+
+# Validate every CLI result in the existing scenario matrix against the source
+# of the advertised contract, including Jev and interrupted mutation cases.
+_spec = importlib.util.spec_from_file_location("mailbend_schema", ROOT / "tools/gen-schema.py")
+_schema = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_schema)
+OUTPUT_VALIDATORS = {}
+for _entry in _schema.TOOLS:
+    Draft202012Validator.check_schema(_entry["outputSchema"])
+    OUTPUT_VALIDATORS[_entry["name"]] = Draft202012Validator(_entry["outputSchema"])
+    for _invalid in ({}, {"error": 1}, {"ok": True, "partial": True}):
+        assert not OUTPUT_VALIDATORS[_entry["name"]].is_valid(_invalid), _entry["name"]
+
+
+def validate_output(name, value):
+    if name in OUTPUT_VALIDATORS:
+        errors = list(OUTPUT_VALIDATORS[name].iter_errors(value))
+        check(f"schema: {name}", not errors, [e.message for e in errors])
+
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -120,6 +142,26 @@ def tool(srv, name, args=None, **env):
 
 def tool_text(srv, name, text, **env):
     """Calls a tool with its arguments as raw JSON text."""
+    if os.environ.get("MAILBEND_TEST_MCP") == "1":
+        try:
+            args = json.loads(text)
+        except json.JSONDecodeError:
+            args = None
+        if isinstance(args, dict):
+            # Keep the raw arguments: duplicate-key refusal is part of the contract.
+            call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": name, "arguments": None}})
+            call = call.replace('"arguments": null', '"arguments": ' + text, 1)
+            replies, code = mcp_session(srv, [
+                {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                 "params": {"protocolVersion": "2025-06-18"}},
+                call,
+            ], **env)
+            result = replies[-1]["result"]
+            out = json.loads(result["content"][0]["text"])
+            check(f"mcp shared value: {name}", result.get("structuredContent") == out)
+            validate_output(name, out)
+            return (1 if result["isError"] else code), out
     p = subprocess.run([LAUNCHER, "call", name, text], capture_output=True, text=True,
                        env=srv.env(**env), timeout=120)
     outputs.extend([p.stdout, p.stderr])
@@ -127,6 +169,8 @@ def tool_text(srv, name, text, **env):
         out = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
     except (json.JSONDecodeError, IndexError):
         out = {"unparsed": p.stdout, "stderr": p.stderr}
+    if p.stdout.strip():
+        validate_output(name, out)
     return p.returncode, out
 
 
@@ -139,7 +183,8 @@ def flags(state, box, uid):
 
 
 def main():
-    work = tempfile.mkdtemp(prefix="e2e-", dir=str(ROOT / "build") if (ROOT / "build").exists() else None)
+    work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
+                            (str(ROOT / "build") if (ROOT / "build").exists() else None))
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
@@ -154,6 +199,7 @@ def main():
 
 
 def run_all(work):
+    mcp_headless()
     srv = Server(work)
     try:
         reads(srv)
@@ -170,6 +216,7 @@ def run_all(work):
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
+    smtp_outcomes(work)
     downloads(work)
     threads(work)
     flags_first_reads(work)
@@ -178,6 +225,10 @@ def run_all(work):
     triage(work)
     gates(work)
     sign_in_html(work)
+    selected_parts(work)
+    selected_parts_errors(work)
+
+    search_pagination(work)
     refresh_known(work)
 
 
@@ -329,6 +380,144 @@ def sign_in_html(work):
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
                 srv.stop()
+
+
+def search_pagination(work):
+    fixture = copy.deepcopy(FIX)
+    sample = copy.deepcopy(fixture["mailboxes"]["INBOX"]["messages"][0])
+    sample["raw"] = "From: Alice <alice@example.test>\r\nSubject: page fixture\r\n\r\nbody"
+    sample["flags"] = []
+    fixture["mailboxes"]["INBOX"]["messages"] = [dict(sample, uid=i) for i in range(1, 406)]
+    srv = Server(work, fixture=fixture)
+    try:
+        seen, token, pages = [], None, 0
+        for _ in range(4):
+            pages += 1
+            args = {"subject": "page fixture", "limit": 200}
+            if token is not None:
+                args["cursor"] = token
+            c, r = tool(srv, "mail_search", args)
+            seen.extend(m["uid"] for m in r.get("messages", []))
+            check("search pages: each response bounded with full-query total", c == 0
+                  and len(r.get("messages", [])) <= 200 and r.get("total") == 405
+                  and "pagination_unavailable" not in r, r)
+            token = r.get("next_cursor")
+            if not r.get("has_more"):
+                break
+        check("search pages: traverse 405 stable matches once and terminate", seen == list(range(405, 0, -1))
+              and token is None and pages == 3 and r.get("has_more") is False, (len(seen), r))
+        c, first = tool(srv, "mail_search", {"unseen": True, "limit": 200})
+        cursor = first.get("next_cursor")
+        check("search pages: first cursor exists", c == 0 and isinstance(cursor, str), first)
+        start = len(srv.log_lines())
+        for bad in ("", "s2:" + cursor[3:], cursor + "junk", "x" * 4097,
+                    cursor.replace(":206:", ":4294967296:"), cursor.replace(":206:", ":1:")):
+            c, r = tool(srv, "mail_search", {"unseen": True, "cursor": bad})
+            check("search pages: malformed cursor rejected", c != 0 and "cursor" in r.get("error", ""), r)
+        for args in ({"cursor": cursor}, {"unseen": True, "cursor": cursor, "folder": "Archive"}):
+            c, r = tool(srv, "mail_search", args)
+            check("search pages: changed query or folder rejected", c != 0 and "cursor" in r.get("error", ""), r)
+        check("search pages: malformed and mismatched cursors cause no network work",
+              len(srv.log_lines()) == start, srv.log_lines()[start:])
+        log = srv.log_lines()
+        check("search pages: EXAMINE and BODY.PEEK only", not any(" SELECT " in x for x in log)
+              and all("BODY.PEEK" in x for x in log if " UID FETCH " in x), log[-8:])
+    finally:
+        srv.stop()
+
+    # Legacy initial searches may exceed the bounded continuation binding.
+    long_subject = "long" * 1001
+    large = copy.deepcopy(fixture)
+    large["mailboxes"]["INBOX"]["messages"] = [dict(sample, uid=i,
+        raw="From: Alice <alice@example.test>\r\nSubject: " + long_subject + "\r\n\r\nbody")
+        for i in range(1, 4)]
+    srv = Server(work, fixture=large)
+    try:
+        for limit in (2, 5):
+            c, r = tool(srv, "mail_search", {"subject": long_subject, "limit": limit})
+            check("search pages: oversized initial query preserves page and reports unavailable cursor",
+                  c == 0 and r.get("total") == 3
+                  and [m["uid"] for m in r.get("messages", [])] == [3, 2, 1][:limit]
+                  and r.get("has_more") == (limit < 3) and r.get("next_cursor") is None
+                  and "4000-character" in r.get("pagination_unavailable", ""), r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"subject": long_subject, "cursor": cursor})
+        check("search pages: oversized query with cursor refuses before network", c != 0
+              and "cursor" in r.get("error", "") and len(srv.log_lines()) == start, r)
+    finally:
+        srv.stop()
+
+    # Continue after a removal, flag change, and new arrival. Lower stable
+    # matches remain visitable; previously visited matches and the new
+    # arrival are both above the exclusive boundary.
+    changed = copy.deepcopy(fixture)
+    messages = changed["mailboxes"]["INBOX"]["messages"]
+    messages[:] = [m for m in messages if m["uid"] != 205]
+    next(m for m in messages if m["uid"] == 204)["flags"] = ["\\Seen"]
+    messages.append(dict(sample, uid=406))
+    srv = Server(work, fixture=changed)
+    try:
+        c, r = tool(srv, "mail_search", {"unseen": True, "cursor": cursor, "limit": 200})
+        check("search pages: arrivals, removals and flags obey the descending boundary", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == list(range(203, 3, -1))
+              and r.get("has_more") is True, r)
+        c, r = tool(srv, "mail_search", {"unseen": True, "cursor": r.get("next_cursor"), "limit": 3})
+        check("search pages: limit may change and final page is explicit", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == [3, 2, 1]
+              and r.get("has_more") is False and r.get("next_cursor") is None, r)
+    finally:
+        srv.stop()
+
+    for name, tweaks in (
+            ("stale", {"uidvalidity": 99}),
+            ("invalid_identity", {"uidvalidity": 0}),
+            ("empty", {"messages": []}),
+            ("maximum", {"messages": [dict(sample, uid=4294967295), dict(sample, uid=1)]})):
+        scenario = copy.deepcopy(fixture)
+        scenario["mailboxes"]["INBOX"].update(tweaks)
+        srv = Server(work, fixture=scenario)
+        try:
+            args = ({"limit": 1} if name in ("maximum", "invalid_identity") else
+                    {"unseen": True, "cursor": cursor})
+            c, r = tool(srv, "mail_search", args)
+            if name == "invalid_identity":
+                check("search pages: first call refuses missing identity without claiming a reset", c != 0
+                      and "positive UIDVALIDITY" in r.get("error", "")
+                      and not any(" UID FETCH " in x for x in srv.log_lines()), r)
+            elif name == "stale":
+                check("search pages: changed UIDVALIDITY refuses continuation before SEARCH", c != 0
+                      and "UIDVALIDITY" in r.get("error", "")
+                      and not any(" UID SEARCH " in x or " UID FETCH " in x for x in srv.log_lines()), r)
+            elif name == "empty":
+                check("search pages: empty continuation is terminal", c == 0 and r.get("messages") == []
+                      and r.get("has_more") is False and r.get("next_cursor") is None, r)
+            else:
+                check("search pages: maximum UID included on first page", c == 0
+                      and [m["uid"] for m in r.get("messages", [])] == [4294967295], r)
+                c, r = tool(srv, "mail_search", {"cursor": r.get("next_cursor"), "limit": 1})
+                check("search pages: maximum UID cannot wrap or repeat", c == 0
+                      and [m["uid"] for m in r.get("messages", [])] == [1]
+                      and r.get("has_more") is False and r.get("next_cursor") is None, r)
+        finally:
+            srv.stop()
+
+    for change in ({"at": 2, "uidvalidity": 99}, {"at": 2, "remove_uids": [405, 404]}):
+        scenario = copy.deepcopy(fixture)
+        scenario["examine_changes"] = [change]
+        srv = Server(work, fixture=scenario)
+        try:
+            c, r = tool(srv, "mail_search", {"limit": 2})
+            if "uidvalidity" in change:
+                check("search pages: changed UIDVALIDITY between SEARCH and FETCH refuses results", c != 0
+                      and "UIDVALIDITY" in r.get("error", ""), r)
+            else:
+                check("search pages: disappearing selected messages still advance cursor", c == 0
+                      and r.get("messages") == [] and r.get("has_more") is True, r)
+                c, r = tool(srv, "mail_search", {"limit": 2, "cursor": r.get("next_cursor")})
+                check("search pages: empty FETCH does not repeat a page", c == 0
+                      and [m["uid"] for m in r.get("messages", [])] == [403, 402], r)
+        finally:
+            srv.stop()
 
 
 def reads(srv):
@@ -652,19 +841,218 @@ def compose(srv):
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
 
-def mcp_bytes(srv, data, **env):
+def mcp_headless():
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "headless-test", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    probe = """
+import errno, os, sys
+assert not any(os.isatty(fd) for fd in (0, 1, 2))
+try:
+    fd = os.open('/dev/tty', os.O_RDONLY | os.O_NOCTTY)
+except OSError as error:
+    assert error.errno == errno.ENXIO, error
+else:
+    os.close(fd)
+    raise AssertionError('child has a controlling terminal')
+print('no controlling terminal', file=sys.stderr, flush=True)
+os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
+"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env["MAILBEND_READ_ONLY"] = "1"
+    data = "".join(json.dumps(r) + "\n" for r in requests)
+    for launcher in (pathlib.Path(LAUNCHER), ROOT / "scripts/mailbend-cloud"):
+        tag = f"headless {launcher.name}: "
+        try:
+            p = subprocess.run([sys.executable, "-c", probe, str(launcher)], input=data,
+                               text=True, capture_output=True, env=env, cwd="/",
+                               start_new_session=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            check(tag + "responds and exits within 180 seconds", False)
+            continue
+        outputs.extend([p.stdout, p.stderr])
+        check(tag + "starts without a controlling terminal, exits on EOF, and adds no stderr",
+              p.returncode == 0 and p.stderr == "no controlling terminal\n", p.stderr)
+        try:
+            replies = [json.loads(line) for line in p.stdout.splitlines()]
+        except json.JSONDecodeError:
+            replies = []
+        check(tag + "stdout contains only the two JSON-RPC replies",
+              len(replies) == 2 and [r.get("id") for r in replies] == [1, 2]
+              and all(r.get("jsonrpc") == "2.0" for r in replies), replies)
+        by_id = {r.get("id"): r.get("result", {}) for r in replies}
+        check(tag + "initializes without credentials",
+              by_id.get(1, {}).get("serverInfo", {}).get("name") == "mailbend"
+              and by_id.get(1, {}).get("protocolVersion") == "2025-06-18", by_id.get(1))
+        listed = by_id.get(2, {}).get("tools", [])
+        check(tag + "discovers exactly the read-only tools without credentials",
+              sorted(t.get("name", "") for t in listed) == sorted(READ_TOOLS)
+              and all("inputSchema" in t for t in listed), listed)
+
+
+def mcp_bytes(srv, data, *, legacy=True, **env):
+    if legacy:
+        init = {"jsonrpc": "2.0", "id": "test-initialize", "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"}}
+        data = json.dumps(init).encode() + b"\n" + data
     p = subprocess.Popen([LAUNCHER, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          env=srv.env(**env))
     out, err = p.communicate(data, timeout=180)
     out, err = out.decode("utf-8"), err.decode("utf-8", "replace")
     outputs.extend([out, err])
-    return [json.loads(l) for l in out.splitlines() if l.strip()], p.returncode
+    replies = [json.loads(l) for l in out.splitlines() if l.strip()]
+    if legacy:
+        initialized = bool(replies) and replies[0].get("result", {}).get("protocolVersion") == "2025-06-18"
+        check("MCP fixture initializes legacy protocol", initialized, replies[:1])
+        replies = replies[1:]
+    return replies, p.returncode
 
 
 def mcp_session(srv, requests, **env):
     # raw bytes: a string request may carry lone surrogates standing for invalid UTF-8 bytes
     lines = [json.dumps(r) if not isinstance(r, str) else r for r in requests]
     return mcp_bytes(srv, b"\n".join(l.encode("utf-8", "surrogateescape") for l in lines) + b"\n", **env)
+
+
+def modern_request(identifier, method="server/discover", **params):
+    return {"jsonrpc": "2.0", "id": identifier, "method": method, "params": {
+        "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                  "io.modelcontextprotocol/clientCapabilities": {}}, **params}}
+
+
+def mcp_modern(srv):
+    # Official schema examples and normative requirements are mapped in docs/MCP.md.
+    versions = ["2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"]
+    reqs = [modern_request(1), modern_request(2, "tools/list"),
+            modern_request(3, "tools/call", name="mail_search", arguments={"limit": 1}),
+            modern_request(4, "tools/call", name="mail_delete", arguments={}),
+            modern_request(5, "tools/call", name="no-such-tool"),
+            modern_request(6, "tools/call", name=123),
+            modern_request(7, "tools/call", name="mail_probe", arguments=[]),
+            modern_request(8, "tools/list", cursor="unissued"),
+            modern_request(9, "resources/list"), modern_request(10, "ping"),
+            modern_request(11, "initialize"),
+            {"jsonrpc": "2.0", "id": 12, "method": "tools/list"},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 3}},
+            modern_request(13, "tools/call", name="mail_probe", requestState="unissued")]
+    res, code = mcp_session(srv, reqs, legacy=False)
+    by_id = {r.get("id"): r for r in res}
+    discover = by_id[1].get("result", {})
+    check("modern MCP: discovery reports supported versions and only tools", code == 0 and
+          discover.get("supportedVersions") == versions and discover.get("capabilities") == {"tools": {}}, res)
+    check("modern MCP: every success identifies complete result and server", all(
+        r["result"].get("resultType") == "complete" and
+        r["result"].get("_meta", {}).get("io.modelcontextprotocol/serverInfo", {}).get("name") == "mailbend"
+        for r in res if "result" in r), res)
+    tools = by_id[2]["result"]["tools"]
+    check("modern MCP: tool list and successful call", len(tools) == TOOL_COUNT and all(
+        t["inputSchema"].get("type") == "object" for t in tools) and
+        by_id[3]["result"].get("isError") is False, res)
+    check("modern MCP: tool input failure remains a tool execution error",
+          by_id[4].get("result", {}).get("isError") is True, by_id[4])
+    check("modern MCP: malformed calls, unknown tools, cursors and missing metadata are protocol errors",
+          all(by_id[i].get("error", {}).get("code") == -32602 for i in [5, 6, 7, 8, 12, 13]), res)
+    check("modern MCP: unsupported methods and legacy methods are absent",
+          all(by_id[i].get("error", {}).get("code") == -32601 for i in [9, 10, 11]), res)
+    check("modern MCP: notifications have no replies", len(res) == 13, res)
+    res, _ = mcp_session(srv, [modern_request(1, "tools/list")], legacy=False)
+    check("modern MCP: discovery is optional", len(res[0].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
+    res, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}], legacy=False)
+    check("legacy ping before initialization cannot establish a legacy session",
+          res[0].get("result") == {} and res[1].get("error", {}).get("code") == -32602, res)
+
+    # Each request must stand alone; preceding valid metadata supplies nothing.
+    malformed = []
+    for version in [None, 17, {}, []]:
+        req = modern_request(len(malformed))
+        req["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = version
+        malformed.append(req)
+    for meta in [None, [], "bad", {}, {"io.modelcontextprotocol/protocolVersion": "2026-07-28"},
+                 {"io.modelcontextprotocol/clientCapabilities": {}}]:
+        malformed.append(modern_request(len(malformed), _meta=meta))
+    for caps in [None, [], "bad", {"roots": 1}, {"sampling": {"tools": 1}},
+                 {"elicitation": {"form": []}}, {"extensions": {"com.example/test": True}}]:
+        req = modern_request(len(malformed))
+        req["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"] = caps
+        malformed.append(req)
+    req = modern_request(len(malformed))
+    req["params"]["_meta"]["io.modelcontextprotocol/clientInfo"] = {"name": "missing-version"}
+    malformed.append(req)
+    res, _ = mcp_session(srv, [modern_request("valid"), *malformed], legacy=False)
+    check("modern MCP: missing and malformed metadata fails independently",
+          len(res) == len(malformed) + 1 and all(r.get("error", {}).get("code") == -32602 for r in res[1:]), res)
+    unsupported = []
+    for i, version in enumerate(["1900-01-01", "", "2025-06-18"]):
+        req = modern_request(i)
+        req["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = version
+        unsupported.append(req)
+    res, _ = mcp_session(srv, unsupported, legacy=False)
+    check("modern MCP: unsupported versions include exact requested and supported versions", all(
+        r.get("error", {}).get("code") == -32022 and
+        r["error"].get("data") == {"supported": versions, "requested": req["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]}
+        for r, req in zip(res, unsupported)) and len(res) == 3, res)
+    res, _ = mcp_session(srv, [modern_request(None), modern_request(1.5), modern_request("ok")], legacy=False)
+    check("modern MCP: ids must be strings or integers", [r.get("error", {}).get("code") for r in res[:2]] ==
+          [-32600, -32600] and all("id" not in r for r in res[:2]) and "result" in res[2], res)
+    res, _ = mcp_session(srv, [modern_request(1.0), json.dumps(modern_request(2)).replace('"id": 2', '"id": 2e0')], legacy=False)
+    check("modern MCP: integer-valued decimal and exponent ids are accepted",
+          [r.get("id") for r in res] == [1, 2] and all("result" in r for r in res), res)
+    res, _ = mcp_session(srv, ["not-json", modern_request("recovered")], legacy=False)
+    check("modern MCP: parse error omits unreadable id and next request recovers",
+          res[0].get("error", {}).get("code") == -32700 and "id" not in res[0] and "result" in res[1], res)
+    bad_fraction = modern_request(1.5)
+    bad_fraction["jsonrpc"] = "1.0"
+    bad_null = modern_request(None)
+    bad_null["jsonrpc"] = "1.0"
+    init = {"jsonrpc": "2.0", "id": "init", "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"}}
+    res, _ = mcp_session(srv, [bad_fraction, init, bad_null, bad_fraction,
+        {"jsonrpc": "1.0", "id": None, "method": "ping"}, modern_request("recovered")], legacy=False)
+    check("modern MCP: malformed envelopes use their own era for error ids",
+          all(r.get("error", {}).get("code") == -32600 and "id" not in r for r in [res[0], res[2], res[3]]) and
+          "id" in res[4] and res[4]["id"] is None and "result" in res[5], res)
+    res, _ = mcp_session(srv, [
+        {"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": []},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}], legacy=False)
+    check("modern MCP: notification or malformed initialization cannot create legacy state",
+          len(res) == 2 and all(r.get("error", {}).get("code") == -32602 for r in res), res)
+
+    for version in versions[1:]:
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": version}}
+        reqs = [init, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                modern_request(3), {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                                    "params": {"name": "mail_search", "arguments": {"limit": 1}}},
+                modern_request(5, _meta={"io.modelcontextprotocol/protocolVersion": None}),
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/list"}]
+        res, _ = mcp_session(srv, reqs, legacy=False)
+        check(f"MCP legacy {version}: initialization, list, call and modern interleaving",
+              res[0].get("result", {}).get("protocolVersion") == version and
+              len(res[1]["result"]["tools"]) == TOOL_COUNT and "resultType" not in res[1]["result"] and
+              res[2]["result"].get("resultType") == "complete" and
+              res[3]["result"].get("isError") is False and "resultType" not in res[3]["result"] and
+              res[4].get("error", {}).get("code") == -32602 and
+              len(res[5].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
+
+    # The same guards serve both eras; metadata cannot enable a forbidden tool.
+    for env, forbidden, hidden, args in [
+            ({"MAILBEND_READ_ONLY": "1"}, "mail_delete", True, {"uids": [1],
+             "uidvalidity": 1700000001, "confirm": "permanently-delete"}),
+            ({"MAILBEND_DRAFTS_ONLY": "1"}, "mail_send", True, {"to": ["test@example.com"],
+             "subject": "test", "body": "test"}),
+            ({"MAILBEND_READ_ONLY": "invalid"}, "mail_probe", False, {})]:
+        start = len(srv.log_lines())
+        res, _ = mcp_session(srv, [modern_request(1, "tools/list"),
+            modern_request(2, "tools/call", name=forbidden, arguments=args)], legacy=False, **env)
+        check(f"modern MCP: safety configuration {env} fails closed",
+              (not hidden or forbidden not in [t["name"] for t in res[0]["result"]["tools"]]) and
+              res[1].get("result", {}).get("isError") is True and len(srv.log_lines()) == start, res)
 
 
 def mcp(srv):
@@ -713,7 +1101,9 @@ def mcp(srv):
     check("mcp: malformed envelopes answered with -32600", by_id.get(8, {}).get("error", {}).get("code") == -32600
           and any(r.get("id") is None and r.get("error", {}).get("code") == -32600 for r in res), res)
     check("mcp: exits cleanly when stdin closes", code == 0, code)
+    mcp_structured(srv)
     mcp_framing(srv)
+    mcp_modern(srv)
 
 
 def ping(i):
@@ -722,6 +1112,60 @@ def ping(i):
 
 def unknown_method(i, name):
     return json.dumps({"jsonrpc": "2.0", "id": i, "method": name}, ensure_ascii=False).encode()
+
+
+def mcp_structured(srv):
+    calls = [
+        ("mail_get", {"uid": 3}),
+        ("mail_search", {}),
+        ("mail_get", {"uid": 1, "unexpected": True}),
+        ("mail_delete", {"uids": [1], "uidvalidity": 1}),
+        ("mail_mark_read", {"uids": [3], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
+        ("mail_send", {"to": ["test@example.net"], "body": 'A "quote"\n\t雪', "dry_run": True}),
+    ]
+    for version in ("2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05", "unknown"):
+        requests = [{"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                     "params": {"protocolVersion": version}},
+                    {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+        requests += [{"jsonrpc": "2.0", "id": i + 2, "method": "tools/call",
+                      "params": {"name": name, "arguments": args}}
+                     for i, (name, args) in enumerate(calls)]
+        if version == "2026-07-28":
+            requests = [modern_request(0), modern_request(1, "tools/list")]
+            requests += [modern_request(i + 2, "tools/call", name=name, arguments=args)
+                         for i, (name, args) in enumerate(calls)]
+        replies, code = mcp_session(srv, requests, legacy=False)
+        modern = version in ("2026-07-28", "2025-06-18", "unknown")
+        check(f"mcp: {version} output schemas follow negotiated version",
+              all(("outputSchema" in t) == modern for t in replies[1]["result"]["tools"]))
+        if modern:
+            check(f"mcp: {version} publishes generated output contracts",
+                  all(t["outputSchema"] == OUTPUT_VALIDATORS[t["name"]].schema
+                      for t in replies[1]["result"]["tools"]))
+        for (name, _), reply in zip(calls, replies[2:]):
+            result = reply["result"]
+            value = json.loads(result["content"][0]["text"])
+            validate_output(name, value)
+            check(f"mcp: {version} {name} shared output",
+                  result.get("structuredContent") == value if modern
+                  else "structuredContent" not in result, result)
+        check(f"mcp: {version} exits cleanly", code == 0)
+
+    # State survives chunk boundaries, invalid requests, notifications and EOF.
+    lines = [
+        {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+         "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 1, "method": "ping", "padding": "x" * 70000},
+        {"jsonrpc": "2.0", "method": "initialize",
+         "params": {"protocolVersion": "2024-11-05"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": []},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "mail_get", "arguments": {"uid": 3}}},
+    ]
+    replies, _ = mcp_bytes(srv, b"\n".join(json.dumps(line).encode() for line in lines))
+    result = replies[-1]["result"]
+    check("mcp: negotiated output survives chunks, invalid initialize, notification and EOF",
+          result.get("structuredContent") == json.loads(result["content"][0]["text"]))
 
 
 def mcp_framing(srv):
@@ -1799,6 +2243,70 @@ def daily_limit(srv, work):
     c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", XDG_STATE_HOME=xdg)
     check("daily limit: the counter defaults to $XDG_STATE_HOME/mailbend", c == 0
           and pathlib.Path(xdg, "mailbend", "sends").is_file(), r)
+
+
+def smtp_outcomes(work):
+    srv = Server(work, extra=["--echo-login", "--cut-goodbye"])
+    try:
+        for recipient, expected, reason, recorded in [
+            ("before-data-close@example.com", "not_sent", "stopped_before_data", 0),
+            ("reject@example.com", "not_sent", "stopped_before_data", 0),
+            ("final-reject@example.com", "not_sent", "explicit_rejection", 0),
+            ("lost-reply@example.com", "unknown", "acceptance_unconfirmed", 1),
+            ("friend@example.com", "accepted", "accepted_by_server", 1),
+            ("bare-reply@example.com", "accepted", "accepted_by_server", 1),
+        ]:
+            for use_mcp in (False, True):
+                before = len(srv.st()["sent"])
+                start = len(srv.log_records())
+                args = {**SEND, "to": ["first@example.com", recipient]}
+                env = {"MAILBEND_SAVE_SENT": "1", "MAILBEND_SENT_FOLDER": "Nowhere"}
+                if use_mcp:
+                    replies, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1,
+                        "method": "tools/call", "params": {"name": "mail_send", "arguments": args}}], **env)
+                    result = replies[0]["result"]
+                    r = json.loads(result["content"][0]["text"])
+                    failed = result.get("isError") is True
+                else:
+                    c, r = tool(srv, "mail_send", args, **env)
+                    failed = c != 0
+                commands = [x["line"] for x in srv.log_records()[start:] if x["proto"] == "smtp"]
+                check(f"SMTP {recipient} via {'MCP' if use_mcp else 'CLI'} preserves outcome",
+                      r.get("smtp_outcome") == expected and r.get("smtp_reason") == reason
+                      and failed == (expected != "accepted")
+                      and len(srv.st()["sent"]) == before + recorded, r)
+                check("SMTP attempts are never automatically replayed",
+                      sum(line.startswith("MAIL FROM:") for line in commands) == 1, commands)
+                if expected == "accepted":
+                    check("accepted DATA survives failed QUIT and failed Sent filing",
+                          r.get("sent") is True and r.get("message_id")
+                          and r.get("sent_copy", "").startswith("failed:"), r)
+                else:
+                    check("failed or unknown SMTP never attempts Sent filing",
+                          "sent_copy" not in r and "message_id" not in r
+                          and not any(" APPEND " in x["line"] for x in srv.log_records()[start:]), r)
+                if recipient == "bare-reply@example.com":
+                    check("bare final DATA acceptance preserves the actual server reply",
+                          r.get("server_reply") == "250", r)
+                if recipient == "reject@example.com":
+                    check("one refused recipient aborts before DATA despite earlier accepted recipient",
+                          "DATA" not in commands and "550" in r.get("error", ""), commands)
+                if expected == "unknown":
+                    check("unknown outcome gives duplicate-safe guidance",
+                          "Do not retry automatically" in r.get("next_action", "")
+                          and "missing Sent copy" in r.get("next_action", ""), r)
+        helper = pathlib.Path(work) / "interrupted-smtp-helper"
+        calls = pathlib.Path(work) / "interrupted-smtp-calls"
+        for phase, expected in [("before_data", "not_sent"), ("data_started", "unknown"), ("", "unknown")]:
+            calls.write_text("")
+            marker = f"printf 'mailbend-smtp: {phase}\\n' >&2\n" if phase else ""
+            helper.write_text(f"#!/bin/sh\nprintf 'call\\n' >> '{calls}'\n" + marker + "kill -KILL $$\n")
+            helper.chmod(0o700)
+            c, r = tool(srv, "mail_send", SEND, MAILBEND_TLS_HELPER=str(helper))
+            check(f"interrupted helper {phase or 'without evidence'} is {expected} and never replayed",
+                  c != 0 and r.get("smtp_outcome") == expected and calls.read_text().splitlines() == ["call"], r)
+    finally:
+        srv.stop()
 
 
 def sent_message(srv, box, message_id):
@@ -3391,6 +3899,11 @@ def gates_vetoes(srv, work, key_file, attach_dir):
         check("gates: a clean forward asks whether the original may be shared, and goes",
               c == 0 and set(body.get("questions", {})) == {"recipients", "disclosure", "forward"}, (r, body))
         check("gates: only the sends Jev cleared were delivered", sent_count(srv) == n + 4, sent_count(srv) - n)
+        for recipient, expected in [("final-reject@example.com", "not_sent"), ("lost-reply@example.com", "unknown")]:
+            c, r, logged, asked = gate_call(srv, ts, "mail_send", {**SEND, "to": [recipient]}, **env)
+            check(f"gates: SMTP {expected} preserves Jev and scan evidence",
+                  c != 0 and r.get("smtp_outcome") == expected and r.get("secret_scan") == "clean"
+                  and r.get("jev", {}).get("decision") == "proceeded" and len(asked) == 1, r)
     finally:
         ts.stop()
 
@@ -3533,6 +4046,12 @@ def gates_annotations(srv, work, key_file):
         listed = {m["uid"]: m.get("jev", {}) for m in r.get("messages", [])}
         check("gates: every message mail_search lists carries a checked jev object",
               c == 0 and listed and all(j.get("status") == "checked" for j in listed.values()), r)
+        c, page = tool(srv, "mail_search", {"limit": 1}, **env)
+        c, page = tool(srv, "mail_search", {"limit": 1, "cursor": page.get("next_cursor")}, **env)
+        check("gates: search continuation retains Jev annotations and pagination fields", c == 0
+              and len(page.get("messages", [])) == 1
+              and page["messages"][0].get("jev", {}).get("status") == "checked"
+              and "has_more" in page and "next_cursor" in page, page)
         flagged = {uid for uid, j in listed.items() if j.get("signals", {}).get("suspected_injection")}
         check("gates: suspected_injection is shown only where Jev suspects it", flagged == {GATE_INJECTION}, listed)
         missing = [(name, r) for name, args in ANNOTATED_READS[1:] for c, r in [tool(srv, name, args, **env)]
@@ -3551,6 +4070,149 @@ def gates_annotations(srv, work, key_file):
               states and not has_key(states, "text") and GATE_TEXT not in json.dumps(states), states[:1])
     finally:
         ts.stop()
+
+
+def selected_parts(work):
+    fixture = copy.deepcopy(FIX)
+    huge = "Z" * (26 * 1024 * 1024)
+    raw = ("Content-Type: multipart/mixed; boundary=outer\r\n\r\n"
+           "--outer\r\nContent-Type: application/octet-stream\r\n"
+           "Content-Disposition: attachment; filename=large.bin\r\n\r\n" + huge +
+           "\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n"
+           "--inner\r\nContent-Type: text/plain\r\n"
+           "Content-Transfer-Encoding: quoted-printable\r\n\r\nsmall=20text"
+           "\r\n--inner\r\nContent-Type: text/html\r\n"
+           "Content-Transfer-Encoding: base64\r\n\r\nPHA+c21hbGw8L3A+"
+           "\r\n--inner--\r\n--outer\r\nContent-Type: application/octet-stream\r\n"
+           "Content-Disposition: attachment; filename=small.bin\r\n"
+           "Content-Transfer-Encoding: base64\r\n\r\naGVsbG8="
+           "\r\n--outer--\r\n")
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = raw
+    fixture["mailboxes"]["INBOX"]["messages"][0]["measure_sections"] = True
+    uidv = fixture["mailboxes"]["INBOX"]["uidvalidity"]
+    download_dir = pathlib.Path(work) / "selected-downloads"
+    download_dir.mkdir(exist_ok=True)
+    srv = Server(work, fixture=fixture)
+    try:
+        common = {"uid": 1, "uidvalidity": uidv}
+        c, r = tool(srv, "mail_get", dict(common, section="list"))
+        check("sections: discover nested paths without message bytes", c == 0 and
+              [p["section"] for p in r.get("parts", [])] == ["1", "2.1", "2.2", "3"], r)
+        for section, expected in [("text", "small text"), ("html", "<p>small</p>")]:
+            c, r = tool(srv, "mail_get", dict(common, section=section), MAILBEND_READ_ONLY="1")
+            check("sections: small " + section + " after oversized sibling", c == 0 and
+                  r.get("content") == expected and r.get("complete") is True, r)
+        c, r = tool(srv, "mail_get", dict(common, section="3"))
+        check("sections: binary content remains lossless", c == 0 and
+              r.get("content_encoding") == "base64" and r.get("content") == "aGVsbG8=", r)
+        c, r = tool(srv, "mail_get_attachment",
+                    dict(common, section="3", filename="preview.bin", dry_run=True),
+                    MAILBEND_DOWNLOAD_DIR=str(download_dir))
+        check("sections: dry run never publishes a file", c == 0 and
+              not (download_dir / "preview.bin").exists(), r)
+        c, r = tool(srv, "mail_get_attachment", dict(common, section="3"),
+                    MAILBEND_DOWNLOAD_DIR=str(download_dir))
+        path = download_dir / "small.bin"
+        check("sections: complete selected attachment", c == 0 and path.read_bytes() == b"hello", r)
+        c, r = tool(srv, "mail_get_attachment", dict(common, section="3"),
+                    MAILBEND_DOWNLOAD_DIR=str(download_dir))
+        check("sections: no overwrite", c != 0 and path.exists() and path.read_bytes() == b"hello", r)
+        for args in [dict(common, section="1] STORE 1 +FLAGS (\\Seen)"),
+                     dict(common, section="0"), dict(common, section="01"),
+                     dict(common, section="3", uidvalidity=uidv + 1),
+                     {"uid": 1, "section": "text"}]:
+            c, r = tool(srv, "mail_get", args)
+            check("sections: invalid identity refused", c != 0, r)
+        records = srv.log_records()
+        lines = [x["line"] for x in records if x["proto"] == "imap"]
+        sizes = [x["line"] for x in records if x["proto"] == "imap-section-bytes"]
+        expected_sizes = {"BODY[2.1]<0>": 12, "BODY[2.2]<0>": 16, "BODY[3]<0>": 8}
+        measured = [(name, int(size)) for name, size in (line.split() for line in sizes)]
+        check("sections: measured payload sizes", {name for name, _ in measured} ==
+              set(expected_sizes) and all(expected_sizes.get(name) == size
+                                         for name, size in measured), sizes)
+        check("sections: only selected PEEK and read-only metadata", not any(
+            " SELECT " in x or "BODY.PEEK[]" in x or "BODY[" in x or
+            "BODY.PEEK[1]" in x or " STORE " in x for x in lines), lines[-20:])
+        check("sections: message remains unread", not flags(srv.st(), "INBOX", 1))
+        if os.environ.get("MAILBEND_MEASURE_PARTS") == "1":
+            for label, args in [("whole-prefix", dict(uid=1, max_bytes=262144)),
+                                ("selected-text", dict(common, section="text"))]:
+                before = len(srv.log_records())
+                measurement = pathlib.Path(work) / (label + ".rss")
+                p = subprocess.run(["/usr/bin/time", "-f", "%M", "-o", str(measurement),
+                                    LAUNCHER, "call", "mail_get", json.dumps(args)],
+                                   env=srv.env(), capture_output=True, text=True, timeout=120)
+                check("sections: measured " + label, p.returncode == 0, p.stderr)
+                payloads = [x["line"] for x in srv.log_records()[before:]
+                            if x["proto"] == "imap-section-bytes"]
+                print("MEASURE " + label + " peak RSS KiB=" + measurement.read_text().strip() +
+                      "; payload bytes=" + repr(payloads))
+        key_file = typesafe_key_file(work)
+        for scenario, mode in [("ok", "headers"), ("ok", "body"), ("status:503", "body")]:
+            ts = TypeSafe(work, scenario)
+            try:
+                c, r = tool(srv, "mail_get", dict(common, section="text"),
+                            **jev_env(ts, key_file, MAILBEND_TYPESAFE_CONTENT=mode,
+                                      MAILBEND_TYPESAFE_ZERO_RETENTION="1"))
+                expected_status = "checked" if scenario == "ok" else "unchecked"
+                check("sections: Jev " + mode + " " + scenario + " preserves content and scope",
+                      c == 0 and r.get("content") == "small text" and
+                      r.get("scope") == "selected_part" and r.get("message_complete") is False and
+                      r.get("jev", {}).get("status") == expected_status, r)
+                states = [email for q in ts.requests() for email in q["body"]["state"]["emails"]]
+                check("sections: Jev " + mode + " sees only permitted selected facts",
+                      states and all(("text" not in email if mode == "headers" else
+                                      "small text" in email.get("text", "") and
+                                      "message incomplete" in email.get("text", ""))
+                                     for email in states) and "ZZZZ" not in json.dumps(states), states)
+            finally:
+                ts.stop()
+        print("MEASURE selected fixture: unrelated encoded bytes=" + str(len(huge)) +
+              "; selected text=12, html=16, attachment=8 encoded bytes")
+    finally:
+        srv.stop()
+
+
+def selected_parts_errors(work):
+    uidv = FIX["mailboxes"]["INBOX"]["uidvalidity"]
+    for encoding, body, truncate, cut in [("base64", "aGVsbG8", False, False),
+                                           ("quoted-printable", "hello=2", False, False),
+                                           ("7bit", "hello", True, False),
+                                           ("7bit", "hello", False, True)]:
+        fixture = copy.deepcopy(FIX)
+        message = fixture["mailboxes"]["INBOX"]["messages"][0]
+        message["raw"] = ("Content-Type: application/octet-stream\r\n"
+                          "Content-Disposition: attachment; filename=broken.bin\r\n"
+                          f"Content-Transfer-Encoding: {encoding}\r\n\r\n{body}")
+        message["section_truncate"] = truncate
+        message["cut_section_literal"] = cut
+        target = pathlib.Path(work) / "selected-errors"
+        target.mkdir(exist_ok=True)
+        srv = Server(work, fixture=fixture, extra=("--flags-first",))
+        try:
+            c, r = tool(srv, "mail_get_attachment",
+                        {"uid": 1, "uidvalidity": uidv, "section": "1"},
+                        MAILBEND_DOWNLOAD_DIR=str(target))
+            check("sections: " + encoding + (" cut literal" if cut else
+                  " size mismatch" if truncate else " malformed transfer") + " never saved",
+                  c != 0 and not (target / "broken.bin").exists(), r)
+        finally:
+            srv.stop()
+    fixture = copy.deepcopy(FIX)
+    attached = "Subject: enclosed\nContent-Type: text/plain\n\ninner text"
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "Content-Type: message/rfc822\r\n"
+        "Content-Disposition: attachment; filename=original.eml\r\n\r\n" + attached)
+    srv = Server(work, fixture=fixture, extra=("--flags-first",))
+    try:
+        c, r = tool(srv, "mail_get_attachment", {"uid": 1, "uidvalidity": uidv, "section": "1"},
+                    MAILBEND_DOWNLOAD_DIR=str(target))
+        saved = target / "original.eml"
+        check("sections: message/rfc822 remains a complete opaque attachment",
+              c == 0 and saved.read_text() == attached, r)
+    finally:
+        srv.stop()
 
 
 if __name__ == "__main__":
