@@ -34,8 +34,8 @@ TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEN
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 21
-READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_get_thread"]
+TOOL_COUNT = 22
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread"]
 
 results = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
@@ -178,6 +178,108 @@ def run_all(work):
     triage(work)
     gates(work)
     sign_in_html(work)
+    refresh_known(work)
+
+
+def refresh_known(work):
+    """A caller owns its arrival cursor and its bounded local UID cache."""
+    uidv = FIX['mailboxes']['INBOX']['uidvalidity']
+    srv = Server(work)
+    try:
+        c, arrival = tool(srv, 'mail_get_new', {'limit': 3})
+        known = {m['uid']: m['flags'] for m in arrival['messages']}
+        cursor = arrival['next_since_uid']
+        tool(srv, 'mail_mark_read', {'uids': [1], 'uidvalidity': uidv})
+        tool(srv, 'mail_move', {'uids': [2], 'uidvalidity': uidv, 'destination': 'Archive'})
+        before = srv.st()
+        log_start = len(srv.log_lines())
+        c, r = tool(srv, 'mail_refresh', {'uids': [3, 1, 2, 1], 'uidvalidity': uidv},
+                    MAILBEND_READ_ONLY='1')
+        for uid in r.get('absent', []):
+            known.pop(uid, None)
+        known.update({m['uid']: m['flags'] for m in r.get('present', [])})
+        check('refresh: reconciles flags and mailbox-local removal, deduplicated and sorted',
+              c == 0 and r.get('complete') and r['absent'] == [2] and r['unknown'] == []
+              and list(known) == [1, 3] and '\\Seen' in known[1]
+              and [m['uid'] for m in r['present']] == [1, 3], r)
+        logged = srv.log_lines()[log_start:]
+        check('refresh: one EXAMINE and UID metadata FETCH/SEARCH, no flag mutation',
+              sum(' EXAMINE ' in x for x in logged) == 1
+              and sum(' UID FETCH ' in x for x in logged) == 1
+              and sum(' UID SEARCH ' in x for x in logged) == 1
+              and not any(any(x in line for x in MUTATING_COMMANDS + (' SELECT ', 'BODY'))
+                          for line in logged)
+              and before['mailboxes'] == srv.st()['mailboxes'], logged)
+        c, more = tool(srv, 'mail_get_new', {'since_uid': cursor, 'uidvalidity': uidv})
+        check('refresh: arrival cursor remains unchanged and supplies subsequent arrivals',
+              c == 0 and [m['uid'] for m in more['messages']] == [4, 5, 6]
+              and more['next_since_uid'] == 6, more)
+        c, r = tool(srv, 'mail_refresh', {'uids': [4294967295], 'uidvalidity': uidv})
+        check('refresh: largest UID is literal and may be absent',
+              c == 0 and r.get('complete') and r['absent'] == [4294967295], r)
+        n = len(srv.log_lines())
+        bad = []
+        for us in ([], [0], [-1], [4294967296], [1.5], ['1'], [1] * 101):
+            c, r = tool(srv, 'mail_refresh', {'uids': us, 'uidvalidity': uidv})
+            if c == 0:
+                bad.append((us, r))
+        check('refresh: empty, invalid and over-limit inputs fail before connecting',
+              not bad and len(srv.log_lines()) == n, bad)
+        n = len(srv.log_lines())
+        c, r = tool(srv, 'mail_refresh', {'uids': [1], 'uidvalidity': 7})
+        check('refresh: UIDVALIDITY reset discards all old identities before FETCH',
+              c == 0 and r.get('reset_required') and not r['complete']
+              and r['uidvalidity'] == uidv and not r['present'] and not r['absent'] and not r['unknown']
+              and not any(' UID ' in line for line in srv.log_lines()[n:]), r)
+    finally:
+        srv.stop()
+    for extra, absent, unknown in [
+            (('--fetch-no-flags', '1'), [99], [1]),
+            (('--remove-after-fetch', '1'), [1, 99], []),
+            (('--search-response', 'missing'), [], [1, 99]),
+            (('--search-response', 'malformed'), [], [1, 99]),
+            (('--search-response', 'duplicate'), [], [1, 99]),
+            (('--reject', 'SEARCH'), [], [1, 99]),
+            (('--drop-unanswered', 'SEARCH'), [], [1, 99]),
+            (('--drop-after', 'FETCH'), [], [1, 99])]:
+        srv = Server(work, extra=extra)
+        try:
+            c, r = tool(srv, 'mail_refresh', {'uids': [1, 99], 'uidvalidity': uidv})
+            check('refresh evidence: ' + ' '.join(extra),
+                  c == 0 and r.get('absent') == absent and r.get('unknown') == unknown
+                  and r.get('complete') == (not unknown), r)
+        finally:
+            srv.stop()
+    for size in (1, 10, 100):
+        fixture = copy.deepcopy(FIX)
+        template = fixture['mailboxes']['INBOX']['messages'][0]
+        fixture['mailboxes']['INBOX']['messages'] = [dict(template, uid=u, flags=['\\Seen'])
+                                                    for u in range(1, size + 1)]
+        srv = Server(work, fixture=fixture, extra=('--measure-responses',))
+        try:
+            c, r = tool(srv, 'mail_refresh', {'uids': list(range(1, size + 1)), 'uidvalidity': uidv})
+            records = srv.log_records()
+            commands = [x['line'] for x in records if x['proto'] == 'imap']
+            response_bytes = sum(int(x['line']) for x in records if x['proto'] == 'imap-bytes')
+            result_bytes = len(json.dumps(r, separators=(',', ':')).encode())
+            check(f'refresh cost: {size} UIDs', c == 0 and r.get('complete')
+                  and len(r['present']) == size and len(commands) == 5 and response_bytes < 262144,
+                  (r, commands, response_bytes))
+            print(f'MEASURE refresh uids={size} commands={len(commands)} '
+                  f'imap_response_bytes={response_bytes} result_bytes={result_bytes}')
+        finally:
+            srv.stop()
+    for flag, label in [('x' * 300000, 'helper output'), ('\\' * 150000, 'JSON result')]:
+        fixture = copy.deepcopy(FIX)
+        fixture['mailboxes']['INBOX']['messages'][0]['flags'] = [flag]
+        srv = Server(work, fixture=fixture)
+        try:
+            c, r = tool(srv, 'mail_refresh', {'uids': [1, 99], 'uidvalidity': uidv})
+            check('refresh: ' + label + ' cap loses evidence, never declares absence',
+                  c == 0 and not r.get('complete') and r.get('absent') == []
+                  and r.get('unknown') == [1, 99], r)
+        finally:
+            srv.stop()
 
 
 def sign_in_html(work):

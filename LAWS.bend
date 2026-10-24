@@ -24,7 +24,7 @@ import ./src/smtp.bend as S
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly seven tools
+# Reading is read-only, and permanent deletion is not. Exactly eight tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
 # mail_classify only asks TypeSafe about messages; mail_triage asks it, then
@@ -50,10 +50,10 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these seven, in this order
-law read_only_tools_are_exactly_seven:
+# LAW: the read-only tools are exactly these eight, in this order
+law read_only_tools_are_exactly_eight:
   {Ops.read_only_names(Ops.all_ops()) ==
-    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
       "mail_get_thread", "mail_classify"]
     : List<&2, String>}
 
@@ -64,34 +64,34 @@ law read_only_tools_are_exactly_seven:
 law tools_listed_per_config:
   for drafts: Bool
   ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_send",
        "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_reply",
        "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread", "mail_classify"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread"] : List<&2, String>})
 
 # Read plans
@@ -146,6 +146,18 @@ law get_new_writes_nothing:
   for mbox: String
   for since: U32
   {I.any_writes(Ops.plan_new(mbox, since)) == False{} : Bool}
+
+# LAW: refresh is read-only, pins identity before reading UIDs, and uses
+# only metadata FETCH followed by a caller-bounded UID SEARCH.
+law refresh_plan:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  ({I.any_writes(Ops.plan_refresh(mbox, uids, uidv)) == False{} : Bool} &
+   {Ops.plan_refresh(mbox, uids, uidv) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+     I.CFetch{uids, [I.IUid{}, I.IFlags{}]}, I.CSearch{[I.KUids{uids}]}]
+    : List<&2, I.Cmd>})
 
 # LAW: for every folder list, key list and UIDs per folder, the plans that
 # read a thread write nothing

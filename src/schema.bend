@@ -96,6 +96,29 @@ def tool_defs.mail_get_new() -> String:
     "\"destructiveHint\":false,\"idempotentHint\":true,",
     "\"openWorldHint\":true}}"])
 
+def tool_defs.mail_refresh() -> String:
+  String.concat([
+    "{\"name\":\"mail_refresh\",\"description\":\"Refresh known message UIDs ",
+    "in one read-only session. Returns present UIDs with flags, absent UIDs ",
+    "proved absent in this mailbox by SEARCH, and unknown UIDs when evidence ",
+    "is incomplete. Absence is not global deletion. Missing FETCH never ",
+    "proves absence. complete is false for unknown evidence or ",
+    "reset_required; on reset discard the mailbox's cached UIDs. Stateless, ",
+    "not a snapshot; combine with mail_get_new. At most 100 supplied UIDs, ",
+    "sorted and deduplicated; empty is refused. One session, three commands, ",
+    "256 KiB helper output and result, 30 seconds. No content or Jev calls.\",",
+    "\"inputSchema\":{\"type\":\"object\",",
+    "\"properties\":{\"folder\":{\"type\":\"string\",",
+    "\"description\":\"Mailbox name; at most 1024 UTF-8 bytes. Default ",
+    "INBOX.\"},\"uids\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",",
+    "\"minimum\":1,\"maximum\":4294967295},\"minItems\":1,\"maxItems\":100},",
+    "\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1,",
+    "\"maximum\":4294967295,\"description\":\"Expected mailbox identity from ",
+    "earlier reads.\"}},\"required\":[\"uids\",\"uidvalidity\"],",
+    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
+    "\"destructiveHint\":false,\"idempotentHint\":true,",
+    "\"openWorldHint\":false}}"])
+
 def tool_defs.mail_get_thread() -> String:
   String.concat([
     "{\"name\":\"mail_get_thread\",\"description\":\"Read the conversation a ",
@@ -719,6 +742,7 @@ def tool_defs() -> String:
     tool_defs.mail_search(),
     tool_defs.mail_get(),
     tool_defs.mail_get_new(),
+    tool_defs.mail_refresh(),
     tool_defs.mail_get_thread(),
     tool_defs.mail_classify(),
     tool_defs.mail_triage(),

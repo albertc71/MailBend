@@ -214,6 +214,9 @@ class State:
         self.session_flags = False
         self.noisy_store = False
         self.fetch_no_flags = set()
+        self.search_response = "normal"
+        self.remove_after_fetch = set()
+        self.measure_responses = False
         self.flags_first = False
         self.cut_goodbye = False
         self.file_sent = None
@@ -702,6 +705,8 @@ class IMAPSession:
     def send(self, text: str):
         if not self.muted:
             self.conn.write(text.encode('latin-1'))
+            if self.state.measure_responses:
+                self.logger.log('imap-bytes', str(len(text)))
 
     def run(self):
         self.send('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] fake ready\r\n')
@@ -971,7 +976,13 @@ class IMAPSession:
                 self.send(f'{tag} BAD unknown search key {unknown}\r\n')
                 return
             matched = sorted(m['uid'] for m in messages if all(p(m) for p in preds))
-        self.send('* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n')
+        response = '* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n'
+        if self.state.search_response == 'malformed':
+            self.send('* SEARCH invalid\r\n')
+        elif self.state.search_response != 'missing':
+            self.send(response)
+            if self.state.search_response == 'duplicate':
+                self.send(response)
         self.send(f'{tag} OK SEARCH completed\r\n')
 
     def build_fetch_response(self, seq, m, items):
@@ -1038,6 +1049,12 @@ class IMAPSession:
         for line in out_lines:
             self.send(line)
         self.send(f'{tag} OK FETCH completed\r\n')
+        if self.state.remove_after_fetch:
+            with self.state.lock:
+                mb = self.state.data['mailboxes'][mbox]
+                mb['messages'] = [m for m in mb['messages']
+                                  if m['uid'] not in self.state.remove_after_fetch]
+                self.state.save()
 
     def cmd_store(self, tag, args):
         mbox = self.require_selected(tag)
@@ -1591,6 +1608,10 @@ def main():
                     help='answer every STORE with FETCH updates and repeat FETCH answers')
     ap.add_argument('--flags-first', action='store_true',
                     help='precede every FETCH answer with an unsolicited update holding only UID and FLAGS')
+    ap.add_argument('--search-response', choices=['normal', 'missing', 'malformed', 'duplicate'],
+                    default='normal')
+    ap.add_argument('--remove-after-fetch', type=lambda v: {int(u) for u in v.split(',')}, default=set())
+    ap.add_argument('--measure-responses', action='store_true')
     ap.add_argument('--fetch-no-flags', type=lambda v: {int(u) for u in v.split(',')}, default=set(),
                     help='leave FLAGS out of FETCH answers for these comma-separated UIDs')
     ap.add_argument('--cut-goodbye', action='store_true',
@@ -1618,6 +1639,9 @@ def main():
     state.session_flags = args.session_flags
     state.noisy_store = args.noisy_store
     state.fetch_no_flags = args.fetch_no_flags
+    state.search_response = args.search_response
+    state.remove_after_fetch = args.remove_after_fetch
+    state.measure_responses = args.measure_responses
     state.flags_first = args.flags_first
     state.cut_goodbye = args.cut_goodbye
     state.file_sent = args.file_sent
