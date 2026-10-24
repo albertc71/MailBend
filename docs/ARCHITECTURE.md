@@ -312,7 +312,7 @@ This is a scope decision, not a claim that OAuth is incompatible with IMAP or
 SMTP. There is no accepted OAuth-specific user need sufficient to justify
 owning consent, token expiry, refresh coordination and revocation alongside
 the current connector. The current authentication owners are
-[`Credentials::load`](../native/mailbend-tls/src/creds.rs),
+[`creds::load`](../native/mailbend-tls/src/creds.rs),
 [IMAP `login`](../native/mailbend-tls/src/imap/session.rs) and
 [SMTP `authenticate`](../native/mailbend-tls/src/smtp/session.rs).
 The existing password profile and native boundaries remain authoritative.
