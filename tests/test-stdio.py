@@ -196,15 +196,32 @@ class StdioTests(unittest.TestCase):
                 self.assertEqual(session.proc.wait(timeout=10), -sig)
                 wait_until(lambda: not live(core))
 
-    @unittest.skipIf("wsl-capture-crash" in pathlib.Path("/proc/sys/kernel/core_pattern").read_text(),
-                     "WSL crash collector delays SIGQUIT termination despite RLIMIT_CORE=0")
     def test_quit_status_propagates(self):
         with Session(LAUNCHERS[0]) as session:
             session.peer.sendall(discovery())
             session.line()
             core = session.core_pid()
             session.proc.send_signal(signal.SIGQUIT)
-            self.assertEqual(session.proc.wait(timeout=10), -signal.SIGQUIT)
+            try:
+                status = session.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pattern = pathlib.Path("/proc/sys/kernel/core_pattern").read_text().strip()
+                dumping = False
+                owned_states = {}
+                for pid in (core, session.proc.pid):
+                    try:
+                        state = pathlib.Path(f"/proc/{pid}/status").read_text()
+                        dumping |= "CoreDumping:\t1" in state
+                        owned_states[pid] = [line for line in state.splitlines()
+                                             if line.startswith(("State:", "CoreDumping:", "SigPnd:"))]
+                    except FileNotFoundError:
+                        owned_states[pid] = ["exited"]
+                print(f"SIGQUIT timeout: core_pattern={pattern!r}; owned_states={owned_states}",
+                      file=sys.stderr)
+                if pattern.startswith("|") and dumping:
+                    self.skipTest(f"{pattern.split()[0]} delayed SIGQUIT; kernel reports CoreDumping=1")
+                raise
+            self.assertEqual(status, -signal.SIGQUIT)
             self.assertFalse(live(core))
 
     def test_controlled_child_signal_statuses(self):
