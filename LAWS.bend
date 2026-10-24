@@ -20,6 +20,7 @@ import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
+import ./src/response.bend as Response
 
 # Tool classes
 # ------------
@@ -992,3 +993,30 @@ law outgoing_headers_state_has_no_body:
   {Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, text) ==
     Jev.outgoing_request(Jev.Headers{}, Jev.Outgoing{fields, attachments, about}, vetoes, "")
     : String}
+
+# Read response projections
+# -------------------------
+
+# LAW: projection cannot omit a field other than the two body fields.
+law projection_keeps_nonbody:
+  for mode: String
+  for key: String
+  for not_text: {String.eq(key, "text") == False{} : Bool}
+  for not_html: {String.eq(key, "html") == False{} : Bool}
+  {Response.keep(mode, key) == True{} : Bool}
+
+# LAW: the budget's body classifier cannot expand to safety or identity fields.
+law response_body_fields_are_exact:
+  for key: String
+  {Response.body_key(key) ==
+    (String.eq(key, "text") || String.eq(key, "html")) : Bool}
+
+# LAW: fitting a non-body field preserves its complete value, consumes no
+# allowance and never claims it was shortened. This includes Jev and cursor data.
+law response_preserves_nonbody:
+  for key: String
+  for value: J.Json
+  for left: U32
+  for nonbody: {Response.body_key(key) == False{} : Bool}
+  {Response.fit_field(J.kv(key, value), left) ==
+    Response.Field{J.kv(key, value), left, False{}} : Response.Field}

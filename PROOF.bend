@@ -15,6 +15,7 @@ import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
+import ./src/response.bend as Response
 
 # Tool classes
 # ------------
@@ -1301,3 +1302,42 @@ def Laws.secret_scan_blocks(part, reason, gate, allow, rcpts, from, msg):
 
 def Laws.outgoing_headers_state_has_no_body(fields, attachments, about, vetoes, text):
   {==}
+
+# Read response projections
+# -------------------------
+
+def Laws.projection_keeps_nonbody(mode, key, not_text, not_html):
+  %Equal.sym(Bool, String.eq(key, "text"), False{}, not_text) :
+    {Bool.not((_ && (String.eq(mode, "html") || String.eq(mode, "metadata"))) ||
+      (String.eq(key, "html") &&
+        (String.eq(mode, "text") || String.eq(mode, "metadata")))) == True{} : Bool}
+  %Equal.sym(Bool, String.eq(key, "html"), False{}, not_html) :
+    {Bool.not(_ && (String.eq(mode, "text") || String.eq(mode, "metadata"))) == True{} : Bool}
+  {==}
+
+def Laws.response_body_fields_are_exact(key):
+  {==}
+
+def Laws.response_preserves_nonbody(key, value, left, nonbody):
+  match value:
+    case J.JStr{s}:
+      %Equal.sym(Bool, Response.body_key(key), False{}, nonbody) :
+        {Response.fit_field.if(_, key, s, left) ==
+          Response.Field{J.kv(key, J.str(s)), left, False{}} : Response.Field}
+      {==}
+    case J.JNull{}:
+      {==}
+    case J.JBool{b}:
+      {==}
+    case J.JNum{s}:
+      {==}
+    case J.JArr{xs}:
+      {==}
+    case J.JObj{xs}:
+      {==}
+    case J.JCons{h, t}:
+      {==}
+    case J.JEnd{}:
+      {==}
+    case J.JKv{k, v}:
+      {==}

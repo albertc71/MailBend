@@ -80,6 +80,52 @@ never marks mail as read. Tools that change messages take the `uidvalidity`
 that came with the UIDs and report which UIDs were `changed` or `missing`.
 `scripts/mailbend tools` prints each tool's full description and schema.
 
+### Compact read responses
+
+`mail_get`, `mail_search`, `mail_get_new` and `mail_get_thread` accept optional
+`projection` and `max_response_bytes`. With neither argument, their existing
+results stay unchanged, including `mail_get`'s decoded HTML.
+
+| Projection | Returned body fields |
+| --- | --- |
+| `full` (default) | `text` and `html` |
+| `text` | `text` only |
+| `html` | `html` only |
+| `metadata` | Neither body field |
+
+Projection only selects body fields; list reads already return summaries.
+Headers, attachments, identifiers, UIDVALIDITY, completeness and Jev results
+remain intact. `html_available` still describes the fetched message, even
+when the projection omits its HTML. Projection does not change what is
+fetched or what Jev inspects.
+
+`max_response_bytes` (1–16777216, no default limit) bounds the shared result
+JSON's **UTF-8 bytes**, including JSON quotes and escaping. The CLI's final
+newline and MCP's outer envelope, string escaping and any duplicate structured
+content are outside this budget. This is not a token limit. The result is
+projected once before CLI/MCP serialization.
+
+```sh
+scripts/mailbend call mail_get '{"uid":42,"projection":"text","max_response_bytes":8192}'
+```
+
+Opting in adds `response`: its `projection`, `max_bytes` (0 means no output
+budget), `budget_scope: "result_json_utf8"`, `output_truncated` and
+`request_more` describe the result. A budget shortens `text` first, then gives
+any remaining room to `html`, cutting only at Unicode scalar boundaries.
+HTML may consequently end inside a tag; it remains untrusted content.
+`response.output_truncated` reports budget shortening; the existing `truncated`
+field still reports an incomplete **fetch**. Selecting metadata or omitting a
+body by projection never makes a truncated fetch complete. To retrieve more,
+select `full`, raise `max_response_bytes`, and raise the fetch `max_bytes` if
+`truncated` is true.
+
+The budget never drops summaries or advances an arrival cursor past omitted
+messages. If protected fields and the response notice alone will not fit,
+the call fails explicitly with the minimum required budget. Raise the budget,
+or reduce `limit` where supported and retry the **same checkpoint**. Error
+responses are outside the output budget and are never shortened.
+
 Every tool that changes or sends mail, or saves a file, also takes
 `dry_run: true`: it runs only the tool's read-only checks and returns what it
 would do (the `imap` commands, the `smtp` sender and recipients, or the
@@ -377,6 +423,13 @@ checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
 maps each rule to the code and checks that enforce it.
+
+Response projection laws also prove that selecting a projection keeps every
+non-body field, and fitting a non-body field preserves its entire value and
+byte allowance. A separate law fixes the body classifier to exactly `text` and
+`html`, so safety fields cannot silently become shorten-able. Whole-response
+byte bounds, cursor paging and unchanged Jev inputs are tested; those are not
+claimed as universally quantified budget or IO proofs.
 
 ## How it works
 

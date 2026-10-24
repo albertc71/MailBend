@@ -178,6 +178,12 @@ def run_all(work):
     triage(work)
     gates(work)
     sign_in_html(work)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("response_projection_cases",
+                                                  ROOT / "tests" / "response-projection-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
 
 
 def sign_in_html(work):
@@ -3426,6 +3432,23 @@ def gates_annotations(srv, work, key_file):
         states = [q["body"]["state"] for q in ts.requests()]
         check("gates, headers mode: the reads never send a message body to TypeSafe",
               states and not has_key(states, "text") and GATE_TEXT not in json.dumps(states), states[:1])
+        body_env = dict(env, MAILBEND_TYPESAFE_CONTENT="body")
+        c, baseline, _, asked = gate_call(srv, ts, "mail_get", {"uid": GATE_INJECTION}, **body_env)
+        for mode in ("text", "html", "metadata"):
+            code, projected, _, observed = gate_call(srv, ts, "mail_get",
+                {"uid": GATE_INJECTION, "projection": mode, "max_response_bytes": 5000}, **body_env)
+            check(f"projection {mode}: identical Jev input and safety results",
+                  c == code == 0 and [q["body"] for q in asked] == [q["body"] for q in observed]
+                  and projected.get("jev") == baseline.get("jev"), projected)
+        # Metadata's protected size plus the two empty body keys leaves only
+        # a short prefix, while reserving the exact same Jev response.
+        budget = len(json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode()) + 24
+        code, shortened, _, observed = gate_call(srv, ts, "mail_get",
+            {"uid": GATE_INJECTION, "projection": "full", "max_response_bytes": budget}, **body_env)
+        check("projection budget: truncated output cannot change Jev input or status",
+              code == 0 and shortened.get("response", {}).get("output_truncated") is True
+              and [q["body"] for q in asked] == [q["body"] for q in observed]
+              and shortened.get("jev") == baseline.get("jev"), shortened)
     finally:
         ts.stop()
 

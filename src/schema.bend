@@ -46,10 +46,23 @@ def tool_defs.mail_search() -> String:
     "this date, YYYY-MM-DD.\"},\"unseen\":{\"type\":\"boolean\"},",
     "\"seen\":{\"type\":\"boolean\"},\"flagged\":{\"type\":\"boolean\"},",
     "\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200,",
-    "\"description\":\"Default 20.\"}},\"required\":[],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
-    "\"destructiveHint\":false,\"idempotentHint\":true,",
-    "\"openWorldHint\":true}}"])
+    "\"description\":\"Default 20.\"},\"projection\":{\"type\":\"string\",",
+    "\"enum\":[\"full\",\"text\",\"html\",\"metadata\"],",
+    "\"description\":\"Body fields to return; default full preserves text and ",
+    "HTML. text omits html, html omits text, metadata omits both. Headers, ",
+    "summaries, identity, completeness and Jev stay unchanged. Does not ",
+    "change fetching or Jev input.\"},",
+    "\"max_response_bytes\":{\"type\":\"integer\",\"minimum\":1,",
+    "\"maximum\":16777216,\"description\":\"Optional UTF-8 byte budget for ",
+    "shared result JSON, including JSON escaping; excludes CLI newline and ",
+    "MCP envelope/escaping. No default limit. Only body strings are ",
+    "shortened. All selected summaries/cursors/Jev results are retained; an ",
+    "impossible budget is an error (errors are outside the budget). Retry ",
+    "with a larger budget or smaller limit and the same checkpoint. ",
+    "response.output_truncated is separate from fetched-message ",
+    "truncated.\"}},\"required\":[],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
+    "\"idempotentHint\":true,\"openWorldHint\":true}}"])
 
 def tool_defs.mail_get() -> String:
   String.concat([
@@ -68,10 +81,23 @@ def tool_defs.mail_get() -> String:
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
     "\"minimum\":1},\"max_bytes\":{\"type\":\"integer\",\"minimum\":1024,",
     "\"maximum\":16777216,\"description\":\"Read at most this many bytes of ",
-    "the message. Default 262144.\"}},\"required\":[\"uid\"],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
-    "\"destructiveHint\":false,\"idempotentHint\":true,",
-    "\"openWorldHint\":true}}"])
+    "the message. Default 262144.\"},\"projection\":{\"type\":\"string\",",
+    "\"enum\":[\"full\",\"text\",\"html\",\"metadata\"],",
+    "\"description\":\"Body fields to return; default full preserves text and ",
+    "HTML. text omits html, html omits text, metadata omits both. Headers, ",
+    "summaries, identity, completeness and Jev stay unchanged. Does not ",
+    "change fetching or Jev input.\"},",
+    "\"max_response_bytes\":{\"type\":\"integer\",\"minimum\":1,",
+    "\"maximum\":16777216,\"description\":\"Optional UTF-8 byte budget for ",
+    "shared result JSON, including JSON escaping; excludes CLI newline and ",
+    "MCP envelope/escaping. No default limit. Only body strings are ",
+    "shortened. All selected summaries/cursors/Jev results are retained; an ",
+    "impossible budget is an error (errors are outside the budget). Retry ",
+    "with a larger budget or smaller limit and the same checkpoint. ",
+    "response.output_truncated is separate from fetched-message ",
+    "truncated.\"}},\"required\":[\"uid\"],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
+    "\"idempotentHint\":true,\"openWorldHint\":true}}"])
 
 def tool_defs.mail_get_new() -> String:
   String.concat([
@@ -91,10 +117,23 @@ def tool_defs.mail_get_new() -> String:
     "\"description\":\"UIDVALIDITY from the previous call; required when ",
     "since_uid is set. If it changed, the checkpoint restarts at 0.\"},",
     "\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":500,",
-    "\"description\":\"Default 50.\"}},\"required\":[],",
-    "\"additionalProperties\":false},\"annotations\":{\"readOnlyHint\":true,",
-    "\"destructiveHint\":false,\"idempotentHint\":true,",
-    "\"openWorldHint\":true}}"])
+    "\"description\":\"Default 50.\"},\"projection\":{\"type\":\"string\",",
+    "\"enum\":[\"full\",\"text\",\"html\",\"metadata\"],",
+    "\"description\":\"Body fields to return; default full preserves text and ",
+    "HTML. text omits html, html omits text, metadata omits both. Headers, ",
+    "summaries, identity, completeness and Jev stay unchanged. Does not ",
+    "change fetching or Jev input.\"},",
+    "\"max_response_bytes\":{\"type\":\"integer\",\"minimum\":1,",
+    "\"maximum\":16777216,\"description\":\"Optional UTF-8 byte budget for ",
+    "shared result JSON, including JSON escaping; excludes CLI newline and ",
+    "MCP envelope/escaping. No default limit. Only body strings are ",
+    "shortened. All selected summaries/cursors/Jev results are retained; an ",
+    "impossible budget is an error (errors are outside the budget). Retry ",
+    "with a larger budget or smaller limit and the same checkpoint. ",
+    "response.output_truncated is separate from fetched-message ",
+    "truncated.\"}},\"required\":[],\"additionalProperties\":false},",
+    "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
+    "\"idempotentHint\":true,\"openWorldHint\":true}}"])
 
 def tool_defs.mail_get_thread() -> String:
   String.concat([
@@ -113,7 +152,20 @@ def tool_defs.mail_get_thread() -> String:
     "failed.\",\"inputSchema\":{\"type\":\"object\",",
     "\"properties\":{\"folder\":{\"type\":\"string\",\"description\":\"Folder ",
     "(IMAP mailbox) name. Default: INBOX.\"},\"uid\":{\"type\":\"integer\",",
-    "\"minimum\":1}},\"required\":[\"uid\"],\"additionalProperties\":false},",
+    "\"minimum\":1},\"projection\":{\"type\":\"string\",\"enum\":[\"full\",",
+    "\"text\",\"html\",\"metadata\"],\"description\":\"Body fields to return; ",
+    "default full preserves text and HTML. text omits html, html omits text, ",
+    "metadata omits both. Headers, summaries, identity, completeness and Jev ",
+    "stay unchanged. Does not change fetching or Jev input.\"},",
+    "\"max_response_bytes\":{\"type\":\"integer\",\"minimum\":1,",
+    "\"maximum\":16777216,\"description\":\"Optional UTF-8 byte budget for ",
+    "shared result JSON, including JSON escaping; excludes CLI newline and ",
+    "MCP envelope/escaping. No default limit. Only body strings are ",
+    "shortened. All selected summaries/cursors/Jev results are retained; an ",
+    "impossible budget is an error (errors are outside the budget). Retry ",
+    "with a larger budget or smaller limit and the same checkpoint. ",
+    "response.output_truncated is separate from fetched-message ",
+    "truncated.\"}},\"required\":[\"uid\"],\"additionalProperties\":false},",
     "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,",
     "\"idempotentHint\":true,\"openWorldHint\":true}}"])
 

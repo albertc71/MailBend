@@ -40,6 +40,8 @@ def hints(read_only=False, destructive=False, idempotent=False,
 def tool(name, description, annotations, properties=None, required=()):
     """One tools/list entry. Every tool that is not read-only takes dry_run."""
     properties = dict(properties or {})
+    if name in ("mail_get", "mail_search", "mail_get_new", "mail_get_thread"):
+        properties.update(READ_PROJECTION)
     if not annotations["readOnlyHint"]:
         properties["dry_run"] = DRY_RUN
     return {"name": name, "description": description,
@@ -72,6 +74,21 @@ UIDVALIDITY = param(
     "mail_get_new). Checked in the same session as the change; if the folder "
     "changed since, nothing is changed.",
     minimum=1)
+
+READ_PROJECTION = {
+    "projection": param(
+        "string", "Body fields to return; default full preserves text and HTML. "
+        "text omits html, html omits text, metadata omits both. Headers, summaries, "
+        "identity, completeness and Jev stay unchanged. Does not change fetching or Jev input.",
+        enum=["full", "text", "html", "metadata"]),
+    "max_response_bytes": param(
+        "integer", "Optional UTF-8 byte budget for shared result JSON, including JSON escaping; "
+        "excludes CLI newline and MCP envelope/escaping. No default limit. Only body strings "
+        "are shortened. All selected summaries/cursors/Jev results are retained; an impossible "
+        "budget is an error (errors are outside the budget). Retry with a larger budget or "
+        "smaller limit and the same checkpoint. response.output_truncated is separate from "
+        "fetched-message truncated.", minimum=1, maximum=16777216),
+}
 
 # The messages a change applies to; the whole input of the simple changes.
 MESSAGES = {"folder": FOLDER, "uids": UIDS, "uidvalidity": UIDVALIDITY}
