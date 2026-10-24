@@ -139,6 +139,39 @@ Expect `"ok": true`, `"tls_verified": true`, authenticated capabilities and
 discovered folders. Authentication errors and missing-secret errors are
 separate from DNS errors.
 
+### Connector fails to load with ENXIO
+
+[Issue #30](https://github.com/albertc71/MailBend/issues/30) reports Grok
+Bot's `user-mailbend` connector failing during tool discovery with
+`failed_to_load`, `Connection closed` and `No such device or address`
+(`ENXIO`). In that report, a standalone MCP initialize request succeeded
+with piped stdio and no controlling terminal. MailBend does not require a
+terminal. The end-to-end suite also checks initialize and tools/list through
+both launchers in a new session, without credentials or a controlling terminal.
+
+The reported evidence points to the client's launch path or its custom
+wrapper environment. It does not identify the exact failing client call.
+The custom `mailbend-mcp-host.py` mentioned in the report is not shipped by
+this repository. Use the direct launcher and `args: ["mcp"]` shown above to
+remove that extra variable. Tool discovery needs no mail credentials, so a
+discovery failure alone does not establish a mail authentication problem.
+
+If standalone discovery works but the connector still fails, collect the
+client's launch error and exit status for the platform maintainer. Do not
+dump environment values or credentials. Allocating a pseudo-terminal is
+not a verified repair and can change the stdio protocol. No fix in the
+Grok Bot runner has been verified here.
+
+The supported fallback is the CLI, with the same environment and safety
+settings as the MCP server:
+
+```sh
+MAILBEND_READ_ONLY=1 /workspace/MailBend/scripts/mailbend-cloud call mail_probe '{}'
+```
+
+Use `scripts/mailbend-cloud call <tool> '<json-arguments>'` for other tools.
+This bypasses MCP client startup; it does not bypass MailBend's policy checks.
+
 ### Optional: Jev
 
 To use [Jev](JEV.md), keep the TypeSafe key in a file, not in a secret

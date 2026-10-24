@@ -139,6 +139,7 @@ def flags(state, box, uid):
 
 
 def main():
+    mcp_headless()
     work = tempfile.mkdtemp(prefix="e2e-", dir=str(ROOT / "build") if (ROOT / "build").exists() else None)
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
@@ -527,6 +528,55 @@ def compose(srv):
           and "report.txt" in data, r)
     s = srv.st()
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
+
+
+def mcp_headless():
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "headless-test", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    probe = """
+import errno, os, sys
+assert not any(os.isatty(fd) for fd in (0, 1, 2))
+try:
+    fd = os.open('/dev/tty', os.O_RDONLY | os.O_NOCTTY)
+except OSError as error:
+    assert error.errno == errno.ENXIO, error
+else:
+    os.close(fd)
+    raise AssertionError('child has a controlling terminal')
+print('no controlling terminal', file=sys.stderr, flush=True)
+os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
+"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env["MAILBEND_READ_ONLY"] = "1"
+    data = "".join(json.dumps(r) + "\n" for r in requests)
+    for launcher in (ROOT / "scripts/mailbend", ROOT / "scripts/mailbend-cloud"):
+        p = subprocess.run([sys.executable, "-c", probe, str(launcher)], input=data,
+                           text=True, capture_output=True, env=env, cwd="/",
+                           start_new_session=True, timeout=180)
+        outputs.extend([p.stdout, p.stderr])
+        tag = f"headless {launcher.name}: "
+        check(tag + "starts without a controlling terminal and exits on EOF",
+              p.returncode == 0 and p.stderr == "no controlling terminal\n", p.stderr)
+        try:
+            replies = [json.loads(line) for line in p.stdout.splitlines()]
+        except json.JSONDecodeError:
+            replies = []
+        check(tag + "stdout contains only the two JSON-RPC replies",
+              len(replies) == 2 and [r.get("id") for r in replies] == [1, 2]
+              and all(r.get("jsonrpc") == "2.0" for r in replies), replies)
+        by_id = {r.get("id"): r.get("result", {}) for r in replies}
+        check(tag + "initializes without credentials",
+              by_id.get(1, {}).get("serverInfo", {}).get("name") == "mailbend"
+              and by_id.get(1, {}).get("protocolVersion") == "2025-06-18", by_id.get(1))
+        listed = by_id.get(2, {}).get("tools", [])
+        check(tag + "discovers exactly the read-only tools without credentials",
+              sorted(t.get("name", "") for t in listed) == sorted(READ_TOOLS)
+              and all("inputSchema" in t for t in listed), listed)
 
 
 def mcp_bytes(srv, data, **env):
