@@ -3432,7 +3432,7 @@ def gates_annotations(srv, work, key_file):
         states = [q["body"]["state"] for q in ts.requests()]
         check("gates, headers mode: the reads never send a message body to TypeSafe",
               states and not has_key(states, "text") and GATE_TEXT not in json.dumps(states), states[:1])
-        body_env = dict(env, MAILBEND_TYPESAFE_CONTENT="body")
+        body_env = dict(env, **BODY_MODE)
         c, baseline, _, asked = gate_call(srv, ts, "mail_get", {"uid": GATE_INJECTION}, **body_env)
         for mode in ("text", "html", "metadata"):
             code, projected, _, observed = gate_call(srv, ts, "mail_get",

@@ -24,9 +24,9 @@ field selection, tiny-budget rejection, scalar boundaries and protected fields.
 
 ## Verification scope
 
-Existing safety laws remain unchanged. Three added laws prove generic non-body
-field selection, fix the body classifier to exactly text/HTML, and preserve every
-non-body JSON value and byte allowance while fitting. The new whole-response
+Existing safety laws remain unchanged. Three added laws prove the generic non-body
+selection predicate, fix the body classifier to exactly text/HTML, and preserve every
+non-body JSON value and byte allowance while fitting. Full list/result assembly and the whole-response
 budget and cursor invariants are validated by unit and synthetic e2e tests;
 this work does not claim a universally quantified byte-budget or IO theorem.
 The parent coordinates the requested independent formal-verification council and
@@ -124,4 +124,14 @@ Two temporary mutations of the real `src/response.bend` were each rejected with
 to `body_key`. The first fails `projection_keeps_nonbody`; the second fails
 `response_body_fields_are_exact`, preventing the generic non-body premise from
 becoming vacuous. The source was restored byte-for-byte after both checks, and
-the restored proofs pass. Final proven-kernel verification is queued.
+the restored proofs pass. Final `bend PROOF.bend --verdict` passed with all three new laws
+(66 seconds, 1,134,412 KiB peak RSS).
+
+## Contributor-check progress
+
+The final proven-kernel check, all 13 unit suites, all 21 transport cases,
+all 14 cloud-network cases, and Rust fmt/clippy (`-D warnings`)/99 tests pass.
+Full e2e is running. The Windows checkout's cloud-launcher shebang had CRLF and
+was normalized locally; e2e temporary storage was moved to ext4 `/tmp` because
+Windows-mounted directories cannot create the FIFO required by existing sandbox
+tests. No checks were weakened. CI and final council confirmation remain pending.

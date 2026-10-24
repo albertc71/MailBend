@@ -24,6 +24,11 @@ def run(t, work):
                     'html' in original and 'response' not in original, original)
             baseline = t.outputs[-2].strip()
             print('MEASURE', name, 'default', len(baseline.encode()), len(baseline))
+            code, selected = t.tool(srv, 'mail_get', {'uid': 1, 'projection': 'text'})
+            t.check(f'projection {name}: selection without budget is unbounded', code == 0 and
+                    selected.get('text') == original['text'] and 'html' not in selected and
+                    selected.get('response', {}).get('max_bytes') == 0 and
+                    selected['response']['output_truncated'] is False, selected)
             for mode in ('full', 'text', 'html', 'metadata'):
                 args = {'uid': 1, 'projection': mode, 'max_response_bytes': 1200}
                 p = subprocess.run([t.LAUNCHER, 'call', 'mail_get', json.dumps(args)],

@@ -424,10 +424,10 @@ checks that Jev's answers are right. Each law is stated in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
 maps each rule to the code and checks that enforce it.
 
-Response projection laws also prove that selecting a projection keeps every
-non-body field, and fitting a non-body field preserves its entire value and
+Response projection laws also prove that the per-field selection predicate
+keeps non-body fields, and fitting one non-body field preserves its value and
 byte allowance. A separate law fixes the body classifier to exactly `text` and
-`html`, so safety fields cannot silently become shorten-able. Whole-response
+`html`, so safety fields cannot silently become shorten-able. Full result/list assembly, whole-response
 byte bounds, cursor paging and unchanged Jev inputs are tested; those are not
 claimed as universally quantified budget or IO proofs.
 
