@@ -185,6 +185,44 @@ Expect `"ok": true`, `"tls_verified": true`, authenticated capabilities and
 discovered folders. Authentication errors and missing-secret errors are
 separate from DNS errors.
 
+### Connector fails to load with ENXIO
+
+[Issue #30](https://github.com/albertc71/MailBend/issues/30) reports
+`failed_to_load`, `Connection closed` and `No such device or address`
+(`ENXIO`) during Grok Bot tool discovery, despite standalone MCP success.
+MailBend does not require a terminal. Use the direct launcher and
+`args: ["mcp"]` shown above. The custom `mailbend-mcp-host.py` in that
+report is not shipped by this repository.
+
+To compare standalone discovery without a controlling terminal, run on Linux:
+
+```sh
+MAILBEND_READ_ONLY=1 setsid --wait /workspace/MailBend/scripts/mailbend-cloud mcp <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"discovery-check","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+EOF
+```
+
+Expect two JSON-RPC results, with IDs 1 and 2, and exit status zero.
+The notification produces no reply. Discovery needs no mail credentials and
+does not contact the mailbox. If this succeeds but the connector still fails,
+collect the client's launch error and exit status for the platform maintainer.
+If it fails, check the launcher path, build readiness and client environment.
+Do not dump environment values or credentials. A pseudo-terminal is not a
+verified repair and can change the stdio protocol. The exact failing Grok
+client call remains unresolved in the linked issue.
+
+The supported fallback is the CLI, with the same environment and safety
+settings as the MCP server:
+
+```sh
+MAILBEND_READ_ONLY=1 /workspace/MailBend/scripts/mailbend-cloud call mail_probe '{}'
+```
+
+Use `scripts/mailbend-cloud call <tool> '<json-arguments>'` for other tools.
+This bypasses MCP client startup; it does not bypass MailBend's policy checks.
+
 ### Optional: Jev
 
 To use [Jev](JEV.md), keep the TypeSafe key in a file, not in a secret

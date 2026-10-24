@@ -4,6 +4,7 @@
 
 import Base
 import ./imap.bend as I
+import ./search-cursor.bend as SC
 
 # Operations
 # ----------
@@ -14,6 +15,7 @@ type Op is Data:
   OSearch{}
   OGet{}
   OGetNew{}
+  ORefresh{}
   OGetThread{}
   OClassify{}
   OTriage{}
@@ -48,6 +50,8 @@ def is_read_only(op: Op) -> Bool:
       True{}
     case OGetNew{}:
       True{}
+    case ORefresh{}:
+      True{}
     case OGetThread{}:
       True{}
     case OClassify{}:
@@ -76,6 +80,8 @@ def name(op: Op) -> String:
       "mail_get"
     case OGetNew{}:
       "mail_get_new"
+    case ORefresh{}:
+      "mail_refresh"
     case OGetThread{}:
       "mail_get_thread"
     case OClassify{}:
@@ -121,6 +127,7 @@ def all_ops() -> List<&2, Op>:
     OSearch{},
     OGet{},
     OGetNew{},
+    ORefresh{},
     OGetThread{},
     OClassify{},
     OTriage{},
@@ -238,6 +245,16 @@ def plan_roles() -> List<&2, I.Cmd>:
 def plan_search(mbox: String, keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CSearch{keys}]
 
+# A continuation checks the mailbox incarnation in the search session itself.
+# SEARCH still enumerates every match; Bend applies the descending boundary.
+def plan_search_page(mbox: String, keys: List<&2, I.Key>, cursor: SC.Cursor)
+  -> List<&2, I.Cmd>:
+  match cursor:
+    case SC.Start{}:
+      plan_search(mbox, keys)
+    case SC.Continue{uidv, before}:
+      [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{keys}]
+
 # The largest UID, 2^32 - 1.
 def max_uid() -> U32:
   4294967295
@@ -284,6 +301,18 @@ def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
     I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
   ]
 
+# Discover metadata without message content. The caller checks UIDVALIDITY;
+# the selected read then guards that generation before requesting content.
+def plan_parts(mbox: String, uid: U32) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CFetch{[uid], [I.IUid{}, I.IStructure{}]}]
+
+def plan_part(
+  mbox: String, uid: U32, uidv: U32, section: List<&2, U32>, max: U32
+) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+    I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
+        I.IStructure{}, I.IPart{section, max}]}]
+
 # A conversation is read in sessions of several folders each: one searches
 # every folder for the thread's message IDs, the next fetches the summaries
 # of what it found.
@@ -324,6 +353,12 @@ def plan_sent_search(sent: String, addrs: List<&2, String>) -> List<&2, I.Cmd>:
 # then a UID FETCH of FLAGS.
 def plan_reread_flags(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CFetch{uids, [I.IUid{}, I.IFlags{}]}]
+
+# Refresh known UIDs in one read-only session. Search after fetching so a
+# concurrent removal is absent, while an omitted FETCH is never absence.
+def plan_refresh(mbox: String, +uids: List<&2, U32>, uidv: U32) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+   I.CFetch{uids, [I.IUid{}, I.IFlags{}]}, I.CSearch{[I.KUids{uids}]}]
 
 # Some UIDs in one folder: those to fetch there, or to move there.
 type FolderUids is Data:

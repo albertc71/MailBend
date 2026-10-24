@@ -33,7 +33,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang openssl
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl python3-jsonschema
 
       - name: Install Rust 1.99 (native/rust-toolchain.toml)
         run: rustup toolchain install 1.99 --profile minimal
@@ -45,6 +45,7 @@ jobs:
 
       - name: Generated schema is up to date
         run: |
+          python3 tests/test-output-schema.py
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
 
@@ -98,6 +99,11 @@ jobs:
       - name: Unit tests
         run: sh tests/run-unit.sh
 
+      - name: Bounded exhaustive search-pagination model
+        run: |
+          python3 tests/formal/search-pagination-model.py
+          python3 tests/formal/check-search-contract-mutations.py
+
       - name: Transport tests
         run: bash tests/test-transport.sh
 
@@ -107,8 +113,11 @@ jobs:
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
 
-      - name: End-to-end tests
-        run: python3 tests/test-e2e.py
+      - name: End-to-end tests (CLI and structured MCP)
+        run: |
+          python3 tests/test-e2e.py
+          MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py
+          python3 tests/test-integrated-results.py
 
   rust:
     runs-on: ubuntu-24.04

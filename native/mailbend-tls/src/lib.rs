@@ -34,6 +34,9 @@ pub use settings::Protocol;
 /// server, writing the server's transcript to stdout. Everything that can
 /// be checked locally is checked before connecting.
 pub fn run(protocol: Protocol) -> Result<Outcome, Exit> {
+    if matches!(protocol, Protocol::Smtp) {
+        smtp::session::progress("before_data")?;
+    }
     refuse_typesafe_api_key().map_err(Exit::usage)?;
     let settings = Settings::from_env(protocol)?;
     let credentials = creds::load()?;

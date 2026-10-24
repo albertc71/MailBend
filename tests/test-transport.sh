@@ -529,7 +529,7 @@ case21() {
   fi
   body=$'Subject: x\r\n\r\nhi\r\n'
   call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
-  if [ "$CODE" -ne 0 ] || [ -s "$ERR" ]; then
+  if [ "$CODE" -ne 0 ] || ! grep -qx "mailbend-smtp: data_accepted" "$ERR"; then
     ok=0; detail="$detail smtp exit=$CODE $(tr -d '\r' <"$ERR")"
   fi
   if [ "$ok" -eq 1 ]; then
@@ -537,6 +537,23 @@ case21() {
   else
     fail "21 a cut-off LOGOUT or QUIT reply keeps the success" "$detail"
   fi
+  stop_server
+}
+
+# Fixed SMTP evidence distinguishes refusal from loss of the final reply.
+case_smtp_progress() {
+  start_server smtp-progress --echo-login || { fail smtp-progress "server did not start"; return; }
+  body=$'Subject: outcome\r\n\r\nsynthetic\r\n'
+  for entry in before-data-close:6:before_data final-reject:5:data_rejected lost-reply:6:data_started bare-reply:0:data_accepted; do
+    IFS=: read -r rcpt expected phase <<< "$entry"
+    call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<'"$rcpt"$'@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
+    last=$(grep '^mailbend-smtp: ' "$ERR" | tail -1)
+    if [ "$CODE" -eq "$expected" ] && [ "$last" = "mailbend-smtp: $phase" ]; then
+      pass "SMTP $rcpt progress"
+    else
+      fail "SMTP $rcpt progress" "exit=$CODE last=$last"
+    fi
+  done
   stop_server
 }
 
@@ -562,6 +579,44 @@ case2() {
   fi
 }
 
+# Numeric section partials retain literal framing and the UIDVALIDITY guard.
+case_selected_section() {
+  start_server case_selected_section || { fail selected-section "server did not start"; return; }
+  call_imap $'a1 EXAMINE INBOX\r\n=EXPECT * OK [UIDVALIDITY 1700000001]\r\na2 UID FETCH 4 (UID BODYSTRUCTURE BODY.PEEK[2]<0.64>)\r\n'
+  if [ "$CODE" -eq 0 ] && grep -aq 'BODY\[2\]<0>' "$OUT" && grep -aq 'JVBERi0xLjQKJeLjz9MK' "$OUT"; then
+    pass "selected PEEK literal"
+  else
+    fail "selected PEEK literal" "exit=$CODE"
+  fi
+  call_imap $'a1 EXAMINE INBOX\r\n=EXPECT * OK [UIDVALIDITY 9]\r\na2 UID FETCH 4 (UID BODY.PEEK[2]<0.64>)\r\n'
+  if [ "$CODE" -ne 0 ] && ! grep -aq 'BODY\[2\]' "$OUT"; then
+    pass "selected section stale generation stops before selected read"
+  else
+    fail "selected section stale generation stops before selected read" "exit=$CODE"
+  fi
+  stop_server
+}
+
+# The bounded refresh plan guards read identities before fetching flags.
+case_refresh() {
+  start_server case_refresh || { fail 22 "server did not start"; return; }
+  call_imap $'a1 EXAMINE "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 1700000001]\r\na2 UID FETCH 1,99 (UID FLAGS)\r\na3 UID SEARCH UID 1,99\r\n'
+  if [ "$CODE" -eq 0 ] && grep -aq 'a3 OK' "$OUT" && grep -aq '\* SEARCH 1' "$OUT"; then
+    pass "22 refresh reads flags and presence in one guarded session"
+  else
+    fail "22 refresh reads flags and presence" "exit=$CODE"
+  fi
+  stop_server
+  start_server case-refresh-stale || { fail 22 "server did not start"; return; }
+  call_imap $'a1 EXAMINE "INBOX"\r\n=EXPECT * OK [UIDVALIDITY 7]\r\na2 UID FETCH 1 (UID FLAGS)\r\na3 UID SEARCH UID 1\r\n'
+  if [ "$CODE" -eq 5 ] && ! grep -aq 'UID FETCH\|UID SEARCH' "$LOG_FILE"; then
+    pass "22 stale refresh stops before any UID operation"
+  else
+    fail "22 stale refresh guard" "exit=$CODE"
+  fi
+  stop_server
+}
+
 # --- run every case -------------------------------------------------------
 case1
 case3
@@ -583,6 +638,9 @@ case18
 case19
 case20
 case21
+case_smtp_progress
+case_selected_section
+case_refresh
 case2
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"
