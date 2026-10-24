@@ -15,6 +15,7 @@ import ./thread.bend as T
 import ./search-cursor.bend as SC
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
+import ./response.bend as Response
 
 # Results
 # =======
@@ -6893,28 +6894,57 @@ def annotated(jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
     s : Shown <- read
     annotate(jev, s)
 
+# Apply presentation after annotation: Jev always receives the original read.
+def projected.result(r: Result<&2, &2, String, J.Json>) -> Out:
+  match r:
+    case Done{v}:
+      Ok{v}
+    case Fail{m}:
+      Err{m}
+
+def projected.out(o: Out, mode: String, max: U32) -> Out:
+  match o:
+    case Ok{j}:
+      projected.result(Response.apply(j, mode, max))
+    case _:
+      o
+
+def projected.if(enabled: Bool, o: Out, +args: J.Json) -> Out:
+  match enabled:
+    case False{}:
+      o
+    case True{}:
+      projected.out(o, str_arg(args, "projection", "full"),
+        u32_arg(args, "max_response_bytes", 0))
+
+def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
+  do IO<Out>:
+    o : Out <- annotated(jev, read)
+    return projected.if(Maybe.is_some(&2, J.Json, J.get(args, "projection")) ||
+      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), o, args)
+
 # Dispatch
 # ========
 
 # Running a tool
 # --------------
 
-def run_op(op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
+def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch) -> IO(Out):
   match op:
     case Ops.OProbe{}:
       t_probe(args)
     case Ops.OListFolders{}:
       t_folders(args)
     case Ops.OSearch{}:
-      annotated(jev, t_search(args))
+      projected(args, jev, t_search(args))
     case Ops.OGet{}:
-      annotated(jev, t_get(args))
+      projected(args, jev, t_get(args))
     case Ops.OGetNew{}:
-      annotated(jev, t_get_new(args))
+      projected(args, jev, t_get_new(args))
     case Ops.ORefresh{}:
       t_refresh(args)
     case Ops.OGetThread{}:
-      annotated(jev, t_get_thread(args))
+      projected(args, jev, t_get_thread(args))
     case Ops.OClassify{}:
       t_classify(args, jev)
     case Ops.OTriage{}:
@@ -7235,6 +7265,32 @@ def call.if(problem: String, +name: String, args: J.Json) -> IO(Out):
     case SNil{}:
       call_op(Ops.from_name(name), name, args)
 
+def response_budget.value(n: Maybe<&2, U32>) -> String:
+  match n:
+    case Some{+v}:
+      Bool.pick(String, U32.is_ge(v, 1) && U32.is_le(v, 16777216), "",
+        "max_response_bytes must be an integer from 1 to 16777216")
+    case None{}:
+      "max_response_bytes must be an integer from 1 to 16777216"
+
+def response_budget(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case None{}:
+      ""
+    case Some{v}:
+      response_budget.value(J.as_u32(Some{v}))
+
+def projection_problem(+args: J.Json) -> String:
+  first_of(Bool.pick(String,
+    C.is_in(str_arg(args, "projection", "full"), ["full", "text", "html", "metadata"]), "",
+    "projection must be full, text, html or metadata"),
+    response_budget(J.get(args, "max_response_bytes")))
+
+def call_problem(+name: String, +args: J.Json) -> String:
+  first_of(schema_problem(tool_input(name), args, name),
+    Bool.pick(String, C.is_in(name, ["mail_get", "mail_search", "mail_get_new", "mail_get_thread"]),
+      projection_problem(args), ""))
+
 # Runs the named tool with its JSON arguments, once they match its schema.
 def call(+name: String, +args: J.Json) -> IO(Out):
-  call.if(schema_problem(tool_input(name), args, name), name, args)
+  call.if(call_problem(name, args), name, args)

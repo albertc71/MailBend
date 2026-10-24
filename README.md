@@ -106,6 +106,63 @@ a `message/rfc822` attachment is one opaque part containing the complete
 attached message. Legacy `index` remains the zero-based attachment order
 reported by the whole-message `mail_get`; it is not a section number.
 
+### Compact read responses
+
+`mail_get`, `mail_search`, `mail_get_new` and `mail_get_thread` accept optional
+`projection` and `max_response_bytes`. With neither argument, their existing
+results stay unchanged, including `mail_get`'s decoded HTML.
+
+| Projection | Returned body fields |
+| --- | --- |
+| `full` (default) | `text` and `html` |
+| `text` | `text` only |
+| `html` | `html` only |
+| `metadata` | Neither body field |
+
+Projection only selects body fields; list reads already return summaries.
+Headers, attachments, identifiers, UIDVALIDITY, completeness and Jev results
+remain intact. `html_available` still describes the fetched message, even
+when the projection omits its HTML. Projection does not change what is
+fetched or what Jev inspects.
+
+`max_response_bytes` (1–16777216, no default limit) bounds the shared result
+JSON's **UTF-8 bytes**, including JSON quotes and escaping. The CLI's final
+newline and MCP's outer envelope, string escaping and any duplicate structured
+content are outside this budget. This is not a token limit. The result is
+projected once before CLI/MCP serialization.
+
+```sh
+scripts/mailbend call mail_get '{"uid":42,"projection":"text","max_response_bytes":8192}'
+```
+
+Opting in adds `response`: its `projection`, `max_bytes` (0 means no output
+budget), `budget_scope: "result_json_utf8"`, `output_truncated` and
+`request_more` describe the result. A budget shortens `text` first, then gives
+any remaining room to `html`, cutting only at Unicode scalar boundaries.
+HTML may consequently end inside a tag; it remains untrusted content.
+`response.output_truncated` reports budget shortening; the existing `truncated`
+field still reports an incomplete **fetch**. Selecting metadata or omitting a
+body by projection never makes a truncated fetch complete. To retrieve more,
+select `full`, raise `max_response_bytes`, and raise the fetch `max_bytes` if
+`truncated` is true.
+
+For selected MIME-part results (`scope: "selected_part"`), `metadata` omits
+`content`; `text` retains `text/*` content except `text/html`, and `html` retains
+only `text/html` (MIME type matching ignores case and parameters). `full` retains
+any part. Decoded text is shortened at Unicode scalar boundaries. Binary base64
+is kept whole or replaced with the valid empty string; it is never partially
+sliced. On opted-in selected results, `response.content_complete` describes the
+**returned** content and is false when omitted or shortened. The existing
+`complete` still describes the **fetched part**, while `message_complete` and
+all section/identity/Jev metadata remain unchanged. Intentional projection
+omission leaves `output_truncated` false; budget shortening sets it true.
+
+The budget never drops summaries or advances an arrival cursor past omitted
+messages. If protected fields and the response notice alone will not fit,
+the call fails explicitly with the minimum required budget. Raise the budget,
+or reduce `limit` where supported and retry the **same checkpoint**. Error
+responses are outside the output budget and are never shortened.
+
 Every tool that changes or sends mail, or saves a file, also takes
 `dry_run: true`: it runs only the tool's read-only checks and returns what it
 would do (the `imap` commands, the `smtp` sender and recipients, or the
@@ -525,6 +582,12 @@ checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
 maps each rule to the code and checks that enforce it.
+
+Response projection laws also prove that the per-field selection predicate
+keeps non-body fields, and fitting one non-body field preserves its value and
+byte allowance. A separate law fixes the body classifier to exactly `text`, `html` and selected-part `content`, so safety fields cannot silently become shorten-able. Full result/list assembly, whole-response
+byte bounds, cursor paging and unchanged Jev inputs are tested; those are not
+claimed as universally quantified budget or IO proofs.
 
 ## How it works
 

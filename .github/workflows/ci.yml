@@ -117,6 +117,7 @@ jobs:
         run: |
           python3 tests/test-e2e.py
           MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py
+          python3 tests/test-integrated-results.py
 
   rust:
     runs-on: ubuntu-24.04
