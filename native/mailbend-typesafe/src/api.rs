@@ -312,4 +312,28 @@ mod tests {
         );
         assert_eq!(redact_key(b"ts_key", b"ts_key"), b"[redacted]".to_vec());
     }
+
+    #[test]
+    fn danger_zone_header_follows_the_images_flag() {
+        assert_eq!(
+            danger_zone_line(true),
+            b"TypeSafe-Danger-Zone-Images: true\r\n"
+        );
+        assert_eq!(danger_zone_line(false), b"");
+        let on = request_head(b"secret-key-0123", 2, true);
+        let off = request_head(b"secret-key-0123", 2, false);
+        assert!(
+            on.windows(b"TypeSafe-Danger-Zone-Images: true\r\n".len())
+                .any(|w| w == b"TypeSafe-Danger-Zone-Images: true\r\n"),
+            "{}",
+            String::from_utf8_lossy(&on)
+        );
+        assert!(
+            !off
+                .windows(b"TypeSafe-Danger-Zone-Images".len())
+                .any(|w| w == b"TypeSafe-Danger-Zone-Images"),
+            "{}",
+            String::from_utf8_lossy(&off)
+        );
+    }
 }

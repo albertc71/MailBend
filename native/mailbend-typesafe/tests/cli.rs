@@ -97,6 +97,21 @@ fn a_single_attempt_is_a_mode_of_ask() {
 }
 
 #[test]
+fn images_is_an_ask_mode_in_either_order() {
+    for args in [
+        &["ask", "--images"][..],
+        &["ask", "--once", "--images"][..],
+        &["ask", "--images", "--once"][..],
+    ] {
+        assert_exit(
+            &run(args, &[], b"{}"),
+            2,
+            "MAILBEND_TYPESAFE_KEY_FILE is not set",
+        );
+    }
+}
+
+#[test]
 fn a_key_in_the_environment_is_refused() {
     let path = key_file("env", KEY);
     let file = path.to_str().expect("utf-8");
