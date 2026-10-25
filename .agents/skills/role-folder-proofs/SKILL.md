@@ -89,4 +89,4 @@ Not covered by these proofs, and left to the end-to-end tests in `tests/test-e2e
 
 ## Keeping it in step
 
-When the diff above touches covered code, rerun all three checks. If a def's meaning changed, review its law against README.md. Move the commit in "Does my change touch it?" forward to the new commit only after you have confirmed that the laws, examples and mutation targets describe the code at that commit and every check passes. Use `/maintain-formal-verification-skill` to bring this skill back in line after changes that did not recheck it.
+When the diff above touches covered code, rerun all three checks. If a def's meaning changed, review its law against README.md. Move the commit in "Does my change touch it?" forward to the new commit only after you have confirmed that the laws, examples and mutation targets describe the code at that commit and every check passes. If your agent has pstack's `maintain-formal-verification-skill`, use it to bring this skill back in line after changes that did not recheck it.
