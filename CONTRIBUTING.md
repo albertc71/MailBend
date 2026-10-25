@@ -51,7 +51,7 @@ MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through str
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
-The [bounded SMTP model](docs/verification/smtp-tls/SKILL.md) checks an
+The [bounded SMTP model](.claude/skills/smtp-tls/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
 The transport suite exercises the actual helper.
