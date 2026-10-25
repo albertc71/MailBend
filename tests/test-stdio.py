@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import contextlib
+import ctypes
 import json
 import os
 import pathlib
@@ -54,7 +55,7 @@ def wait_until(predicate, timeout=10):
 def live(pid):
     try:
         return pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
@@ -99,6 +100,57 @@ class Session:
 
 
 class StdioTests(unittest.TestCase):
+    def test_replaced_adapter_starts_core(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.ptrace.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+        libc.ptrace.restype = ctypes.c_long
+
+        def trace_exec():
+            if libc.ptrace(0, 0, None, None) == -1:  # PTRACE_TRACEME
+                raise OSError(ctypes.get_errno(), "cannot trace adapter startup")
+
+        for replace in (False, True):
+            with self.subTest(replace=replace), tempfile.TemporaryDirectory() as directory:
+                helper = pathlib.Path(directory) / "mailbend-stdio"
+                shutil.copy2(STDIO_BINARY, helper)
+                core = helper.parent / "mailbend-core"
+                core.write_text(f"#!{sys.executable}\nimport sys\n"
+                                "assert sys.argv[1:] == ['mcp']\n"
+                                "sys.stdout.buffer.write(b'core: ' + sys.stdin.buffer.read())\n")
+                core.chmod(0o755)
+                with contextlib.ExitStack() as stack:
+                    peer, child = socket.socketpair()
+                    stack.enter_context(peer)
+                    stack.enter_context(child)
+                    proc = subprocess.Popen([str(helper), "mcp"], stdin=child,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            env=ENV, cwd="/", preexec_fn=trace_exec)
+                    child.close()
+                    try:
+                        # Exec stops before any adapter code, making the install/startup
+                        # interleaving deterministic without a production test hook.
+                        pid, status = os.waitpid(proc.pid, 0)
+                        self.assertEqual(pid, proc.pid)
+                        self.assertTrue(os.WIFSTOPPED(status))
+                        self.assertEqual(os.WSTOPSIG(status), signal.SIGTRAP)
+                        if replace:
+                            replacement = helper.with_suffix(".new")
+                            shutil.copy2(STDIO_BINARY, replacement)
+                            replacement.replace(helper)
+                            self.assertTrue(os.readlink(f"/proc/{pid}/exe").endswith(" (deleted)"))
+                        self.assertEqual(libc.ptrace(17, pid, None, None), 0)  # PTRACE_DETACH
+                        peer.sendall(discovery())
+                        peer.shutdown(socket.SHUT_WR)
+                        out, err = proc.communicate(timeout=30)
+                        self.assertEqual((proc.returncode, err), (0, b""))
+                        self.assertEqual(out, b"core: " + discovery())
+                    finally:
+                        if proc.poll() is None:
+                            proc.kill()
+                        proc.wait(timeout=10)
+                        proc.stdout.close()
+                        proc.stderr.close()
+
     def test_distinct_socket_stdio(self):
         for launcher in LAUNCHERS:
             for modern in (False, True):

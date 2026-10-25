@@ -50,8 +50,14 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools
   do not. A part outside those rules is skipped and reported; it is not
-  resized. The request carries `TypeSafe-Danger-Zone-Images: true` only when
-  an image is actually sent.
+  resized or re-encoded: it is sent as the sender wrote it, with any
+  metadata in it (a photo's EXIF data, which can hold its GPS position), and
+  TypeSafe says it removes such metadata when it receives an image. The
+  request carries `TypeSafe-Danger-Zone-Images: true` only when an image is
+  actually sent. TypeSafe refuses a whole request when it cannot
+  use one of its images (a damaged file, for example), so a refused request
+  that carried images is asked once more without them; see
+  [`mail_classify`](#mail_classify).
 - List reads (`mail_search`, `mail_get_new`, `mail_get_thread`) send header
   facts only, even in `body` mode, and number messages by position instead
   of UID.
@@ -76,11 +82,15 @@ pinned `model`, the `content` mode, `derived_from_untrusted_content` (always
 `true`), `decision` (`proceeded` or `blocked`), `reasons`, and `signals`,
 Jev's answers, mostly as `low`, `mid`, `high` or `unknown`. A missing or
 malformed answer reads as the cautious one. The answers come from untrusted
-mail: treat them as hints, not facts.
+mail: treat them as hints, not facts. A reply is read only when its `model`
+names the pinned model as the one that answered; a reply from any other
+model, or one that does not say, counts as no answer, as when TypeSafe
+fails.
 
 The pinned model is `jev-1.14.0`, never `jev-latest`. The 0.30 and 0.70 cuts
-were not remeasured on `jev-1.14.0`, and the request budgets are unchanged
-because the price and the default context match `jev-1.13.0`.
+are TypeSafe's suggested starting points, not measured on MailBend mail for
+any model. The request budgets are unchanged because the price and the
+default context match `jev-1.13.0`.
 
 ## When TypeSafe fails, and what it costs
 
@@ -91,13 +101,21 @@ because the price and the default context match `jev-1.13.0`.
   each marked `unchecked` with the reason.
 - `mail_classify` and `mail_triage` split a request TypeSafe refuses once
   into halves; any other failure stops the call, and triage then moves
-  nothing.
+  nothing. A refused `mail_classify` request that carried images is first
+  asked again without them, and is split only if that is refused too.
 
 Every call that asks Jev makes at least one request to your TypeSafe
 account, and a read with notes lists the folders in one more read-only IMAP
 session (two when the server has SPECIAL-USE; `mail_get_thread` reuses its
 own). `mail_classify` and `mail_triage` report each request's `messages`,
 `bytes` and TypeSafe's `input_tokens`.
+
+With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` fetches each image part
+it might send in a read-only IMAP session of its own, just before the
+request that would carry it, and at most eight per request. A part past
+those eight, or past the request's four images or its bytes, is reported
+`over_count` or `over_budget` without being fetched, even where a fetch
+would have found it outside the pixel rules (`dimensions`).
 
 ## Sends
 
@@ -165,8 +183,13 @@ With `MAILBEND_TYPESAFE_IMAGES` on, each message Jev was asked about has an
 `images` array. A used image reports its section, name, format, decoded
 size, and pixel width and height. A skipped image reports a reason:
 `format`, `animated`, `dimensions`, `file_size`, `over_count`,
-`over_budget`, `unreadable`, or `ref`. When any image was sent, the call
-also has `image_notice`:
+`over_budget`, `unreadable`, `ref`, or `refused`. TypeSafe answers no part
+of a request in which it rejects an image, and does not say which image it
+rejected, so when it refuses a request that carried images, the same
+messages are asked once more in a request without images (the request
+`mail_classify` sends with images off), and every image of the refused
+request is reported `refused`. When any image was used in an answered
+request, the call also has `image_notice`:
 
 `Image classification is experimental. Jev's answers on a message with a used image may depend on that image.`
 

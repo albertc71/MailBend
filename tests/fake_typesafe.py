@@ -24,6 +24,16 @@ compact JSON, the estimate MailBend packs with, so the fake checks only
 MailBend's packing arithmetic, not TypeSafe's real tokenizer. A request
 that breaks a rule gets 422 with a "detail", as TypeSafe answers.
 
+A request with images (docs.typesafe.ai/images.md) gets 400 when an asset
+is never referenced in the state or the questions, or when an image does
+not decode: a PNG needs its signature, an IHDR, chunk CRCs that match, IDAT
+data that inflates to a complete zlib stream, and an IEND; a JPEG needs SOI,
+a frame header (SOF) before its scan (SOS), and EOI at the end. One such
+image fails the whole request, with no partial answers.
+
+Every 200 answer names the model that answered in "model", as TypeSafe's
+SystemOneResponse does: the pinned model, unless a scenario says otherwise.
+
 Answers are deterministic, from the state alone: a category is the folder
 (or candidate) whose name appears in the email's subject, else the "none"
 option; questions about injection answer yes when the email says "ignore
@@ -49,15 +59,22 @@ Scenarios (--scenario):
     fail-after:<n>    answer the first <n> requests, then 422 to every other
     malformed         answer 200 with a body that is not TypeSafe's JSON
     slow[:<seconds>]  wait 30 (or <seconds>) seconds before answering
+    refuse-assets     answer 400 to every request that carries assets
+    model:<id>        answer as the model <id> instead of the pinned one
+    no-model          answer without a "model" field
 """
 import argparse
+import base64
+import binascii
 import json
 import os
 import socket
 import ssl
+import struct
 import sys
 import threading
 import time
+import zlib
 
 TARGET = "api.typesafe.ai:443"
 MODEL = "jev-1.14.0"
@@ -101,6 +118,104 @@ def images_problem(body, images_header):
         return "assets require TypeSafe-Danger-Zone-Images: true"
     if header_on and not has_assets:
         return "TypeSafe-Danger-Zone-Images: true requires assets"
+    return None
+
+
+PNG_SIGNATURE = bytes([137, 80, 78, 71, 13, 10, 26, 10])
+# Every SOF marker except DHT (C4), JPG (C8) and DAC (CC).
+JPEG_SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def png_problem(data):
+    """Why bytes are not a PNG that decodes; None when they are."""
+    if data[:8] != PNG_SIGNATURE:
+        return "not a PNG"
+    pos, ihdr, idat = 8, None, b""
+    while True:
+        if pos + 12 > len(data):
+            return "the PNG ends before IEND"
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        chunk = data[pos + 8:pos + 8 + length]
+        crc = data[pos + 8 + length:pos + 12 + length]
+        if len(chunk) != length or len(crc) != 4:
+            return "a PNG chunk is truncated"
+        if zlib.crc32(kind + chunk) != struct.unpack(">I", crc)[0]:
+            return f"the PNG {kind.decode('latin-1')} chunk fails its CRC"
+        pos += 12 + length
+        if kind == b"IHDR":
+            ihdr = chunk
+        elif kind == b"IDAT":
+            idat += chunk
+        elif kind == b"IEND":
+            break
+    if ihdr is None or len(ihdr) != 13 or not idat:
+        return "the PNG has no IHDR or no IDAT"
+    inflate = zlib.decompressobj()
+    try:
+        inflate.decompress(idat)
+    except zlib.error:
+        return "the PNG image data does not inflate"
+    if not inflate.eof:
+        return "the PNG image data is incomplete"
+    return None
+
+
+def jpeg_problem(data):
+    """Why bytes are not a JPEG with a frame and a scan; None when they are."""
+    if data[:2] != b"\xff\xd8":
+        return "not a JPEG"
+    pos, sof = 2, False
+    while pos < len(data):
+        if data[pos] != 0xFF:
+            return "a JPEG marker is missing"
+        while pos < len(data) and data[pos] == 0xFF:
+            pos += 1
+        if pos >= len(data):
+            return "the JPEG ends inside a marker"
+        marker = data[pos]
+        pos += 1
+        if marker == 0xD9:
+            return "the JPEG has no scan"
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:
+            continue
+        if pos + 2 > len(data):
+            return "a JPEG segment is truncated"
+        length = struct.unpack(">H", data[pos:pos + 2])[0]
+        if length < 2 or pos + length > len(data):
+            return "a JPEG segment is truncated"
+        if marker in JPEG_SOF:
+            sof = True
+        pos += length
+        if marker == 0xDA:
+            if not sof:
+                return "the JPEG scan comes before its frame header"
+            if data[-2:] != b"\xff\xd9" or len(data) - pos < 2:
+                return "the JPEG does not end with EOI"
+            return None
+    return "the JPEG has no scan"
+
+
+def assets_problem(body):
+    """Why the assets of a request would be rejected (400); None when not."""
+    assets = body.get("assets")
+    if assets is None:
+        return None
+    if not isinstance(assets, dict) or not assets:
+        return "assets must be a nonempty object"
+    seen = json.dumps(body["state"], ensure_ascii=False) + json.dumps(body["questions"], ensure_ascii=False)
+    for key, asset in assets.items():
+        if key not in seen:
+            return f"asset {key!r} is not referenced"
+        if not isinstance(asset, dict) or asset.get("type") != "image":
+            return f"asset {key!r} is not an image"
+        try:
+            data = base64.b64decode(asset.get("data_base64", ""), validate=True)
+        except (binascii.Error, ValueError, TypeError):
+            return f"asset {key!r} is not base64"
+        fmt = asset.get("format")
+        problem = png_problem(data) if fmt == "png" else jpeg_problem(data) if fmt == "jpeg" else "an unknown format"
+        if problem:
+            return f"image {key!r} is damaged or incomplete: {problem}"
     return None
 
 
@@ -239,6 +354,11 @@ class Fake:
         problem = request_problem(body, images_header)
         if problem:
             return 422, {"detail": problem}
+        if kind == "refuse-assets" and "assets" in body:
+            return 400, {"detail": "scenario refusal of a request with images"}
+        problem = assets_problem(body)
+        if problem:
+            return 400, {"detail": problem}
         if kind == "malformed":
             return 200, ["not", "an", "answer"]
         state = body["state"]
@@ -247,7 +367,10 @@ class Fake:
         else:
             emails = emails_by_uid(state)
             answers = {qid: answer(qid, q, emails) for qid, q in body["questions"].items()}
-        return 200, {"answers": answers, "usage": {"input_tokens": len(raw) // 4, "output_tokens": 0}}
+        answer_body = {"answers": answers, "usage": {"input_tokens": len(raw) // 4, "output_tokens": 0}}
+        if kind == "no-model":
+            return 200, answer_body
+        return 200, {"model": arg if kind == "model" else MODEL, **answer_body}
 
     def serve(self, conn):
         """One proxied connection: CONNECT, then one HTTPS request."""

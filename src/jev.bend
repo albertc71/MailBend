@@ -38,7 +38,8 @@ type Switch is Data:
   Off{}
   On{content: Content}
 
-# The model every request names: pinned, never "jev-latest".
+# The model every request names: pinned, never "jev-latest". A reply is
+# read only when its `model` names this one too (pinned, below).
 def model() -> String:
   "jev-1.14.0"
 
@@ -848,8 +849,8 @@ type Answered is Data:
   Skipped{facts: Facts}
 
 # Below 0.30 is Low and above 0.70 High: TypeSafe routes the range between
-# to people. These cuts, and `level_band`, were not remeasured when the pin
-# moved from jev-1.13.0 to jev-1.14.0.
+# to people. These cuts are TypeSafe's suggested starting points; neither
+# they nor `level_band` were measured on MailBend mail for any model.
 def prob_band(+p: U32) -> Band:
   Bool.pick(Band, U32.is_lt(p, 300), Low{}, Bool.pick(Band, U32.is_gt(p, 700), High{}, Mid{}))
 
@@ -1128,6 +1129,31 @@ def reply.put(
     case None{}:
       None{}
 
+# Whether a reply names the pinned model as the one that answered, as
+# TypeSafe's `model` field does. An answer from any other model, or one
+# that does not say, is not what MailBend asked for.
+def answered_by_pin(m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case Some{J.JStr{s}}:
+      String.eq(s, model())
+    case _:
+      False{}
+
+def pinned.if(ok: Bool, j: J.Json) -> Maybe<&2, J.Json>:
+  match ok:
+    case True{}:
+      Some{j}
+    case False{}:
+      None{}
+
+# A reply that named the pinned model; None for any other reply.
+def pinned(m: Maybe<&2, J.Json>) -> Maybe<&2, J.Json>:
+  match m:
+    case Some{+j}:
+      pinned.if(answered_by_pin(J.get(j, "model")), j)
+    case None{}:
+      None{}
+
 def reply_of(
   m: Maybe<&2, J.Json>,
   +es: List<&2, Entry>,
@@ -1143,9 +1169,10 @@ def reply_of(
 
 # TypeSafe's answer to the request for `es`, with Choice keys checked
 # against `categories`; None when it is not the JSON MailBend asked for,
-# names a member twice, or answers more questions than were asked.
+# names a member twice, does not name the pinned model as the one that
+# answered, or answers more questions than were asked.
 def reply(body: String, es: List<&2, Entry>, categories: List<&2, String>) -> Maybe<&2, Reply>:
-  reply_of(unrepeated(J.parse(body)), es, categories)
+  reply_of(pinned(unrepeated(J.parse(body))), es, categories)
 
 # Policies
 # --------
@@ -1752,9 +1779,9 @@ def outgoing_answers.put(m: Maybe<&2, J.Json>, asked: Nat) -> Maybe<&2, J.Json>:
       None{}
 
 # TypeSafe's answers to `asked` outgoing questions; None when the reply is
-# not the JSON MailBend asked for.
+# not the JSON MailBend asked for, or does not name the pinned model.
 def outgoing_answers(body: String, asked: Nat) -> Maybe<&2, J.Json>:
-  outgoing_answers.put(unrepeated(J.parse(body)), asked)
+  outgoing_answers.put(pinned(unrepeated(J.parse(body))), asked)
 
 # Gates
 # -----

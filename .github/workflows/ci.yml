@@ -88,6 +88,25 @@ jobs:
             exit 1
           fi
 
+      # Only mail_classify sends images. Law entry_at_sends_no_images says
+      # every entry the requests are built from has no stills; only
+      # Jev.entry_images gives one stills, and only classify's image path
+      # calls it. The send gate's request is a plain cargo.
+      - name: Only mail_classify sends images
+        run: |
+          flat() { cat "$@" | tr -s ' \t\n' ' '; }
+          count() { grep -oE "$1" | wc -l; }
+          if [ "$(flat src/*.bend main.bend | count 'entry_images\(')" -ne 2 ] \
+              || [ "$(flat src/tools.bend | count 'Jev\.entry_images\(')" -ne 1 ]; then
+            echo "Jev.entry_images has a caller other than classify's image path" >&2
+            exit 1
+          fi
+          if [ "$(flat src/*.bend main.bend | count 'Jev\.plain_cargo\( ?Jev\.outgoing_request\(')" -ne 1 ] \
+              || [ "$(flat src/*.bend main.bend | count 'outgoing_request\(')" -ne 2 ]; then
+            echo "the send gate's request is not a plain cargo" >&2
+            exit 1
+          fi
+
       - name: Install Lean (scripts/install-lean.sh, for --verdict)
         run: sh scripts/install-lean.sh
 
@@ -105,6 +124,13 @@ jobs:
       - name: Unit tests
         run: sh tests/run-unit.sh
 
+      # The helper's MAX_REQUEST must equal the cap Bend computes, and the
+      # fake TypeSafe must enforce the image rules the e2e tests rely on.
+      - name: Image request cap and the fake TypeSafe's image rules
+        run: |
+          python3 tests/test-image-budget.py
+          python3 tests/test-image-assets.py
+
       - name: Bounded exhaustive search-pagination model
         run: |
           python3 tests/formal/search-pagination-model.py
@@ -116,10 +142,10 @@ jobs:
       - name: Build
         run: scripts/install.sh
 
-      - name: Installer fallback warnings
+      - name: Installer staging, locking, signals and fallback warnings
         run: python3 tests/test-install.py
 
-      - name: Installer swap atomicity
+      - name: Installer swap fault injection
         run: python3 tests/formal/check-install-swap.py
 
       - name: Cloud DNS and TLS tests

@@ -109,7 +109,7 @@ CLASSIFIED_OPTIONAL = {"new_category": S, "needs_new_category": YES,
 CLASSIFIED = record(CLASSIFIED_FIELDS, CLASSIFIED_OPTIONAL)
 IMAGE_REASON = param("string", enum=[
     "format", "animated", "dimensions", "file_size", "over_count", "over_budget",
-    "unreadable", "ref"])
+    "unreadable", "ref", "refused"])
 IMAGE_FORMAT = param("string", enum=["png", "jpeg"])
 IMAGE_USED = record({
     "section": S, "name": S, "fate": {"const": "used"}, "format": IMAGE_FORMAT,

@@ -188,7 +188,11 @@ install all of it on Debian or Ubuntu.
 
 `scripts/install.sh` builds `bin/mailbend-tls`, `bin/mailbend-attach`,
 `bin/mailbend-typesafe` and `bin/mailbend-stdio`, checks the safety proofs with `bend PROOF.bend`,
-and compiles the core to `bin/mailbend-core`. With `--install-bend` and no
+and compiles the core to `bin/mailbend-core`. Nothing in `bin/` changes until
+all of that has passed, and then each binary is renamed into place, so a
+failed build, check, proof or compile leaves the installation as it was. A
+running MCP server keeps running; restart it so its core matches the new
+helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
 the pinned Bend to `~/.bend` after checking the archive's sha256; that
 release is Linux x64 only, so elsewhere install the same version yourself.

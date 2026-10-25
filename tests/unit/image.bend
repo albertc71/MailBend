@@ -58,7 +58,8 @@ def reasons() -> String:
   Image.reason_name(Image.Format{}) ++ " " ++ Image.reason_name(Image.Animated{}) ++ " " ++
     Image.reason_name(Image.Dimensions{}) ++ " " ++ Image.reason_name(Image.FileSize{}) ++ " " ++
     Image.reason_name(Image.OverCount{}) ++ " " ++ Image.reason_name(Image.OverBudget{}) ++ " " ++
-    Image.reason_name(Image.Unreadable{}) ++ " " ++ Image.reason_name(Image.NoRef{})
+    Image.reason_name(Image.Unreadable{}) ++ " " ++ Image.reason_name(Image.NoRef{}) ++ " " ++
+    Image.reason_name(Image.Refused{})
 
 def show_pre(p: Image.Pre) -> String:
   match p:
@@ -112,6 +113,39 @@ def behind() -> List<&2, Image.Verdict>:
 def budget() -> List<&2, Image.Verdict>:
   [keep_n(1572864n), keep_n(1n)]
 
+# Verdicts admitted one by one against a quota, as the survey admits them.
+type SurveyAt is Data:
+  SurveyVs{quota: Image.Quota, vs: List<&2, Image.Verdict>, acc: List<&2, Image.Verdict>}
+  SurveyJ{got: Image.Judged, vs: List<&2, Image.Verdict>, acc: List<&2, Image.Verdict>}
+
+def surveyed.go(fuel: Nat, at: SurveyAt) -> List<&2, Image.Verdict>:
+  match fuel at:
+    case 0n _:
+      []
+    case 1n+f SurveyVs{q, Nil{}, acc}:
+      List.reverse(&2, Image.Verdict, acc)
+    case 1n+f SurveyVs{q, v <> t, acc}:
+      surveyed.go(f, SurveyJ{Image.quota_admit(q, v), t, acc})
+    case 1n+f SurveyJ{Image.Judged{v, q}, t, acc}:
+      surveyed.go(f, SurveyVs{q, t, v <> acc})
+
+def surveyed(vs: List<&2, Image.Verdict>) -> List<&2, Image.Verdict>:
+  surveyed.go(24n, SurveyVs{Image.quota_new(), vs, []})
+
+# bind_io's admission of the verdicts, before and after the survey's.
+def agree(+vs: List<&2, Image.Verdict>) -> String:
+  counts(Image.room_new(), vs) ++ " " ++ counts(Image.room_new(), surveyed(vs))
+
+def show_ahead(m: Maybe<&2, Image.Reason>) -> String:
+  match m:
+    case None{}:
+      "fetch"
+    case Some{r}:
+      Image.reason_name(r)
+
+def ahead(count: U32, bytes: U32, fetches: U32, encoding: String, size: U32) -> String:
+  show_ahead(Image.ahead(Image.Quota{Image.Room{count, bytes}, fetches}, encoding, size))
+
 def hyphens(s: String, n: U32) -> U32:
   match s:
     case SNil{}:
@@ -156,6 +190,9 @@ def main() -> IO(Unit):
     IO.print("screen " ++ show_pre(Image.screen("image/gif", "base64", 10)) ++ " " ++
       show_pre(Image.screen("image/png", "base64", 0)) ++ " " ++
       show_pre(Image.screen("image/png", "base64", 2097153)) ++ " " ++
+      show_pre(Image.screen("image/png", "base64", 2152312)) ++ " " ++
+      show_pre(Image.screen("image/png", "base64", 2162688)) ++ " " ++
+      show_pre(Image.screen("image/png", "base64", 2162689)) ++ " " ++
       show_pre(Image.screen("image/png", "base64", 100)) ++ " " ++
       show_pre(Image.screen("image/jpg", "8bit", 10)) ++ " " ++
       show_pre(Image.screen("image/jpeg", "base64", 2097152)) ++ " " ++
@@ -171,8 +208,19 @@ def main() -> IO(Unit):
       judge(Image.Jpeg{}, jpeg_ok()) ++ " " ++
       judge(Image.Jpeg{}, C.bytes_str([0, 0])) ++ " " ++
       judge(Image.Png{}, png_of(1, 24, 1, 24) ++ many(1572820n, "")))
+    IO.print("ceiling " ++ U32.show(Image.encoded_ceiling("base64")) ++ " " ++
+      U32.show(Image.encoded_ceiling("8bit")))
     IO.print("ihdr " ++ judge(Image.Png{}, png_len(0, 0, 0, 8, C.bytes_str([0, 0, 0, 0]))) ++ " " ++
       judge(Image.Png{}, png_len(255, 255, 255, 255, C.bytes_str([0]))))
+    IO.print("fetch cap " ++ U32.show(Image.fetch_cap()))
+    IO.print("least " ++ U32.show(Image.least_bytes("base64", 2152312)) ++ " " ++
+      U32.show(Image.least_bytes("base64", 15)) ++ " " ++ U32.show(Image.least_bytes("8bit", 100)) ++
+      " " ++ U32.show(Image.least_bytes("quoted-printable", 100)))
+    IO.print("ahead " ++ ahead(4, 1572864, 8, "base64", 1000) ++ " " ++
+      ahead(4, 1572864, 0, "base64", 1000) ++ " " ++ ahead(0, 1572864, 8, "base64", 1000) ++ " " ++
+      ahead(4, 100, 8, "base64", 1000) ++ " " ++ ahead(4, 100, 8, "quoted-printable", 1000) ++ " " ++
+      ahead(4, 723, 8, "base64", 1000))
+    IO.print("agree " ++ agree(five_keeps()) ++ " " ++ agree(behind()) ++ " " ++ agree(budget()))
     IO.print("counts " ++ counts(Image.room_new(), five_keeps()))
     IO.print("behind " ++ counts(Image.room_new(), behind()))
     IO.print("budget " ++ counts(Image.room_new(), budget()))
@@ -181,6 +229,8 @@ def main() -> IO(Unit):
       Bool.show(Image.ref_clear(sample_ref(), "xx" ++ sample_ref() ++ "yy")))
     IO.print("fate " ++ J.show(Image.fate_json(Image.Used{sample_sent()})))
     IO.print("fate " ++ J.show(Image.fate_json(Image.Skipped{[2], "anim.png", Image.Animated{}})))
+    IO.print("refused " ++ J.show(Image.note_json(Image.refused(Image.note_of(Image.Used{
+      sample_sent()})))))
     IO.print("notice " ++ Image.notice_text())
     IO.print("assets " ++ show_assets(Image.assets([])))
     IO.print("assets " ++ show_assets(Image.assets([sample_sent()])))
@@ -190,10 +240,15 @@ def main() -> IO(Unit):
 
 #|caps 4 1572864 1572864 slot 187 framing 387 b64 2097152 slack 12 text 60128 max 2157679
 #|sides 279 False 1569 False 280 True 1568 True
-#|reasons format animated dimensions file_size over_count over_budget unreadable ref
-#|screen omit format omit unreadable omit file_size fetch png 101 fetch jpeg 11 fetch jpeg 2097153 fetch png 1572865 omit file_size
+#|reasons format animated dimensions file_size over_count over_budget unreadable ref refused
+#|screen omit format omit unreadable fetch png 2097154 fetch png 2152313 fetch png 2162689 omit file_size fetch png 101 fetch jpeg 11 fetch jpeg 2097153 fetch png 1572865 omit file_size
 #|judge keep png 280 280 drop dimensions keep png 1568 1568 drop dimensions drop animated drop format drop unreadable keep jpeg 1568 280 drop format drop file_size
+#|ceiling 2162688 1572864
 #|ihdr drop unreadable drop unreadable
+#|fetch cap 8
+#|least 1565314 0 100 0
+#|ahead fetch over_count over_count over_budget fetch fetch
+#|agree t3t2t1t0over_count t3t2t1t0over_count formatformatformatformatt3 formatformatformatformatt3 t3over_budget t3over_budget
 #|counts t3t2t1t0over_count
 #|behind formatformatformatformatt3
 #|budget t3over_budget
@@ -201,6 +256,7 @@ def main() -> IO(Unit):
 #|clear True False
 #|fate {"section":"1.2","name":"scan.png","fate":"used","format":"png","bytes":4,"width":1200,"height":800}
 #|fate {"section":"2","name":"anim.png","fate":"skipped","reason":"animated"}
+#|refused {"section":"1.2","name":"scan.png","fate":"skipped","reason":"refused"}
 #|notice Image classification is experimental. Jev's answers on a message with a used image may depend on that image.
 #|assets none
 #|assets {"mbimg-01234567-89abcdef-00000000-ffffffff":{"type":"image","format":"png","data_base64":"YWJjZA=="}}

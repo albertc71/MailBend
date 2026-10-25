@@ -25,8 +25,8 @@ pub fn run() -> Result<ExitStatus, Error> {
         .map_err(|_| "cannot supervise signals")?;
     let signals = SignalFd::with_flags(&mask, SfdFlags::SFD_NONBLOCK | SfdFlags::SFD_CLOEXEC)
         .map_err(|_| "cannot supervise signals")?;
-    let exe = std::env::current_exe().map_err(|_| "cannot locate installed helper")?;
-    let mut child = Command::new(exe)
+    // Keep the executing inode usable when an install replaces its pathname.
+    let mut child = Command::new("/proc/self/exe")
         .args(["--child", &getpid().as_raw().to_string()])
         .stdin(Stdio::piped())
         .process_group(0)

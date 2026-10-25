@@ -217,7 +217,7 @@ def noul(p: String) -> String:
 
 def answers_json() -> String:
   String.concat([
-    "{\"answers\":{",
+    "{\"model\":\"jev-1.14.0\",\"answers\":{",
     "\"u1_category\":{\"type\":\"choice\",\"choice\":\"Work\",\"confidence\":0.9},",
     "\"u1_reply_needed\":", noul("0.8"), ",",
     "\"u1_action_required\":", noul("0.1"), ",",
@@ -272,22 +272,31 @@ def check_answers() -> IO(Unit):
       show_category(Jev.category_of(Jev.Picked{"Work", Jev.Mid{}}, ["Ideas"], "none")),
       show_category(Jev.category_of(Jev.NoPick{}, ["Ideas"], "none"))], " "))
     IO.print(reply_lines(Jev.reply(answers_json(), two_entries(), ["Work", "Ideas", "none"])))
-    IO.print(reply_lines(Jev.reply("{\"answers\":{}}", two_entries(), ["Work", "none"])))
-    IO.print(reply_lines(Jev.reply("{\"answers\":[]}", two_entries(), ["Work", "none"])))
+    IO.print(reply_lines(Jev.reply("{\"model\":\"jev-1.14.0\",\"answers\":{}}", two_entries(), ["Work", "none"])))
+    IO.print(reply_lines(Jev.reply("{\"model\":\"jev-1.14.0\",\"answers\":[]}", two_entries(), ["Work", "none"])))
     IO.print(reply_lines(Jev.reply("not json", two_entries(), ["Work", "none"])))
-    IO.print(reply_lines(Jev.reply("{\"answers\":{\"a\":1,\"b\":2}}",
+    IO.print(reply_lines(Jev.reply("{\"model\":\"jev-1.14.0\",\"answers\":{\"a\":1,\"b\":2}}",
       entries(Jev.requests(Jev.Headers{}, [], opts([]))), ["none"])))
     IO.print(String.join([
       Bool.show(Jev.repeats_member(json("{\"a\":{\"b\":1},\"c\":[{\"b\":1,\"b\":2}]}"))),
       Bool.show(Jev.repeats_member(json("{\"a\":{\"b\":1},\"b\":[{\"b\":1},{\"b\":2}]}")))],
       " "))
-    IO.print(reply_lines(Jev.reply("{\"answers\":{\"u1_injection\":" ++ noul("0.01") ++
+    IO.print(reply_lines(Jev.reply("{\"model\":\"jev-1.14.0\",\"answers\":{\"u1_injection\":" ++ noul("0.01") ++
       ",\"u1_injection\":" ++ noul("0.99") ++ "}}", two_entries(), ["Work", "none"])))
     IO.print(reply_lines(Jev.reply(
-      "{\"answers\":{\"u1_injection\":{\"type\":\"noul\",\"noul\":0.01,\"noul\":0.99}}}",
+      "{\"model\":\"jev-1.14.0\",\"answers\":{\"u1_injection\":{\"type\":\"noul\",\"noul\":0.01,\"noul\":0.99}}}",
       two_entries(), ["Work", "none"])))
-    IO.print(reply_lines(Jev.reply("{\"answers\":{\"u1_injection\":" ++ noul("0.01") ++
+    IO.print(reply_lines(Jev.reply("{\"model\":\"jev-1.14.0\",\"answers\":{\"u1_injection\":" ++ noul("0.01") ++
       "},\"answers\":{}}", two_entries(), ["Work", "none"])))
+    IO.print(String.join([
+      reply_lines(Jev.reply("{\"model\":\"jev-9.9.9\",\"answers\":{}}", two_entries(),
+        ["Work", "none"])),
+      reply_lines(Jev.reply("{\"model\":\"jev-1.14.0-1\",\"answers\":{}}", two_entries(),
+        ["Work", "none"])),
+      reply_lines(Jev.reply("{\"answers\":{}}", two_entries(), ["Work", "none"])),
+      reply_lines(Jev.reply("{\"model\":42,\"answers\":{}}", two_entries(), ["Work", "none"])),
+      reply_lines(Jev.reply("{\"model\":null,\"answers\":{}}", two_entries(), ["Work", "none"]))],
+      " | "))
     IO.print(J.show(J.arr(Jev.answered_jsons([Jev.Skipped{facts(9)}], Jev.Body{}, [], "none"))))
     IO.print(J.show(J.arr(Jev.answered_jsons([Jev.Answered{Jev.with_body(facts(9), Jev.Partial{}),
       Jev.answers_for(J.JNull{}, 9, ["none"])}], Jev.Body{}, [], "none"))))
@@ -476,7 +485,11 @@ def answer_kvs(probs: List<&2, String>, names: List<&2, String>) -> List<&2, Str
           ("\"" ++ n ++ "\":" ++ noul(p)) <> answer_kvs(t, u)
 
 def outgoing_answers(probs: List<&2, String>, names: List<&2, String>) -> String:
-  "{\"answers\":{" ++ String.join(answer_kvs(probs, names), ",") ++ "}}"
+  "{\"model\":\"jev-1.14.0\",\"answers\":{" ++ String.join(answer_kvs(probs, names), ",") ++ "}}"
+
+# The same answers named as coming from `model`, a JSON value or nothing.
+def answers_from(model: String, probs: List<&2, String>, names: List<&2, String>) -> String:
+  "{" ++ model ++ "\"answers\":{" ++ String.join(answer_kvs(probs, names), ",") ++ "}}"
 
 def text_whole(t: Jev.Text) -> String:
   Jev.Text{text, whole} = t
@@ -557,6 +570,12 @@ def check_gates() -> IO(Unit):
       outgoing_answers(["0.05", "0.05", "0.05"], ["recipients", "disclosure", "extra"]))))
     IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
       "not json")))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      answers_from("\"model\":\"jev-9.9.9\",", ["0.05", "0.05"], names))))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      answers_from("", ["0.05", "0.05"], names))))
+    IO.print(show_decision(Jev.outgoing_decision(Jev.Headers{}, fresh, Jev.Complete{},
+      answers_from("\"model\":42,", ["0.05", "0.05"], names))))
     IO.print(show_decision(Jev.undecided(Jev.Body{}, "TypeSafe is down")))
     IO.print(show_decision(Jev.decided(Jev.Headers{}, Jev.delete_concerns([
       Jev.Answered{facts(4), keep_answers(Jev.Low{})},
@@ -620,6 +639,7 @@ def main() -> IO(Unit):
 #|no reply
 #|no reply
 #|no reply
+#|no reply | no reply | no reply | no reply | no reply
 #|[{"uid":9,"category":null,"jev":{"status":"unchecked","model":"jev-1.14.0","content":"body","derived_from_untrusted_content":true,"decision":"proceeded","reasons":["its header fields alone exceed what one TypeSafe request may hold"],"signals":{}}}]
 #|[{"uid":9,"category":null,"body_truncated":true,"jev":{"status":"checked","model":"jev-1.14.0","content":"body","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"reply_needed":"unknown","action_required":"unknown","deadline_present":"unknown","priority":"unknown","suggested_action":"none","keep":{"record":"unknown","security":"unknown","personal":"unknown","open_action":"unknown","needed_again":"unknown"},"disposable":"unknown","suspected_injection":true}}}]
 #|2592000
@@ -661,6 +681,9 @@ def main() -> IO(Unit):
 #|cleared {"jev":{"status":"checked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"proceeded","reasons":[],"signals":{"recipients":"low","disclosure":"mid"}}}
 #|vetoed[a recipient may not belong in this conversation] {"jev":{"status":"checked","model":"jev-1.14.0","content":"body","derived_from_untrusted_content":true,"decision":"blocked","reasons":["a recipient may not belong in this conversation"],"signals":{"recipients":"high","disclosure":"low"}},"body_truncated":true}
 #|failed[TypeSafe gave no usable answer to disclosure] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe gave no usable answer to disclosure"],"signals":{}}}
+#|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
+#|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
+#|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
 #|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
 #|failed[TypeSafe's answer is not the JSON MailBend asked for] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"headers","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe's answer is not the JSON MailBend asked for"],"signals":{}}}
 #|failed[TypeSafe is down] {"jev":{"status":"unchecked","model":"jev-1.14.0","content":"body","derived_from_untrusted_content":true,"decision":"blocked","reasons":["TypeSafe is down"],"signals":{}}}

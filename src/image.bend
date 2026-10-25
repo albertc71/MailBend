@@ -1,7 +1,8 @@
 # Still images for one classify request. A part is one Fate: Used holds the
 # still, its pixels, its bytes and a Ref; Skipped holds a section, a name
-# and a Reason. The assets map, the body-mode images key, the helper's
-# --images flag and the agent's images array are projections of that deck.
+# and a Reason. The assets map, the body-mode images key and the helper's
+# --images flag are projections of that deck; the agent's images array is
+# a projection of its Notes, which keep no bytes.
 
 import Base
 import ./codec.bend as C
@@ -16,6 +17,7 @@ type Reason is Data:
   OverBudget{}
   Unreadable{}
   NoRef{}
+  Refused{}
 
 type Format is Data:
   Png{}
@@ -70,6 +72,11 @@ def image_file_cap() -> U32:
 def image_request_cap() -> U32:
   1572864
 
+# The most image parts one batch fetches, whatever their fate. Each fetch
+# is one read-only IMAP session.
+def fetch_cap() -> U32:
+  8
+
 def min_side() -> U32:
   280
 
@@ -100,6 +107,8 @@ def reason_name(r: Reason) -> String:
       "unreadable"
     case NoRef{}:
       "ref"
+    case Refused{}:
+      "refused"
 
 def format_name(f: Format) -> String:
   match f:
@@ -129,10 +138,20 @@ def mime_format(+typ: String) -> Maybe<&2, Format>:
   mime_format.if(String.eq(typ, "image/png"),
     String.eq(typ, "image/jpeg") || String.eq(typ, "image/jpg"))
 
-# base64 expands by 4/3, so its encoded ceiling is the exact base64 of the
-# decoded cap. Every other transfer encoding is at most the decoded cap.
+# n base64 characters with a CRLF after every 64 or more of them. MIME
+# writes lines of at most 76 characters, and the size BODYSTRUCTURE gives
+# counts their CRLFs.
+def b64_lines_len(+n: U32) -> U32:
+  (n + 2 * ((n + 63) / 64 : U32) : U32)
+
+# The largest part fetched. base64 expands by 4/3 and MIME breaks it into
+# lines, so its ceiling is the base64 of the decoded cap with room for a
+# CRLF every 64 characters; the decoded cap is checked after the fetch
+# (judge.still), and the request cap still counts unbroken base64
+# (b64_len). Every other transfer encoding is at most the decoded cap.
 def encoded_ceiling(encoding: String) -> U32:
-  Bool.pick(U32, String.eq(encoding, "base64"), b64_len(image_file_cap()), image_file_cap())
+  Bool.pick(U32, String.eq(encoding, "base64"), b64_lines_len(b64_len(image_file_cap())),
+    image_file_cap())
 
 def screen.empty(empty: Bool, big: Bool, f: Format, size: U32) -> Pre:
   match empty big:
@@ -174,7 +193,8 @@ def pixels_ok(p: Pixels) -> Bool:
   pixels_ok.sides(side_ok(w) && side_ok(h), w, h)
 
 # Header walks. A corrupt deflate stream behind a legal header is not
-# detected: the still is kept, and TypeSafe can still refuse it.
+# detected: the still is kept, and TypeSafe can still refuse it, which
+# classify reports as refused after asking again without images.
 
 type Parsed is Data:
   StillImage{pixels: Pixels}
@@ -425,7 +445,8 @@ def jpeg_skip(+rest: String) -> JpegStep:
   jpeg_skip.at(has2(rest), rest)
 
 # EOI and SOS end the header walk. APP1 is a length-prefixed segment, so
-# its payload, including EXIF, is never read.
+# this walk skips its payload, EXIF included. The still is sent as it is,
+# EXIF and GPS data included.
 def jpeg_marked.if(stop: Bool, alone: Bool, sof: Bool, rest: String) -> JpegStep:
   match stop alone sof:
     case True{} _ _:
@@ -563,6 +584,65 @@ def admit(room: Room, v: Verdict) -> Admitted:
       Leave{section, name, reason, room}
     case Keep{still}:
       admit.keep(room, still)
+
+# What a batch's survey may still use: the room left in its request, and
+# how many more parts it may fetch.
+type Quota is Data:
+  Quota{room: Room, fetches: U32}
+
+def quota_new() -> Quota:
+  Quota{room_new(), fetch_cap()}
+
+def least_b64(+size: U32) -> U32:
+  Bool.pick(U32, U32.is_lt(size, 16), 0, (((size - 2) * 8 / 11 : U32) - 2 : U32))
+
+# The fewest decoded bytes a part of `size` encoded bytes can hold. An
+# identity encoding holds its size. base64 holds 3 bytes per 4 characters,
+# less 2 of padding, with a CRLF at most every 64 characters, as the fetch
+# ceiling assumes: at least (size - 2) * 8 / 11 - 2. Quoted-printable may
+# be all soft breaks, so nothing is assumed of it.
+def least_bytes(+encoding: String, +size: U32) -> U32:
+  Bool.pick(U32, String.eq(encoding, "base64"), least_b64(size),
+    Bool.pick(U32, String.eq(encoding, "quoted-printable"), 0, size))
+
+def ahead.if(over_count: Bool, over_budget: Bool) -> Maybe<&2, Reason>:
+  match over_count over_budget:
+    case True{} _:
+      Some{OverCount{}}
+    case False{} True{}:
+      Some{OverBudget{}}
+    case False{} False{}:
+      None{}
+
+# Why a part that screen would fetch is not fetched: the batch has made
+# fetch_cap fetches, or its request has room for no more images
+# (over_count), or even the part's fewest decoded bytes exceed the bytes
+# left (over_budget); None when it is fetched.
+def ahead(q: Quota, encoding: String, size: U32) -> Maybe<&2, Reason>:
+  Quota{Room{count, bytes}, fetches} = q
+  ahead.if(U32.is_zero(fetches) || U32.is_zero(count),
+    U32.is_gt(least_bytes(encoding, size), bytes))
+
+def quota_fetched(q: Quota) -> Quota:
+  Quota{room, fetches} = q
+  Quota{room, (fetches - 1 : U32)}
+
+type Judged is Data:
+  Judged{verdict: Verdict, quota: Quota}
+
+def quota_admit.put(a: Admitted, fetches: U32) -> Judged:
+  match a:
+    case Take{still, room}:
+      Judged{Keep{still}, Quota{room, fetches}}
+    case Leave{section, name, reason, room}:
+      Judged{VDrop{section, name, reason}, Quota{room, fetches}}
+
+# A fetched part's verdict against the batch's room, as bind_io will admit
+# it: a still that fits stays kept and takes its room; any other part is
+# dropped with its reason, and its bytes go with it.
+def quota_admit(q: Quota, v: Verdict) -> Judged:
+  Quota{room, fetches} = q
+  quota_admit.put(admit(room, v), fetches)
 
 def draw_ok(r: Result<&1, &1, U32 & String, U32>) -> Maybe<&2, U32>:
   match r:
@@ -728,19 +808,55 @@ def section_text(xs: List<&2, U32>) -> String:
     case n <> t:
       U32.show(n) ++ "." ++ section_text(t)
 
-def fate_used(st: Still) -> J.Json:
-  Still{section, name, format, Pixels{w, h}, data} = st
-  J.obj([J.kv("section", J.str(section_text(section))), J.kv("name", J.str(name)),
-    J.kv("fate", J.str("used")), J.kv("format", J.str(format_name(format))),
-    J.kv("bytes", J.num(C.byte_len(data))), J.kv("width", J.num(w)), J.kv("height", J.num(h))])
+# What the agent is told of one part: a used still's section, name,
+# format, decoded size and pixels, never its bytes; or a skipped part's
+# reason.
+type Note is Data:
+  NoteUsed{section: List<&2, U32>, name: String, format: Format, bytes: U32, pixels: Pixels}
+  NoteSkipped{section: List<&2, U32>, name: String, reason: Reason}
 
-def fate_json(f: Fate) -> J.Json:
+def note_of(f: Fate) -> Note:
   match f:
-    case Used{Sent{st, r}}:
-      fate_used(st)
+    case Used{Sent{Still{section, name, format, px, data}, r}}:
+      NoteUsed{section, name, format, C.byte_len(data), px}
     case Skipped{section, name, reason}:
+      NoteSkipped{section, name, reason}
+
+def notes_of(fs: List<&2, Fate>) -> List<&2, Note>:
+  match fs:
+    case Nil{}:
+      []
+    case f <> t:
+      note_of(f) <> notes_of(t)
+
+# A used still whose request TypeSafe refused. TypeSafe does not say which
+# image it rejected, so every still of that request is reported refused.
+def refused(n: Note) -> Note:
+  match n:
+    case NoteUsed{section, name, format, bytes, px}:
+      NoteSkipped{section, name, Refused{}}
+    case NoteSkipped{section, name, reason}:
+      NoteSkipped{section, name, reason}
+
+def refused_all(ns: List<&2, Note>) -> List<&2, Note>:
+  match ns:
+    case Nil{}:
+      []
+    case n <> t:
+      refused(n) <> refused_all(t)
+
+def note_json(n: Note) -> J.Json:
+  match n:
+    case NoteUsed{section, name, format, bytes, Pixels{w, h}}:
+      J.obj([J.kv("section", J.str(section_text(section))), J.kv("name", J.str(name)),
+        J.kv("fate", J.str("used")), J.kv("format", J.str(format_name(format))),
+        J.kv("bytes", J.num(bytes)), J.kv("width", J.num(w)), J.kv("height", J.num(h))])
+    case NoteSkipped{section, name, reason}:
       J.obj([J.kv("section", J.str(section_text(section))), J.kv("name", J.str(name)),
         J.kv("fate", J.str("skipped")), J.kv("reason", J.str(reason_name(reason)))])
+
+def fate_json(f: Fate) -> J.Json:
+  note_json(note_of(f))
 
 def notice_kv(any_used: Bool) -> List<&2, J.Json>:
   match any_used:

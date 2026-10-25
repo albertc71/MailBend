@@ -15,6 +15,7 @@ import os
 import pwd
 import pathlib
 import quopri
+import re
 import shutil
 import signal
 import subprocess
@@ -46,6 +47,9 @@ _spec = importlib.util.spec_from_file_location("mailbend_schema", ROOT / "tools/
 _schema = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_schema)
 OUTPUT_VALIDATORS = {}
+_images_spec = importlib.util.spec_from_file_location("image_fixtures", ROOT / "tests/image_fixtures.py")
+IMAGES = importlib.util.module_from_spec(_images_spec)
+_images_spec.loader.exec_module(IMAGES)
 for _entry in _schema.TOOLS:
     Draft202012Validator.check_schema(_entry["outputSchema"])
     OUTPUT_VALIDATORS[_entry["name"]] = Draft202012Validator(_entry["outputSchema"])
@@ -3110,6 +3114,10 @@ def jev(work):
     jev_structure(work, key_file)
     jev_options(work, key_file)
     jev_images(work, key_file)
+    jev_image_batches(work, key_file)
+    jev_image_refusals(work, key_file)
+    jev_image_quota(work, key_file)
+    jev_image_kinds(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3339,16 +3347,12 @@ def jev_candidates(srv, work, key_file):
 
 
 def png_still():
-    """A 280 by 280 PNG whose header is legal and whose body is not deflated."""
-    return bytes([
-        137, 80, 78, 71, 13, 10, 26, 10,
-        0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 24, 0, 0, 1, 24, 8, 2, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 73, 68, 65, 84, 0, 0, 0, 0,
-    ])
+    """A valid 280 by 280 PNG."""
+    return IMAGES.png(280, 280)
 
 
-def image_message():
-    png = base64.b64encode(png_still()).decode("ascii")
+def image_message(png_bytes=None):
+    png = base64.b64encode(png_still() if png_bytes is None else png_bytes).decode("ascii")
     raw = (
         "From: dana@example.com\r\nTo: tester@example.com\r\nSubject: scan\r\n"
         "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
@@ -3361,6 +3365,217 @@ def image_message():
         "--b--\r\n"
     )
     return {"uid": 1, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000", "raw": raw}
+
+
+def images_message(uid, parts):
+    """A message with a text part, then one part per (filename, content type,
+    bytes), base64 with a CRLF every 76 characters, as MIME writes it."""
+    raw = ("From: dana@example.com\r\nTo: tester@example.com\r\nSubject: photos\r\n"
+           "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+           "--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n")
+    for name, ctype, data in parts:
+        raw += (f"--b\r\nContent-Type: {ctype}\r\nContent-Disposition: attachment; filename=\"{name}\"\r\n"
+                "Content-Transfer-Encoding: base64\r\n\r\n"
+                + base64.encodebytes(data).decode("ascii").replace("\n", "\r\n"))
+    raw += "--b--\r\n"
+    return {"uid": uid, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000", "raw": raw}
+
+
+def part_fetches(lines):
+    """The image part fetches in a server log: BODY.PEEK of one section."""
+    return [l for l in lines if re.search(r"BODY\.PEEK\[\d+(\.\d+)*\]<0\.", l)]
+
+
+def jev_image_quota(work, key_file):
+    """A batch fetches at most 8 image parts, and none once its request has
+    room for no more images or bytes; those parts are reported without a fetch."""
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    small = IMAGES.png(100, 100)
+    big = IMAGES.png(600, 580, seed=7)
+    cases = (
+        ("the fetch cap", [(f"s{i}.png", "image/png", small) for i in range(9)]
+         + [("ok.png", "image/png", png_still())],
+         ["skipped:dimensions"] * 8 + ["skipped:over_count"] * 2, 8),
+        ("the count cap", [(f"p{i}.png", "image/png", png_still()) for i in range(6)],
+         ["used"] * 4 + ["skipped:over_count"] * 2, 4),
+        ("the byte budget, with a realistic still", [("big1.png", "image/png", big),
+                                                     ("big2.png", "image/png", big),
+                                                     ("ok.png", "image/png", png_still())],
+         ["used", "skipped:over_budget", "used"], 2),
+    )
+    for title, parts, fates, fetches in cases:
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"] = [images_message(1, parts)]
+        srv = Server(work, fixture=fixture)
+        ts = TypeSafe(work)
+        try:
+            before, log_start = srv.st(), len(srv.log_lines())
+            c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+            images = (r.get("messages") or [{}])[0].get("images") or []
+            seen = [i["fate"] + (":" + i["reason"] if "reason" in i else "") for i in images]
+            fetched = part_fetches(srv.log_lines()[log_start:])
+            sent = ts.requests()
+            assets = sent[0]["body"].get("assets", {}) if sent else {}
+            check(f"images quota, {title}: parts past it are reported without a fetch",
+                  c == 0 and seen == fates and len(fetched) == fetches
+                  and len(assets) == fates.count("used") and srv.st() == before,
+                  (r.get("error"), seen, len(fetched), len(assets)))
+        finally:
+            ts.stop()
+            srv.stop()
+    check("images quota: the realistic still is sent byte for byte",
+          any(base64.b64decode(a.get("data_base64", "")) == big for a in assets.values()), len(assets))
+
+
+def jev_image_kinds(work, key_file):
+    """A JPEG is sent as a PNG is, and a part past the decoded cap is
+    skipped once fetched, though its line-broken base64 fits the ceiling."""
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    over = IMAGES.png(800, 658, seed=3)
+    jpeg = IMAGES.jpeg(280, 280)
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        images_message(1, [("big.png", "image/png", over), ("photo.jpg", "image/jpeg", jpeg)])]
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    try:
+        before, log_start = srv.st(), len(srv.log_lines())
+        c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+        images = (r.get("messages") or [{}])[0].get("images")
+        sent = ts.requests()
+        assets = sent[0]["body"].get("assets", {}) if sent else {}
+        check("images: a JPEG is used and a part past the decoded cap is skipped as file_size after its fetch",
+              c == 0 and len(over) > 1572864 and images == [
+                  {"section": "2", "name": "big.png", "fate": "skipped", "reason": "file_size"},
+                  {"section": "3", "name": "photo.jpg", "fate": "used", "format": "jpeg",
+                   "bytes": len(jpeg), "width": 280, "height": 280}]
+              and len(part_fetches(srv.log_lines()[log_start:])) == 2 and "image_notice" in r
+              and [a["format"] for a in assets.values()] == ["jpeg"]
+              and [base64.b64decode(a["data_base64"]) for a in assets.values()] == [jpeg]
+              and srv.st() == before, (r.get("error"), images, len(assets)))
+    finally:
+        ts.stop()
+        srv.stop()
+
+
+def jev_image_batches(work, key_file):
+    """The final survey remains visible within and across request batches."""
+    for split in (False, True):
+        fixture = copy.deepcopy(FIX)
+        text = ("x" * 99 + "\r\n") * 180 if split else "hello"
+        final = image_message()
+        final["uid"] = 3
+        fixture["mailboxes"]["INBOX"]["messages"] = [
+            plain_message(1, "First", text), plain_message(2, "Second", text), final]
+        srv = Server(work, fixture=fixture)
+        ts = None
+        try:
+            ts = TypeSafe(work)
+            before = srv.st()
+            c, r = classify(srv, ts, key_file, {"uids": [1, 2, 3]},
+                            MAILBEND_TYPESAFE_CONTENT="body", MAILBEND_TYPESAFE_ZERO_RETENTION="1",
+                            MAILBEND_TYPESAFE_IMAGES="1")
+            messages = r.get("messages", [])
+            got = {m["uid"]: m for m in messages}
+            expected = [
+                {"section": "2", "name": "scan.png", "fate": "used", "format": "png",
+                 "bytes": len(png_still()), "width": 280, "height": 280},
+                {"section": "3", "name": "anim.gif", "fate": "skipped", "reason": "format"},
+            ]
+            label = "multiple requests" if split else "one request"
+            check(f"images {label}: final message reports used and skipped images",
+                  c == 0 and [m["uid"] for m in messages] == [1, 2, 3]
+                  and got.get(1, {}).get("images") == [] and got.get(2, {}).get("images") == []
+                  and got.get(3, {}).get("images") == expected and "image_notice" in r
+                  and "mbimg-" not in json.dumps(r), r)
+            sent = ts.requests()
+            batches = [[e["uid"] for e in q["body"]["state"]["emails"]] for q in sent]
+            check(f"images {label}: request batching is exercised",
+                  len(sent) > 1 if split else len(sent) == 1, batches)
+            wired = [q for q in sent if 3 in [e["uid"] for e in q["body"]["state"]["emails"]]]
+            request = wired[0]["body"] if len(wired) == 1 else {}
+            entry = next((e for e in request.get("state", {}).get("emails", []) if e["uid"] == 3), {})
+            refs = entry.get("images", [])
+            assets = request.get("assets", {})
+            check(f"images {label}: final message references its exact PNG asset",
+                  len(refs) == 1 and set(refs) == set(assets)
+                  and assets[refs[0]] == {"type": "image", "format": "png",
+                                         "data_base64": base64.b64encode(png_still()).decode("ascii")}
+                  and wired[0].get("images_header") == "true", (entry, assets))
+            check(f"images {label}: classification leaves mail unchanged", srv.st() == before)
+        finally:
+            if ts is not None:
+                ts.stop()
+            srv.stop()
+
+
+def jev_image_refusals(work, key_file):
+    """TypeSafe refuses a whole request when it cannot use one image, so the
+    batch is asked again without images, and its images are reported refused."""
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    refused = [
+        {"section": "2", "name": "scan.png", "fate": "skipped", "reason": "refused"},
+        {"section": "3", "name": "anim.gif", "fate": "skipped", "reason": "format"},
+    ]
+
+    def plain(q):
+        return (q.get("images_header") in (None, "") and "assets" not in q["body"]
+                and all("images" not in e for e in q["body"]["state"]["emails"]))
+
+    for title, scenario, png, uids in (
+        ("an image TypeSafe cannot decode", "ok", IMAGES.damaged_png(), [1, 2, 3]),
+        ("a request with images refused for any reason", "refuse-assets", png_still(), [3]),
+    ):
+        fixture = copy.deepcopy(FIX)
+        final = image_message(png)
+        final["uid"] = 3
+        fixture["mailboxes"]["INBOX"]["messages"] = [
+            plain_message(1, "First", "hello"), plain_message(2, "Second", "hello"), final]
+        srv = Server(work, fixture=fixture)
+        ts = TypeSafe(work, scenario)
+        try:
+            before = srv.st()
+            c, r = classify(srv, ts, key_file, {"uids": uids}, **on)
+            got = {m["uid"]: m for m in r.get("messages", [])}
+            sent = ts.requests()
+            statuses = [q["status"] for q in sent]
+            check(f"images refused, {title}: every message is classified and the image is refused",
+                  c == 0 and [m["uid"] for m in r.get("messages", [])] == uids
+                  and all(m.get("jev", {}).get("status") == "checked" for m in got.values())
+                  and got.get(3, {}).get("images") == refused and "image_notice" not in r
+                  and len(r.get("requests", [])) == 1 and r["requests"][0]["messages"] == len(uids), r)
+            check(f"images refused, {title}: the same messages are asked again without images",
+                  statuses == [400, 200] and len(sent) == 2 and "assets" in sent[0]["body"]
+                  and sent[0].get("images_header") == "true" and plain(sent[1])
+                  and [e["uid"] for e in sent[1]["body"]["state"]["emails"]] == uids
+                  and sent[1]["body"]["questions"] == sent[0]["body"]["questions"],
+                  (statuses, sent[1:]))
+            check(f"images refused, {title}: classification leaves mail unchanged", srv.st() == before)
+        finally:
+            ts.stop()
+            srv.stop()
+    fixture = copy.deepcopy(FIX)
+    final = image_message()
+    final["uid"] = 3
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        plain_message(1, "First", "hello"), plain_message(2, "Second", "hello"), final]
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work, "status:400")
+    try:
+        before = srv.st()
+        c, r = classify(srv, ts, key_file, {"uids": [1, 2, 3]}, **on)
+        sent = ts.requests()
+        check("images refused: when the request without images is refused too, it is split once, then stops",
+              c != 0 and "TypeSafe refused the request (HTTP 400)" in r.get("error", "")
+              and len(sent) == 3 and "assets" in sent[0]["body"] and all(plain(q) for q in sent[1:])
+              and [len(q["body"]["state"]["emails"]) for q in sent] == [3, 3, 1] and srv.st() == before,
+              (r, [q["status"] for q in sent]))
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def jev_images(work, key_file):
@@ -4027,6 +4242,7 @@ def gates(work):
         gates_secret_scan(srv, work, key_file, attach_dir)
         gates_vetoes(srv, work, key_file, attach_dir)
         gates_failure(srv, work, key_file)
+        gates_unpinned(srv, work, key_file)
         gates_annotations(srv, work, key_file)
     finally:
         srv.stop()
@@ -4317,6 +4533,42 @@ def gates_failure(srv, work, key_file):
               not unchecked, unchecked)
     finally:
         ts.stop()
+
+
+def gates_unpinned(srv, work, key_file):
+    """A reply that names another model, or none, as the one that answered is
+    no answer: every tool takes the path it takes when TypeSafe fails."""
+    needle = "not the JSON MailBend asked for"
+    for scenario in ("model:jev-9.9.9", "model:jev-1.14.0-1", "no-model"):
+        ts = TypeSafe(work, scenario)
+        try:
+            env = jev_env(ts, key_file)
+            n, before = sent_count(srv), srv.st()
+            bad = []
+            c, r, logged, asked = gate_call(srv, ts, "mail_send", SEND, **env)
+            if not (send_blocked(c, r, logged, "could not be checked with Jev") and needle in r["error"]
+                    and r["jev"].get("status") == "unchecked" and len(asked) == 1):
+                bad.append(("mail_send", r, len(asked)))
+            c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_PREVIEWED), **env)
+            if not (c != 0 and "could not be checked with Jev" in r.get("error", "")
+                    and "nothing was deleted" in r["error"] and needle in r["error"]):
+                bad.append(("mail_delete", r))
+            c, r, logged, asked = gate_call(srv, ts, "mail_classify", {"uids": [GATE_PREVIEWED]}, **env)
+            if not (c != 0 and needle in r.get("error", "")):
+                bad.append(("mail_classify", r))
+            c, r, logged, asked = gate_call(srv, ts, "mail_triage",
+                                            {"uids": [GATE_PREVIEWED], "uidvalidity": GATE_VALIDITY}, **env)
+            if not (c != 0 and needle in r.get("error", "") and "nothing was moved" in r["error"]):
+                bad.append(("mail_triage", r))
+            check(f"gates {scenario}: a reply not from the pinned model blocks send and delete, and stops "
+                  "classify and triage", not bad and sent_count(srv) == n
+                  and srv.st()["mailboxes"] == before["mailboxes"], bad)
+            c, r, logged, asked = gate_call(srv, ts, "mail_search", {}, **env)
+            jevs = [m.get("jev") for m in r.get("messages", [])]
+            check(f"gates {scenario}: a read returns its messages unchecked",
+                  c == 0 and jevs and all(j and j.get("status") == "unchecked" for j in jevs), r)
+        finally:
+            ts.stop()
 
 
 def gates_annotations(srv, work, key_file):
