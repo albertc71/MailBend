@@ -33,7 +33,7 @@ type Switch is Data:
 
 # The model every request names: pinned, never "jev-latest".
 def model() -> String:
-  "jev-1.13.0"
+  "jev-1.14.0"
 
 def content_name(c: Content) -> String:
   match c:
@@ -436,9 +436,11 @@ def questions_for(p: Purpose, uid: U32, options: List<&2, J.Json>, none: String)
 # ------------------
 
 # TypeSafe takes 32k tokens of state plus the longest question, and 64k of
-# state plus all questions (jev-1.13.0). MailBend estimates tokens by the
-# UTF-8 bytes of the serialised JSON, which a token's text never undercuts;
-# the limits keep a margin, and `overhead` bounds the request's own framing.
+# state plus all questions (jev-1.14.0). Its price and its default context
+# match jev-1.13.0, which is why `state_limit` 30000, `request_limit` 60000,
+# and `overhead` 128 stay. MailBend estimates tokens by the UTF-8 bytes of
+# the serialised JSON, which a token's text never undercuts; the limits keep
+# a margin, and `overhead` bounds the request's own framing.
 def state_limit() -> U32:
   30000
 
@@ -737,7 +739,8 @@ type Answered is Data:
   Skipped{facts: Facts}
 
 # Below 0.30 is Low and above 0.70 High: TypeSafe routes the range between
-# to people.
+# to people. These cuts, and `level_band`, were not remeasured when the pin
+# moved from jev-1.13.0 to jev-1.14.0.
 def prob_band(+p: U32) -> Band:
   Bool.pick(Band, U32.is_lt(p, 300), Low{}, Bool.pick(Band, U32.is_gt(p, 700), High{}, Mid{}))
 
