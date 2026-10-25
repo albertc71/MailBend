@@ -146,36 +146,62 @@ def select(xs: List<&2, Part>, +wanted: String) -> Maybe<&2, Part>:
       select.if(matches(p, wanted), p, select(t, wanted))
 
 # Canonical base64 roundtrip rejects garbage, bad padding and partial groups.
-# MIME whitespace is permitted between base64 digits.
-def compact(s: String) -> String:
+# MIME whitespace is permitted between base64 digits. The walks below are
+# loops over a reversed accumulator: an image part is past what a
+# cons-recursive walk can hold on the interpreter's stack.
+def compact.go(s: String, +acc: String) -> String:
   match s:
     case SNil{}:
-      ""
+      String.reverse(acc)
     case SCon{+c, t}:
-      Bool.pick(String, M.char_in(c, " \t\r\n"), "", SCon{c, SNil{}}) ++ compact(t)
+      compact.go(t, Bool.pick(String, M.char_in(c, " \t\r\n"), acc, SCon{c, acc}))
+
+def compact(s: String) -> String:
+  compact.go(s, "")
+
+# `ok` is false once an escape was not two hex digits.
+def qp_ok.go(s: String, ok: Bool) -> Bool:
+  match s ok:
+    case _ False{}:
+      False{}
+    case SNil{} True{}:
+      True{}
+    case SCon{'=', SCon{'\r', SCon{'\n', t}}} True{}:
+      qp_ok.go(t, True{})
+    case SCon{'=', SCon{'\n', t}} True{}:
+      qp_ok.go(t, True{})
+    case SCon{'=', SCon{a, SCon{b, t}}} True{}:
+      qp_ok.go(t, M.char_in(a, "0123456789abcdefABCDEF") &&
+        M.char_in(b, "0123456789abcdefABCDEF"))
+    case SCon{'=', t} True{}:
+      False{}
+    case SCon{c, t} True{}:
+      qp_ok.go(t, True{})
 
 def qp_ok(s: String) -> Bool:
-  match s:
-    case SNil{}:
-      True{}
-    case SCon{'=', SCon{'\r', SCon{'\n', t}}}:
-      qp_ok(t)
-    case SCon{'=', SCon{'\n', t}}:
-      qp_ok(t)
-    case SCon{'=', SCon{a, SCon{b, t}}}:
-      M.char_in(a, "0123456789abcdefABCDEF") &&
-        M.char_in(b, "0123456789abcdefABCDEF") && qp_ok(t)
-    case SCon{'=', t}:
+  qp_ok.go(s, True{})
+
+# String.eq rebuilds both strings on its way back, so it is not a loop.
+def same.go(a: String, b: String, ok: Bool) -> Bool:
+  match a b ok:
+    case _ _ False{}:
       False{}
-    case SCon{c, t}:
-      qp_ok(t)
+    case SNil{} SNil{} True{}:
+      True{}
+    case SCon{x, s} SCon{y, t} True{}:
+      same.go(s, t, U32.is_eq(C.u(x), C.u(y)))
+    case _ _ True{}:
+      False{}
+
+def same(a: String, b: String) -> Bool:
+  same.go(a, b, True{})
 
 def decode.if(b64: Bool, qp: Bool, +raw: String) -> Result<&2, &2, String, String>:
   match b64 qp:
     case True{} _:
       +bytes = C.b64_decode(raw)
       do Result<&2, &2, String, String>:
-        check(String.eq(C.b64_encode(bytes, False{}), compact(raw)),
+        check(same(C.b64_encode(bytes, False{}), compact(raw)),
           "incomplete or malformed base64 part")
         return bytes
     case False{} True{}:

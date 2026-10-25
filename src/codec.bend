@@ -496,35 +496,40 @@ def hex8(n: U32) -> String:
 # Quoted-printable
 # ----------------
 
-# The byte an "=XX" escape stands for, in front of `rest`; when the digits
-# are not hex (`ok` is false), the escape text `orig` is kept as it is.
+# The byte an "=XX" escape stands for, onto the reversed output `acc`; when
+# the digits are not hex (`ok` is false), the escape text "=ab" is kept as
+# it is.
 def qp_decode.pair(
-  ok: Bool, h: U32, l: U32, rest: String, orig: String
+  ok: Bool, h: U32, l: U32, acc: String, a: Char, b: Char
 ) -> String:
   match ok:
     case True{}:
-      SCon{chr((h * 16 + l : U32)), rest}
+      SCon{chr((h * 16 + l : U32)), acc}
     case False{}:
-      orig ++ rest
+      SCon{b, SCon{a, SCon{'=', acc}}}
 
-# Quoted-printable to bytes. With `q` (RFC 2047 "Q" encoding) '_' is a space.
-def qp_decode(s: String, +q: Bool) -> String:
+# The output is built reversed, so a long body stays a loop.
+def qp_decode.go(s: String, +q: Bool, acc: String) -> String:
   match s:
     case SNil{}:
-      ""
+      String.reverse(acc)
     case SCon{'=', SCon{'\r', SCon{'\n', t}}}:
-      qp_decode(t, q)
+      qp_decode.go(t, q, acc)
     case SCon{'=', SCon{'\n', t}}:
-      qp_decode(t, q)
+      qp_decode.go(t, q, acc)
     case SCon{'=', SCon{+a, SCon{+b, t}}}:
       +high = hex_val(a)
       +low = hex_val(b)
-      qp_decode.pair(U32.is_lt(high, 16) && U32.is_lt(low, 16), high, low,
-        qp_decode(t, q), SCon{'=', SCon{a, SCon{b, SNil{}}}})
+      qp_decode.go(t, q,
+        qp_decode.pair(U32.is_lt(high, 16) && U32.is_lt(low, 16), high, low, acc, a, b))
     case SCon{'_', t}:
-      SCon{Bool.pick(Char, q, ' ', '_'), qp_decode(t, q)}
+      qp_decode.go(t, q, SCon{Bool.pick(Char, q, ' ', '_'), acc})
     case SCon{c, t}:
-      SCon{c, qp_decode(t, q)}
+      qp_decode.go(t, q, SCon{c, acc})
+
+# Quoted-printable to bytes. With `q` (RFC 2047 "Q" encoding) '_' is a space.
+def qp_decode(s: String, +q: Bool) -> String:
+  qp_decode.go(s, q, "")
 
 # The "=XX" escape of byte n.
 def qp_encode.escape(+n: U32) -> String:
