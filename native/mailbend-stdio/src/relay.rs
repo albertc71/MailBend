@@ -1,5 +1,3 @@
-//! One bounded buffer, with signals and child exit observed even under backpressure.
-
 use std::os::fd::AsFd;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};

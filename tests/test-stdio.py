@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Exercise the installed MCP entry points with real Linux descriptor transports."""
 import json
 import os
 import pathlib
@@ -226,7 +225,6 @@ class StdioTests(unittest.TestCase):
 
     def test_controlled_child_signal_statuses(self):
         # A controlled OS child isolates forwarding from the host crash collector.
-        # Protocol tests above always use the real Bend core.
         with tempfile.TemporaryDirectory() as directory:
             bin_dir = pathlib.Path(directory) / "bin"
             bin_dir.mkdir()
