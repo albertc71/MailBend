@@ -445,7 +445,8 @@ def jpeg_skip(+rest: String) -> JpegStep:
   jpeg_skip.at(has2(rest), rest)
 
 # EOI and SOS end the header walk. APP1 is a length-prefixed segment, so
-# its payload, including EXIF, is never read.
+# this walk skips its payload, EXIF included. The still is sent as it is,
+# EXIF and GPS data included.
 def jpeg_marked.if(stop: Bool, alone: Bool, sof: Bool, rest: String) -> JpegStep:
   match stop alone sof:
     case True{} _ _:

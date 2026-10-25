@@ -3117,6 +3117,7 @@ def jev(work):
     jev_image_batches(work, key_file)
     jev_image_refusals(work, key_file)
     jev_image_quota(work, key_file)
+    jev_image_kinds(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3425,6 +3426,38 @@ def jev_image_quota(work, key_file):
             srv.stop()
     check("images quota: the realistic still is sent byte for byte",
           any(base64.b64decode(a.get("data_base64", "")) == big for a in assets.values()), len(assets))
+
+
+def jev_image_kinds(work, key_file):
+    """A JPEG is sent as a PNG is, and a part past the decoded cap is
+    skipped once fetched, though its line-broken base64 fits the ceiling."""
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    over = IMAGES.png(800, 658, seed=3)
+    jpeg = IMAGES.jpeg(280, 280)
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        images_message(1, [("big.png", "image/png", over), ("photo.jpg", "image/jpeg", jpeg)])]
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    try:
+        before, log_start = srv.st(), len(srv.log_lines())
+        c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+        images = (r.get("messages") or [{}])[0].get("images")
+        sent = ts.requests()
+        assets = sent[0]["body"].get("assets", {}) if sent else {}
+        check("images: a JPEG is used and a part past the decoded cap is skipped as file_size after its fetch",
+              c == 0 and len(over) > 1572864 and images == [
+                  {"section": "2", "name": "big.png", "fate": "skipped", "reason": "file_size"},
+                  {"section": "3", "name": "photo.jpg", "fate": "used", "format": "jpeg",
+                   "bytes": len(jpeg), "width": 280, "height": 280}]
+              and len(part_fetches(srv.log_lines()[log_start:])) == 2 and "image_notice" in r
+              and [a["format"] for a in assets.values()] == ["jpeg"]
+              and [base64.b64decode(a["data_base64"]) for a in assets.values()] == [jpeg]
+              and srv.st() == before, (r.get("error"), images, len(assets)))
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def jev_image_batches(work, key_file):

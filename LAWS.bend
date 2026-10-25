@@ -1034,6 +1034,17 @@ law cargo_of_without_images:
   {Jev.cargo_of(Jev.clear_used(es)) ==
     Jev.plain_cargo(Jev.request_body(Jev.clear_used(es))) : Jev.Cargo}
 
+# LAW: an entry as the requests are built sends no still, for every content
+# mode, message, text, question set and reserve; only Jev.entry_images,
+# which classify alone calls, gives an entry stills
+law entry_at_sends_no_images:
+  for c: Jev.Content
+  for f: Jev.Facts
+  for text: String
+  for opts: Jev.Options
+  for reserve: U32
+  {Jev.sent_list([Jev.entry_at(c, f, text, opts, reserve)]) == [] : List<&2, Image.Sent>}
+
 # LAW: a missing answer reads as Missing, which the injection screen flags
 # (Jev.suspects), suggests nothing and files it nowhere, whatever the key,
 # candidates and none key

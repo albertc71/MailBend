@@ -50,8 +50,11 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools
   do not. A part outside those rules is skipped and reported; it is not
-  resized. The request carries `TypeSafe-Danger-Zone-Images: true` only when
-  an image is actually sent. TypeSafe refuses a whole request when it cannot
+  resized or re-encoded: it is sent as the sender wrote it, with any
+  metadata in it (a photo's EXIF data, which can hold its GPS position), and
+  TypeSafe says it removes such metadata when it receives an image. The
+  request carries `TypeSafe-Danger-Zone-Images: true` only when an image is
+  actually sent. TypeSafe refuses a whole request when it cannot
   use one of its images (a damaged file, for example), so a refused request
   that carried images is asked once more without them; see
   [`mail_classify`](#mail_classify).

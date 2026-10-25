@@ -1347,6 +1347,20 @@ def cargo_from_clear(+es: List<&2, Jev.Entry>)
 def Laws.cargo_of_without_images(es):
   cargo_from_clear(es)
 
+# entry.put writes [] for the used list. Its sizes come from the question
+# list, which questions_for builds by matching the purpose, so the proof
+# matches the options and the purpose, and each case computes.
+def Laws.entry_at_sends_no_images(c, f, text, opts, reserve):
+  match opts:
+    case Jev.Options{purpose, json, none}:
+      match purpose:
+        case Jev.Classifying{}:
+          {==}
+        case Jev.Annotating{}:
+          {==}
+        case Jev.Deleting{}:
+          {==}
+
 def Laws.missing_answer_is_cautious(key, candidates, none):
   ({==}, {==}, {==}, {==}, {==}, {==})
 
