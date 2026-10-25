@@ -19,6 +19,22 @@ def advertises(fs: List<&2, I.Folder>, +attr: String) -> Bool:
     case I.Folder{name, delim, attrs} <> t:
       I.has_attr(attrs, attr) || advertises(t, attr)
 
+# Whether any folder of `fs` is named `want`, as an override is matched.
+def lists_name(fs: List<&2, I.Folder>, +want: String) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case I.Folder{name, delim, attrs} <> t:
+      I.same_name(name, want) || lists_name(t, want)
+
+# Whether `at` holds any of `attrs`, as a folder's attributes are read.
+def advertises_any(attrs: List<&2, String>, +at: List<&2, String>) -> Bool:
+  match attrs:
+    case Nil{}:
+      False{}
+    case attr <> t:
+      I.has_attr(at, attr) || advertises_any(t, at)
+
 # Laws
 # ----
 
@@ -38,6 +54,80 @@ law override_decides_the_role:
   for set: {String.is_empty(override) == False{} : Bool}
   {Tools.resolved_role(fs, override, attr, a, b) == Tools.named_folder(fs, override)
     : Maybe<&2, String>}
+
+# LAW: with an override set, the one selectable folder of that name takes
+# the role, wherever it stands
+law override_takes_its_listed_folder:
+  for before: List<&2, I.Folder>
+  for n: String
+  for d: String
+  for at: List<&2, String>
+  for after: List<&2, I.Folder>
+  for override: String
+  for attr: String
+  for a: String
+  for b: String
+  for set: {String.is_empty(override) == False{} : Bool}
+  for named: {I.same_name(n, override) == True{} : Bool}
+  for sel: {Tools.selectable(at) == True{} : Bool}
+  for none_before: {lists_name(before, override) == False{} : Bool}
+  for none_after: {lists_name(after, override) == False{} : Bool}
+  {Tools.resolved_role(List.append(&2, I.Folder, before, I.Folder{n, d, at} <> after),
+     override, attr, a, b) == Some{n} : Maybe<&2, String>}
+
+# LAW: with an override set, two folders of that name: no folder takes the
+# role
+law override_naming_two_folders_takes_no_role:
+  for before: List<&2, I.Folder>
+  for n1: String
+  for d1: String
+  for at1: List<&2, String>
+  for between: List<&2, I.Folder>
+  for n2: String
+  for d2: String
+  for at2: List<&2, String>
+  for after: List<&2, I.Folder>
+  for override: String
+  for attr: String
+  for a: String
+  for b: String
+  for set: {String.is_empty(override) == False{} : Bool}
+  for named1: {I.same_name(n1, override) == True{} : Bool}
+  for named2: {I.same_name(n2, override) == True{} : Bool}
+  {Tools.resolved_role(
+     List.append(&2, I.Folder, before,
+       I.Folder{n1, d1, at1} <> List.append(&2, I.Folder, between, I.Folder{n2, d2, at2} <> after)),
+     override, attr, a, b) == None{} : Maybe<&2, String>}
+
+# LAW: with an override set, a folder of that name that cannot be selected:
+# no folder takes the role
+law override_naming_unselectable_folder_takes_no_role:
+  for before: List<&2, I.Folder>
+  for n: String
+  for d: String
+  for at: List<&2, String>
+  for after: List<&2, I.Folder>
+  for override: String
+  for attr: String
+  for a: String
+  for b: String
+  for set: {String.is_empty(override) == False{} : Bool}
+  for named: {I.same_name(n, override) == True{} : Bool}
+  for unselectable: {Tools.selectable(at) == False{} : Bool}
+  {Tools.resolved_role(List.append(&2, I.Folder, before, I.Folder{n, d, at} <> after),
+     override, attr, a, b) == None{} : Maybe<&2, String>}
+
+# LAW: with an override set and no folder of that name, no folder takes the
+# role: neither the name nor any other folder is used instead
+law override_naming_no_folder_takes_no_role:
+  for fs: List<&2, I.Folder>
+  for override: String
+  for attr: String
+  for a: String
+  for b: String
+  for set: {String.is_empty(override) == False{} : Bool}
+  for unlisted: {lists_name(fs, override) == False{} : Bool}
+  {Tools.resolved_role(fs, override, attr, a, b) == None{} : Maybe<&2, String>}
 
 # LAW: when two folders advertise the role, no folder takes it
 law two_advertised_folders_take_no_role:
@@ -164,13 +254,33 @@ law each_role_has_its_own_attribute_and_names:
       Tools.resolved_role(fs, archive, "\\Archive", "Archive", "Archive")
     } : Tools.Folders}
 
+# The laws above read selectability and roles through Tools.selectable and
+# Tools.recognized_role; these tie both to the attributes the server sent.
+
+# LAW: a folder can be selected exactly when it advertises neither
+# \Noselect nor \NonExistent
+law selectable_is_neither_noselect_nor_nonexistent:
+  for at: List<&2, String>
+  {Tools.selectable(at) ==
+    Bool.not(I.has_attr(at, "\\Noselect") || I.has_attr(at, "\\NonExistent")) : Bool}
+
+# LAW: a folder has a role of its own exactly when it advertises one of
+# \Drafts, \Sent, \Trash, \Junk, \Archive, \All or \Flagged
+law recognized_roles_are_the_special_use_attributes:
+  for at: List<&2, String>
+  {Tools.recognized_role(at) ==
+    advertises_any(
+      ["\\Drafts", "\\Sent", "\\Trash", "\\Junk", "\\Archive", "\\All", "\\Flagged"], at)
+    : Bool}
+
 # Examples
 # --------
 
-# One instance of each law, on folders like iCloud's, where Trash is
-# "Deleted Messages" advertising \Trash. They come before the proofs so
-# that, when a change breaks a law, the first failure Bend prints is the
-# folder the code now picks here, not a step inside a proof.
+# Instances of the laws on folders like iCloud's, where Trash is "Deleted
+# Messages" advertising \Trash; every law a real folder list can show has
+# one. They come before the proofs so that, when a change breaks a law, the
+# first failure Bend prints is the folder the code now picks here, not a
+# step inside a proof.
 
 def trash_role(fs: List<&2, I.Folder>, override: String) -> Maybe<&2, String>:
   Tools.resolved_role(fs, override, "\\Trash", "Trash", "Deleted Messages")
@@ -187,7 +297,14 @@ def icloud_folders() -> List<&2, I.Folder>:
   ]
 
 def override_example()
-  -> {trash_role(icloud_folders(), "Trash") == Some{"Trash"} : Maybe<&2, String>}:
+  -> {trash_role(
+        [I.Folder{"Deleted Messages", "/", ["\\Trash"]}, I.Folder{"Trash", "/", []},
+          I.Folder{"Bin", "/", []}],
+        "Bin") == Some{"Bin"} : Maybe<&2, String>}:
+  {==}
+
+def unlisted_override_example()
+  -> {trash_role(icloud_folders(), "Bin") == None{} : Maybe<&2, String>}:
   {==}
 
 def two_advertised_example()
@@ -206,6 +323,13 @@ def unselectable_advertised_example()
         "") == None{} : Maybe<&2, String>}:
   {==}
 
+def nonexistent_advertised_example()
+  -> {trash_role(
+        [I.Folder{"Deleted Messages", "/", ["\\Trash", "\\NonExistent"]},
+          I.Folder{"Trash", "/", []}],
+        "") == None{} : Maybe<&2, String>}:
+  {==}
+
 def two_conventional_example()
   -> {trash_role([I.Folder{"Trash", "/", []}, I.Folder{"Deleted Messages", "/", []}], "") ==
        None{} : Maybe<&2, String>}:
@@ -213,6 +337,10 @@ def two_conventional_example()
 
 def other_role_example()
   -> {trash_role([I.Folder{"Trash", "/", ["\\Junk"]}], "") == None{} : Maybe<&2, String>}:
+  {==}
+
+def all_mail_folder_example()
+  -> {trash_role([I.Folder{"Trash", "/", ["\\All"]}], "") == None{} : Maybe<&2, String>}:
   {==}
 
 def each_role_example()
@@ -532,6 +660,157 @@ def other_role_no_match(
       False{} : Bool}
   and_false((I.same_name(n, a) || I.same_name(n, b)) && Tools.selectable(at))
 
+# Override candidates
+# -------------------
+
+# Tools.override_candidates keeps, in order, the folders named like the
+# override. Like the role candidates, it splits over an append, keeps a
+# folder of that name and drops any other.
+
+def override_candidates_append(xs: List<&2, I.Folder>, +ys: List<&2, I.Folder>, +want: String)
+  -> {Tools.override_candidates(List.append(&2, I.Folder, xs, ys), want) ==
+       List.append(&2, I.Folder, Tools.override_candidates(xs, want),
+         Tools.override_candidates(ys, want)) : List<&2, I.Folder>}:
+  match xs:
+    case Nil{}:
+      {==}
+    case I.Folder{n, d, at} <> t:
+      +ts = t
+      %Equal.sym(List<&2, I.Folder>,
+        Tools.override_candidates(List.append(&2, I.Folder, ts, ys), want),
+        List.append(&2, I.Folder, Tools.override_candidates(ts, want),
+          Tools.override_candidates(ys, want)),
+        override_candidates_append(ts, ys, want)) :
+        {List.filter.put(I.Folder, I.Folder{n, d, at}, _, I.same_name(n, want)) ==
+          List.append(&2, I.Folder,
+            List.filter.put(I.Folder, I.Folder{n, d, at}, Tools.override_candidates(ts, want),
+              I.same_name(n, want)),
+            Tools.override_candidates(ys, want)) : List<&2, I.Folder>}
+      put_append(n, d, at, Tools.override_candidates(ts, want),
+        Tools.override_candidates(ys, want), I.same_name(n, want))
+
+def override_candidates_keep(
+  -n: String, -d: String, -at: List<&2, String>, -t: List<&2, I.Folder>, -want: String,
+  e: {I.same_name(n, want) == True{} : Bool})
+  -> {Tools.override_candidates(I.Folder{n, d, at} <> t, want) ==
+       I.Folder{n, d, at} <> Tools.override_candidates(t, want) : List<&2, I.Folder>}:
+  %Equal.sym(Bool, I.same_name(n, want), True{}, e) :
+    {List.filter.put(I.Folder, I.Folder{n, d, at}, Tools.override_candidates(t, want), _) ==
+      I.Folder{n, d, at} <> Tools.override_candidates(t, want) : List<&2, I.Folder>}
+  {==}
+
+def override_candidates_drop(
+  -n: String, -d: String, -at: List<&2, String>, -t: List<&2, I.Folder>, -want: String,
+  e: {I.same_name(n, want) == False{} : Bool})
+  -> {Tools.override_candidates(I.Folder{n, d, at} <> t, want) ==
+       Tools.override_candidates(t, want) : List<&2, I.Folder>}:
+  %Equal.sym(Bool, I.same_name(n, want), False{}, e) :
+    {List.filter.put(I.Folder, I.Folder{n, d, at}, Tools.override_candidates(t, want), _) ==
+      Tools.override_candidates(t, want) : List<&2, I.Folder>}
+  {==}
+
+# No folder of the override's name leaves no override candidate.
+def no_override_candidates(
+  fs: List<&2, I.Folder>, +want: String, unlisted: {lists_name(fs, want) == False{} : Bool})
+  -> {Tools.override_candidates(fs, want) == [] : List<&2, I.Folder>}:
+  match fs:
+    case Nil{}:
+      {==}
+    case I.Folder{+n, d, +at} <> t:
+      +ts = t
+      +e = unlisted
+      Equal.trans(List<&2, I.Folder>,
+        Tools.override_candidates(I.Folder{n, d, at} <> ts, want),
+        Tools.override_candidates(ts, want),
+        [],
+        override_candidates_drop(n, d, at, ts, want,
+          or_false_left(I.same_name(n, want), lists_name(ts, want), e)),
+        no_override_candidates(ts, want,
+          or_false_right(I.same_name(n, want), lists_name(ts, want), e)))
+
+def override_candidates_around(
+  +xs: List<&2, I.Folder>, +n: String, +d: String, +at: List<&2, String>,
+  +ys: List<&2, I.Folder>, +want: String, e: {I.same_name(n, want) == True{} : Bool})
+  -> {Tools.override_candidates(List.append(&2, I.Folder, xs, I.Folder{n, d, at} <> ys), want) ==
+       List.append(&2, I.Folder, Tools.override_candidates(xs, want),
+         I.Folder{n, d, at} <> Tools.override_candidates(ys, want)) : List<&2, I.Folder>}:
+  Equal.trans(List<&2, I.Folder>,
+    Tools.override_candidates(List.append(&2, I.Folder, xs, I.Folder{n, d, at} <> ys), want),
+    List.append(&2, I.Folder, Tools.override_candidates(xs, want),
+      Tools.override_candidates(I.Folder{n, d, at} <> ys, want)),
+    List.append(&2, I.Folder, Tools.override_candidates(xs, want),
+      I.Folder{n, d, at} <> Tools.override_candidates(ys, want)),
+    override_candidates_append(xs, I.Folder{n, d, at} <> ys, want),
+    Equal.cong(List<&2, I.Folder>, List<&2, I.Folder>,
+      zs => List.append(&2, I.Folder, Tools.override_candidates(xs, want), zs),
+      Tools.override_candidates(I.Folder{n, d, at} <> ys, want),
+      I.Folder{n, d, at} <> Tools.override_candidates(ys, want),
+      override_candidates_keep(n, d, at, ys, want, e)))
+
+def override_candidates_around_two(
+  +xs: List<&2, I.Folder>, +n1: String, +d1: String, +at1: List<&2, String>,
+  +ys: List<&2, I.Folder>, +n2: String, +d2: String, +at2: List<&2, String>,
+  +zs: List<&2, I.Folder>, +want: String,
+  e1: {I.same_name(n1, want) == True{} : Bool}, e2: {I.same_name(n2, want) == True{} : Bool})
+  -> {Tools.override_candidates(
+        List.append(&2, I.Folder, xs,
+          I.Folder{n1, d1, at1} <> List.append(&2, I.Folder, ys, I.Folder{n2, d2, at2} <> zs)),
+        want) ==
+       List.append(&2, I.Folder, Tools.override_candidates(xs, want),
+         I.Folder{n1, d1, at1} <>
+           List.append(&2, I.Folder, Tools.override_candidates(ys, want),
+             I.Folder{n2, d2, at2} <> Tools.override_candidates(zs, want)))
+       : List<&2, I.Folder>}:
+  %override_candidates_around(ys, n2, d2, at2, zs, want, e2) :
+    {Tools.override_candidates(
+       List.append(&2, I.Folder, xs,
+         I.Folder{n1, d1, at1} <> List.append(&2, I.Folder, ys, I.Folder{n2, d2, at2} <> zs)),
+       want) ==
+      List.append(&2, I.Folder, Tools.override_candidates(xs, want),
+        I.Folder{n1, d1, at1} <> _) : List<&2, I.Folder>}
+  override_candidates_around(xs, n1, d1, at1,
+    List.append(&2, I.Folder, ys, I.Folder{n2, d2, at2} <> zs), want, e1)
+
+# Roles
+# -----
+
+# Tools.role_in walks the recognised attributes, so whether it finds a
+# role is whether the folder holds any of them.
+
+def role_attrs_any(roles: List<&2, Tools.RoleAttr>, +at: List<&2, String>) -> Bool:
+  match roles:
+    case Nil{}:
+      False{}
+    case Tools.RoleAttr{attr, name} <> t:
+      I.has_attr(at, attr) || role_attrs_any(t, at)
+
+def is_some_pick(c: Bool, -x: String, -m: Maybe<&2, String>)
+  -> {Maybe.is_some(&2, String, Bool.pick(Maybe<&2, String>, c, Some{x}, m)) ==
+       (c || Maybe.is_some(&2, String, m)) : Bool}:
+  match c:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def role_in_finds_any(roles: List<&2, Tools.RoleAttr>, +at: List<&2, String>)
+  -> {Maybe.is_some(&2, String, Tools.role_in(roles, at)) == role_attrs_any(roles, at) : Bool}:
+  match roles:
+    case Nil{}:
+      {==}
+    case Tools.RoleAttr{attr, name} <> t:
+      +r = attr
+      +ts = t
+      Equal.trans(Bool,
+        Maybe.is_some(&2, String,
+          Bool.pick(Maybe<&2, String>, I.has_attr(at, r), Some{name}, Tools.role_in(ts, at))),
+        I.has_attr(at, r) || Maybe.is_some(&2, String, Tools.role_in(ts, at)),
+        I.has_attr(at, r) || role_attrs_any(ts, at),
+        is_some_pick(I.has_attr(at, r), name, Tools.role_in(ts, at)),
+        Equal.cong(Bool, Bool, v => I.has_attr(at, r) || v,
+          Maybe.is_some(&2, String, Tools.role_in(ts, at)), role_attrs_any(ts, at),
+          role_in_finds_any(ts, at)))
+
 # Law proofs
 # ----------
 
@@ -544,6 +823,115 @@ def override_decides_the_role(fs, override, attr, a, b, set):
   %Equal.sym(Bool, String.is_empty(o), False{}, set) :
     {Tools.resolved_role.if(_, fs, o, attr, a, b) == Tools.named_folder(fs, o)
       : Maybe<&2, String>}
+  {==}
+
+# With an override set, Tools.resolved_role is Tools.named_folder, the one
+# selectable override candidate; each proof rewrites to it first.
+
+def override_takes_its_listed_folder(
+  before, n, d, at, after, override, attr, a, b, set, named, sel, none_before, none_after):
+  +xs = before
+  +zs = after
+  +m = n
+  +e = d
+  +t = at
+  +o = override
+  %Equal.sym(Maybe<&2, String>,
+    Tools.resolved_role(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o, attr, a, b),
+    Tools.named_folder(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o),
+    override_decides_the_role(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o,
+      attr, a, b, set)) :
+    {_ == Some{m} : Maybe<&2, String>}
+  %Equal.sym(List<&2, I.Folder>,
+    Tools.override_candidates(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o),
+    List.append(&2, I.Folder, Tools.override_candidates(xs, o),
+      I.Folder{m, e, t} <> Tools.override_candidates(zs, o)),
+    override_candidates_around(xs, m, e, t, zs, o, named)) :
+    {Tools.unique_folder(_) == Some{m} : Maybe<&2, String>}
+  %Equal.sym(List<&2, I.Folder>, Tools.override_candidates(xs, o), [],
+    no_override_candidates(xs, o, none_before)) :
+    {Tools.unique_folder(
+       List.append(&2, I.Folder, _, I.Folder{m, e, t} <> Tools.override_candidates(zs, o))) ==
+      Some{m} : Maybe<&2, String>}
+  %Equal.sym(List<&2, I.Folder>, Tools.override_candidates(zs, o), [],
+    no_override_candidates(zs, o, none_after)) :
+    {Tools.unique_folder(I.Folder{m, e, t} <> _) == Some{m} : Maybe<&2, String>}
+  %Equal.sym(Bool, Tools.selectable(t), True{}, sel) :
+    {Bool.pick(Maybe<&2, String>, _, Some{m}, None{}) == Some{m} : Maybe<&2, String>}
+  {==}
+
+def override_naming_two_folders_takes_no_role(
+  before, n1, d1, at1, between, n2, d2, at2, after, override, attr, a, b, set, named1, named2):
+  +xs = before
+  +ys = between
+  +zs = after
+  +m1 = n1
+  +e1 = d1
+  +t1 = at1
+  +m2 = n2
+  +e2 = d2
+  +t2 = at2
+  +o = override
+  %Equal.sym(Maybe<&2, String>,
+    Tools.resolved_role(
+      List.append(&2, I.Folder, xs,
+        I.Folder{m1, e1, t1} <> List.append(&2, I.Folder, ys, I.Folder{m2, e2, t2} <> zs)),
+      o, attr, a, b),
+    Tools.named_folder(
+      List.append(&2, I.Folder, xs,
+        I.Folder{m1, e1, t1} <> List.append(&2, I.Folder, ys, I.Folder{m2, e2, t2} <> zs)),
+      o),
+    override_decides_the_role(
+      List.append(&2, I.Folder, xs,
+        I.Folder{m1, e1, t1} <> List.append(&2, I.Folder, ys, I.Folder{m2, e2, t2} <> zs)),
+      o, attr, a, b, set)) :
+    {_ == None{} : Maybe<&2, String>}
+  %Equal.sym(List<&2, I.Folder>,
+    Tools.override_candidates(
+      List.append(&2, I.Folder, xs,
+        I.Folder{m1, e1, t1} <> List.append(&2, I.Folder, ys, I.Folder{m2, e2, t2} <> zs)),
+      o),
+    List.append(&2, I.Folder, Tools.override_candidates(xs, o),
+      I.Folder{m1, e1, t1} <>
+        List.append(&2, I.Folder, Tools.override_candidates(ys, o),
+          I.Folder{m2, e2, t2} <> Tools.override_candidates(zs, o))),
+    override_candidates_around_two(xs, m1, e1, t1, ys, m2, e2, t2, zs, o, named1, named2)) :
+    {Tools.unique_folder(_) == None{} : Maybe<&2, String>}
+  unique_of_two(Tools.override_candidates(xs, o), m1, e1, t1,
+    Tools.override_candidates(ys, o), m2, e2, t2, Tools.override_candidates(zs, o))
+
+def override_naming_unselectable_folder_takes_no_role(
+  before, n, d, at, after, override, attr, a, b, set, named, unselectable):
+  +xs = before
+  +zs = after
+  +m = n
+  +e = d
+  +t = at
+  +o = override
+  %Equal.sym(Maybe<&2, String>,
+    Tools.resolved_role(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o, attr, a, b),
+    Tools.named_folder(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o),
+    override_decides_the_role(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o,
+      attr, a, b, set)) :
+    {_ == None{} : Maybe<&2, String>}
+  %Equal.sym(List<&2, I.Folder>,
+    Tools.override_candidates(List.append(&2, I.Folder, xs, I.Folder{m, e, t} <> zs), o),
+    List.append(&2, I.Folder, Tools.override_candidates(xs, o),
+      I.Folder{m, e, t} <> Tools.override_candidates(zs, o)),
+    override_candidates_around(xs, m, e, t, zs, o, named)) :
+    {Tools.unique_folder(_) == None{} : Maybe<&2, String>}
+  unique_unselectable(Tools.override_candidates(xs, o), m, e, t,
+    Tools.override_candidates(zs, o), unselectable)
+
+def override_naming_no_folder_takes_no_role(fs, override, attr, a, b, set, unlisted):
+  +f = fs
+  +o = override
+  %Equal.sym(Maybe<&2, String>, Tools.resolved_role(f, o, attr, a, b), Tools.named_folder(f, o),
+    override_decides_the_role(f, o, attr, a, b, set)) :
+    {_ == None{} : Maybe<&2, String>}
+  %Equal.sym(List<&2, I.Folder>, Tools.override_candidates(f, o), [],
+    no_override_candidates(f, o, unlisted)) :
+    {Tools.unique_folder(_) == None{} : Maybe<&2, String>}
   {==}
 
 def two_advertised_folders_take_no_role(
@@ -732,3 +1120,18 @@ def other_role_folder_never_takes_the_role(before, n, d, at, after, attr, a, b, 
 
 def each_role_has_its_own_attribute_and_names(fs, drafts, trash, sent, junk, archive):
   {==}
+
+def selectable_is_neither_noselect_nor_nonexistent(at):
+  {==}
+
+# Tools.recognized_role asks Tools.role_in over Tools.role_attrs, whose
+# list computes to the attributes the law names.
+def recognized_roles_are_the_special_use_attributes(at):
+  +t = at
+  Equal.trans(Bool,
+    Tools.recognized_role(t),
+    role_attrs_any(Tools.role_attrs(), t),
+    advertises_any(
+      ["\\Drafts", "\\Sent", "\\Trash", "\\Junk", "\\Archive", "\\All", "\\Flagged"], t),
+    role_in_finds_any(Tools.role_attrs(), t),
+    {==})

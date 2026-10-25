@@ -602,12 +602,15 @@ It does not prove the Rust transport or cryptography.
 
 The [role-folder proofs](tests/formal/role-folders.bend), imported by `PROOF.bend`,
 prove the role precedence above on `resolved_role` itself, for every folder list,
-override and role: an override decides alone; two folders advertising a role, or
-an unselectable one, leave it unresolved with no fallback to a name; the one
-selectable advertiser wins over any name; two conventional-name matches leave it
-unresolved; a folder with another role never takes one by name; and each role
-uses its own attribute and names. Folder discovery, override validation and how
-each tool uses the resolved folder are covered by the end-to-end tests.
+override and role: an override decides alone, taking the one selectable folder of
+its name and nothing when there is none, two, or an unselectable one; two folders
+advertising a role, or an unselectable one, leave it unresolved with no fallback to
+a name; the one selectable advertiser wins over any name; two conventional-name
+matches leave it unresolved; a folder with another role never takes one by name;
+and each role uses its own attribute and names. Selectability and roles are read
+from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Folder
+discovery, override validation and how each tool uses the resolved folder are
+covered by the end-to-end tests.
 
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's

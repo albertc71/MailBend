@@ -9,7 +9,7 @@ description: Recheck MailBend's role-folder proofs when a change touches how the
 
 **Harm it prevents.** A guessed Trash, Drafts or Sent folder sends `mail_trash`, draft saves and Sent copies into a folder the user never meant: on iCloud, Trash is `Deleted Messages` advertising `\Trash`, and a user folder named `Trash` must not take its place.
 
-The proofs are about the real Bend code, not a model: `tests/formal/role-folders.bend` imports `src/tools.bend` and proves seven laws about it with Bend's checker. `bend PROOF.bend --verdict` imports that file, so CI also rechecks the proofs with Bend's proven kernel.
+The proofs are about the real Bend code, not a model: `tests/formal/role-folders.bend` imports `src/tools.bend` and proves thirteen laws about it with Bend's checker. `bend PROOF.bend --verdict` imports that file, so CI also rechecks the proofs with Bend's proven kernel.
 
 ## The laws
 
@@ -18,11 +18,17 @@ Each holds for every folder list (any length, the folders anywhere in it), every
 | Law | In plain words | Example that shows it |
 | --- | --- | --- |
 | `override_decides_the_role` | With an override set, only the override decides; no advertised role or name can take the role instead. | `override_example` |
+| `override_takes_its_listed_folder` | With an override set, the one selectable folder of that name takes the role, wherever it stands. | `override_example` |
+| `override_naming_two_folders_takes_no_role` | With an override set, two folders of that name: no folder takes the role. | none; `ambiguous-picks-first` breaks it through `unique_of_two` |
+| `override_naming_unselectable_folder_takes_no_role` | With an override set, a folder of that name that cannot be selected: no folder takes the role. | none; `unselectable-chosen` breaks it through `unique_unselectable` |
+| `override_naming_no_folder_takes_no_role` | With an override set and no folder of that name, no folder takes the role; neither the name itself nor another folder is used. | `unlisted_override_example` |
 | `two_advertised_folders_take_no_role` | Two folders advertising the role: no folder takes it. | `two_advertised_example` |
 | `sole_advertised_folder_takes_the_role` | The one selectable folder advertising the role takes it, whatever the other folders are named. | `sole_advertised_example` |
 | `unselectable_advertised_folder_takes_no_role` | A folder advertising the role that cannot be selected (`\Noselect`, `\NonExistent`): no folder takes it, with no fallback to a conventional name. | `unselectable_advertised_example` |
 | `two_conventional_folders_take_no_role` | No folder advertises the role, and two selectable folders with no role of their own have a conventional name: no folder takes it. | `two_conventional_example` |
 | `other_role_folder_never_takes_the_role` | A folder advertising another role (say `Trash` with `\Junk`) never takes this one by name; adding it anywhere changes nothing. | `other_role_example` |
+| `selectable_is_neither_noselect_nor_nonexistent` | A folder can be selected exactly when it advertises neither `\Noselect` nor `\NonExistent`. This ties the laws' `Tools.selectable` premises to the attributes the server sent. | `nonexistent_advertised_example` |
+| `recognized_roles_are_the_special_use_attributes` | A folder has a role of its own exactly when it advertises `\Drafts`, `\Sent`, `\Trash`, `\Junk`, `\Archive`, `\All` or `\Flagged`. This ties the laws' `Tools.recognized_role` premises to the attributes. | `all_mail_folder_example` |
 | `each_role_has_its_own_attribute_and_names` | `resolved_folders` resolves Drafts by `\Drafts`/`Drafts`, Trash by `\Trash`/`Trash`/`Deleted Messages`, Sent by `\Sent`/`Sent`/`Sent Messages`, Junk by `\Junk`/`Junk` and Archive by `\Archive`/`Archive`, each with its own override. | `each_role_example` |
 
 These are the promises in README.md's "Configure" section (the precedence paragraph and the override table) and AGENTS.md's role-folder rule. The examples are concrete instances on iCloud-like folders, placed before the proofs, so that when a law breaks, the first failure Bend prints names the folder the code now picks.
@@ -52,11 +58,11 @@ From the repository root:
 
 ```sh
 bend tests/formal/role-folders.bend --check-only   # about 10 s; the loop while editing
-python3 tests/formal/check-role-folders.py         # about 35 s; proofs, then 8 broken variants must fail
+python3 tests/formal/check-role-folders.py         # about 80 s; proofs, then 12 broken variants must fail
 bend PROOF.bend --verdict                          # about 1.5 min; every proof, rechecked by the kernel
 ```
 
-A pass prints `ALL PROOFS CHECK`. The mutation check prints one `PASS rejected <name>: <example> gives <wrong folder>, not <right folder>` line per broken variant and ends with `PASS checkout unchanged`. It copies `src/` into a temporary directory and never edits the checkout. All three run in CI (`.github/workflows/ci.yml`) and are listed in CONTRIBUTING.md.
+A pass prints `ALL PROOFS CHECK`. The mutation check runs each broken variant twice: once with the examples, where it must fail at its own example, and once with the examples removed, where it must fail inside the proofs, so the universal laws reject it on their own. It prints one `PASS rejected <name>: <example> gives <wrong folder>, not <right folder>; without the examples, <def> fails` line per variant and ends with `PASS checkout unchanged`. It copies `src/` into a temporary directory and never edits the checkout. All three run in CI (`.github/workflows/ci.yml`) and are listed in CONTRIBUTING.md.
 
 ## Reading a failure
 
@@ -64,6 +70,7 @@ Bend stops at the first failing def and prints `expected` (what the code compute
 
 - **An example fails** (`Location: <name>_example`): the code now resolves that folder list differently. The `expected` line is the folder the code picks, so read it as the counterexample. For instance, if `two_advertised_example` expects `Some{"Deleted Messages"}`, the code would put trash into one of two `\Trash` folders. Compare against README.md's precedence. Unless the change was meant to alter the precedence, this is a real bug in the product code: fix the code, never the example or the law.
 - **Only a proof fails** (a lemma such as `candidates_append`, or a law's own def): if every example still passes, the behaviour probably held and the proof no longer follows the code's shape, because a helper was renamed, a condition reordered, or `&&` regrouped. Before deciding, write the law's statement out for the new code and look for an input that breaks it. Add that input as an example if you find one. Otherwise update the lemma to the new shape.
+- **The mutation check stops with `no proof rejected it`**: a broken variant still fails its example, but with the examples removed every law accepts it, so a law has become too weak or vacuous to catch that break. Strengthen the law, or add one that catches it; never drop the mutation.
 - **The mutation check stops with `mutation target not found once`**: the text of a covered def changed, so a mutation in `MUTATIONS` in `tests/formal/check-role-folders.py` no longer applies. Point it at the same behaviour in the new code, then rerun to see that variant rejected again.
 - **`unknown name` or import errors**: a covered def was renamed or moved. Update the names in `tests/formal/role-folders.bend` (it imports `../../src/tools.bend as Tools` and `../../src/imap.bend as I`).
 
@@ -72,7 +79,7 @@ Bend stops at the first failing def and prints `expected` (what the code compute
 - **Precedence change** (a new tier, a new conventional name, a different ambiguity rule): the laws are the owner's promises. Change README.md's precedence and table, the affected law, its example and the proof together, and explain the changed law in the pull request (AGENTS.md: laws are the owner's). Never weaken a law, or delete an example, just to get a pass.
 - **A new role** (a sixth role folder): add it to `each_role_has_its_own_attribute_and_names` and `each_role_example`. The other laws are generic over the attribute and names, so they already cover it.
 - **Refactor with the same behaviour**: keep the laws and examples as they are, and repair the lemmas.
-- Every law must still be able to fail. After a change, `python3 tests/formal/check-role-folders.py` must report every mutation rejected. When you add a law, add a mutation that breaks it and an example that catches it first.
+- Every law must still be able to fail. After a change, `python3 tests/formal/check-role-folders.py` must report every mutation rejected. When you add a law, add a mutation that breaks it, and an example that catches it first wherever a realistic folder list shows the law.
 
 Bend's own rules apply to the proof file: `bend guide` explains them, and the lemma style follows PROOF.bend. Rewriting with `%e : P` turns the `_` in `P` from the right side of `e` into its left. A Bool premise is used through `Equal.sym` and a rewrite. A computed Bool that blocks reduction goes through a lemma that matches it as a parameter.
 
