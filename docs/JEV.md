@@ -88,8 +88,9 @@ model, or one that does not say, counts as no answer, as when TypeSafe
 fails.
 
 The pinned model is `jev-1.14.0`, never `jev-latest`. The 0.30 and 0.70 cuts
-were not remeasured on `jev-1.14.0`, and the request budgets are unchanged
-because the price and the default context match `jev-1.13.0`.
+are TypeSafe's suggested starting points, not measured on MailBend mail for
+any model. The request budgets are unchanged because the price and the
+default context match `jev-1.13.0`.
 
 ## When TypeSafe fails, and what it costs
 

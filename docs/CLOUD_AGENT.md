@@ -422,8 +422,7 @@ DNS, with DoH and with `MAILBEND_IMAP_CONNECT_IP`, and an SMTP send to self
 passed. On 2026-10-06 the whole [checklist](#live-icloud-checklist) below
 was run with the Rust `mailbend-tls`, `mailbend-attach` and
 `mailbend-typesafe` (Jev `jev-1.13.0`), on disposable messages sent to the
-account's own address and on test folders. The pin is now `jev-1.14.0`.
-The 0.30 and 0.70 cuts were not remeasured on that model.
+account's own address and on test folders:
 
 | Item | Result | Observed |
 | --- | --- | --- |
@@ -446,6 +445,11 @@ The test folders `MailBend Test`, `MailBend Test/Nested`,
 `MailBend live check` (created as `INBOX/MailBend Test`) and `To Delete`
 remain, because no MailBend tool deletes a folder. Every test message was
 permanently deleted.
+
+The pin is now `jev-1.14.0`; item 11 has not been run on it. The Jev
+confidences above are observations, not a calibration: the 0.30 and 0.70
+cuts are TypeSafe's suggested starting points, not measured on MailBend
+mail for any model.
 
 For another provider or localised/nested folders, follow the
 [server and folder configuration](../README.md#configure). Inspect

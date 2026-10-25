@@ -849,8 +849,8 @@ type Answered is Data:
   Skipped{facts: Facts}
 
 # Below 0.30 is Low and above 0.70 High: TypeSafe routes the range between
-# to people. These cuts, and `level_band`, were not remeasured when the pin
-# moved from jev-1.13.0 to jev-1.14.0.
+# to people. These cuts are TypeSafe's suggested starting points; neither
+# they nor `level_band` were measured on MailBend mail for any model.
 def prob_band(+p: U32) -> Band:
   Bool.pick(Band, U32.is_lt(p, 300), Low{}, Bool.pick(Band, U32.is_gt(p, 700), High{}, Mid{}))
 
