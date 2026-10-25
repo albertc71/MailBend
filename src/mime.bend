@@ -523,6 +523,12 @@ def file_name.if(ct: String, from_cd: String, none: Bool) -> String:
     case False{}:
       from_cd
 
+# The filename, or the media type when the filename is empty. Attachment
+# lists and image rows use this one rule.
+def part_label(k: PartKind) -> String:
+  PartKind{ct, typ, +name, file} = k
+  Bool.pick(String, String.is_empty(name), typ, name)
+
 # A part's file name: the Content-Disposition filename, else the
 # Content-Type name.
 def file_name(ct: String, cd: String) -> String:

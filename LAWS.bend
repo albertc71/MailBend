@@ -17,6 +17,7 @@ import ./src/json.bend as J
 import ./src/imap.bend as I
 import ./src/search-cursor.bend as SC
 import ./src/mime.bend as M
+import ./src/image.bend as Image
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
@@ -990,6 +991,47 @@ law headers_state_has_no_body:
       List.append(&2, J.Json, Jev.field_kvs(fields),
         [J.kv("attachments", Jev.attachments_json(atts))]))
     : J.Json}
+
+# LAW: for every ref list, adding images to a headers-mode state leaves it
+# equal to state_of on headers
+law state_images_on_headers_is_state:
+  for uid: U32
+  for fields: List<&2, M.Hdr>
+  for flags: List<&2, String>
+  for date: String
+  for size: U32
+  for atts: Jev.Attachments
+  for body: Jev.Completeness
+  for text: String
+  for refs: List<&2, Image.Ref>
+  {Jev.state_images(Jev.Headers{},
+      Jev.state_of(Jev.Headers{}, Jev.Facts{uid, fields, flags, date, size, atts, body}, text),
+      refs) ==
+    Jev.state_of(Jev.Headers{}, Jev.Facts{uid, fields, flags, date, size, atts, body}, text)
+    : J.Json}
+
+# LAW: a body-mode state with no image refs is state_of on body
+law state_images_body_without_refs_is_state:
+  for uid: U32
+  for fields: List<&2, M.Hdr>
+  for flags: List<&2, String>
+  for date: String
+  for size: U32
+  for atts: Jev.Attachments
+  for body: Jev.Completeness
+  for text: String
+  {Jev.state_images(Jev.Body{},
+      Jev.state_of(Jev.Body{}, Jev.Facts{uid, fields, flags, date, size, atts, body}, text),
+      []) ==
+    Jev.state_of(Jev.Body{}, Jev.Facts{uid, fields, flags, date, size, atts, body}, text)
+    : J.Json}
+
+# LAW: entries whose used lists are empty build the plain request and no
+# danger-zone header
+law cargo_of_without_images:
+  for es: List<&2, Jev.Entry>
+  {Jev.cargo_of(Jev.clear_used(es)) ==
+    Jev.plain_cargo(Jev.request_body(Jev.clear_used(es))) : Jev.Cargo}
 
 # LAW: a missing answer reads as Missing, which the injection screen flags
 # (Jev.suspects), suggests nothing and files it nowhere, whatever the key,
