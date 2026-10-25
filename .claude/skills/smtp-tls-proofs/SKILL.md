@@ -1,5 +1,5 @@
 ---
-name: smtp-tls
+name: smtp-tls-proofs
 description: Recheck the bounded SMTP transport model when changing TLS modes, negotiation, authentication ordering, or failure propagation.
 ---
 

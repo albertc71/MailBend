@@ -596,7 +596,7 @@ synthetic cost measurements and experiment decision are in
 
 ### What the proofs cover
 
-The bounded [SMTP TLS-ordering model](.claude/skills/smtp-tls/SKILL.md) separately
+The bounded [SMTP TLS-ordering model](.claude/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
 It does not prove the Rust transport or cryptography.
 

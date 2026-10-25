@@ -1,5 +1,5 @@
 ---
-name: role-folders
+name: role-folder-proofs
 description: Recheck MailBend's role-folder proofs when a change touches how the Drafts, Trash, Sent, Junk or Archive folder is chosen from the server's folder list (resolved_role and its helpers in src/tools.bend, I.has_attr or I.same_name in src/imap.bend), the role overrides or conventional names, or tests/formal/role-folders.bend itself.
 ---
 
