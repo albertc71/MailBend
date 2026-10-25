@@ -79,6 +79,9 @@ fn unknown_modes_are_input_errors() {
         &[][..],
         &["ask", "more"][..],
         &["ask", "--once", "more"][..],
+        &["ask", "--images", "--images"][..],
+        &["ask", "--once", "--once"][..],
+        &["ask", "--images", "--once", "--images"][..],
         &["--once", "ask"][..],
         &["classify"][..],
     ] {
@@ -94,6 +97,21 @@ fn a_single_attempt_is_a_mode_of_ask() {
         2,
         "MAILBEND_TYPESAFE_KEY_FILE is not set",
     );
+}
+
+#[test]
+fn images_is_an_ask_mode_in_either_order() {
+    for args in [
+        &["ask", "--images"][..],
+        &["ask", "--once", "--images"][..],
+        &["ask", "--images", "--once"][..],
+    ] {
+        assert_exit(
+            &run(args, &[], b"{}"),
+            2,
+            "MAILBEND_TYPESAFE_KEY_FILE is not set",
+        );
+    }
 }
 
 #[test]

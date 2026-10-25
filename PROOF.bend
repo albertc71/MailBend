@@ -14,6 +14,7 @@ import ./src/imap.bend as I
 import ./src/sections.bend as Part
 
 import ./src/search-cursor.bend as SC
+import ./src/image.bend as Image
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
@@ -1315,6 +1316,36 @@ def Laws.append_preview_hides_message(mbox, flags, msg, n):
 
 def Laws.headers_state_has_no_body(uid, fields, flags, date, size, atts, body, text):
   {==}
+
+def Laws.state_images_on_headers_is_state(uid, fields, flags, date, size, atts, body, text, refs):
+  {==}
+
+def Laws.state_images_body_without_refs_is_state(uid, fields, flags, date, size, atts, body, text):
+  {==}
+
+# clear_used puts [] in every used list, so the concatenated sent list is
+# empty, and cargo_of then takes the plain-body branch.
+def sent_cleared(es: List<&2, Jev.Entry>)
+  -> {Jev.sent_list(Jev.clear_used(es)) == [] : List<&2, Image.Sent>}:
+  match es:
+    case Nil{}:
+      {==}
+    case Jev.Entry{f, s, qs, n, q, l, u} <> t:
+      sent_cleared(t)
+
+def cargo_cong(
+  +xs: List<&2, Jev.Entry>,
+  e: {Jev.sent_list(xs) == [] : List<&2, Image.Sent>}
+) -> {Jev.cargo_of(xs) == Jev.plain_cargo(Jev.request_body(xs)) : Jev.Cargo}:
+  Equal.cong(List<&2, Image.Sent>, Jev.Cargo, x => Jev.cargo_from(xs, x), Jev.sent_list(xs), [], e)
+
+def cargo_from_clear(+es: List<&2, Jev.Entry>)
+  -> {Jev.cargo_of(Jev.clear_used(es)) ==
+    Jev.plain_cargo(Jev.request_body(Jev.clear_used(es))) : Jev.Cargo}:
+  cargo_cong(Jev.clear_used(es), sent_cleared(es))
+
+def Laws.cargo_of_without_images(es):
+  cargo_from_clear(es)
 
 def Laws.missing_answer_is_cautious(key, candidates, none):
   ({==}, {==}, {==}, {==}, {==}, {==})

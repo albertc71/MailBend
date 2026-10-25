@@ -82,13 +82,14 @@ pub fn ask(
     key: &[u8],
     request: &[u8],
     attempts: Attempts,
+    images: bool,
 ) -> Result<Vec<u8>, (Exit, Vec<u8>)> {
     let no_body = |exit| (exit, Vec::new());
     let config = tls::client_config(settings.ca_file.as_deref())
         .map_err(|e| no_body(Exit::new(Failure::Connect, e.to_string())))?;
     let mut waits = attempts.waits().iter();
     loop {
-        let result = attempt(settings, &config, key, request);
+        let result = attempt(settings, &config, key, request, images);
         let retry = match &result {
             Ok(response) => verdict(response.status) == Verdict::Retry,
             Err(error) => *error == NetError::TimedOut,
@@ -158,10 +159,11 @@ fn attempt(
     config: &Arc<ClientConfig>,
     key: &[u8],
     request: &[u8],
+    images: bool,
 ) -> Result<HttpResponse, NetError> {
     let deadline = Deadline::after(settings.timeout);
     let mut stream = tls::connect(config, HOST, socket(settings, config, &deadline)?)?;
-    send(&mut stream, key, request).map_err(|e| match e.kind() {
+    send(&mut stream, key, request, images).map_err(|e| match e.kind() {
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => NetError::TimedOut,
         _ => NetError::Connect("the connection to TypeSafe failed".to_string()),
     })?;
@@ -185,21 +187,40 @@ fn socket(
     ))
 }
 
-/// Writes the request. The head holds the key, so it is built in a buffer
-/// wiped on drop, never in a formatted string.
-fn send(stream: &mut TlsStream<BoundedStream>, key: &[u8], request: &[u8]) -> io::Result<()> {
+/// The danger-zone line, or nothing. The helper does not read the JSON to
+/// decide this: the core passes `--images` only for a cargo that has assets.
+fn danger_zone_line(images: bool) -> &'static [u8] {
+    if images {
+        b"TypeSafe-Danger-Zone-Images: true\r\n"
+    } else {
+        b""
+    }
+}
+
+/// The request head. The key lives in a buffer wiped on drop.
+fn request_head(key: &[u8], len: usize, images: bool) -> Zeroizing<Vec<u8>> {
     let mut head = Zeroizing::new(Vec::with_capacity(256 + key.len()));
     head.extend_from_slice(format!("POST {PATH} HTTP/1.1\r\nHost: {HOST}\r\n").as_bytes());
     head.extend_from_slice(b"Authorization: Bearer ");
     head.extend_from_slice(key);
+    head.extend_from_slice(b"\r\nContent-Type: application/json\r\nAccept: application/json\r\n");
+    head.extend_from_slice(danger_zone_line(images));
     head.extend_from_slice(
-        format!(
-            "\r\nContent-Type: application/json\r\nAccept: application/json\r\n\
-             Content-Length: {}\r\nUser-Agent: mailbend\r\nConnection: close\r\n\r\n",
-            request.len()
-        )
-        .as_bytes(),
+        format!("Content-Length: {len}\r\nUser-Agent: mailbend\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
     );
+    head
+}
+
+/// Writes the request. The head holds the key, so it is built in a buffer
+/// wiped on drop, never in a formatted string.
+fn send(
+    stream: &mut TlsStream<BoundedStream>,
+    key: &[u8],
+    request: &[u8],
+    images: bool,
+) -> io::Result<()> {
+    let head = request_head(key, request.len(), images);
     stream.write_all(&head)?;
     stream.write_all(request)?;
     stream.flush()
@@ -311,5 +332,28 @@ mod tests {
             br#"{"detail":"bad key [redacted] or [redacted]"}"#.to_vec()
         );
         assert_eq!(redact_key(b"ts_key", b"ts_key"), b"[redacted]".to_vec());
+    }
+
+    #[test]
+    fn danger_zone_header_follows_the_images_flag() {
+        assert_eq!(
+            danger_zone_line(true),
+            b"TypeSafe-Danger-Zone-Images: true\r\n"
+        );
+        assert_eq!(danger_zone_line(false), b"");
+        let on = request_head(b"secret-key-0123", 2, true);
+        let off = request_head(b"secret-key-0123", 2, false);
+        assert!(
+            on.windows(b"TypeSafe-Danger-Zone-Images: true\r\n".len())
+                .any(|w| w == b"TypeSafe-Danger-Zone-Images: true\r\n"),
+            "{}",
+            String::from_utf8_lossy(&on)
+        );
+        assert!(
+            !off.windows(b"TypeSafe-Danger-Zone-Images".len())
+                .any(|w| w == b"TypeSafe-Danger-Zone-Images"),
+            "{}",
+            String::from_utf8_lossy(&off)
+        );
     }
 }

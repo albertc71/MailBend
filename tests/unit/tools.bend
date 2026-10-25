@@ -68,18 +68,34 @@ def show_switch(s: Jev.Switch) -> String:
 
 def show_config(c: T.Config) -> String:
   match c:
-    case T.Config{ro, drafts, jev}:
+    case T.Config{ro, drafts, jev, images}:
       "config " ++ Bool.show(ro) ++ " " ++ Bool.show(drafts) ++ " " ++ show_switch(jev)
     case T.ConfigBad{m}:
       "bad " ++ m
 
 # The configuration of the read-only and drafts-only switches alone.
 def switches(r: T.Flag, d: T.Flag) -> String:
-  show_config(T.config.put(T.config_of(r, d, False{}, T.FlagOff{}, "", T.FlagOff{}, "")))
+  show_config(T.config.put(T.config_of(r, d, False{}, T.FlagOff{}, "", T.FlagOff{}, T.FlagOff{}, "")))
 
 # The configuration of the TypeSafe settings alone.
 def typesafe(key_set: Bool, t: T.Flag, content: String, zr: T.Flag, key: String) -> String:
-  show_config(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, key_set, t, content, zr, key)))
+  show_config(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, key_set, t, content, zr, T.FlagOff{},
+    key)))
+
+def show_images(c: T.Config) -> String:
+  match c:
+    case T.Config{ro, drafts, jev, images}:
+      match images:
+        case Jev.ImagesOff{}:
+          "off"
+        case Jev.ImagesOn{}:
+          "on"
+    case T.ConfigBad{m}:
+      "bad " ++ m
+
+def image_switch(v: String) -> String:
+  show_images(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, False{}, T.FlagOn{}, "body", T.FlagOn{},
+    T.flag_value("MAILBEND_TYPESAFE_IMAGES", v), "/k")))
 
 def show_proc(p: T.Proc) -> String:
   match p:
@@ -223,6 +239,9 @@ def check_switches() -> IO(Unit):
     IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, ""))
     IO.print(typesafe(False{}, T.FlagBad{"t"}, "", T.FlagOff{}, "/k"))
     IO.print(typesafe(False{}, T.FlagOff{}, "", T.FlagBad{"z"}, ""))
+    IO.print(String.join([
+      image_switch("1"), image_switch("true"), image_switch("TRUE"), image_switch("false"),
+      image_switch("FALSE"), image_switch("0"), image_switch(""), image_switch("yes")], "|"))
     IO.print(show_bool(T.is_set(Done{""})) ++ " " ++ show_bool(T.is_set(Fail{(2, "unset")})))
 
 def check_helper() -> IO(Unit):
@@ -933,14 +952,14 @@ def check_dispatch() -> IO(Unit):
       show_bool(listed("mail_classify", True{}, False{}, True{})) ++ " " ++
       show_bool(listed("mail_nope", False{}, False{}, True{})) ++ " " ++
       show_bool(C.is_in("b", ["a", "b"])) ++ " " ++ show_bool(C.is_in("b", [])))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, False{}, Jev.Off{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.Off{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, True{}, Jev.Off{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, False{}, Jev.Off{}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.Off{}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, True{}, Jev.Off{}, Jev.ImagesOff{}})))
     IO.print(tool_names(T.offered_for(tool_defs(), T.ConfigBad{"x"})))
-    IO.print(J.show(T.offered_for(J.str("x"), T.Config{True{}, True{}, Jev.Off{}})))
+    IO.print(J.show(T.offered_for(J.str("x"), T.Config{True{}, True{}, Jev.Off{}, Jev.ImagesOff{}})))
     IO.print(tool_names(T.offered_for(tool_defs(),
-      T.Config{False{}, False{}, Jev.On{Jev.Headers{}}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.On{Jev.Body{}}})))
+      T.Config{False{}, False{}, Jev.On{Jev.Headers{}}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.On{Jev.Body{}}, Jev.ImagesOff{}})))
 
 # Arguments checked against the schema
 # ------------------------------------
@@ -1212,8 +1231,8 @@ def check_classify() -> IO(Unit):
       T.Progress{[skipped(1)], []})))
     IO.print(show_out(T.classify_out(Done{T.progress_add(T.progress_add(T.Progress{[], []},
       [skipped(1), skipped(2)], [J.str("r1")]), [skipped(3)], [J.str("r2")])},
-      Jev.Headers{}, [], "none", [J.kv("folder", J.str("INBOX"))], [9])))
-    IO.print(show_out(T.classify_out(Fail{"stopped"}, Jev.Headers{}, [], "none", [], [])))
+      Jev.Headers{}, [], "none", [J.kv("folder", J.str("INBOX"))], [9], [])))
+    IO.print(show_out(T.classify_out(Fail{"stopped"}, Jev.Headers{}, [], "none", [], [], [])))
     IO.print(T.jev_off("mail_classify"))
 
 # mail_triage
@@ -1224,7 +1243,7 @@ def review_folders(trash: Maybe<&2, String>) -> T.Folders:
     None{}, None{}}
 
 def pending(uid: U32, sender: Maybe<&2, String>) -> T.Pending:
-  T.Pending{Jev.Fetched{Jev.facts_of(classify_msg(uid)), Jev.Text{"", Jev.Complete{}}}, [],
+  T.Pending{Jev.Fetched{Jev.facts_of(classify_msg(uid)), Jev.Text{"", Jev.Complete{}}, 0}, [],
     sender}
 
 def review_problem_of(f: T.Folders) -> String:
@@ -1350,6 +1369,7 @@ def main() -> IO(Unit):
 #|bad MAILBEND_TYPESAFE_KEY_FILE must be the absolute path of the TypeSafe key file when MAILBEND_TYPESAFE is on
 #|bad t
 #|bad z
+#|on|on|on|off|off|off|off|bad MAILBEND_TYPESAFE_IMAGES must be 1, true, 0, false or empty
 #|True False
 #|True True False True False
 #|ok 0 out err|refused no such file|fail 110 timed out

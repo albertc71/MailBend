@@ -11,6 +11,7 @@
 import Base
 import ./codec.bend as C
 import ./json.bend as J
+import ./image.bend as Image
 import ./imap.bend as I
 import ./mime.bend as M
 import ./ops.bend as Ops
@@ -25,6 +26,12 @@ import ./smtp.bend as S
 type Content is Data:
   Headers{}
   Body{}
+
+# Images are on only together with body content. tools stores the mode;
+# jev does not import tools.
+type ImageMode is Data:
+  ImagesOff{}
+  ImagesOn{}
 
 # Whether Jev is on, and with which content.
 type Switch is Data:
@@ -92,8 +99,10 @@ type Text is Data:
   Text{text: String, whole: Completeness}
 
 # A message to ask about: its facts and its text.
+# `reserve` is room kept in the token estimate for refs this message may
+# add. Non-classify fetches pass 0.
 type Fetched is Data:
-  Fetched{facts: Facts, text: Text}
+  Fetched{facts: Facts, text: Text, reserve: U32}
 
 # The header fields Jev sees, in this order.
 def fact_names() -> List<&2, String>:
@@ -111,8 +120,8 @@ def fact_fields(+hs: List<&2, M.Hdr>, names: List<&2, String>) -> List<&2, M.Hdr
 # M.part_kind), else its content type. Parts that read as text are no
 # attachments.
 def attachment_names.put(k: M.PartKind, rest: List<&2, String>) -> List<&2, String>:
-  M.PartKind{ct, typ, +name, file} = k
-  List.filter.put(String, Bool.pick(String, String.is_empty(name), typ, name), rest, file)
+  M.PartKind{ct, typ, name, +file} = k
+  List.filter.put(String, M.part_label(M.PartKind{ct, typ, name, file}), rest, file)
 
 def attachment_names(ps: List<&2, I.BodyPart>) -> List<&2, String>:
   match ps:
@@ -270,6 +279,38 @@ def state_of(c: Content, f: Facts, text: String) -> J.Json:
       header_state(f)
     case Body{}:
       J.obj(List.append(&2, J.Json, fact_kvs(f), [J.kv("text", J.str(text))]))
+
+def obj_snoc(items: J.Json, kv: J.Json) -> J.Json:
+  match items:
+    case J.JEnd{}:
+      J.JCons{kv, J.JEnd{}}
+    case J.JCons{h, t}:
+      J.JCons{h, obj_snoc(t, kv)}
+    case _:
+      J.JCons{kv, J.JEnd{}}
+
+def obj_add(state: J.Json, kv: J.Json) -> J.Json:
+  match state:
+    case J.JObj{items}:
+      J.JObj{obj_snoc(items, kv)}
+    case _:
+      state
+
+def state_images.body(refs: List<&2, Image.Ref>, state: J.Json) -> J.Json:
+  match refs:
+    case Nil{}:
+      state
+    case _:
+      obj_add(state, Image.images_kv(refs))
+
+# Headers, and a body with no refs, are exactly state_of. Refs are names
+# only; the bytes stay in assets.
+def state_images(c: Content, state: J.Json, refs: List<&2, Image.Ref>) -> J.Json:
+  match c:
+    case Headers{}:
+      state
+    case Body{}:
+      state_images.body(refs, state)
 
 # Questions
 # ---------
@@ -453,6 +494,8 @@ def overhead() -> U32:
 # One message ready to ask about: its facts (body completeness settled), its
 # state and questions, and their sizes (each with one byte for the comma
 # before it).
+# `used` is the stills this entry will send. It is empty until classify
+# binds images, and every other builder passes [].
 type Entry is Data:
   Entry{
     facts: Facts,
@@ -460,7 +503,8 @@ type Entry is Data:
     questions: List<&2, J.Json>,
     state_size: U32,
     questions_size: U32,
-    longest: U32
+    longest: U32,
+    used: List<&2, Image.Sent>
   }
 
 # What one request asks about each message: the question set, and the
@@ -476,14 +520,18 @@ def entry.sizes(qs: List<&2, J.Json>, total: U32, longest: U32) -> U32 & U32:
       +n = C.utf8_len(J.show(q))
       entry.sizes(t, (total + n + 1 : U32), U32.max(longest, n))
 
-def entry.put(f: Facts, +state: J.Json, qs: List<&2, J.Json>, sizes: U32 & U32) -> Entry:
+def entry.put(f: Facts, +state: J.Json, qs: List<&2, J.Json>, sizes: U32 & U32, reserve: U32) ->
+  Entry:
   (total, longest) = sizes
-  Entry{f, state, qs, (C.utf8_len(J.show(state)) + 1 : U32), total, longest}
+  Entry{f, state, qs, (C.utf8_len(J.show(state)) + 1 + reserve : U32), total, longest, []}
 
-def entry(c: Content, +f: Facts, text: String, opts: Options) -> Entry:
+def entry_at(c: Content, +f: Facts, text: String, opts: Options, reserve: U32) -> Entry:
   Options{purpose, json, none} = opts
   +qs = questions_for(purpose, facts_uid(f), json, none)
-  entry.put(f, state_of(c, f, text), qs, entry.sizes(qs, 0, 0))
+  entry.put(f, state_of(c, f, text), qs, entry.sizes(qs, 0, 0), reserve)
+
+def entry(c: Content, f: Facts, text: String, opts: Options) -> Entry:
+  entry_at(c, f, text, opts, 0)
 
 # Requests so far: the open batch (reversed) with its state and question
 # sizes and longest question, and the finished steps (reversed).
@@ -503,19 +551,19 @@ type Step is Data:
   Skip{facts: Facts}
 
 def entry_state(e: Entry) -> U32:
-  Entry{f, s, qs, n, q, l} = e
+  Entry{f, s, qs, n, q, l, u} = e
   n
 
 def entry_questions(e: Entry) -> U32:
-  Entry{f, s, qs, n, q, l} = e
+  Entry{f, s, qs, n, q, l, u} = e
   q
 
 def entry_longest(e: Entry) -> U32:
-  Entry{f, s, qs, n, q, l} = e
+  Entry{f, s, qs, n, q, l, u} = e
   l
 
 def entry_facts(e: Entry) -> Facts:
-  Entry{f, s, qs, n, q, l} = e
+  Entry{f, s, qs, n, q, l, u} = e
   f
 
 # Whether a request whose state, questions and longest question take
@@ -573,15 +621,16 @@ def alone.put(
   f: Facts,
   text: String,
   opts: Options,
-  done: List<&2, Step>
+  done: List<&2, Step>,
+  reserve: U32
 ) -> Packing:
   match room c:
     case None{} _:
       empty_packing(Skip{f} <> done)
     case Some{r} Headers{}:
-      packing_with(empty_packing(done), entry(Headers{}, f, "", opts))
+      packing_with(empty_packing(done), entry_at(Headers{}, f, "", opts, reserve))
     case Some{r} Body{}:
-      entry_cut = entry(Body{}, with_body(f, Partial{}), escaped_prefix(text, r), opts)
+      entry_cut = entry_at(Body{}, with_body(f, Partial{}), escaped_prefix(text, r), opts, reserve)
       packing_with(empty_packing(done), entry_cut)
 
 def alone.if(
@@ -591,13 +640,14 @@ def alone.if(
   +f: Facts,
   text: String,
   +opts: Options,
-  done: List<&2, Step>
+  done: List<&2, Step>,
+  +reserve: U32
 ) -> Packing:
   match fit:
     case True{}:
       packing_with(empty_packing(done), e)
     case False{}:
-      alone.put(text_room(entry(c, f, "", opts)), c, f, text, opts, done)
+      alone.put(text_room(entry_at(c, f, "", opts, reserve)), c, f, text, opts, done, reserve)
 
 # What requests for `p` ask, with the category options for `names`.
 def options_for(p: Purpose, +names: List<&2, String>) -> Options:
@@ -626,9 +676,10 @@ def alone(
   f: Facts,
   text: String,
   opts: Options,
-  done: List<&2, Step>
+  done: List<&2, Step>,
+  reserve: U32
 ) -> Packing:
-  alone.if(fits_in(empty_packing([]), e), e, c, f, text, opts, done)
+  alone.if(fits_in(empty_packing([]), e), e, c, f, text, opts, done, reserve)
 
 def requests.if(
   fit: Bool,
@@ -637,21 +688,23 @@ def requests.if(
   e: Entry,
   f: Facts,
   text: String,
-  opts: Options
+  opts: Options,
+  reserve: U32
 ) -> Packing:
   match fit:
     case True{}:
       packing_with(p, e)
     case False{}:
-      alone(e, c, f, text, opts, closed(p))
+      alone(e, c, f, text, opts, closed(p), reserve)
 
 # Adds a message to the open batch, or closes the batch and starts the next
-# with it alone.
-def requests.step(+c: Content, f: Facts, t: Text, +opts: Options, +p: Packing) -> Packing:
+# with it alone. `reserve` is counted in the state size before the refs exist.
+def requests.step(+c: Content, f: Facts, t: Text, +opts: Options, +p: Packing, +reserve: U32) ->
+  Packing:
   Text{+text, whole} = t
   +g = with_body(f, whole)
-  +e = entry(c, g, text, opts)
-  requests.if(fits_in(p, e), p, c, e, g, text, opts)
+  +e = entry_at(c, g, text, opts, reserve)
+  requests.if(fits_in(p, e), p, c, e, g, text, opts, reserve)
 
 def requests.go(
   +c: Content,
@@ -662,8 +715,8 @@ def requests.go(
   match ms:
     case Nil{}:
       List.reverse(&2, Step, closed(p))
-    case Fetched{f, t} <> rest:
-      requests.go(c, rest, opts, requests.step(c, f, t, opts, p))
+    case Fetched{f, t, reserve} <> rest:
+      requests.go(c, rest, opts, requests.step(c, f, t, opts, p, reserve))
 
 # The requests for messages and their texts, in order, packed greedily
 # within the budget. In headers mode the texts are ignored.
@@ -675,22 +728,78 @@ def states(es: List<&2, Entry>) -> List<&2, J.Json>:
   match es:
     case Nil{}:
       []
-    case Entry{f, s, qs, n, q, l} <> t:
+    case Entry{f, s, qs, n, q, l, u} <> t:
       s <> states(t)
 
 def all_questions(es: List<&2, Entry>) -> List<&2, J.Json>:
   match es:
     case Nil{}:
       []
-    case Entry{f, s, qs, n, q, l} <> t:
+    case Entry{f, s, qs, n, q, l, u} <> t:
       List.append(&2, J.Json, qs, all_questions(t))
 
-def request_body(+es: List<&2, Entry>) -> String:
-  J.show(J.obj([
+def request_obj(+es: List<&2, Entry>) -> J.Json:
+  J.obj([
     J.kv("state", J.obj([J.kv("emails", J.arr(states(es)))])),
     J.kv("model", J.str(model())),
     J.kv("questions", J.obj(all_questions(es)))
-  ]))
+  ])
+
+def request_body(+es: List<&2, Entry>) -> String:
+  J.show(request_obj(es))
+
+type ImageHeader is Data:
+  NoImageHeader{}
+  DangerZone{}
+
+type Cargo is Data:
+  Cargo{body: String, header: ImageHeader}
+
+def plain_cargo(body: String) -> Cargo:
+  Cargo{body, NoImageHeader{}}
+
+def sent_list(es: List<&2, Entry>) -> List<&2, Image.Sent>:
+  match es:
+    case Nil{}:
+      []
+    case Entry{f, s, qs, n, q, l, used} <> t:
+      List.append(&2, Image.Sent, used, sent_list(t))
+
+def clear_entry(e: Entry) -> Entry:
+  Entry{f, s, qs, n, q, l, u} = e
+  Entry{f, s, qs, n, q, l, []}
+
+def clear_used(es: List<&2, Entry>) -> List<&2, Entry>:
+  match es:
+    case Nil{}:
+      []
+    case e <> t:
+      clear_entry(e) <> clear_used(t)
+
+def cargo_assets(+es: List<&2, Entry>, +used: List<&2, Image.Sent>) -> Cargo:
+  Cargo{J.show(J.obj([
+    J.kv("state", J.obj([J.kv("emails", J.arr(states(es)))])),
+    J.kv("model", J.str(model())),
+    J.kv("questions", J.obj(all_questions(es))),
+    J.kv("assets", J.obj(Image.asset_kvs(used)))
+  ])), DangerZone{}}
+
+def cargo_from(+es: List<&2, Entry>, used: List<&2, Image.Sent>) -> Cargo:
+  match used:
+    case Nil{}:
+      plain_cargo(request_body(es))
+    case _:
+      cargo_assets(es, used)
+
+# The header is DangerZone exactly when some entry sends a still, and then
+# the body is the same three keys plus assets from that same list.
+def cargo_of(+es: List<&2, Entry>) -> Cargo:
+  cargo_from(es, sent_list(es))
+
+def entry_images(c: Content, e: Entry, fates: List<&2, Image.Fate>) -> Entry:
+  Entry{f, state, qs, n, q, l, u} = e
+  +sent = Image.sent_of(fates)
+  Entry{f, state_images(c, state, Image.refs_of(sent)), qs, n, q, l, sent}
 
 # Answers
 # -------

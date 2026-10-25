@@ -184,7 +184,7 @@ def run.config(c: T.Config, imap: Bool, smtp: Bool) -> IO(T.Out):
         stage_facts(stages(), "smtp", []))
       T.pure_out(result(fact("local", "configuration", "failed",
         "invalid_switches_or_policy") <> skipped))
-    case T.Config{ro, drafts, jev}:
+    case T.Config{ro, drafts, jev, images}:
       do IO<T.Out>:
         +i : List<&2, J.Json> <- transport("imap", imap)
         s : List<&2, J.Json> <- transport("smtp", smtp)

@@ -401,7 +401,11 @@ tool asks it and no tool's result changes. With Jev on:
 
 Outside `mail_classify` and `mail_triage`, Jev can only block or add notes,
 and in no tool does it approve an action. Message text reaches TypeSafe only
-in `body` mode. Settings, what leaves the machine, the `jev` result object,
+in `body` mode. With `MAILBEND_TYPESAFE_IMAGES=1`, also in body mode and with
+zero retention stated, `mail_classify` may send in-range PNG and JPEG parts.
+The result says which images were used or skipped, and carries an
+experimental notice when one was used. No other tool sends images.
+Settings, what leaves the machine, the `jev` result object,
 failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages

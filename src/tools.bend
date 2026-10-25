@@ -13,6 +13,7 @@ import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
 import ./search-cursor.bend as SC
+import ./image.bend as Image
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 import ./response.bend as Response
@@ -131,7 +132,7 @@ def env_or(name: String, d: String) -> IO(String):
 # is refused rather than read as off: MAILBEND_READ_ONLY=yes must not leave
 # writes on. ConfigBad fails every tool.
 type Config is Data:
-  Config{read_only: Bool, drafts_only: Bool, jev: Jev.Switch}
+  Config{read_only: Bool, drafts_only: Bool, jev: Jev.Switch, images: Jev.ImageMode}
   ConfigBad{msg: String}
 
 type Flag is Data:
@@ -217,6 +218,19 @@ def jev_switch(on: Bool, c: Jev.Content, absolute: Bool) -> Result<&2, &2, Strin
 
 # The switches, checked in this order; the first bad value fails every tool,
 # including a TypeSafe setting while Jev is off.
+# Off, or on together with body content. On in headers mode, or without
+# the zero-retention statement, is refused. attested still fails first when
+# body mode lacks that statement.
+def image_mode(on: Bool, c: Jev.Content) -> Result<&2, &2, String, Jev.ImageMode>:
+  match on c:
+    case False{} _:
+      Done{Jev.ImagesOff{}}
+    case True{} Jev.Body{}:
+      Done{Jev.ImagesOn{}}
+    case True{} Jev.Headers{}:
+      Fail{"MAILBEND_TYPESAFE_IMAGES needs MAILBEND_TYPESAFE_CONTENT=body and " ++
+        "MAILBEND_TYPESAFE_ZERO_RETENTION=1"}
+
 def config_of(
   read_only: Flag,
   drafts_only: Flag,
@@ -224,6 +238,7 @@ def config_of(
   typesafe: Flag,
   content: String,
   zero_retention: Flag,
+  images: Flag,
   key_file: String
 ) -> Result<&2, &2, String, Config>:
   do Result<&2, &2, String, Config>:
@@ -233,9 +248,11 @@ def config_of(
     on : Bool <- flag_on(typesafe)
     wanted : Jev.Content <- content_of(content)
     zr : Bool <- flag_on(zero_retention)
-    c : Jev.Content <- attested(wanted, zr)
+    +c : Jev.Content <- attested(wanted, zr)
+    images_on : Bool <- flag_on(images)
+    mode : Jev.ImageMode <- image_mode(images_on, c)
     jev : Jev.Switch <- jev_switch(on, c, String.starts_with(key_file, "/"))
-    return Config{ro, drafts, jev}
+    return Config{ro, drafts, jev, mode}
 
 def config.put(r: Result<&2, &2, String, Config>) -> Config:
   match r:
@@ -266,8 +283,9 @@ def config() -> IO(Config):
     t : Flag <- flag("MAILBEND_TYPESAFE")
     c : String <- env_or("MAILBEND_TYPESAFE_CONTENT", "")
     z : Flag <- flag("MAILBEND_TYPESAFE_ZERO_RETENTION")
+    images : Flag <- flag("MAILBEND_TYPESAFE_IMAGES")
     k : String <- env_or("MAILBEND_TYPESAFE_KEY_FILE", "")
-    return config.put(config_of(r, d, is_set(key), t, c, z, k))
+    return config.put(config_of(r, d, is_set(key), t, c, z, images, k))
 
 # Send settings
 # -------------
@@ -1920,7 +1938,7 @@ def part_get.shown(
     case Done{+bytes} m <> t:
       text = part_get.text(p, bytes)
       Selected{part_content(Done{bytes}, p, folder, uid, uidv),
-        Jev.Fetched{Jev.facts_of(m), text}}
+        Jev.Fetched{Jev.facts_of(m), text, 0}}
 
 def part_get.fetched(r: Run(), +p: Part.Part, folder: String,
   +uid: U32, +uidv: U32, max: U32) -> Shown:
@@ -2535,33 +2553,47 @@ type Tries is Data:
   Once{}
   Retried{}
 
-def tries_args(t: Tries) -> List<String>:
+def ask_once_flag(t: Tries, args: List<&1, String>) -> List<&1, String>:
   match t:
     case Once{}:
-      ["ask", "--once"]
+      List.append(&1, String, args, ["--once"])
     case Retried{}:
-      ["ask"]
+      args
+
+def ask_images_flag(h: Jev.ImageHeader, args: List<&1, String>) -> List<&1, String>:
+  match h:
+    case Jev.NoImageHeader{}:
+      args
+    case Jev.DangerZone{}:
+      List.append(&1, String, args, ["--images"])
+
+# ask, then --once, then --images. The helper accepts either flag order.
+def ask_args(t: Tries, h: Jev.ImageHeader) -> List<&1, String>:
+  ask_images_flag(h, ask_once_flag(t, ["ask"]))
 
 # The helper may print up to 8 MiB (it caps TypeSafe's answer at 4 MiB) and
 # take up to five minutes (it may retry an overloaded service twice). It is
 # not run_helper, whose 128 MiB cap is for mail: this cap is a second guard.
-def typesafe_run(path: Result<&2, &2, String, String>, t: Tries, body: String) -> IO(Proc):
+def typesafe_run(path: Result<&2, &2, String, String>, t: Tries, header: Jev.ImageHeader,
+  body: String) -> IO(Proc):
   match path:
     case Done{p}:
       do IO<Proc>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
-          Process.run(p, tries_args(t), body, 8388608, 300000)
+          Process.run(p, ask_args(t, header), body, 8388608, 300000)
         return proc_of(r)
     case Fail{m}:
       IO.pure(Proc, ProcRefused{m})
 
 # Sends one request through mailbend-typesafe, the only program that reads
-# the TypeSafe key.
-def ask_jev(t: Tries, body: String) -> IO(Asked):
+# the TypeSafe key. The danger-zone flag is the cargo's header, not a second
+# look at the JSON.
+def ask_jev(t: Tries, cargo: Jev.Cargo) -> IO(Asked):
+  Jev.Cargo{body, header} = cargo
   do IO<Asked>:
     path : String <- env_or("MAILBEND_TYPESAFE_HELPER", "")
     p : Proc <- typesafe_run(
-      helper_path(path, "MAILBEND_TYPESAFE_HELPER", "mailbend-typesafe"), t, body)
+      helper_path(path, "MAILBEND_TYPESAFE_HELPER", "mailbend-typesafe"), t, header, body)
     return asked(p)
 
 # Requests in turn
@@ -2618,6 +2650,18 @@ def answered(
     case AskFailed{m}:
       Fail{m}
 
+def ask_once.send(
+  cargo: Jev.Cargo,
+  tries: Tries,
+  es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress
+) -> IO(Tally()):
+  Jev.Cargo{+body, header} = cargo
+  do IO<Tally()>:
+    r : Asked <- ask_jev(tries, Jev.Cargo{body, header})
+    return answered(r, es, C.utf8_len(body), keys, p)
+
 # Sends the request for `es`, unless the call has already stopped.
 def ask_once(
   tries: Tries,
@@ -2629,10 +2673,7 @@ def ask_once(
     case Fail{m}:
       IO.pure(Tally(), Fail{m})
     case Done{p}:
-      +body = Jev.request_body(es)
-      do IO<Tally()>:
-        r : Asked <- ask_jev(tries, body)
-        return answered(r, es, C.utf8_len(body), keys, p)
+      ask_once.send(Jev.cargo_of(es), tries, es, keys, p)
 
 # A refused request split once into halves, each asked on its own; a
 # refusal of either stops the call.
@@ -2679,16 +2720,25 @@ def ask_batch.put(
 # TypeSafe's 422 is a general validation error, so a refused request of two
 # or more messages is split once, in case it was too large; a refusal of a
 # half, or of a single message, stops the call with TypeSafe's reason.
+def ask_batch.send(
+  cargo: Jev.Cargo,
+  +tries: Tries,
+  +es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress
+) -> IO(Tally()):
+  Jev.Cargo{+body, header} = cargo
+  do IO<Tally()>:
+    r : Asked <- ask_jev(tries, Jev.Cargo{body, header})
+    ask_batch.put(r, tries, es, keys, C.utf8_len(body), p)
+
 def ask_batch(
   +tries: Tries,
   +es: List<&2, Jev.Entry>,
   keys: List<&2, String>,
   p: Progress
 ) -> IO(Tally()):
-  +body = Jev.request_body(es)
-  do IO<Tally()>:
-    r : Asked <- ask_jev(tries, body)
-    ask_batch.put(r, tries, es, keys, C.utf8_len(body), p)
+  ask_batch.send(Jev.cargo_of(es), tries, es, keys, p)
 
 def ask_step.put(tries: Tries, s: Jev.Step, keys: List<&2, String>, p: Progress) -> IO(Tally()):
   match s:
@@ -2775,7 +2825,7 @@ def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
     case Nil{}:
       []
     case +m <> t:
-      Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max)} <> fetched_list(t, max)
+      Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max), 0} <> fetched_list(t, max)
 
 # Changing mail
 # =============
@@ -5210,7 +5260,7 @@ def send_ask(
 ) -> IO(Out):
   Jev.Text{shown, whole} = t
   do IO<Out>:
-    a : Asked <- ask_jev(Retried{}, Jev.outgoing_request(c, o, vs, shown))
+    a : Asked <- ask_jev(Retried{}, Jev.plain_cargo(Jev.outgoing_request(c, o, vs, shown)))
     send_decided(Secrets.Clean{}, outgoing_answered(a, c, vs, whole), r)
 
 # Jev is asked only about a message the local secret scan passed.
@@ -5956,39 +6006,502 @@ def candidates_problem(+g: Guard, cs: List<&2, String>, +seen: List<&2, String>)
           "candidate \"" ++ c ++ "\" is listed twice", candidate_note(c, target_problem(g, c))),
         candidates_problem(g, t, c <> seen))
 
+def image_kind(ct: String, cd: String) -> M.PartKind:
+  M.part_kind([M.Hdr{"content-type", ct}, M.Hdr{"content-disposition", cd}])
+
+def image_typ.of(k: M.PartKind) -> String:
+  M.PartKind{c, typ, name, file} = k
+  typ
+
+def image_typ(ct: String, cd: String) -> String:
+  image_typ.of(image_kind(ct, cd))
+
+def image_name(ct: String, cd: String) -> String:
+  M.part_label(image_kind(ct, cd))
+
+def image_name_of(p: Part.Part) -> String:
+  Part.Part{path, ct, cd, encoding, size} = p
+  image_name(ct, cd)
+
+def msg_parts.of(r: Result<&2, &2, String, List<&2, Part.Part>>) -> List<&2, Part.Part>:
+  match r:
+    case Done{ps}:
+      ps
+    case Fail{m}:
+      []
+
+def msg_parts(m: I.Msg) -> List<&2, Part.Part>:
+  I.Msg{uid, flags, date, size, headers, body, st} = m
+  msg_parts.of(Part.parts(st))
+
+def is_fetch(pre: Image.Pre) -> Bool:
+  match pre:
+    case Image.Fetch{f, max}:
+      True{}
+    case Image.Omit{r}:
+      False{}
+
+def part_pre(p: Part.Part) -> Image.Pre:
+  Part.Part{path, ct, cd, encoding, size} = p
+  Image.screen(image_typ(ct, cd), encoding, size)
+
+def wants_fetch(ps: List<&2, Part.Part>, yes: Bool) -> Bool:
+  match ps yes:
+    case _ True{}:
+      True{}
+    case Nil{} False{}:
+      False{}
+    case p <> t False{}:
+      wants_fetch(t, is_fetch(part_pre(p)))
+
+def reserve_of(ps: List<&2, Part.Part>) -> U32:
+  Bool.pick(U32, wants_fetch(ps, False{}), Image.ref_slot(), 0)
+
+def fetched_on(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      Jev.Fetched{Jev.facts_of(m), Jev.text_of(m, max), reserve_of(msg_parts(m))} <>
+        fetched_on(t, max)
+
+def classify_fetched(mode: Jev.ImageMode, ms: List<&2, I.Msg>, max: U32) -> List<&2, Jev.Fetched>:
+  match mode:
+    case Jev.ImagesOff{}:
+      fetched_list(ms, max)
+    case Jev.ImagesOn{}:
+      fetched_on(ms, max)
+
+def entry_uid(e: Jev.Entry) -> U32:
+  Jev.Entry{f, s, qs, n, q, l, u} = e
+  Jev.facts_uid(f)
+
+type Survey is Data:
+  Survey{uid: U32, fates: List<&2, Image.Fate>}
+
+type Look is Data:
+  LookScan{ss: List<&2, Survey>}
+  LookHit{eq: Bool, fs: List<&2, Image.Fate>, rest: List<&2, Survey>}
+
+def lookup_go(fuel: Nat, +uid: U32, st: Look) -> Maybe<&2, List<&2, Image.Fate>>:
+  match fuel st:
+    case 0n _:
+      None{}
+    case 1n+f LookScan{Nil{}}:
+      None{}
+    case 1n+f LookScan{Survey{u, fs} <> t}:
+      lookup_go(f, uid, LookHit{U32.is_eq(uid, u), fs, t})
+    case 1n+f LookHit{True{}, fs, rest}:
+      Some{fs}
+    case 1n+f LookHit{False{}, fs, rest}:
+      lookup_go(f, uid, LookScan{rest})
+
+def lookup_survey(uid: U32, +ss: List<&2, Survey>) -> Maybe<&2, List<&2, Image.Fate>>:
+  lookup_go(Nat.add(List.length(&2, Survey, ss), 2n), uid, LookScan{ss})
+
+def fate_jsons(fs: List<&2, Image.Fate>) -> List<&2, J.Json>:
+  match fs:
+    case Nil{}:
+      []
+    case f <> t:
+      Image.fate_json(f) <> fate_jsons(t)
+
+def image_extra.some(m: Maybe<&2, List<&2, Image.Fate>>) -> List<&2, J.Json>:
+  match m:
+    case None{}:
+      []
+    case Some{fs}:
+      [J.kv("images", J.arr(fate_jsons(fs)))]
+
+def image_extra(x: Jev.Answered, surveys: List<&2, Survey>) -> List<&2, J.Json>:
+  match x:
+    case Jev.Skipped{f}:
+      []
+    case Jev.Answered{f, a}:
+      image_extra.some(lookup_survey(Jev.facts_uid(f), surveys))
+
+def classify_messages(
+  xs: List<&2, Jev.Answered>,
+  +c: Jev.Content,
+  +cands: List<&2, String>,
+  +none: String,
+  +surveys: List<&2, Survey>
+) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case +x <> t:
+      J.obj(Jev.answered_kvs(x, c, cands, none, image_extra(x, surveys))) <>
+        classify_messages(t, c, cands, none, surveys)
+
+def any_fate(fs: List<&2, Image.Fate>) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case Image.Used{s} <> t:
+      True{}
+    case Image.Skipped{section, name, reason} <> t:
+      any_fate(t)
+
+def any_survey(ss: List<&2, Survey>, yes: Bool) -> Bool:
+  match ss yes:
+    case _ True{}:
+      True{}
+    case Nil{} False{}:
+      False{}
+    case Survey{u, fs} <> t False{}:
+      any_survey(t, any_fate(fs))
+
+def find_keep(eq: Bool, m: I.Msg) -> Maybe<&2, I.Msg>:
+  match eq:
+    case True{}:
+      Some{m}
+    case False{}:
+      None{}
+
+def find_go(fuel: Nat, +uid: U32, ms: List<&2, I.Msg>, hold: Maybe<&2, I.Msg>) -> Maybe<&2, I.Msg>:
+  match fuel ms hold:
+    case 0n _ _:
+      None{}
+    case _ _ Some{m}:
+      Some{m}
+    case 1n+f Nil{} None{}:
+      None{}
+    case 1n+f +m <> t None{}:
+      find_go(f, uid, t, find_keep(U32.is_eq(msg_uid(m), uid), m))
+
+def find_msg(uid: U32, +ms: List<&2, I.Msg>) -> Maybe<&2, I.Msg>:
+  find_go(Nat.add(List.length(&2, I.Msg, ms), 1n), uid, ms, None{})
+
+type ImgSee is Data:
+  SeeParts{rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>}
+  SeeFetch{rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, part: Part.Part,
+    format: Image.Format, max: U32}
+  SeeStop{msg: String}
+  SeeDone{vs: List<&2, Image.Verdict>}
+
+def see_screen(pre: Image.Pre, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
+  +p: Part.Part, name: String) -> ImgSee:
+  match pre:
+    case Image.Omit{reason}:
+      SeeParts{rest, Image.VDrop{Part.path(p), name, reason} <> acc}
+    case Image.Fetch{format, max}:
+      SeeFetch{rest, acc, p, format, max}
+
+def see_part.image(yes: Bool, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
+  +p: Part.Part, +ct: String, +cd: String, encoding: String, size: U32) -> ImgSee:
+  match yes:
+    case False{}:
+      SeeParts{rest, acc}
+    case True{}:
+      see_screen(Image.screen(image_typ(ct, cd), encoding, size), rest, acc, p, image_name(ct, cd))
+
+def see_part(rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, +p: Part.Part) -> ImgSee:
+  Part.Part{path, +ct, +cd, encoding, size} = p
+  see_part.image(String.starts_with(image_typ(ct, cd), "image/"), rest, acc, p, ct, cd, encoding,
+    size)
+
+def skip_fetch(+m: String) -> Bool:
+  String.eq(m, "MIME section metadata changed between sessions") ||
+    String.eq(m, "missing selected section or unexpected partial origin") ||
+    String.eq(m, "no matching MIME section") ||
+    String.eq(m, "no BODYSTRUCTURE for the requested UID") ||
+    String.starts_with(m, "incomplete ") ||
+    String.eq(m, "malformed or unsupported BODYSTRUCTURE") ||
+    String.eq(m, "BODYSTRUCTURE exceeds 128 parts or levels")
+
+def fetch_fail(stop: Bool, m: String, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
+  path: List<&2, U32>, name: String) -> ImgSee:
+  match stop:
+    case True{}:
+      SeeStop{m}
+    case False{}:
+      SeeParts{rest, Image.VDrop{path, name, Image.Unreadable{}} <> acc}
+
+def fetch_end(r: Result<&2, &2, String, String>, rest: List<&2, Part.Part>,
+  acc: List<&2, Image.Verdict>, path: List<&2, U32>, name: String, format: Image.Format) ->
+  ImgSee:
+  match r:
+    case Done{bytes}:
+      SeeParts{rest, Image.judge(path, name, format, bytes) <> acc}
+    case Fail{+m}:
+      fetch_fail(Bool.not(skip_fetch(m)), m, rest, acc, path, name)
+
+def fetch_one(folder: String, +uid: U32, +uidv: U32, rest: List<&2, Part.Part>,
+  acc: List<&2, Image.Verdict>, +p: Part.Part, format: Image.Format, +max: U32) -> IO(ImgSee):
+  +path = Part.path(p)
+  +name = image_name_of(p)
+  do IO<ImgSee>:
+    run : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, path, max))
+    return fetch_end(part_bytes(run, uid, uidv, p, max), rest, acc, path, name, format)
+
+def see_fuel(ps: List<&2, Part.Part>) -> Nat:
+  Nat.add(Nat.mul(List.length(&2, Part.Part, ps), 3n), 2n)
+
+def see_run(fuel: Nat, +folder: String, +uid: U32, +uidv: U32, st: ImgSee) -> IO(ImgSee):
+  match fuel st:
+    case 0n _:
+      IO.pure(ImgSee, SeeStop{"image survey exceeded its part budget"})
+    case 1n+f SeeStop{m}:
+      IO.pure(ImgSee, SeeStop{m})
+    case 1n+f SeeDone{vs}:
+      IO.pure(ImgSee, SeeDone{vs})
+    case 1n+f SeeParts{Nil{}, acc}:
+      IO.pure(ImgSee, SeeDone{List.reverse(&2, Image.Verdict, acc)})
+    case 1n+f SeeParts{p <> rest, acc}:
+      see_run(f, folder, uid, uidv, see_part(rest, acc, p))
+    case 1n+f SeeFetch{rest, acc, p, format, max}:
+      do IO<ImgSee>:
+        nxt : ImgSee <- fetch_one(folder, uid, uidv, rest, acc, p, format, max)
+        see_run(f, folder, uid, uidv, nxt)
+
+def see_msg(m: Maybe<&2, I.Msg>, folder: String, uid: U32, uidv: U32) -> IO(ImgSee):
+  match m:
+    case None{}:
+      IO.pure(ImgSee, SeeDone{[]})
+    case Some{msg}:
+      +ps = msg_parts(msg)
+      see_run(see_fuel(ps), folder, uid, uidv, SeeParts{ps, []})
+
+def see_entry(e: Jev.Entry, ms: List<&2, I.Msg>, folder: String, uidv: U32) -> IO(ImgSee):
+  +uid = entry_uid(e)
+  see_msg(find_msg(uid, ms), folder, uid, uidv)
+
+type Bat is Data:
+  BatGo{es: List<&2, Jev.Entry>, counts: List<&2, Nat>, vs: List<&2, Image.Verdict>}
+  BatSaw{es: List<&2, Jev.Entry>, counts: List<&2, Nat>, vs: List<&2, Image.Verdict>, one: ImgSee}
+  BatNo{msg: String}
+  BatOk{counts: List<&2, Nat>, vs: List<&2, Image.Verdict>}
+
+def batch_fuel(es: List<&2, Jev.Entry>) -> Nat:
+  Nat.add(Nat.mul(List.length(&2, Jev.Entry, es), 4n), 2n)
+
+def batch_run(fuel: Nat, +folder: String, +uidv: U32, +ms: List<&2, I.Msg>, st: Bat) -> IO(Bat):
+  match fuel st:
+    case 0n _:
+      IO.pure(Bat, BatNo{"image survey exceeded its message budget"})
+    case 1n+f BatNo{m}:
+      IO.pure(Bat, BatNo{m})
+    case 1n+f BatOk{counts, vs}:
+      IO.pure(Bat, BatOk{counts, vs})
+    case 1n+f BatGo{Nil{}, counts, vs}:
+      IO.pure(Bat, BatOk{counts, vs})
+    case 1n+f BatGo{e <> rest, counts, vs}:
+      do IO<Bat>:
+        one : ImgSee <- see_entry(e, ms, folder, uidv)
+        batch_run(f, folder, uidv, ms, BatSaw{rest, counts, vs, one})
+    case 1n+f BatSaw{rest, counts, vs, SeeStop{m}}:
+      IO.pure(Bat, BatNo{m})
+    case 1n+f BatSaw{rest, counts, vs, SeeDone{+more}}:
+      +n = List.length(&2, Image.Verdict, more)
+      batch_run(f, folder, uidv, ms, BatGo{rest, List.append(&2, Nat, counts, [n]),
+        List.append(&2, Image.Verdict, vs, more)})
+    case 1n+f BatSaw{rest, counts, vs, one}:
+      IO.pure(Bat, BatNo{"image survey stopped between parts"})
+
+def corpus_entry(e: Jev.Entry) -> String:
+  Jev.Entry{f, state, qs, n, q, l, u} = e
+  J.show(state) ++ "\n" ++ J.show(J.obj(qs))
+
+def corpus_entries(es: List<&2, Jev.Entry>) -> String:
+  match es:
+    case Nil{}:
+      ""
+    case e <> t:
+      corpus_entry(e) ++ "\n" ++ corpus_entries(t)
+
+def batch_corpus(folder: String, names: List<&2, String>, es: List<&2, Jev.Entry>) -> String:
+  folder ++ "\n" ++ String.join(names, "\n") ++ "\n" ++ corpus_entries(es)
+
+type Zipped is Data:
+  Zipped{entries: List<&2, Jev.Entry>, surveys: List<&2, Survey>}
+
+def zip_go(
+  +c: Jev.Content,
+  es: List<&2, Jev.Entry>,
+  counts: List<&2, Nat>,
+  +fates: List<&2, Image.Fate>,
+  ents: List<&2, Jev.Entry>,
+  surveys: List<&2, Survey>
+) -> Zipped:
+  match es counts:
+    case Nil{} _:
+      Zipped{List.reverse(&2, Jev.Entry, ents), List.reverse(&2, Survey, surveys)}
+    case _ Nil{}:
+      Zipped{List.reverse(&2, Jev.Entry, ents), List.reverse(&2, Survey, surveys)}
+    case +e <> et, +n <> ct:
+      +chunk = List.take(&2, Image.Fate, fates, n)
+      zip_go(c, et, ct, List.drop(&2, Image.Fate, fates, n),
+        Jev.entry_images(c, e, chunk) <> ents, Survey{entry_uid(e), chunk} <> surveys)
+
+def zip_images(
+  c: Jev.Content,
+  es: List<&2, Jev.Entry>,
+  counts: List<&2, Nat>,
+  fates: List<&2, Image.Fate>
+) -> Zipped:
+  zip_go(c, es, counts, fates, [], [])
+
+def fold_zipped(z: Zipped) -> StepGot:
+  Zipped{nes, surveys} = z
+  StepKeep{Jev.Ask{nes}, surveys}
+
+type StepGot is Data:
+  StepKeep{step: Jev.Step, surveys: List<&2, Survey>}
+  StepHalt{msg: String}
+
+def fold_seen(
+  c: Jev.Content,
+  folder: String,
+  names: List<&2, String>,
+  +es: List<&2, Jev.Entry>,
+  seen: Bat
+) -> IO(StepGot):
+  match seen:
+    case BatNo{m}:
+      IO.pure(StepGot, StepHalt{m})
+    case BatOk{counts, vs}:
+      do IO<StepGot>:
+        fates : List<&2, Image.Fate> <- Image.bind_io(vs, batch_corpus(folder, names, es))
+        return fold_zipped(zip_images(c, es, counts, fates))
+    case _:
+      IO.pure(StepGot, StepHalt{"image survey did not finish"})
+
+def fold_ask(
+  c: Jev.Content,
+  +folder: String,
+  uidv: U32,
+  names: List<&2, String>,
+  ms: List<&2, I.Msg>,
+  +es: List<&2, Jev.Entry>
+) -> IO(StepGot):
+  do IO<StepGot>:
+    seen : Bat <- batch_run(batch_fuel(es), folder, uidv, ms, BatGo{es, [], []})
+    fold_seen(c, folder, names, es, seen)
+
+def fold_step(
+  s: Jev.Step,
+  c: Jev.Content,
+  folder: String,
+  uidv: U32,
+  names: List<&2, String>,
+  ms: List<&2, I.Msg>
+) -> IO(StepGot):
+  match s:
+    case Jev.Skip{f}:
+      IO.pure(StepGot, StepKeep{Jev.Skip{f}, []})
+    case Jev.Ask{es}:
+      fold_ask(c, folder, uidv, names, ms, es)
+
+type St is Data:
+  StGo{rest: List<&2, Jev.Step>, acc: List<&2, Jev.Step>, surveys: List<&2, Survey>}
+  StGot{rest: List<&2, Jev.Step>, acc: List<&2, Jev.Step>, surveys: List<&2, Survey>, got: StepGot}
+
+type Bound is Data:
+  BoundOk{steps: List<&2, Jev.Step>, surveys: List<&2, Survey>}
+  BoundStop{msg: String}
+
+def steps_fuel(ss: List<&2, Jev.Step>) -> Nat:
+  Nat.add(Nat.mul(List.length(&2, Jev.Step, ss), 4n), 2n)
+
+def steps_run(
+  fuel: Nat,
+  +c: Jev.Content,
+  +folder: String,
+  +uidv: U32,
+  +names: List<&2, String>,
+  +ms: List<&2, I.Msg>,
+  st: St
+) -> IO(Bound):
+  match fuel st:
+    case 0n _:
+      IO.pure(Bound, BoundStop{"image survey exceeded its request budget"})
+    case 1n+f StGo{Nil{}, acc, surveys}:
+      IO.pure(Bound, BoundOk{List.reverse(&2, Jev.Step, acc), surveys})
+    case 1n+f StGo{s <> rest, acc, surveys}:
+      do IO<Bound>:
+        got : StepGot <- fold_step(s, c, folder, uidv, names, ms)
+        steps_run(f, c, folder, uidv, names, ms, StGot{rest, acc, surveys, got})
+    case 1n+f StGot{rest, acc, surveys, StepHalt{m}}:
+      IO.pure(Bound, BoundStop{m})
+    case 1n+f StGot{rest, acc, surveys, StepKeep{step, more}}:
+      steps_run(f, c, folder, uidv, names, ms,
+        StGo{rest, step <> acc, List.append(&2, Survey, surveys, more)})
+
+def bind_steps(
+  mode: Jev.ImageMode,
+  c: Jev.Content,
+  folder: String,
+  uidv: U32,
+  names: List<&2, String>,
+  +steps: List<&2, Jev.Step>,
+  ms: List<&2, I.Msg>
+) -> IO(Bound):
+  match mode:
+    case Jev.ImagesOff{}:
+      IO.pure(Bound, BoundOk{steps, []})
+    case Jev.ImagesOn{}:
+      steps_run(steps_fuel(steps), c, folder, uidv, names, ms, StGo{steps, [], []})
+
+def uidv_or(m: Maybe<&2, U32>) -> U32:
+  Maybe.default(&2, U32, m, 0)
+
 def classify_out(
   t: Tally(),
   c: Jev.Content,
   cands: List<&2, String>,
   none: String,
   head: List<&2, J.Json>,
-  not_found: List<&2, U32>
+  not_found: List<&2, U32>,
+  +surveys: List<&2, Survey>
 ) -> Out:
   match t:
     case Fail{m}:
       Err{m}
     case Done{Progress{xs, reqs}}:
-      ok_obj(List.append(&2, J.Json, head, [
-        J.kv("messages",
-          J.arr(Jev.answered_jsons(List.reverse(&2, Jev.Answered, xs), c, cands, none))),
+      ok_obj(List.append(&2, J.Json, head, List.append(&2, J.Json, [
+        J.kv("messages", J.arr(classify_messages(List.reverse(&2, Jev.Answered, xs), c, cands,
+          none, surveys))),
         J.kv("not_found", uids_json(not_found)),
         J.kv("requests", J.arr(List.reverse(&2, J.Json, reqs)))
-      ]))
+      ], Image.notice_kv(any_survey(surveys, False{})))))
+
+def classify_bound(
+  b: Bound,
+  c: Jev.Content,
+  names: List<&2, String>,
+  +opts: Jev.Options,
+  cands: List<&2, String>,
+  head: List<&2, J.Json>,
+  not_found: List<&2, U32>
+) -> IO(Out):
+  match b:
+    case BoundStop{m}:
+      pure_out(Err{m})
+    case BoundOk{steps, surveys}:
+      do IO<Out>:
+        t : Tally() <- ask_all(Retried{}, steps, Jev.option_keys(names, opts))
+        return classify_out(t, c, cands, Jev.options_none(opts), head, not_found, surveys)
 
 # Asks Jev about the messages found, choosing among `names` (the folders,
 # then the candidates) with the options `opts`.
 def classify_ask(
   +c: Jev.Content,
-  names: List<&2, String>,
+  +names: List<&2, String>,
   +opts: Jev.Options,
   cands: List<&2, String>,
-  ms: List<&2, I.Msg>,
+  +ms: List<&2, I.Msg>,
   head: List<&2, J.Json>,
-  not_found: List<&2, U32>
+  not_found: List<&2, U32>,
+  folder: String,
+  uidv: U32,
+  +images: Jev.ImageMode
 ) -> IO(Out):
+  +fetched = classify_fetched(images, ms, jev_max())
+  +steps = Jev.requests(c, fetched, opts)
   do IO<Out>:
-    t : Tally() <- ask_options(Retried{}, c, fetched_list(ms, jev_max()), names, opts)
-    return classify_out(t, c, cands, Jev.options_none(opts), head, not_found)
+    bound : Bound <- bind_steps(images, c, folder, uidv, names, steps, ms)
+    classify_bound(bound, c, names, opts, cands, head, not_found)
 
 def classify_folders.if(
   problem: String,
@@ -5998,23 +6511,27 @@ def classify_folders.if(
   cands: List<&2, String>,
   ms: List<&2, I.Msg>,
   head: List<&2, J.Json>,
-  not_found: List<&2, U32>
+  not_found: List<&2, U32>,
+  folder: String,
+  uidv: U32,
+  images: Jev.ImageMode
 ) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
-      classify_ask(c, names, opts, cands, ms, head, not_found)
+      classify_ask(c, names, opts, cands, ms, head, not_found, folder, uidv, images)
 
 # The options come from the folders LIST gave in the same session as the
 # fetch; the candidates are checked against them.
 def classify_folders(
   f: Fs(),
   +lines: List<&2, I.RLine>,
-  folder: String,
+  +folder: String,
   +uids: List<&2, U32>,
   cands: List<&2, String>,
-  +c: Jev.Content
+  +c: Jev.Content,
+  images: Jev.ImageMode
 ) -> IO(Out):
   match f:
     case Fail{m}:
@@ -6034,14 +6551,16 @@ def classify_folders(
       +names = List.append(&2, String, cats, canon)
       +opts = Jev.options_for(Jev.Classifying{}, names)
       problem = jev_options_problem(c, names, opts, candidates_problem(g, canon, []))
-      classify_folders.if(problem, c, names, opts, canon, ms, head, minus(uids, msg_uids(ms)))
+      classify_folders.if(problem, c, names, opts, canon, ms, head, minus(uids, msg_uids(ms)),
+        folder, uidv_or(I.ok_code(lines, "UIDVALIDITY")), images)
 
 def classify_found(
   r: Run(),
   folder: String,
   uids: List<&2, U32>,
   cands: List<&2, String>,
-  c: Jev.Content
+  c: Jev.Content,
+  images: Jev.ImageMode
 ) -> IO(Out):
   match r:
     case Fail{m}:
@@ -6049,24 +6568,25 @@ def classify_found(
     case Done{+lines}:
       do IO<Out>:
         f : Fs() <- folders_io(lines)
-        classify_folders(f, lines, folder, uids, cands, c)
+        classify_folders(f, lines, folder, uids, cands, c, images)
 
-def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content) -> IO(Out):
+def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content, images: Jev.ImageMode) ->
+  IO(Out):
   match r:
     case Fail{m}:
       pure_out(Err{m})
     case Done{Classify{+folder, +uids, cands}}:
       do IO<Out>:
         run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), jev_max()))
-        classify_found(run, folder, uids, cands, c)
+        classify_found(run, folder, uids, cands, c, images)
 
 # mail_classify changes nothing: one session examines the folder and
 # fetches the messages' facts with BODY.PEEK, and Jev's answers are
 # reported, never acted on.
-def t_classify(+args: J.Json, jev: Jev.Switch) -> IO(Out):
+def t_classify(+args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) -> IO(Out):
   match jev:
     case Jev.On{c}:
-      classify_run(classify_request(args), c)
+      classify_run(classify_request(args), c, images)
     case Jev.Off{}:
       pure_out(Err{jev_off("mail_classify")})
 
@@ -6205,7 +6725,7 @@ def pending_of.text(
   m: I.Msg
 ) -> Pending:
   Jev.Text{text, +whole} = t
-  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.Text{text, whole}}, vetoes,
+  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.Text{text, whole}, 0}, vetoes,
     m)
 
 # A message with its code vetoes; its sender is looked up only while it
@@ -6222,7 +6742,7 @@ def pendings(+c: Jev.Content, +now: U32, ms: List<&2, I.Msg>) -> List<&2, Pendin
       pending_of(c, now, m) <> pendings(c, now, t)
 
 def pending_uid(p: Pending) -> U32:
-  Pending{Jev.Fetched{f, t}, vetoes, sender} = p
+  Pending{Jev.Fetched{f, t, r}, vetoes, sender} = p
   Jev.facts_uid(f)
 
 # The senders still in question, each once, in order.
@@ -6285,7 +6805,7 @@ def written_to(addrs: List<&2, String>, +lines: List<&2, I.RLine>, +n: U32) -> L
 
 # Whether a message is asked about in a request of its own.
 def asked_alone(c: Jev.Content, p: Pending) -> Bool:
-  Pending{Jev.Fetched{f, Jev.Text{text, whole}}, vetoes, sender} = p
+  Pending{Jev.Fetched{f, Jev.Text{text, whole}, r}, vetoes, sender} = p
   Jev.may_review(c, whole, vetoes)
 
 # The messages asked about together (`alone` False) or one per request.
@@ -6742,16 +7262,16 @@ def listed_fetched(ms: List<&2, I.Msg>, +n: U32) -> List<&2, Jev.Fetched>:
     case Nil{}:
       []
     case m <> t:
-      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.Text{"", Jev.Complete{}}} <>
+      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.Text{"", Jev.Complete{}}, 0} <>
         listed_fetched(t, (n + 1 : U32))
 
 # The message mail_get read whole; its text only in body mode.
 def whole_fetched(c: Jev.Content, +m: I.Msg, max: U32) -> Jev.Fetched:
   match c:
     case Jev.Headers{}:
-      Jev.Fetched{Jev.whole_facts(m), Jev.Text{"", Jev.Complete{}}}
+      Jev.Fetched{Jev.whole_facts(m), Jev.Text{"", Jev.Complete{}}, 0}
     case Jev.Body{}:
-      Jev.Fetched{Jev.whole_facts(m), Jev.text_of(m, max)}
+      Jev.Fetched{Jev.whole_facts(m), Jev.text_of(m, max), 0}
 
 def with_jev(item: J.Json, j: J.Json) -> J.Json:
   match item:
@@ -6929,7 +7449,7 @@ def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
 # Running a tool
 # --------------
 
-def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch) -> IO(Out):
+def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) -> IO(Out):
   match op:
     case Ops.OProbe{}:
       t_probe(args)
@@ -6946,7 +7466,7 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch) -> IO(Out):
     case Ops.OGetThread{}:
       projected(args, jev, t_get_thread(args))
     case Ops.OClassify{}:
-      t_classify(args, jev)
+      t_classify(args, jev, images)
     case Ops.OTriage{}:
       t_triage(args, jev)
     case Ops.OGetAttachment{}:
@@ -7002,17 +7522,18 @@ def refusal(+op: Ops.Op, args: J.Json, ro: Bool, drafts: Bool, jev: Bool) -> Str
         jev_off(Ops.name(op)),
         "")))
 
-def gated.if(problem: String, op: Ops.Op, args: J.Json, jev: Jev.Switch) -> IO(Out):
+def gated.if(problem: String, op: Ops.Op, args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
+  IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
-      run_op(op, args, jev)
+      run_op(op, args, jev, images)
 
 def gated(+op: Ops.Op, +args: J.Json, c: Config) -> IO(Out):
   match c:
-    case Config{ro, drafts, +jev}:
-      gated.if(refusal(op, args, ro, drafts, Jev.is_on(jev)), op, args, jev)
+    case Config{ro, drafts, +jev, images}:
+      gated.if(refusal(op, args, ro, drafts, Jev.is_on(jev)), op, args, jev, images)
     case ConfigBad{msg}:
       pure_out(Err{"configuration error: " ++ msg})
 
@@ -7057,7 +7578,7 @@ def offered_in(ts: J.Json, names: List<&2, String>) -> J.Json:
 
 def offered_for(ts: J.Json, c: Config) -> J.Json:
   match c:
-    case Config{ro, drafts, jev}:
+    case Config{ro, drafts, jev, images}:
       offered_in(ts, Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev)))
     case ConfigBad{msg}:
       offered_in(ts, Ops.listed_names(Ops.all_ops(), True{}, False{}, False{}))

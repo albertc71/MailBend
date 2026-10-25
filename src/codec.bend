@@ -356,18 +356,41 @@ def b64_encode.pad(s: String, +keep: U32, imap: Bool) -> String:
     ++ Bool.pick(String, imap, "",
       String.repeat("=", U32.to_nat((4 - keep : U32))))
 
-# Base64 of a byte string. `imap` selects the IMAP mailbox alphabet
-# (',' for '/') without padding.
-def b64_encode(bytes: String, +imap: Bool) -> String:
+# Digits of one group, reversed onto `acc`, so a long body stays a loop.
+def b64_encode.push(a: U32, b: U32, c: U32, +imap: Bool, acc: String) -> String:
+  +n = ((a << 16n) .|. (b << 8n) .|. c : U32)
+  SCon{b64_encode.digit((n .&. 63 : U32), imap),
+    SCon{b64_encode.digit(((n >> 6n) .&. 63 : U32), imap),
+      SCon{b64_encode.digit(((n >> 12n) .&. 63 : U32), imap),
+        SCon{b64_encode.digit((n >> 18n : U32), imap), acc}}}}
+
+def b64_encode.rev_onto(s: String, acc: String) -> String:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{h, t}:
+      b64_encode.rev_onto(t, SCon{h, acc})
+
+def b64_encode.end(a: U32, b: U32, c: U32, keep: U32, +imap: Bool, acc: String) -> String:
+  +part = b64_encode.pad(b64_encode.group(a, b, c, imap, ""), keep, imap)
+  String.reverse(b64_encode.rev_onto(part, acc))
+
+def b64_encode.go(bytes: String, +imap: Bool, acc: String) -> String:
   match bytes:
     case SNil{}:
-      ""
+      String.reverse(acc)
     case SCon{a, SNil{}}:
-      b64_encode.pad(b64_encode.group(u(a), 0, 0, imap, ""), 2, imap)
+      b64_encode.end(u(a), 0, 0, 2, imap, acc)
     case SCon{a, SCon{b, SNil{}}}:
-      b64_encode.pad(b64_encode.group(u(a), u(b), 0, imap, ""), 3, imap)
+      b64_encode.end(u(a), u(b), 0, 3, imap, acc)
     case SCon{a, SCon{b, SCon{c, rest}}}:
-      b64_encode.group(u(a), u(b), u(c), imap, b64_encode(rest, imap))
+      b64_encode.go(rest, imap, b64_encode.push(u(a), u(b), u(c), imap, acc))
+
+# Base64 of a byte string. `imap` selects the IMAP mailbox alphabet
+# (',' for '/') without padding. The walk is a loop: a full-size image is
+# past what a cons-recursive encode can hold on the stack.
+def b64_encode(bytes: String, +imap: Bool) -> String:
+  b64_encode.go(bytes, imap, "")
 
 # Decoder state: the bits not yet output, how many there are, and the bytes
 # so far, reversed.

@@ -111,15 +111,15 @@ def opts(+names: List<&2, String>) -> Jev.Options:
   Jev.Options{Jev.Classifying{}, Jev.category_options(names, none), none}
 
 def fetched(uid: U32, text: String) -> Jev.Fetched:
-  Jev.Fetched{facts(uid), Jev.Text{text, Jev.Complete{}}}
+  Jev.Fetched{facts(uid), Jev.Text{text, Jev.Complete{}}, 0}
 
 def long_subject(uid: U32) -> Jev.Fetched:
   subject : M.Hdr = M.Hdr{"subject", String.repeat("\"", 16000n)}
   Jev.Fetched{Jev.Facts{uid, [subject], [], "", 0, Jev.Unknown{}, Jev.Partial{}},
-    Jev.Text{"", Jev.Complete{}}}
+    Jev.Text{"", Jev.Complete{}}, 0}
 
 def entry_line(e: Jev.Entry) -> String:
-  Jev.Entry{+f, state, qs, n, q, l} = e
+  Jev.Entry{+f, state, qs, n, q, l, u} = e
   U32.show(Jev.facts_uid(f)) ++ ":" ++ show_whole(Jev.facts_body(f))
 
 def entry_lines(es: List<&2, Jev.Entry>) -> List<&2, String>:

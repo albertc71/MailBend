@@ -1,6 +1,6 @@
 //! mailbend-typesafe: MailBend's only connection to TypeSafe's Jev.
 //!
-//!   mailbend-typesafe ask [--once] < request JSON > TypeSafe's answer
+//!   mailbend-typesafe ask [--once] [--images] < request JSON > TypeSafe's answer
 //!   mailbend-typesafe --check                    (readiness check; no network)
 //!
 //! The Bend core builds the request and interprets the answer; this program
@@ -53,26 +53,39 @@ fn run(args: &[OsString]) -> Result<(), Exit> {
         .collect();
     match modes.as_slice() {
         ["--check"] => Ok(()),
-        ["ask"] => ask_confined(args, api::Attempts::Retried),
-        ["ask", "--once"] => ask_confined(args, api::Attempts::Once),
-        _ => Err(Exit::input(
-            "usage: mailbend-typesafe ask [--once] | --check",
-        )),
+        modes => {
+            let (attempts, images) = parse_ask(modes)?;
+            ask_confined(args, attempts, images)
+        }
     }
 }
 
-fn ask_confined(args: &[OsString], attempts: api::Attempts) -> Result<(), Exit> {
+/// `ask`, with `--once` and `--images` independent of each other.
+fn parse_ask(modes: &[&str]) -> Result<(api::Attempts, bool), Exit> {
+    let usage = "usage: mailbend-typesafe ask [--once] [--images] | --check";
+    match modes {
+        ["ask"] => Ok((api::Attempts::Retried, false)),
+        ["ask", "--once"] => Ok((api::Attempts::Once, false)),
+        ["ask", "--images"] => Ok((api::Attempts::Retried, true)),
+        ["ask", "--once", "--images"] | ["ask", "--images", "--once"] => {
+            Ok((api::Attempts::Once, true))
+        }
+        _ => Err(Exit::input(usage)),
+    }
+}
+
+fn ask_confined(args: &[OsString], attempts: api::Attempts, images: bool) -> Result<(), Exit> {
     // Refused before the environment is dropped, which would hide it.
     refuse_typesafe_api_key().map_err(Exit::input)?;
     environment::confine(args).map_err(Exit::input)?;
-    ask(attempts)
+    ask(attempts, images)
 }
 
-fn ask(attempts: api::Attempts) -> Result<(), Exit> {
+fn ask(attempts: api::Attempts, images: bool) -> Result<(), Exit> {
     let settings = settings::Settings::from_env()?;
     let key = settings::read_key()?;
     let request = settings::read_request()?;
-    let (body, result) = match api::ask(&settings, &key, &request, attempts) {
+    let (body, result) = match api::ask(&settings, &key, &request, attempts, images) {
         Ok(body) => (body, Ok(())),
         Err((exit, body)) => (body, Err(exit)),
     };

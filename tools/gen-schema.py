@@ -107,6 +107,20 @@ CLASSIFIED_FIELDS = {"uid": N, "category": NS, "jev": JEV}
 CLASSIFIED_OPTIONAL = {"new_category": S, "needs_new_category": YES,
                        "body_truncated": YES}
 CLASSIFIED = record(CLASSIFIED_FIELDS, CLASSIFIED_OPTIONAL)
+IMAGE_REASON = param("string", enum=[
+    "format", "animated", "dimensions", "file_size", "over_count", "over_budget",
+    "unreadable", "ref"])
+IMAGE_FORMAT = param("string", enum=["png", "jpeg"])
+IMAGE_USED = record({
+    "section": S, "name": S, "fate": {"const": "used"}, "format": IMAGE_FORMAT,
+    "bytes": N, "width": N, "height": N})
+IMAGE_SKIPPED = record({
+    "section": S, "name": S, "fate": {"const": "skipped"}, "reason": IMAGE_REASON})
+CLASSIFY_MESSAGE = record(CLASSIFIED_FIELDS, {
+    **CLASSIFIED_OPTIONAL,
+    "images": array(union(IMAGE_USED, IMAGE_SKIPPED))})
+IMAGE_NOTICE = ("Image classification is experimental. Jev's answers on a message "
+                "with a used image may depend on that image.")
 REQUESTS = array(record({"messages": N, "bytes": N, "input_tokens": NN}))
 QUOTE = {"quoted_original_truncated": B, "quoted_bytes": N, "original_bytes": N}
 GATE = {"jev": JEV, "body_truncated": YES,
@@ -229,8 +243,9 @@ def output_schema(name):
     elif name == "mail_classify":
         variants += [record({"folder": S, "uidvalidity": NN, "content": CONTENT,
                              "categories": STRINGS, "candidates": STRINGS,
-                             "messages": array(CLASSIFIED), "not_found": NUMBERS,
-                             "requests": REQUESTS})]
+                             "messages": array(CLASSIFY_MESSAGE), "not_found": NUMBERS,
+                             "requests": REQUESTS},
+                            {"image_notice": {"const": IMAGE_NOTICE}})]
     elif name == "mail_triage":
         filing = record({**CLASSIFIED_FIELDS, "verdict": S, "vetoes": STRINGS,
                          "destination": NS}, CLASSIFIED_OPTIONAL)
@@ -546,7 +561,11 @@ TOOLS = [
          "priority, a suggested action, whether to keep it, and suspected "
          "prompt injection. Offered only when MAILBEND_TYPESAFE is on. Sends "
          "header facts and attachment names to TypeSafe, or also up to 16 KB "
-         "of plain text with MAILBEND_TYPESAFE_CONTENT=body. When Jev picks "
+         "of plain text with MAILBEND_TYPESAFE_CONTENT=body. With "
+         "MAILBEND_TYPESAFE_IMAGES=1 (body mode and zero retention), in-range "
+         "PNG and JPEG parts of a message Jev was asked about are sent too; "
+         "the result lists each image part as used or skipped, and "
+         "image_notice when one was used. When Jev picks "
          "no folder with high confidence, needs_new_category is true: call again with candidates "
          "(new folder names); a chosen one is returned as new_category and "
          "is never created, so create it with mail_create_folder first. Each "

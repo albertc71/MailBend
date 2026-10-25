@@ -3109,6 +3109,7 @@ def jev(work):
         srv.stop()
     jev_structure(work, key_file)
     jev_options(work, key_file)
+    jev_images(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3335,6 +3336,133 @@ def jev_candidates(srv, work, key_file):
               c != 0 and "too long for one TypeSafe question" in r.get("error", "") and len(ts.requests()) == sent, r)
     finally:
         ts.stop()
+
+
+def png_still():
+    """A 280 by 280 PNG whose header is legal and whose body is not deflated."""
+    return bytes([
+        137, 80, 78, 71, 13, 10, 26, 10,
+        0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 24, 0, 0, 1, 24, 8, 2, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 73, 68, 65, 84, 0, 0, 0, 0,
+    ])
+
+
+def image_message():
+    png = base64.b64encode(png_still()).decode("ascii")
+    raw = (
+        "From: dana@example.com\r\nTo: tester@example.com\r\nSubject: scan\r\n"
+        "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+        "--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n"
+        "--b\r\nContent-Type: image/png\r\n"
+        "Content-Disposition: attachment; filename=\"scan.png\"\r\n"
+        "Content-Transfer-Encoding: base64\r\n\r\n" + png + "\r\n"
+        "--b\r\nContent-Type: image/gif\r\n"
+        "Content-Disposition: attachment; filename=\"anim.gif\"\r\n\r\nGIF89a\r\n"
+        "--b--\r\n"
+    )
+    return {"uid": 1, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000", "raw": raw}
+
+
+def jev_images(work, key_file):
+    """mail_classify may send in-range PNG and JPEG. Other tools do not."""
+    notice = ("Image classification is experimental. Jev's answers on a message with a used "
+              "image may depend on that image.")
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"] = [image_message()]
+    body = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1"}
+    on = {**body, "MAILBEND_TYPESAFE_IMAGES": "1"}
+    srv = Server(work, fixture=fixture)
+    try:
+        ts = TypeSafe(work)
+        try:
+            c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+            images = (r.get("messages") or [{}])[0].get("images")
+            used = [i for i in images or [] if i.get("fate") == "used"]
+            skipped = [i for i in images or [] if i.get("fate") == "skipped"]
+            check("images on: the png is used and the gif is skipped",
+                  c == 0 and r.get("image_notice") == notice and len(used) == 1 and len(skipped) == 1
+                  and used[0].get("name") == "scan.png" and used[0].get("format") == "png"
+                  and used[0].get("width") == 280 and used[0].get("height") == 280
+                  and used[0].get("bytes") == len(png_still()) and "ref" not in used[0]
+                  and skipped[0].get("name") == "anim.gif" and skipped[0].get("reason") == "format"
+                  and "mbimg-" not in json.dumps(r), r)
+            sent = ts.requests()
+            check("images on: assets travel with the danger-zone header",
+                  sent and all(q.get("images_header") == "true" and "assets" in q["body"]
+                               and "images" in q["body"]["state"]["emails"][0] for q in sent), sent[:1])
+        finally:
+            ts.stop()
+        ts = TypeSafe(work)
+        try:
+            c, r = classify(srv, ts, key_file, {"uids": [1]}, **body)
+            msg = (r.get("messages") or [{}])[0]
+            sent = ts.requests()
+            check("images off: classify is unchanged",
+                  c == 0 and "images" not in msg and "image_notice" not in r
+                  and sent and all(q.get("images_header") in (None, "") and "assets" not in q["body"]
+                                   for q in sent), r)
+            c, search = tool(srv, "mail_search", {"subject": "scan"}, **jev_env(ts, key_file, **on))
+            sent = ts.requests()[len(sent):]
+            check("images on: a read sends no image",
+                  c == 0 and sent and all(q.get("images_header") in (None, "") and "assets" not in q["body"]
+                                          for q in sent) and "images" not in json.dumps(search), search)
+            before = len(ts.requests())
+            c, got = tool(srv, "mail_get", {"uid": 1}, **jev_env(ts, key_file, **on))
+            got_sent = ts.requests()[before:]
+            check("images on: mail_get sends no assets",
+                  c == 0 and got_sent and all(q.get("images_header") in (None, "") and "assets" not in q["body"]
+                                              for q in got_sent), got_sent[:1] or got)
+            before = len(ts.requests())
+            c, tri = tool(srv, "mail_triage",
+                          {"uids": [1], "uidvalidity": fixture["mailboxes"]["INBOX"]["uidvalidity"],
+                           "dry_run": True}, **jev_env(ts, key_file, **on))
+            tri_sent = ts.requests()[before:]
+            check("images on: mail_triage sends no assets",
+                  c == 0 and tri_sent and all(q.get("images_header") in (None, "") and "assets" not in q["body"]
+                                              for q in tri_sent), tri_sent[:1] or tri)
+            for value, sends in (("true", True), ("false", False), ("", False)):
+                before = len(ts.requests())
+                c, r = classify(srv, ts, key_file, {"uids": [1]}, **body,
+                                MAILBEND_TYPESAFE_IMAGES=value)
+                wired = ts.requests()[before:]
+                if sends:
+                    ok = (c == 0 and r.get("image_notice") == notice and wired
+                          and all("assets" in q["body"] and q.get("images_header") == "true" for q in wired))
+                else:
+                    ok = (c == 0 and "image_notice" not in r and wired
+                          and all(q.get("images_header") in (None, "") and "assets" not in q["body"]
+                                  for q in wired))
+                shown = value if value else "empty"
+                check(f"images {shown}: classify {'sends assets' if sends else 'sends no assets'}",
+                      ok, (r.get("error"), r.get("image_notice"), wired[:1]))
+        finally:
+            ts.stop()
+        ts = TypeSafe(work)
+        try:
+            quiet = jev_env(ts, key_file, **body, MAILBEND_TYPESAFE="0", MAILBEND_TYPESAFE_IMAGES="1")
+            c, refused_classify = tool(srv, "mail_classify", {"uids": [1]}, **quiet)
+            c_get, got = tool(srv, "mail_get", {"uid": 1}, **quiet)
+            check("typesafe off with images on: nothing is sent",
+                  c != 0 and "MAILBEND_TYPESAFE is off" in refused_classify.get("error", "")
+                  and c_get == 0 and ts.requests() == [],
+                  (refused_classify, got, ts.requests()))
+        finally:
+            ts.stop()
+        for label, extra, needle in (
+            ("headers mode", {"MAILBEND_TYPESAFE_IMAGES": "1"}, "MAILBEND_TYPESAFE_IMAGES"),
+            ("body without zero retention",
+             {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_IMAGES": "1"},
+             "MAILBEND_TYPESAFE_ZERO_RETENTION"),
+            ("a bad value", {"MAILBEND_TYPESAFE_IMAGES": "yes"},
+             "MAILBEND_TYPESAFE_IMAGES must be 1, true, 0, false or empty"),
+        ):
+            env = {"MAILBEND_TYPESAFE": "1", "MAILBEND_TYPESAFE_KEY_FILE": key_file, **extra}
+            for name, args in (("mail_search", {}), ("mail_classify", {"uids": [1]})):
+                c, r = tool(srv, name, args, **env)
+                check(f"images {label}: {name} fails and names the setting",
+                      c != 0 and needle in r.get("error", ""), r)
+    finally:
+        srv.stop()
 
 
 def jev_structure(work, key_file):

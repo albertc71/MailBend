@@ -48,6 +48,7 @@ mod tests {
             &b"MAILBEND_APP_PASSWORD=secret"[..],
             b"MAILBEND_EMAIL=a@b",
             b"MAILBEND_TYPESAFE_API_KEY=k",
+            b"MAILBEND_TYPESAFE_IMAGES=1",
             b"http_proxy=http://p",
             b"MAILBEND_TIMEOUT_MS",
             b"MAILBEND_CA_FILEX=/x",

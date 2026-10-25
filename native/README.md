@@ -112,7 +112,7 @@ mailbend-attach <dir> <path> <max-bytes>    > the file's bytes
 mailbend-attach count <state-dir> <limit> <utc-day>   > ok <n> | full <n>
 mailbend-attach save <attach-dir> <download-dir> <name> <max-bytes> <path-list>
                                             < the file's bytes
-mailbend-typesafe ask [--once]   < Jev request JSON   > TypeSafe's answer JSON
+mailbend-typesafe ask [--once] [--images]   < Jev request JSON   > TypeSafe's answer JSON
 mailbend-typesafe --check  # credential-free local runtime check; no network
 ```
 
@@ -282,9 +282,11 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   buffer wiped on drop, sent only as the `Authorization: Bearer` header,
   never formatted into a message, and every copy of it in an answer, also
   the JSON spelling with `\/` for `/`, is replaced by `[redacted]`.
-- **Request**: stdin, nonempty UTF-8 of at most 1 MiB, sent unchanged as
+- **Request**: stdin, nonempty UTF-8 of at most 2,157,679 bytes, sent unchanged as
   `POST /v1/systemone` to `api.typesafe.ai:443`; host, port and path are
-  constants. The `User-Agent` is `mailbend`.
+  constants. The `User-Agent` is `mailbend`. `--images` adds the header
+  `TypeSafe-Danger-Zone-Images: true`. `--once` and `--images` are
+  independent. The helper does not read the JSON to decide the header.
 - **Route and TLS**: through an `http://` proxy from `https_proxy`,
   `HTTPS_PROXY`, `all_proxy` or `ALL_PROXY`, the first set (HTTP `CONNECT`,
   unless `no_proxy` or `NO_PROXY` lists the host), else the DoH resolver of

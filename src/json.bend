@@ -85,12 +85,24 @@ def esc_char(+c: Char) -> String:
       +u = Char.to_u32(c)
       esc_char.if(U32.is_lt(u, 32), u, c)
 
-def esc(s: String) -> String:
+def esc.onto(s: String, acc: String) -> String:
   match s:
     case SNil{}:
-      ""
+      acc
+    case SCon{h, t}:
+      esc.onto(t, SCon{h, acc})
+
+def esc.go(s: String, acc: String) -> String:
+  match s:
+    case SNil{}:
+      acc
     case SCon{c, t}:
-      esc_char(c) ++ esc(t)
+      esc.go(t, esc.onto(esc_char(c), acc))
+
+# Reversed, then flipped once: a base64 image is too long for a cons-recursive
+# escape.
+def esc(s: String) -> String:
+  String.reverse(esc.go(s, ""))
 
 def quote(s: String) -> String:
   "\"" ++ esc(s) ++ "\""

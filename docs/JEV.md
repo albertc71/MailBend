@@ -28,6 +28,7 @@ every tool:
 | `MAILBEND_TYPESAFE` | `1`/`true` turns Jev on; `0`/`false`/empty keeps it off. Read-only mode still hides `mail_triage`. |
 | `MAILBEND_TYPESAFE_KEY_FILE` | Required when on: the absolute path of a file you own with mode 600 holding only the TypeSafe key, with the same rules as `MAILBEND_PASSWORD_FILE`. Only `mailbend-typesafe` reads it. |
 | `MAILBEND_TYPESAFE_CONTENT` | `headers` (the default) or `body`; see [What leaves the machine](#what-leaves-the-machine). |
+| `MAILBEND_TYPESAFE_IMAGES` | `1`/`true` lets `mail_classify` send in-range PNG and JPEG parts. `0`/`false`/empty leaves them out. Any other value fails every tool. On requires `MAILBEND_TYPESAFE_CONTENT=body` and `MAILBEND_TYPESAFE_ZERO_RETENTION=1`. |
 | `MAILBEND_TYPESAFE_ZERO_RETENTION` | `1`/`true` is your statement that the TypeSafe account has a zero-retention plan; `body` mode is refused without it. MailBend cannot check this statement. |
 
 Never put the key in `MAILBEND_TYPESAFE_API_KEY`: when that variable is set,
@@ -45,6 +46,12 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   headers, and its attachment names.
 - In `body` mode, `mail_get`, `mail_classify`, `mail_triage` and
   `mail_delete` also send up to 16 KB of each message's plain text.
+- With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` also sends PNG and JPEG
+  parts that are within TypeSafe's pixel rules and MailBend's own cap (at
+  most four images and 1,572,864 decoded bytes in one request). Other tools
+  do not. A part outside those rules is skipped and reported; it is not
+  resized. The request carries `TypeSafe-Danger-Zone-Images: true` only when
+  an image is actually sent.
 - List reads (`mail_search`, `mail_get_new`, `mail_get_thread`) send header
   facts only, even in `body` mode, and number messages by position instead
   of UID.
@@ -55,7 +62,8 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
 Selected `mail_get` content keeps this annotation policy: parent header facts
 are available in either mode; body mode adds only the selected part's readable
 text, explicitly identified as a selected, incomplete view of the message.
-Binary parts do not contribute binary data to Jev. The read result's
+Binary parts do not contribute binary data to Jev, except the PNG and JPEG
+parts an opted-in `mail_classify` sends. The read result's
 `scope: "selected_part"` and `message_complete: false` prevent a section's
 `complete: true` from implying the whole message was checked. Unrelated MIME
 bodies are not fetched. A metadata-only section list does not ask Jev.
@@ -152,6 +160,15 @@ or chose a folder with lower or missing confidence), `needs_new_category` is
 `new_category`. It is never created; create it with `mail_create_folder`.
 A message whose header facts alone exceed a request is `unchecked`. The
 result also lists `not_found` UIDs and the requests made.
+
+With `MAILBEND_TYPESAFE_IMAGES` on, each message Jev was asked about has an
+`images` array. A used image reports its section, name, format, decoded
+size, and pixel width and height. A skipped image reports a reason:
+`format`, `animated`, `dimensions`, `file_size`, `over_count`,
+`over_budget`, `unreadable`, or `ref`. When any image was sent, the call
+also has `image_notice`:
+
+`Image classification is experimental. Jev's answers on a message with a used image may depend on that image.`
 
 ## `mail_triage` and the To Delete folder
 
