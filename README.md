@@ -506,8 +506,9 @@ synthetic cost measurements and experiment decision are in
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
 - **Folder targets must be resolved.** Overrides, advertised roles and
-  conventional names follow the per-role precedence above; ambiguous or
-  unselectable targets never trigger a guessed mutation.
+  conventional names follow the per-role precedence above (proven for every
+  folder list); ambiguous or unselectable targets never trigger a guessed
+  mutation.
 - **Search pages move toward older UIDs.** `mail_search` keeps its newest-first
   first page (default 20, at most 200 summaries). Pass its `next_cursor` as
   `cursor`, with the same folder and criteria; `limit` may change. A mismatched,
@@ -595,9 +596,21 @@ synthetic cost measurements and experiment decision are in
 
 ### What the proofs cover
 
-The bounded [SMTP TLS-ordering model](docs/verification/smtp-tls/SKILL.md) separately
+The bounded [SMTP TLS-ordering model](.agents/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
 It does not prove the Rust transport or cryptography.
+
+The [role-folder proofs](tests/formal/role-folders.bend), imported by `PROOF.bend`,
+prove the role precedence above on `resolved_role` itself, for every folder list,
+override and role: an override decides alone, taking the one selectable folder of
+its name and nothing when there is none, two, or an unselectable one; two folders
+advertising a role, or an unselectable one, leave it unresolved with no fallback to
+a name; the one selectable advertiser wins over any name; two conventional-name
+matches leave it unresolved; a folder with another role never takes one by name;
+and each role uses its own attribute and names. Selectability and roles are read
+from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Folder
+discovery, override validation and how each tool uses the resolved folder are
+covered by the end-to-end tests.
 
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's

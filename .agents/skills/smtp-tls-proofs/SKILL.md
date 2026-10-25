@@ -1,5 +1,5 @@
 ---
-name: verify-smtp-tls-ordering
+name: smtp-tls-proofs
 description: Recheck the bounded SMTP transport model when changing TLS modes, negotiation, authentication ordering, or failure propagation.
 ---
 
@@ -25,6 +25,6 @@ This is an abstraction proof, not a proof of Rust, rustls, cryptography, certifi
 
 Run `python3 tests/formal/check-smtp-tls.py` to reproduce the following checks without editing production code. On a scratch copy of the model, remove `Verified{}` from the successful implicit trace. The first property must fail. On another scratch copy, replace the failed implicit trace with `[Failed{}, Auth{}]`; the authentication properties must fail. A third scratch copy moves `Greeting{}` before `Verified{}` in the successful implicit trace; the implicit SMTP property must fail even though AUTH remains after verification. Restore the model and require all properties to pass. Never change the checker or a law to make the broken transition pass.
 
-Review the correspondence above whenever any named Rust function or model changes. A model counterexample can mean either unsafe product ordering or an incorrect abstraction: inspect the actual source and real-helper tests before deciding which. Use `/maintain-formal-verification-skill` to update coverage after changes that did not recheck it.
+Review the correspondence above whenever any named Rust function or model changes. A model counterexample can mean either unsafe product ordering or an incorrect abstraction: inspect the actual source and real-helper tests before deciding which. If your agent has pstack's `maintain-formal-verification-skill`, use it to update coverage after changes that did not recheck it.
 
 Source/model correspondence last confirmed at `c618041aefd12f45974e6e26b027370cf4efcf80`. Review subsequent changes to the named functions before reusing that evidence, and advance this reference only after confirming the correspondence and rerunning the mutation checks. Final revision checks are recorded in CI and the PR verification evidence.
