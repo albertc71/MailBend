@@ -6343,106 +6343,184 @@ def zip_images(
 ) -> Zipped:
   zip_go(c, es, counts, fates, [], [])
 
-def fold_zipped(z: Zipped) -> StepGot:
-  Zipped{nes, surveys} = z
-  StepKeep{Jev.Ask{nes}, surveys}
+# A refused request's surveys: every still it carried is reported refused.
+def refused_surveys(ss: List<&2, Survey>) -> List<&2, Survey>:
+  match ss:
+    case Nil{}:
+      []
+    case Survey{u, fs} <> t:
+      Survey{u, Image.refused_all(fs)} <> refused_surveys(t)
 
-type StepGot is Data:
-  StepKeep{step: Jev.Step, surveys: List<&2, Survey>}
-  StepHalt{msg: String}
+# What the requests have given so far, or why the call stopped, and the
+# survey of each message asked about.
+type Gathered is Data:
+  Gathered{tally: Tally(), surveys: List<&2, Survey>}
 
-def fold_seen(
+def danger(h: Jev.ImageHeader) -> Bool:
+  match h:
+    case Jev.NoImageHeader{}:
+      False{}
+    case Jev.DangerZone{}:
+      True{}
+
+# One batch's answer. TypeSafe refuses a whole request when it rejects any
+# image in it, so a refused request that carried stills is asked once more
+# without them, from the entries as they were before images were bound:
+# that request is the one classify sends with images off, and its stills
+# are reported refused. A refusal of that request, or of a request that
+# carried no still, takes the usual path: split once, then stop.
+def image_answer(
+  r: Asked,
+  carried: Bool,
+  es: List<&2, Jev.Entry>,
+  nes: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  bytes: U32,
+  p: Progress,
+  ss: List<&2, Survey>,
+  more: List<&2, Survey>
+) -> IO(Gathered):
+  match r carried:
+    case AskRefused{m} True{}:
+      do IO<Gathered>:
+        t : Tally() <- ask_batch(Retried{}, Jev.clear_used(es), keys, p)
+        return Gathered{t, List.append(&2, Survey, ss, refused_surveys(more))}
+    case _ _:
+      do IO<Gathered>:
+        t : Tally() <- ask_batch.put(r, Retried{}, nes, keys, bytes, p)
+        return Gathered{t, List.append(&2, Survey, ss, more)}
+
+def image_send(
+  cargo: Jev.Cargo,
+  es: List<&2, Jev.Entry>,
+  nes: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress,
+  ss: List<&2, Survey>,
+  more: List<&2, Survey>
+) -> IO(Gathered):
+  Jev.Cargo{+body, +header} = cargo
+  do IO<Gathered>:
+    r : Asked <- ask_jev(Retried{}, Jev.Cargo{body, header})
+    image_answer(r, danger(header), es, nes, keys, C.utf8_len(body), p, ss, more)
+
+def image_bound(
+  z: Zipped,
+  es: List<&2, Jev.Entry>,
+  keys: List<&2, String>,
+  p: Progress,
+  ss: List<&2, Survey>
+) -> IO(Gathered):
+  Zipped{+nes, more} = z
+  image_send(Jev.cargo_of(nes), es, nes, keys, p, ss, more)
+
+def image_seen(
   c: Jev.Content,
   folder: String,
   names: List<&2, String>,
+  keys: List<&2, String>,
   +es: List<&2, Jev.Entry>,
+  p: Progress,
+  ss: List<&2, Survey>,
   seen: Bat
-) -> IO(StepGot):
+) -> IO(Gathered):
   match seen:
     case BatNo{m}:
-      IO.pure(StepGot, StepHalt{m})
+      IO.pure(Gathered, Gathered{Fail{m}, ss})
     case BatOk{counts, vs}:
-      do IO<StepGot>:
+      do IO<Gathered>:
         fates : List<&2, Image.Fate> <- Image.bind_io(vs, batch_corpus(folder, names, es))
-        return fold_zipped(zip_images(c, es, counts, fates))
+        image_bound(zip_images(c, es, counts, fates), es, keys, p, ss)
     case _:
-      IO.pure(StepGot, StepHalt{"image survey did not finish"})
+      IO.pure(Gathered, Gathered{Fail{"image survey did not finish"}, ss})
 
-def fold_ask(
+# One batch, surveyed, bound and asked before the next is surveyed, so only
+# its stills are held, and only until its request is answered.
+def image_batch(
   c: Jev.Content,
   +folder: String,
   uidv: U32,
   names: List<&2, String>,
   ms: List<&2, I.Msg>,
-  +es: List<&2, Jev.Entry>
-) -> IO(StepGot):
-  do IO<StepGot>:
+  keys: List<&2, String>,
+  +es: List<&2, Jev.Entry>,
+  p: Progress,
+  ss: List<&2, Survey>
+) -> IO(Gathered):
+  do IO<Gathered>:
     seen : Bat <- batch_run(batch_fuel(es), folder, uidv, ms, BatGo{es, [], []})
-    fold_seen(c, folder, names, es, seen)
+    image_seen(c, folder, names, keys, es, p, ss, seen)
 
-def fold_step(
+def image_step.put(
   s: Jev.Step,
   c: Jev.Content,
   folder: String,
   uidv: U32,
   names: List<&2, String>,
-  ms: List<&2, I.Msg>
-) -> IO(StepGot):
+  ms: List<&2, I.Msg>,
+  keys: List<&2, String>,
+  p: Progress,
+  ss: List<&2, Survey>
+) -> IO(Gathered):
   match s:
     case Jev.Skip{f}:
-      IO.pure(StepGot, StepKeep{Jev.Skip{f}, []})
+      IO.pure(Gathered, Gathered{Done{progress_add(p, [Jev.Skipped{f}], [])}, ss})
     case Jev.Ask{es}:
-      fold_ask(c, folder, uidv, names, ms, es)
+      image_batch(c, folder, uidv, names, ms, keys, es, p, ss)
 
-type St is Data:
-  StGo{rest: List<&2, Jev.Step>, acc: List<&2, Jev.Step>, surveys: List<&2, Survey>}
-  StGot{rest: List<&2, Jev.Step>, acc: List<&2, Jev.Step>, surveys: List<&2, Survey>, got: StepGot}
+def image_step(
+  s: Jev.Step,
+  c: Jev.Content,
+  folder: String,
+  uidv: U32,
+  names: List<&2, String>,
+  ms: List<&2, I.Msg>,
+  keys: List<&2, String>,
+  g: Gathered
+) -> IO(Gathered):
+  match g:
+    case Gathered{Fail{m}, ss}:
+      IO.pure(Gathered, Gathered{Fail{m}, ss})
+    case Gathered{Done{p}, ss}:
+      image_step.put(s, c, folder, uidv, names, ms, keys, p, ss)
 
-type Bound is Data:
-  BoundOk{steps: List<&2, Jev.Step>, surveys: List<&2, Survey>}
-  BoundStop{msg: String}
-
-def steps_fuel(ss: List<&2, Jev.Step>) -> Nat:
-  Nat.add(Nat.mul(List.length(&2, Jev.Step, ss), 4n), 2n)
-
-def steps_run(
-  fuel: Nat,
+# Takes the steps in order; once the call has stopped, nothing more is
+# fetched or sent.
+def image_steps(
+  steps: List<&2, Jev.Step>,
   +c: Jev.Content,
   +folder: String,
   +uidv: U32,
   +names: List<&2, String>,
   +ms: List<&2, I.Msg>,
-  st: St
-) -> IO(Bound):
-  match fuel st:
-    case 0n _:
-      IO.pure(Bound, BoundStop{"image survey exceeded its request budget"})
-    case 1n+f StGo{Nil{}, acc, surveys}:
-      IO.pure(Bound, BoundOk{List.reverse(&2, Jev.Step, acc), surveys})
-    case 1n+f StGo{s <> rest, acc, surveys}:
-      do IO<Bound>:
-        got : StepGot <- fold_step(s, c, folder, uidv, names, ms)
-        steps_run(f, c, folder, uidv, names, ms, StGot{rest, acc, surveys, got})
-    case 1n+f StGot{rest, acc, surveys, StepHalt{m}}:
-      IO.pure(Bound, BoundStop{m})
-    case 1n+f StGot{rest, acc, surveys, StepKeep{step, more}}:
-      steps_run(f, c, folder, uidv, names, ms,
-        StGo{rest, step <> acc, List.append(&2, Survey, surveys, more)})
+  +keys: List<&2, String>,
+  g: Gathered
+) -> IO(Gathered):
+  match steps:
+    case Nil{}:
+      IO.pure(Gathered, g)
+    case s <> rest:
+      do IO<Gathered>:
+        next : Gathered <- image_step(s, c, folder, uidv, names, ms, keys, g)
+        image_steps(rest, c, folder, uidv, names, ms, keys, next)
 
-def bind_steps(
+def classify_asked(
   mode: Jev.ImageMode,
   c: Jev.Content,
   folder: String,
   uidv: U32,
   names: List<&2, String>,
-  +steps: List<&2, Jev.Step>,
-  ms: List<&2, I.Msg>
-) -> IO(Bound):
+  steps: List<&2, Jev.Step>,
+  ms: List<&2, I.Msg>,
+  keys: List<&2, String>
+) -> IO(Gathered):
   match mode:
     case Jev.ImagesOff{}:
-      IO.pure(Bound, BoundOk{steps, []})
+      do IO<Gathered>:
+        t : Tally() <- ask_all(Retried{}, steps, keys)
+        return Gathered{t, []}
     case Jev.ImagesOn{}:
-      steps_run(steps_fuel(steps), c, folder, uidv, names, ms, StGo{steps, [], []})
+      image_steps(steps, c, folder, uidv, names, ms, keys, Gathered{Done{Progress{[], []}}, []})
 
 def uidv_or(m: Maybe<&2, U32>) -> U32:
   Maybe.default(&2, U32, m, 0)
@@ -6467,22 +6545,16 @@ def classify_out(
         J.kv("requests", J.arr(List.reverse(&2, J.Json, reqs)))
       ], Image.notice_kv(any_survey(surveys, False{})))))
 
-def classify_bound(
-  b: Bound,
+def classify_gathered(
+  g: Gathered,
   c: Jev.Content,
-  names: List<&2, String>,
-  +opts: Jev.Options,
   cands: List<&2, String>,
+  none: String,
   head: List<&2, J.Json>,
   not_found: List<&2, U32>
-) -> IO(Out):
-  match b:
-    case BoundStop{m}:
-      pure_out(Err{m})
-    case BoundOk{steps, surveys}:
-      do IO<Out>:
-        t : Tally() <- ask_all(Retried{}, steps, Jev.option_keys(names, opts))
-        return classify_out(t, c, cands, Jev.options_none(opts), head, not_found, surveys)
+) -> Out:
+  Gathered{t, surveys} = g
+  classify_out(t, c, cands, none, head, not_found, surveys)
 
 # Asks Jev about the messages found, choosing among `names` (the folders,
 # then the candidates) with the options `opts`.
@@ -6501,8 +6573,9 @@ def classify_ask(
   +fetched = classify_fetched(images, ms, jev_max())
   +steps = Jev.requests(c, fetched, opts)
   do IO<Out>:
-    bound : Bound <- bind_steps(images, c, folder, uidv, names, steps, ms)
-    classify_bound(bound, c, names, opts, cands, head, not_found)
+    g : Gathered <- classify_asked(images, c, folder, uidv, names, steps, ms,
+      Jev.option_keys(names, opts))
+    return classify_gathered(g, c, cands, Jev.options_none(opts), head, not_found)
 
 def classify_folders.if(
   problem: String,

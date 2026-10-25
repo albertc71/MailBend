@@ -58,7 +58,8 @@ def reasons() -> String:
   Image.reason_name(Image.Format{}) ++ " " ++ Image.reason_name(Image.Animated{}) ++ " " ++
     Image.reason_name(Image.Dimensions{}) ++ " " ++ Image.reason_name(Image.FileSize{}) ++ " " ++
     Image.reason_name(Image.OverCount{}) ++ " " ++ Image.reason_name(Image.OverBudget{}) ++ " " ++
-    Image.reason_name(Image.Unreadable{}) ++ " " ++ Image.reason_name(Image.NoRef{})
+    Image.reason_name(Image.Unreadable{}) ++ " " ++ Image.reason_name(Image.NoRef{}) ++ " " ++
+    Image.reason_name(Image.Refused{})
 
 def show_pre(p: Image.Pre) -> String:
   match p:
@@ -190,7 +191,7 @@ def main() -> IO(Unit):
 
 #|caps 4 1572864 1572864 slot 187 framing 387 b64 2097152 slack 12 text 60128 max 2157679
 #|sides 279 False 1569 False 280 True 1568 True
-#|reasons format animated dimensions file_size over_count over_budget unreadable ref
+#|reasons format animated dimensions file_size over_count over_budget unreadable ref refused
 #|screen omit format omit unreadable omit file_size fetch png 101 fetch jpeg 11 fetch jpeg 2097153 fetch png 1572865 omit file_size
 #|judge keep png 280 280 drop dimensions keep png 1568 1568 drop dimensions drop animated drop format drop unreadable keep jpeg 1568 280 drop format drop file_size
 #|ihdr drop unreadable drop unreadable

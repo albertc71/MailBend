@@ -51,7 +51,10 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   most four images and 1,572,864 decoded bytes in one request). Other tools
   do not. A part outside those rules is skipped and reported; it is not
   resized. The request carries `TypeSafe-Danger-Zone-Images: true` only when
-  an image is actually sent.
+  an image is actually sent. TypeSafe refuses a whole request when it cannot
+  use one of its images (a damaged file, for example), so a refused request
+  that carried images is asked once more without them; see
+  [`mail_classify`](#mail_classify).
 - List reads (`mail_search`, `mail_get_new`, `mail_get_thread`) send header
   facts only, even in `body` mode, and number messages by position instead
   of UID.
@@ -91,7 +94,8 @@ because the price and the default context match `jev-1.13.0`.
   each marked `unchecked` with the reason.
 - `mail_classify` and `mail_triage` split a request TypeSafe refuses once
   into halves; any other failure stops the call, and triage then moves
-  nothing.
+  nothing. A refused `mail_classify` request that carried images is first
+  asked again without them, and is split only if that is refused too.
 
 Every call that asks Jev makes at least one request to your TypeSafe
 account, and a read with notes lists the folders in one more read-only IMAP
@@ -165,8 +169,13 @@ With `MAILBEND_TYPESAFE_IMAGES` on, each message Jev was asked about has an
 `images` array. A used image reports its section, name, format, decoded
 size, and pixel width and height. A skipped image reports a reason:
 `format`, `animated`, `dimensions`, `file_size`, `over_count`,
-`over_budget`, `unreadable`, or `ref`. When any image was sent, the call
-also has `image_notice`:
+`over_budget`, `unreadable`, `ref`, or `refused`. TypeSafe answers no part
+of a request in which it rejects an image, and does not say which image it
+rejected, so when it refuses a request that carried images, the same
+messages are asked once more in a request without images (the request
+`mail_classify` sends with images off), and every image of the refused
+request is reported `refused`. When any image was used in an answered
+request, the call also has `image_notice`:
 
 `Image classification is experimental. Jev's answers on a message with a used image may depend on that image.`
 

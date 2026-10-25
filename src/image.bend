@@ -16,6 +16,7 @@ type Reason is Data:
   OverBudget{}
   Unreadable{}
   NoRef{}
+  Refused{}
 
 type Format is Data:
   Png{}
@@ -100,6 +101,8 @@ def reason_name(r: Reason) -> String:
       "unreadable"
     case NoRef{}:
       "ref"
+    case Refused{}:
+      "refused"
 
 def format_name(f: Format) -> String:
   match f:
@@ -174,7 +177,8 @@ def pixels_ok(p: Pixels) -> Bool:
   pixels_ok.sides(side_ok(w) && side_ok(h), w, h)
 
 # Header walks. A corrupt deflate stream behind a legal header is not
-# detected: the still is kept, and TypeSafe can still refuse it.
+# detected: the still is kept, and TypeSafe can still refuse it, which
+# classify reports as refused after asking again without images.
 
 type Parsed is Data:
   StillImage{pixels: Pixels}
@@ -733,6 +737,22 @@ def fate_used(st: Still) -> J.Json:
   J.obj([J.kv("section", J.str(section_text(section))), J.kv("name", J.str(name)),
     J.kv("fate", J.str("used")), J.kv("format", J.str(format_name(format))),
     J.kv("bytes", J.num(C.byte_len(data))), J.kv("width", J.num(w)), J.kv("height", J.num(h))])
+
+# A used still whose request TypeSafe refused. TypeSafe does not say which
+# image it rejected, so every still of that request is reported refused.
+def refused(f: Fate) -> Fate:
+  match f:
+    case Used{Sent{Still{section, name, format, px, data}, r}}:
+      Skipped{section, name, Refused{}}
+    case Skipped{section, name, reason}:
+      Skipped{section, name, reason}
+
+def refused_all(fs: List<&2, Fate>) -> List<&2, Fate>:
+  match fs:
+    case Nil{}:
+      []
+    case f <> t:
+      refused(f) <> refused_all(t)
 
 def fate_json(f: Fate) -> J.Json:
   match f:

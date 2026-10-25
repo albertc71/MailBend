@@ -17,6 +17,7 @@ REASONS = (
     "over_budget",
     "unreadable",
     "ref",
+    "refused",
 )
 
 
