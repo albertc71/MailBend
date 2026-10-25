@@ -79,6 +79,9 @@ fn unknown_modes_are_input_errors() {
         &[][..],
         &["ask", "more"][..],
         &["ask", "--once", "more"][..],
+        &["ask", "--images", "--images"][..],
+        &["ask", "--once", "--once"][..],
+        &["ask", "--images", "--once", "--images"][..],
         &["--once", "ask"][..],
         &["classify"][..],
     ] {

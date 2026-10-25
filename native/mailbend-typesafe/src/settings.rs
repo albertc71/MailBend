@@ -27,9 +27,8 @@ pub const KEY_FILE: &str = "MAILBEND_TYPESAFE_KEY_FILE";
 /// The shortest key accepted: redacting a shorter one from answers could
 /// also hide ordinary text.
 const MIN_KEY: usize = 8;
-/// The core's requests stay far below this (TypeSafe takes at most 64k
-/// tokens); larger input is refused before connecting.
-const MAX_REQUEST: usize = 1024 * 1024;
+/// Text ceiling 60128, framing 387, base64 2097152, slack 12.
+const MAX_REQUEST: usize = 2_157_679;
 
 #[derive(Debug)]
 pub struct Settings {
