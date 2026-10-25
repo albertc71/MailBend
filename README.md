@@ -182,8 +182,8 @@ run as it refuses the tool.
 
 Needs a C compiler, the Rust release pinned in `native/rust-toolchain.toml`
 (cargo and rustc), the system CA certificates, and the Bend release pinned in
-`scripts/install-bend.sh` (clang 14+ to compile the core; without clang the
-core runs through `bend` with a slower start). The three commands at the top
+`scripts/install-bend.sh` (clang 14+ to compile the core; without a compiled
+core, it runs through `bend` with a slower start). The three commands at the top
 install all of it on Debian or Ubuntu.
 
 `scripts/install.sh` builds `bin/mailbend-tls`, `bin/mailbend-attach`,
@@ -195,6 +195,8 @@ release is Linux x64 only, so elsewhere install the same version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
+Without clang, an existing compiled core is kept and remains preferred. The
+installer warns that it may be out of date; install clang and rerun to rebuild it.
 
 On a Grok Bot or Cursor cloud computer, follow
 [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md) instead.
@@ -313,6 +315,9 @@ scripts/mailbend call mail_search '{"from": "apple", "limit": 5}'
 scripts/mailbend call mail_get '{"uid": 1234}'
 scripts/mailbend tools        # the tool list with JSON schemas
 ```
+
+Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
+`bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
 
 Register the MCP server (stdio) with your agent, using the absolute path:
 

@@ -551,10 +551,25 @@ def serve.rest(
         +unfinished : String = last_line(rest)
         serve(f, [unfinished], C.byte_len(unfinished), last)
 
+def mcp.failed(code: U32, message: String) -> IO(Unit):
+  match code:
+    case 6:
+      IO.die(Unit, 6, "mailbend: cannot open socket stdin; use scripts/mailbend mcp")
+    case _:
+      IO.die(Unit, code, message)
+
+def mcp.opened(r: Result<&1, &1, U32 & String, File>) -> IO(Unit):
+  match r:
+    case Done{f}:
+      serve(f, [], 0, None{})
+    case Fail{e}:
+      (code, message) = e
+      mcp.failed(code, message)
+
 def mcp() -> IO(Unit):
   do IO<Unit>:
-    f : File <- IO.try(File, File.open("/dev/stdin", "r"))
-    serve(f, [], 0, None{})
+    r : Result<&1, &1, U32 & String, File> <- File.open("/dev/stdin", "r")
+    mcp.opened(r)
 
 # CLI
 # ===
