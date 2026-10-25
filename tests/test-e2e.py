@@ -15,6 +15,7 @@ import os
 import pwd
 import pathlib
 import quopri
+import re
 import shutil
 import signal
 import subprocess
@@ -3115,6 +3116,7 @@ def jev(work):
     jev_images(work, key_file)
     jev_image_batches(work, key_file)
     jev_image_refusals(work, key_file)
+    jev_image_quota(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3362,6 +3364,67 @@ def image_message(png_bytes=None):
         "--b--\r\n"
     )
     return {"uid": 1, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000", "raw": raw}
+
+
+def images_message(uid, parts):
+    """A message with a text part, then one part per (filename, content type,
+    bytes), base64 with a CRLF every 76 characters, as MIME writes it."""
+    raw = ("From: dana@example.com\r\nTo: tester@example.com\r\nSubject: photos\r\n"
+           "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+           "--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n")
+    for name, ctype, data in parts:
+        raw += (f"--b\r\nContent-Type: {ctype}\r\nContent-Disposition: attachment; filename=\"{name}\"\r\n"
+                "Content-Transfer-Encoding: base64\r\n\r\n"
+                + base64.encodebytes(data).decode("ascii").replace("\n", "\r\n"))
+    raw += "--b--\r\n"
+    return {"uid": uid, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000", "raw": raw}
+
+
+def part_fetches(lines):
+    """The image part fetches in a server log: BODY.PEEK of one section."""
+    return [l for l in lines if re.search(r"BODY\.PEEK\[\d+(\.\d+)*\]<0\.", l)]
+
+
+def jev_image_quota(work, key_file):
+    """A batch fetches at most 8 image parts, and none once its request has
+    room for no more images or bytes; those parts are reported without a fetch."""
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    small = IMAGES.png(100, 100)
+    big = IMAGES.png(600, 580, seed=7)
+    cases = (
+        ("the fetch cap", [(f"s{i}.png", "image/png", small) for i in range(9)]
+         + [("ok.png", "image/png", png_still())],
+         ["skipped:dimensions"] * 8 + ["skipped:over_count"] * 2, 8),
+        ("the count cap", [(f"p{i}.png", "image/png", png_still()) for i in range(6)],
+         ["used"] * 4 + ["skipped:over_count"] * 2, 4),
+        ("the byte budget, with a realistic still", [("big1.png", "image/png", big),
+                                                     ("big2.png", "image/png", big),
+                                                     ("ok.png", "image/png", png_still())],
+         ["used", "skipped:over_budget", "used"], 2),
+    )
+    for title, parts, fates, fetches in cases:
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"] = [images_message(1, parts)]
+        srv = Server(work, fixture=fixture)
+        ts = TypeSafe(work)
+        try:
+            before, log_start = srv.st(), len(srv.log_lines())
+            c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+            images = (r.get("messages") or [{}])[0].get("images") or []
+            seen = [i["fate"] + (":" + i["reason"] if "reason" in i else "") for i in images]
+            fetched = part_fetches(srv.log_lines()[log_start:])
+            sent = ts.requests()
+            assets = sent[0]["body"].get("assets", {}) if sent else {}
+            check(f"images quota, {title}: parts past it are reported without a fetch",
+                  c == 0 and seen == fates and len(fetched) == fetches
+                  and len(assets) == fates.count("used") and srv.st() == before,
+                  (r.get("error"), seen, len(fetched), len(assets)))
+        finally:
+            ts.stop()
+            srv.stop()
+    check("images quota: the realistic still is sent byte for byte",
+          any(base64.b64decode(a.get("data_base64", "")) == big for a in assets.values()), len(assets))
 
 
 def jev_image_batches(work, key_file):

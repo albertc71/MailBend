@@ -103,6 +103,13 @@ session (two when the server has SPECIAL-USE; `mail_get_thread` reuses its
 own). `mail_classify` and `mail_triage` report each request's `messages`,
 `bytes` and TypeSafe's `input_tokens`.
 
+With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` fetches each image part
+it might send in a read-only IMAP session of its own, just before the
+request that would carry it, and at most eight per request. A part past
+those eight, or past the request's four images or its bytes, is reported
+`over_count` or `over_budget` without being fetched, even where a fetch
+would have found it outside the pixel rules (`dimensions`).
+
 ## Sends
 
 `mail_send`, and `mail_reply` and `mail_forward` without `as_draft`, first
