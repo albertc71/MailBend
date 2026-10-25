@@ -82,6 +82,21 @@ def typesafe(key_set: Bool, t: T.Flag, content: String, zr: T.Flag, key: String)
   show_config(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, key_set, t, content, zr, T.FlagOff{},
     key)))
 
+def show_images(c: T.Config) -> String:
+  match c:
+    case T.Config{ro, drafts, jev, images}:
+      match images:
+        case Jev.ImagesOff{}:
+          "off"
+        case Jev.ImagesOn{}:
+          "on"
+    case T.ConfigBad{m}:
+      "bad " ++ m
+
+def image_switch(v: String) -> String:
+  show_images(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, False{}, T.FlagOn{}, "body", T.FlagOn{},
+    T.flag_value("MAILBEND_TYPESAFE_IMAGES", v), "/k")))
+
 def show_proc(p: T.Proc) -> String:
   match p:
     case T.ProcOk{code, out, err}:
@@ -224,6 +239,9 @@ def check_switches() -> IO(Unit):
     IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, ""))
     IO.print(typesafe(False{}, T.FlagBad{"t"}, "", T.FlagOff{}, "/k"))
     IO.print(typesafe(False{}, T.FlagOff{}, "", T.FlagBad{"z"}, ""))
+    IO.print(String.join([
+      image_switch("1"), image_switch("true"), image_switch("TRUE"), image_switch("false"),
+      image_switch("FALSE"), image_switch("0"), image_switch(""), image_switch("yes")], "|"))
     IO.print(show_bool(T.is_set(Done{""})) ++ " " ++ show_bool(T.is_set(Fail{(2, "unset")})))
 
 def check_helper() -> IO(Unit):
@@ -1351,6 +1369,7 @@ def main() -> IO(Unit):
 #|bad MAILBEND_TYPESAFE_KEY_FILE must be the absolute path of the TypeSafe key file when MAILBEND_TYPESAFE is on
 #|bad t
 #|bad z
+#|on|on|on|off|off|off|off|bad MAILBEND_TYPESAFE_IMAGES must be 1, true, 0, false or empty
 #|True False
 #|True True False True False
 #|ok 0 out err|refused no such file|fail 110 timed out
