@@ -422,7 +422,8 @@ DNS, with DoH and with `MAILBEND_IMAP_CONNECT_IP`, and an SMTP send to self
 passed. On 2026-10-06 the whole [checklist](#live-icloud-checklist) below
 was run with the Rust `mailbend-tls`, `mailbend-attach` and
 `mailbend-typesafe` (Jev `jev-1.13.0`), on disposable messages sent to the
-account's own address and on test folders:
+account's own address and on test folders. The pin is now `jev-1.14.0`.
+The 0.30 and 0.70 cuts were not remeasured on that model.
 
 | Item | Result | Observed |
 | --- | --- | --- |

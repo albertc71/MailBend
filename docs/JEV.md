@@ -70,6 +70,10 @@ Jev's answers, mostly as `low`, `mid`, `high` or `unknown`. A missing or
 malformed answer reads as the cautious one. The answers come from untrusted
 mail: treat them as hints, not facts.
 
+The pinned model is `jev-1.14.0`, never `jev-latest`. The 0.30 and 0.70 cuts
+were not remeasured on `jev-1.14.0`, and the request budgets are unchanged
+because the price and the default context match `jev-1.13.0`.
+
 ## When TypeSafe fails, and what it costs
 
 - A send or delete is blocked when TypeSafe fails or leaves an answer out,
