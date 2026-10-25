@@ -38,6 +38,7 @@ sh scripts/scan-secrets.sh                        # redacted secret scan, tree a
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
+python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
 sh tests/run-unit.sh
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py

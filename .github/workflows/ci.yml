@@ -99,6 +99,9 @@ jobs:
       - name: Bounded SMTP model mutation checks
         run: python3 tests/formal/check-smtp-tls.py
 
+      - name: Role-folder resolution mutation checks
+        run: python3 tests/formal/check-role-folders.py
+
       - name: Unit tests
         run: sh tests/run-unit.sh
 
