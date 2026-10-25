@@ -1,6 +1,6 @@
-# Native boundary: mailbend-tls, mailbend-attach and mailbend-typesafe
+# Native boundaries
 
-MailBend has three small native programs:
+MailBend has four small native programs:
 
 - `mailbend-tls/` (Rust): sockets, TLS and login, the only code that reads the
   password. Which commands to send, and what the answers mean, is decided
@@ -18,8 +18,13 @@ MailBend has three small native programs:
   with an allow-listed environment first. What to ask, and what the answer
   means, is decided by the core.
 
+- `mailbend-stdio/` (Rust): adapts inherited socket stdin to a pipe for Bend's
+  pathname-based input. It starts only the fixed sibling core in MCP mode,
+  preserving the existing Bend interpreter fallback. It does not parse JSON,
+  read credentials or create sockets; it inherits the launch environment.
+
 ```sh
-(cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe)
+(cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe -p mailbend-stdio)
 ```
 
 The Rust workspace (`native/Cargo.toml`) pins its Rust release, the MSRV, in
@@ -42,7 +47,7 @@ settings and the key file. The checks, including the cargo ones, are in
   `secret` (the mail password and TypeSafe key files, and the refusal of a
   key in the environment), `report` (stderr reports) and `core_bytes` (the
   byte encoding of what the helpers and the core pass each other); no
-  network, shared by all three programs.
+  network, shared by all four programs.
 - `mailbend-net/`: `connect` (deadline, system DNS, address fallback),
   `tls` (the one verified client configuration), `http` (bounded HTTP/1.1
   responses), `proxy` (HTTP `CONNECT`), and the DoH client: `doh` built on
@@ -60,6 +65,30 @@ settings and the key file. The checks, including the cargo ones, are in
   connecting), `api` (the fixed endpoint, retries, redaction) and `exit`
   (the exit statuses).
 - `fuzz/`: one cargo-fuzz target per parser (its own workspace, nightly).
+
+## MCP stdin adapter
+
+The public launchers route MCP through `mailbend-stdio`. Non-socket stdin
+executes the core in place. MCP stream-socket input uses one 64 KiB buffer and a pipe;
+stdout and stderr stay inherited, with no adapter output on stdout. Only the
+pipe write end is made nonblocking, preserving sockets shared with stdout.
+Polling observes input, backpressure, child exit and signals without a reader
+thread. EOF drains pending bytes and closes the pipe, then waits for the core's
+existing work; it introduces no new request timeout.
+
+INT, TERM, HUP and QUIT are forwarded to the child's process group. Numeric
+exit codes are preserved and the direct child is reaped. The adapter re-raises
+termination signals where possible; an ignored signal uses shell-equivalent
+`128 + signal` (including Rust's ignored SIGPIPE, reported as 141).
+Before exec, a guarded child mode
+sets Linux's parent-death signal and checks its expected parent, so killing the
+adapter also kills the direct core. This does not promise to kill descendants
+already spawned by the core after an uncatchable parent kill. Bend retains all
+framing, UTF-8 validation, request limits and mail policy. The raw compiled
+core still cannot reopen socket stdin; clients must use the public launcher.
+
+`python3 tests/test-stdio.py` exercises the real compiled core, including a
+raw-core negative control that reproduces the original `ENXIO` failure.
 
 ## Contract
 

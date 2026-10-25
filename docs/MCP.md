@@ -4,6 +4,13 @@ MailBend serves newline-delimited JSON-RPC on stdio. It supports modern MCP
 `2026-07-28`, plus initialization-based `2025-06-18`, `2025-03-26` and
 `2024-11-05`. The CLI is independent of MCP negotiation.
 
+Register `scripts/mailbend mcp` (or `scripts/mailbend-cloud mcp` in cloud
+environments), using its absolute path. These launchers support pipes, regular
+files and inherited Unix stream sockets without a terminal. `mailbend-stdio` adapts
+socket input to a pipe; Bend still owns JSON parsing, framing and limits.
+Do not register `bin/mailbend-core` directly: the pinned Bend runtime reopens
+`/dev/stdin`, which fails with `ENXIO` on socket-backed input.
+
 Modern requests include `params._meta` with
 `io.modelcontextprotocol/protocolVersion: "2026-07-28"` and
 `io.modelcontextprotocol/clientCapabilities: {}`. Client identity is optional.

@@ -1,0 +1,15 @@
+[package]
+name = "mailbend-stdio"
+description = "Inherited stdin adapter for the fixed MailBend MCP core; no mail policy or network access"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mailbend-io.workspace = true
+nix = { workspace = true, features = ["signal", "poll"] }
+
+[lints]
+workspace = true

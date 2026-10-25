@@ -1,14 +1,19 @@
 # MailBend agent instructions
 
 MailBend is a small Linux IMAP/SMTP connector for AI agents, with
-iCloud Mail as the default and live-tested profile: a Bend 2 core plus three
+iCloud Mail as the default and live-tested profile: a Bend 2 core plus four
 small native helpers, all in Rust (`native/mailbend-tls/`,
-`native/mailbend-attach/` and `native/mailbend-typesafe/`).
+`native/mailbend-attach/`, `native/mailbend-typesafe/` and `native/mailbend-stdio/`).
 
 ## Native boundaries
 
 Keep product/mail policy in Bend 2. Native helpers exist only where the
 Bend runtime cannot safely provide the required OS/protocol boundary.
+
+- `mailbend-stdio`: adapts inherited socket stdin to a bounded pipe for the
+  fixed sibling Bend core in MCP mode, supervising signals and child lifetime.
+  It creates no sockets, reads no credentials and makes no protocol or mail
+  decisions. JSON framing, UTF-8 validation and request limits remain in Bend.
 
 - `mailbend-tls`: verified TLS, sockets, authentication, protocol framing,
   literal-safe I/O, and lock-step execution of Bend-generated command plans.

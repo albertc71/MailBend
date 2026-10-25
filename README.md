@@ -186,8 +186,8 @@ Needs a C compiler, the Rust release pinned in `native/rust-toolchain.toml`
 core runs through `bend` with a slower start). The three commands at the top
 install all of it on Debian or Ubuntu.
 
-`scripts/install.sh` builds `bin/mailbend-tls`, `bin/mailbend-attach` and
-`bin/mailbend-typesafe`, checks the safety proofs with `bend PROOF.bend`,
+`scripts/install.sh` builds `bin/mailbend-tls`, `bin/mailbend-attach`,
+`bin/mailbend-typesafe` and `bin/mailbend-stdio`, checks the safety proofs with `bend PROOF.bend`,
 and compiles the core to `bin/mailbend-core`. With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
 the pinned Bend to `~/.bend` after checking the archive's sha256; that
@@ -620,7 +620,9 @@ claimed as universally quantified budget or IO proofs.
 
 ```mermaid
 flowchart LR
-  agent["AI agent"] -- "MCP JSON-RPC on stdio" --> core
+  agent["AI agent"] -- "MCP stdin" --> stdio["mailbend-stdio (Rust)<br/>socket-to-pipe adaptation"]
+  stdio -- "unchanged bytes" --> core
+  core -- "MCP stdout" --> agent
   subgraph core["Bend core: never reads the password"]
     direction TB
     tools["tools"] --> plans["command plans<br/>(safety laws proven)"]
