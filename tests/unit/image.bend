@@ -28,6 +28,12 @@ def png_idat() -> String:
 def png_of(w2: U32, w3: U32, h2: U32, h3: U32) -> String:
   png_sig() ++ png_ihdr(w2, w3, h2, h3) ++ png_idat()
 
+# 280 by 280, with `pad` bytes between the dimensions and IDAT. A legal IHDR
+# length is 13. These lengths are not.
+def png_len(a: U32, b: U32, c: U32, d: U32, pad: String) -> String:
+  png_sig() ++ C.bytes_str([a, b, c, d]) ++ C.bytes_str([73, 72, 68, 82]) ++
+    C.bytes_str([0, 0, 1, 24, 0, 0, 1, 24]) ++ pad ++ png_idat()
+
 def png_anim() -> String:
   png_sig() ++ png_ihdr(1, 24, 1, 24) ++
     C.bytes_str([0, 0, 0, 0, 97, 99, 84, 76, 0, 0, 0, 0]) ++ png_idat()
@@ -165,6 +171,8 @@ def main() -> IO(Unit):
       judge(Image.Jpeg{}, jpeg_ok()) ++ " " ++
       judge(Image.Jpeg{}, C.bytes_str([0, 0])) ++ " " ++
       judge(Image.Png{}, png_of(1, 24, 1, 24) ++ many(1572820n, "")))
+    IO.print("ihdr " ++ judge(Image.Png{}, png_len(0, 0, 0, 8, C.bytes_str([0, 0, 0, 0]))) ++ " " ++
+      judge(Image.Png{}, png_len(255, 255, 255, 255, C.bytes_str([0]))))
     IO.print("counts " ++ counts(Image.room_new(), five_keeps()))
     IO.print("behind " ++ counts(Image.room_new(), behind()))
     IO.print("budget " ++ counts(Image.room_new(), budget()))
@@ -185,6 +193,7 @@ def main() -> IO(Unit):
 #|reasons format animated dimensions file_size over_count over_budget unreadable ref
 #|screen omit format omit unreadable omit file_size fetch png 101 fetch jpeg 11 fetch jpeg 2097153 fetch png 1572865 omit file_size
 #|judge keep png 280 280 drop dimensions keep png 1568 1568 drop dimensions drop animated drop format drop unreadable keep jpeg 1568 280 drop format drop file_size
+#|ihdr drop unreadable drop unreadable
 #|counts t3t2t1t0over_count
 #|behind formatformatformatformatt3
 #|budget t3over_budget
