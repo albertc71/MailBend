@@ -1350,6 +1350,41 @@ def Laws.cargo_of_without_images(es):
 def Laws.missing_answer_is_cautious(key, candidates, none):
   ({==}, {==}, {==}, {==}, {==}, {==})
 
+# answered_by_pin matches its parameter, so each kind computes; another
+# string rewrites its String.eq to False first.
+def Laws.only_the_pinned_model_answers(s, other, b, n, items):
+  ({==},
+   %Equal.sym(Bool, String.eq(s, Jev.model()), False{}, other) :
+     {_ == False{} : Bool}
+   {==},
+   {==}, {==}, {==}, {==}, {==}, {==})
+
+# pinned branches on answered_by_pin of the reply's model, which the
+# hypothesis rewrites to False; pinned.if then gives None, and both readers
+# give None for None.
+def unpinned_reply(
+  -j: J.Json,
+  -es: List<&2, Jev.Entry>,
+  -categories: List<&2, String>,
+  unpinned: {Jev.answered_by_pin(J.get(j, "model")) == False{} : Bool}
+) -> {Jev.reply_of(Jev.pinned(Some{j}), es, categories) == None{} : Maybe<&2, Jev.Reply>}:
+  %Equal.sym(Bool, Jev.answered_by_pin(J.get(j, "model")), False{}, unpinned) :
+    {Jev.reply_of(Jev.pinned.if(_, j), es, categories) == None{} : Maybe<&2, Jev.Reply>}
+  {==}
+
+def unpinned_outgoing(
+  -j: J.Json,
+  -asked: Nat,
+  unpinned: {Jev.answered_by_pin(J.get(j, "model")) == False{} : Bool}
+) -> {Jev.outgoing_answers.put(Jev.pinned(Some{j}), asked) == None{} : Maybe<&2, J.Json>}:
+  %Equal.sym(Bool, Jev.answered_by_pin(J.get(j, "model")), False{}, unpinned) :
+    {Jev.outgoing_answers.put(Jev.pinned.if(_, j), asked) == None{} : Maybe<&2, J.Json>}
+  {==}
+
+def Laws.unpinned_reply_is_no_answer(j, es, categories, asked, unpinned):
+  +u = unpinned
+  (unpinned_reply(j, es, categories, u), unpinned_outgoing(j, asked, u))
+
 # Gates
 # -----
 

@@ -1227,7 +1227,8 @@ def check_classify() -> IO(Unit):
     IO.print(show_tally(T.answered(T.AskAnswered{"not json"}, [], 10, keys(),
       T.Progress{[], []})))
     IO.print(show_tally(T.answered(T.AskRefused{"no"}, [], 10, keys(), T.Progress{[], []})))
-    IO.print(show_tally(T.answered(T.AskAnswered{"{\"answers\":{}}"}, [], 10, keys(),
+    IO.print(show_tally(T.answered(T.AskAnswered{"{\"model\":\"jev-1.14.0\",\"answers\":{}}"},
+      [], 10, keys(),
       T.Progress{[skipped(1)], []})))
     IO.print(show_out(T.classify_out(Done{T.progress_add(T.progress_add(T.Progress{[], []},
       [skipped(1), skipped(2)], [J.str("r1")]), [skipped(3)], [J.str("r2")])},

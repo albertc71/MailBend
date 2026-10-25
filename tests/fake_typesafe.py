@@ -31,6 +31,9 @@ data that inflates to a complete zlib stream, and an IEND; a JPEG needs SOI,
 a frame header (SOF) before its scan (SOS), and EOI at the end. One such
 image fails the whole request, with no partial answers.
 
+Every 200 answer names the model that answered in "model", as TypeSafe's
+SystemOneResponse does: the pinned model, unless a scenario says otherwise.
+
 Answers are deterministic, from the state alone: a category is the folder
 (or candidate) whose name appears in the email's subject, else the "none"
 option; questions about injection answer yes when the email says "ignore
@@ -57,6 +60,8 @@ Scenarios (--scenario):
     malformed         answer 200 with a body that is not TypeSafe's JSON
     slow[:<seconds>]  wait 30 (or <seconds>) seconds before answering
     refuse-assets     answer 400 to every request that carries assets
+    model:<id>        answer as the model <id> instead of the pinned one
+    no-model          answer without a "model" field
 """
 import argparse
 import base64
@@ -362,7 +367,10 @@ class Fake:
         else:
             emails = emails_by_uid(state)
             answers = {qid: answer(qid, q, emails) for qid, q in body["questions"].items()}
-        return 200, {"answers": answers, "usage": {"input_tokens": len(raw) // 4, "output_tokens": 0}}
+        answer_body = {"answers": answers, "usage": {"input_tokens": len(raw) // 4, "output_tokens": 0}}
+        if kind == "no-model":
+            return 200, answer_body
+        return 200, {"model": arg if kind == "model" else MODEL, **answer_body}
 
     def serve(self, conn):
         """One proxied connection: CONNECT, then one HTTPS request."""

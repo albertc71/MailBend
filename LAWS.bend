@@ -973,7 +973,8 @@ law append_preview_hides_message:
 # its fact fields and its attachment names: never its text, flags, date or
 # size. A missing or malformed answer is read as the cautious one: keep the
 # message, flag it as a suspected injection, suggest nothing, and file it
-# nowhere.
+# nowhere. A reply that does not name the pinned model as the model that
+# answered gives no answer at all.
 
 # LAW: for every message and text, the headers-mode state is the header
 # facts alone
@@ -1047,6 +1048,37 @@ law missing_answer_is_cautious:
    {Jev.category_of(Jev.NoPick{}, candidates, none) == Jev.Uncategorised{} : Jev.Category} &
    {Jev.category_of(Jev.Picked{key, Jev.Missing{}}, candidates, none) == Jev.NeedsNew{}
      : Jev.Category})
+
+# LAW: only the pinned model's name counts as the model that answered: a
+# reply with no model, with a model that is not a string, or with any
+# other string does not, whatever that string is
+law only_the_pinned_model_answers:
+  for s: String
+  for other: {String.eq(s, Jev.model()) == False{} : Bool}
+  for b: Bool
+  for n: String
+  for items: J.Json
+  ({Jev.answered_by_pin(Some{J.JStr{Jev.model()}}) == True{} : Bool} &
+   {Jev.answered_by_pin(Some{J.JStr{s}}) == False{} : Bool} &
+   {Jev.answered_by_pin(None{}) == False{} : Bool} &
+   {Jev.answered_by_pin(Some{J.JNull{}}) == False{} : Bool} &
+   {Jev.answered_by_pin(Some{J.JBool{b}}) == False{} : Bool} &
+   {Jev.answered_by_pin(Some{J.JNum{n}}) == False{} : Bool} &
+   {Jev.answered_by_pin(Some{J.JArr{items}}) == False{} : Bool} &
+   {Jev.answered_by_pin(Some{J.JObj{items}}) == False{} : Bool})
+
+# LAW: for every reply that the pinned model did not answer, and every
+# entry list, category list and question count, the answers of mail_classify,
+# mail_triage, deletes and reads (reply_of) and those of the send gate
+# (outgoing_answers.put) are none, so each takes its cautious path
+law unpinned_reply_is_no_answer:
+  for j: J.Json
+  for es: List<&2, Jev.Entry>
+  for categories: List<&2, String>
+  for asked: Nat
+  for unpinned: {Jev.answered_by_pin(J.get(j, "model")) == False{} : Bool}
+  ({Jev.reply_of(Jev.pinned(Some{j}), es, categories) == None{} : Maybe<&2, Jev.Reply>} &
+   {Jev.outgoing_answers.put(Jev.pinned(Some{j}), asked) == None{} : Maybe<&2, J.Json>})
 
 # Gates
 # -----

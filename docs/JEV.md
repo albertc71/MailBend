@@ -79,7 +79,10 @@ pinned `model`, the `content` mode, `derived_from_untrusted_content` (always
 `true`), `decision` (`proceeded` or `blocked`), `reasons`, and `signals`,
 Jev's answers, mostly as `low`, `mid`, `high` or `unknown`. A missing or
 malformed answer reads as the cautious one. The answers come from untrusted
-mail: treat them as hints, not facts.
+mail: treat them as hints, not facts. A reply is read only when its `model`
+names the pinned model as the one that answered; a reply from any other
+model, or one that does not say, counts as no answer, as when TypeSafe
+fails.
 
 The pinned model is `jev-1.14.0`, never `jev-latest`. The 0.30 and 0.70 cuts
 were not remeasured on `jev-1.14.0`, and the request budgets are unchanged

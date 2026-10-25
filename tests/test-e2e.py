@@ -4209,6 +4209,7 @@ def gates(work):
         gates_secret_scan(srv, work, key_file, attach_dir)
         gates_vetoes(srv, work, key_file, attach_dir)
         gates_failure(srv, work, key_file)
+        gates_unpinned(srv, work, key_file)
         gates_annotations(srv, work, key_file)
     finally:
         srv.stop()
@@ -4499,6 +4500,42 @@ def gates_failure(srv, work, key_file):
               not unchecked, unchecked)
     finally:
         ts.stop()
+
+
+def gates_unpinned(srv, work, key_file):
+    """A reply that names another model, or none, as the one that answered is
+    no answer: every tool takes the path it takes when TypeSafe fails."""
+    needle = "not the JSON MailBend asked for"
+    for scenario in ("model:jev-9.9.9", "model:jev-1.14.0-1", "no-model"):
+        ts = TypeSafe(work, scenario)
+        try:
+            env = jev_env(ts, key_file)
+            n, before = sent_count(srv), srv.st()
+            bad = []
+            c, r, logged, asked = gate_call(srv, ts, "mail_send", SEND, **env)
+            if not (send_blocked(c, r, logged, "could not be checked with Jev") and needle in r["error"]
+                    and r["jev"].get("status") == "unchecked" and len(asked) == 1):
+                bad.append(("mail_send", r, len(asked)))
+            c, r, logged, asked = gate_call(srv, ts, "mail_delete", gate_delete_args(GATE_PREVIEWED), **env)
+            if not (c != 0 and "could not be checked with Jev" in r.get("error", "")
+                    and "nothing was deleted" in r["error"] and needle in r["error"]):
+                bad.append(("mail_delete", r))
+            c, r, logged, asked = gate_call(srv, ts, "mail_classify", {"uids": [GATE_PREVIEWED]}, **env)
+            if not (c != 0 and needle in r.get("error", "")):
+                bad.append(("mail_classify", r))
+            c, r, logged, asked = gate_call(srv, ts, "mail_triage",
+                                            {"uids": [GATE_PREVIEWED], "uidvalidity": GATE_VALIDITY}, **env)
+            if not (c != 0 and needle in r.get("error", "") and "nothing was moved" in r["error"]):
+                bad.append(("mail_triage", r))
+            check(f"gates {scenario}: a reply not from the pinned model blocks send and delete, and stops "
+                  "classify and triage", not bad and sent_count(srv) == n
+                  and srv.st()["mailboxes"] == before["mailboxes"], bad)
+            c, r, logged, asked = gate_call(srv, ts, "mail_search", {}, **env)
+            jevs = [m.get("jev") for m in r.get("messages", [])]
+            check(f"gates {scenario}: a read returns its messages unchecked",
+                  c == 0 and jevs and all(j and j.get("status") == "unchecked" for j in jevs), r)
+        finally:
+            ts.stop()
 
 
 def gates_annotations(srv, work, key_file):
