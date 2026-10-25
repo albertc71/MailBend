@@ -72,6 +72,10 @@ rendering, response interpretation, MIME behaviour, and agent-visible results.
   "ALL PROOFS CHECK". `--verdict` also rechecks every def with Bend's proven
   kernel, which it builds with the Lean that `scripts/install-lean.sh`
   installs
+- the proof skills in `.agents/skills/` (`.claude/skills` links there) say
+  when a change needs a proof rechecked, how to run it and how to read a
+  failure: `role-folder-proofs` for role-folder resolution, `smtp-tls-proofs`
+  for SMTP TLS ordering
 - Bend has no mutual recursion, `match` only inspects parameters, and defs
   must be declared before use; `Bool.pick` evaluates both branches, so never
   put a recursive call in both (that is exponential): recurse once and pick

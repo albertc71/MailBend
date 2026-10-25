@@ -38,6 +38,7 @@ sh scripts/scan-secrets.sh                        # redacted secret scan, tree a
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
+python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
 sh tests/run-unit.sh
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
@@ -52,7 +53,7 @@ MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through str
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
-The [bounded SMTP model](docs/verification/smtp-tls/SKILL.md) checks an
+The [bounded SMTP model](.agents/skills/smtp-tls-proofs/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
 The transport suite exercises the actual helper.

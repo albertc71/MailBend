@@ -21,6 +21,7 @@ import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 import ./src/response.bend as Response
 import ./tests/formal/smtp-tls.bend as SmtpTls
+import ./tests/formal/role-folders.bend as RoleFolders
 
 # Tool classes
 # ------------
