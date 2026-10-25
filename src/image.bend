@@ -211,8 +211,9 @@ def read_ihdr.if(ok: Bool, len: U32, data: String) -> Chunk:
     case True{}:
       read_ihdr.bytes(data, len)
 
+# PNG IHDR data is 13 bytes. Any other length is skipped and not walked.
 def read_ihdr(+len: U32, data: String) -> Chunk:
-  read_ihdr.if(U32.is_ge(len, 8), len, data)
+  read_ihdr.if(U32.is_eq(len, 13), len, data)
 
 # A length past the decoded cap is not skipped: dropping it would walk a
 # lying field. The part is unreadable.
