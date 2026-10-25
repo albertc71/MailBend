@@ -91,10 +91,30 @@ def question_problem(qid, q):
     return f"{qid}: unknown question type {kind!r}"
 
 
-def request_problem(body):
-    """Why a request breaks the documented shape or the token limits."""
-    if not isinstance(body, dict) or set(body) != {"state", "model", "questions"}:
+def images_problem(body, images_header):
+    """assets and TypeSafe-Danger-Zone-Images are accepted only together."""
+    if not isinstance(body, dict):
         return "the request takes exactly state, model and questions"
+    has_assets = "assets" in body
+    header_on = images_header == "true"
+    if has_assets and not header_on:
+        return "assets require TypeSafe-Danger-Zone-Images: true"
+    if header_on and not has_assets:
+        return "TypeSafe-Danger-Zone-Images: true requires assets"
+    return None
+
+
+def request_problem(body, images_header=None):
+    """Why a request breaks the documented shape or the token limits."""
+    keys = set(body) if isinstance(body, dict) else set()
+    allowed = {"state", "model", "questions"}
+    if isinstance(body, dict) and "assets" in body:
+        allowed.add("assets")
+    if not isinstance(body, dict) or keys != allowed:
+        return "the request takes exactly state, model and questions"
+    images = images_problem(body, images_header)
+    if images:
+        return images
     if body["model"] != MODEL:
         return f"unknown model {body['model']!r}"
     questions = body["questions"]
@@ -194,7 +214,7 @@ class Fake:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    def reply(self, raw, auth):
+    def reply(self, raw, auth, images_header=None):
         """The status and JSON body for one request."""
         with self.lock:
             self.count += 1
@@ -216,7 +236,7 @@ class Fake:
             body = json.loads(raw)
         except ValueError:
             return 422, {"detail": "the request is not JSON"}
-        problem = request_problem(body)
+        problem = request_problem(body, images_header)
         if problem:
             return 422, {"detail": problem}
         if kind == "malformed":
@@ -273,16 +293,18 @@ class Fake:
                 break
             rest += chunk
         raw = rest[:length]
+        images_header = headers.get("typesafe-danger-zone-images")
         if lines[0] != "POST /v1/systemone HTTP/1.1" or headers.get("host") != "api.typesafe.ai":
             status, answer_body = 404, {"detail": "not found"}
         else:
-            status, answer_body = self.reply(raw, headers.get("authorization", ""))
+            status, answer_body = self.reply(raw, headers.get("authorization", ""), images_header)
         try:
             parsed = json.loads(raw)
         except ValueError:
             parsed = None
         self.log({**record, "request_line": lines[0], "status": status, "bytes": len(raw),
-                  "user_agent": headers.get("user-agent"), "body": parsed})
+                  "user_agent": headers.get("user-agent"), "images_header": images_header,
+                  "body": parsed})
         payload = json.dumps(answer_body).encode("utf-8")
         tls.sendall(f"HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n"
                     f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode("latin-1") + payload)

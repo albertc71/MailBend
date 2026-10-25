@@ -52,10 +52,14 @@ def main():
     if printed != rust:
         sys.exit(f"MAX_REQUEST {rust} != bend max {printed}")
     schema = (ROOT / "src" / "schema.bend").read_text()
-    missing = [name for name in REASONS if f'"{name}"' not in schema]
+
+    def has(name):
+        return f'"{name}"' in schema or f'\\"{name}\\"' in schema
+
+    missing = [name for name in REASONS if not has(name)]
     if missing:
         sys.exit("schema omits image reasons: " + ", ".join(missing))
-    if "image_notice" not in schema or '"images"' not in schema:
+    if "image_notice" not in schema or not has("images"):
         sys.exit("schema omits images or image_notice")
     print(f"image budget {printed} matches MAX_REQUEST")
 
