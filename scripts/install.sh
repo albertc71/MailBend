@@ -13,11 +13,21 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
+trap 'rm -f bin/*.new.$$' EXIT
 export BEND_NO_TELEMETRY=1
 PATH="$HOME/.bend/bin:$HOME/.cargo/bin:$PATH"
 
 say() { printf 'mailbend: %s\n' "$*"; }
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
+
+# cp opens its destination with O_TRUNC, and the kernel rejects that with
+# ETXTBSY while the file is executed. The rename does not open the running
+# inode.
+install_bin() {
+  tmp="$2.new.$$"
+  cp "$1" "$tmp"
+  mv -f "$tmp" "$2"
+}
 
 install_bend=0 install_rust=0
 for arg in "$@"; do
@@ -74,10 +84,10 @@ say "building native helpers ($rustc_version)"
 # Build from native/: rustup finds rust-toolchain.toml from the working
 # directory, not from --manifest-path.
 (CDPATH= cd native && "$cargo" build --release --locked --quiet -p mailbend-tls -p mailbend-attach -p mailbend-typesafe -p mailbend-stdio)
-cp native/target/release/mailbend-tls bin/mailbend-tls
-cp native/target/release/mailbend-attach bin/mailbend-attach
-cp native/target/release/mailbend-typesafe bin/mailbend-typesafe
-cp native/target/release/mailbend-stdio bin/mailbend-stdio
+install_bin native/target/release/mailbend-tls bin/mailbend-tls
+install_bin native/target/release/mailbend-attach bin/mailbend-attach
+install_bin native/target/release/mailbend-typesafe bin/mailbend-typesafe
+install_bin native/target/release/mailbend-stdio bin/mailbend-stdio
 bin/mailbend-tls --check || fail "the built TLS helper cannot run"
 bin/mailbend-typesafe --check || fail "the built TypeSafe helper cannot run"
 bin/mailbend-stdio --check || fail "the built stdio helper cannot run"
@@ -87,7 +97,14 @@ bend PROOF.bend
 
 if command -v clang >/dev/null 2>&1; then
   say "compiling the Bend core to bin/mailbend-core (takes about a minute)"
-  bend main.bend -o bin/mailbend-core 2>/dev/null || bend main.bend -o bin/mailbend-core
+  # ld unlinks the output before writing it, so a crash would leave a short
+  # core.
+  core_tmp="bin/mailbend-core.new.$$"
+  if bend main.bend -o "$core_tmp" 2>/dev/null || bend main.bend -o "$core_tmp"; then
+    mv -f "$core_tmp" bin/mailbend-core
+  else
+    exit 1
+  fi
 else
   if [ -x bin/mailbend-core ]; then
     printf '%s\n' \
