@@ -139,10 +139,10 @@ jobs:
       - name: Build
         run: scripts/install.sh
 
-      - name: Installer fallback warnings
+      - name: Installer staging, locking, signals and fallback warnings
         run: python3 tests/test-install.py
 
-      - name: Installer swap atomicity
+      - name: Installer swap fault injection
         run: python3 tests/formal/check-install-swap.py
 
       - name: Cloud DNS and TLS tests

@@ -76,7 +76,7 @@ if name == "mv":
     os.execv(os.environ["INSTALL_SWAP_MV"], [os.environ["INSTALL_SWAP_MV"], "-f", src, dest])
 if name == "bend":
     if sys.argv[1:] == ["PROOF.bend"]:
-        sys.exit(0)
+        sys.exit(1 if os.environ.get("INSTALL_SWAP_PROOF_DOWN") == "1" else 0)
     if len(sys.argv) == 4 and sys.argv[1] == "main.bend" and sys.argv[2] == "-o":
         dest = sys.argv[3]
         n = bump()
@@ -103,7 +103,7 @@ class SwapFailure(Exception):
     pass
 
 
-def classify(files, old, new, extras, violations):
+def classify(files, old, new, extras, violations, modes=None):
     if violations:
         raise SwapFailure("opened a running executable for writing: " + violations)
     if extras:
@@ -114,6 +114,8 @@ def classify(files, old, new, extras, violations):
             raise SwapFailure(name + " is missing")
         if data != old[name] and data != new[name]:
             raise SwapFailure(name + " is neither the old file nor the new file")
+        if modes is not None and data == new[name] and modes[name] != 0o755:
+            raise SwapFailure("%s was published with mode %o, not 755" % (name, modes[name]))
 
 
 def prove_oracle():
@@ -135,14 +137,14 @@ def executable(path, text):
     path.chmod(0o755)
 
 
-def stage(root, count_path, log_path, fail_at, how, bend_down):
+def stage(root, count_path, log_path, fail_at, how, bend_down, proof_down, broken):
     tools = root / "tools"
     tools.mkdir()
     (root / "native").mkdir()
     (root / "scripts").mkdir()
     (root / "bin").mkdir()
     shutil.copy2(ROOT / "scripts/install.sh", root / "scripts/install.sh")
-    for command in ("dirname", "sed", "mkdir", "rm"):
+    for command in ("dirname", "sed", "mkdir", "rm", "sync", "flock"):
         (tools / command).symlink_to(shutil.which(command))
     tool = tools / "swap-tool.py"
     tool.write_text(TOOL)
@@ -158,10 +160,14 @@ def stage(root, count_path, log_path, fail_at, how, bend_down):
 fi
 /bin/mkdir -p target/release
 for name in mailbend-tls mailbend-attach mailbend-typesafe mailbend-stdio; do
-  printf '#!/bin/sh\\nexit 0\\n' > "target/release/$name"
+  if [ "$name" = "%s" ]; then
+    printf '#!/bin/sh\\nexit 127\\n' > "target/release/$name"
+  else
+    printf '#!/bin/sh\\nexit 0\\n' > "target/release/$name"
+  fi
   /bin/chmod +x "target/release/$name"
 done
-""")
+""" % (broken or ""))
     sleep = pathlib.Path(shutil.which("sleep"))
     if sleep.read_bytes()[:4] != b"\x7fELF":
         raise SystemExit("sleep is not an ELF, so ETXTBSY cannot be observed")
@@ -189,6 +195,7 @@ done
         "INSTALL_SWAP_FAIL_AT": str(fail_at),
         "INSTALL_SWAP_FAIL_HOW": how,
         "INSTALL_SWAP_BEND_DOWN": "1" if bend_down else "0",
+        "INSTALL_SWAP_PROOF_DOWN": "1" if proof_down else "0",
         "INSTALL_SWAP_CP": shutil.which("cp"),
         "INSTALL_SWAP_MV": shutil.which("mv"),
     }
@@ -197,19 +204,21 @@ done
 
 def snapshot(root, held):
     files = {}
+    modes = {}
     for path in (root / "bin").iterdir():
         files[path.name] = path.read_bytes()
+        modes[path.name] = path.stat().st_mode & 0o777
     extras = sorted(set(files) - set(TARGETS))
     alive = all(proc.poll() is None for proc in held)
-    return files, extras, alive
+    return files, modes, extras, alive
 
 
-def run(fail_at, how, bend_down=False):
+def run(fail_at, how, bend_down=False, proof_down=False, broken=None):
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
         count_path = root / "count"
         log_path = root / "log"
-        old, held, env = stage(root, count_path, log_path, fail_at, how, bend_down)
+        old, held, env = stage(root, count_path, log_path, fail_at, how, bend_down, proof_down, broken)
         try:
             proc = subprocess.run(
                 ["/bin/sh", str(root / "scripts/install.sh")],
@@ -217,7 +226,7 @@ def run(fail_at, how, bend_down=False):
                 capture_output=True,
                 timeout=15,
             )
-            files, extras, alive = snapshot(root, held)
+            files, modes, extras, alive = snapshot(root, held)
             violations = log_path.read_text(encoding="utf-8")
             steps = int(count_path.read_text() or "0")
         finally:
@@ -225,50 +234,58 @@ def run(fail_at, how, bend_down=False):
                 if proc_held.poll() is None:
                     proc_held.kill()
                 proc_held.wait(timeout=5)
-        return proc, old, files, extras, alive, violations, steps
+        return proc, old, files, modes, extras, alive, violations, steps
 
 
 def main():
+    os.umask(0o022)
     prove_oracle()
     new = {name: NEW_HELPER for name in HELPERS}
     new["mailbend-core"] = NEW_CORE
-    proc, old, files, extras, alive, violations, steps = run(0, "before")
+    proc, old, files, modes, extras, alive, violations, steps = run(0, "before")
     if proc.returncode != 0 or not alive:
         raise SystemExit(
             "install failed while binaries were executing\n"
             + proc.stdout.decode()
             + proc.stderr.decode()
         )
-    classify(files, old, new, extras, violations)
+    classify(files, old, new, extras, violations, modes)
     for name in TARGETS:
         if files[name] != new[name]:
             raise SystemExit(name + " was not replaced")
     injected = 0
     for how in ("before", "partial"):
         for fail_at in range(1, steps + 1):
-            proc, old, files, extras, alive, violations, _used = run(fail_at, how)
+            proc, old, files, modes, extras, alive, violations, _used = run(fail_at, how)
             injected += 1
             if not alive:
                 raise SystemExit("running binary died at %s step %s" % (how, fail_at))
             try:
-                classify(files, old, new, extras, violations)
+                classify(files, old, new, extras, violations, modes)
             except SwapFailure as error:
                 raise SystemExit("%s step %s: %s" % (how, fail_at, error)) from error
-    proc, old, files, extras, alive, violations, _used = run(0, "before", bend_down=True)
-    injected += 1
-    if proc.returncode == 0:
-        raise SystemExit("bend failure did not fail the install")
-    if not alive:
-        raise SystemExit("running binary died when bend failed")
-    try:
-        classify(files, old, new, extras, violations)
-    except SwapFailure as error:
-        raise SystemExit("bend failure: " + str(error)) from error
-    for name in HELPERS:
-        if files[name] != new[name]:
-            raise SystemExit(name + " was not published before the bend failure")
-    if files["mailbend-core"] != old["mailbend-core"]:
-        raise SystemExit("core changed even though bend failed")
+    # A failure before the renames publishes nothing: every binary is
+    # staged, checked, proven and compiled first.
+    for title, options in (
+        ("core compile failure", {"bend_down": True}),
+        ("proof failure", {"proof_down": True}),
+        ("TLS helper --check failure", {"broken": "mailbend-tls"}),
+        ("TypeSafe helper --check failure", {"broken": "mailbend-typesafe"}),
+        ("stdio helper --check failure", {"broken": "mailbend-stdio"}),
+    ):
+        proc, old, files, modes, extras, alive, violations, _used = run(0, "before", **options)
+        injected += 1
+        if proc.returncode == 0:
+            raise SystemExit(title + " did not fail the install")
+        if not alive:
+            raise SystemExit("running binary died at the " + title)
+        try:
+            classify(files, old, new, extras, violations, modes)
+        except SwapFailure as error:
+            raise SystemExit(title + ": " + str(error)) from error
+        changed = [name for name in TARGETS if files[name] != old[name]]
+        if changed:
+            raise SystemExit(title + " published " + " ".join(changed))
     print("install swap: %s publish steps, %s injected failures, properties hold" % (steps, injected))
 
 
