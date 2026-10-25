@@ -157,6 +157,9 @@ def main() -> IO(Unit):
     IO.print("screen " ++ show_pre(Image.screen("image/gif", "base64", 10)) ++ " " ++
       show_pre(Image.screen("image/png", "base64", 0)) ++ " " ++
       show_pre(Image.screen("image/png", "base64", 2097153)) ++ " " ++
+      show_pre(Image.screen("image/png", "base64", 2152312)) ++ " " ++
+      show_pre(Image.screen("image/png", "base64", 2162688)) ++ " " ++
+      show_pre(Image.screen("image/png", "base64", 2162689)) ++ " " ++
       show_pre(Image.screen("image/png", "base64", 100)) ++ " " ++
       show_pre(Image.screen("image/jpg", "8bit", 10)) ++ " " ++
       show_pre(Image.screen("image/jpeg", "base64", 2097152)) ++ " " ++
@@ -172,6 +175,8 @@ def main() -> IO(Unit):
       judge(Image.Jpeg{}, jpeg_ok()) ++ " " ++
       judge(Image.Jpeg{}, C.bytes_str([0, 0])) ++ " " ++
       judge(Image.Png{}, png_of(1, 24, 1, 24) ++ many(1572820n, "")))
+    IO.print("ceiling " ++ U32.show(Image.encoded_ceiling("base64")) ++ " " ++
+      U32.show(Image.encoded_ceiling("8bit")))
     IO.print("ihdr " ++ judge(Image.Png{}, png_len(0, 0, 0, 8, C.bytes_str([0, 0, 0, 0]))) ++ " " ++
       judge(Image.Png{}, png_len(255, 255, 255, 255, C.bytes_str([0]))))
     IO.print("counts " ++ counts(Image.room_new(), five_keeps()))
@@ -192,8 +197,9 @@ def main() -> IO(Unit):
 #|caps 4 1572864 1572864 slot 187 framing 387 b64 2097152 slack 12 text 60128 max 2157679
 #|sides 279 False 1569 False 280 True 1568 True
 #|reasons format animated dimensions file_size over_count over_budget unreadable ref refused
-#|screen omit format omit unreadable omit file_size fetch png 101 fetch jpeg 11 fetch jpeg 2097153 fetch png 1572865 omit file_size
+#|screen omit format omit unreadable fetch png 2097154 fetch png 2152313 fetch png 2162689 omit file_size fetch png 101 fetch jpeg 11 fetch jpeg 2097153 fetch png 1572865 omit file_size
 #|judge keep png 280 280 drop dimensions keep png 1568 1568 drop dimensions drop animated drop format drop unreadable keep jpeg 1568 280 drop format drop file_size
+#|ceiling 2162688 1572864
 #|ihdr drop unreadable drop unreadable
 #|counts t3t2t1t0over_count
 #|behind formatformatformatformatt3

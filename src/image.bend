@@ -132,10 +132,20 @@ def mime_format(+typ: String) -> Maybe<&2, Format>:
   mime_format.if(String.eq(typ, "image/png"),
     String.eq(typ, "image/jpeg") || String.eq(typ, "image/jpg"))
 
-# base64 expands by 4/3, so its encoded ceiling is the exact base64 of the
-# decoded cap. Every other transfer encoding is at most the decoded cap.
+# n base64 characters with a CRLF after every 64 or more of them. MIME
+# writes lines of at most 76 characters, and the size BODYSTRUCTURE gives
+# counts their CRLFs.
+def b64_lines_len(+n: U32) -> U32:
+  (n + 2 * ((n + 63) / 64 : U32) : U32)
+
+# The largest part fetched. base64 expands by 4/3 and MIME breaks it into
+# lines, so its ceiling is the base64 of the decoded cap with room for a
+# CRLF every 64 characters; the decoded cap is checked after the fetch
+# (judge.still), and the request cap still counts unbroken base64
+# (b64_len). Every other transfer encoding is at most the decoded cap.
 def encoded_ceiling(encoding: String) -> U32:
-  Bool.pick(U32, String.eq(encoding, "base64"), b64_len(image_file_cap()), image_file_cap())
+  Bool.pick(U32, String.eq(encoding, "base64"), b64_lines_len(b64_len(image_file_cap())),
+    image_file_cap())
 
 def screen.empty(empty: Bool, big: Bool, f: Format, size: U32) -> Pre:
   match empty big:
