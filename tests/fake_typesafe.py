@@ -16,7 +16,7 @@ test certificate typesafe.pem (DNS:api.typesafe.ai, signed by the test CA in
 --certdir, which the helper trusts through MAILBEND_CA_FILE).
 
 Each request is checked against the documented shapes (docs.typesafe.ai
-/api.md and /models.md): a Bearer key, the model "jev-1.13.0", questions of
+/api.md and /models.md): a Bearer key, the model "jev-1.14.0", questions of
 type noul, choice (at most 255 options) or score (2 to 10 levels), and both
 token limits: 32,000 for the state plus the longest question and 64,000 for
 the state plus all questions. Tokens are counted as the UTF-8 bytes of the
@@ -60,7 +60,7 @@ import threading
 import time
 
 TARGET = "api.typesafe.ai:443"
-MODEL = "jev-1.13.0"
+MODEL = "jev-1.14.0"
 STATE_LIMIT = 32000
 REQUEST_LIMIT = 64000
 

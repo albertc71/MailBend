@@ -3179,7 +3179,7 @@ def jev_headers(srv, work, key_file):
         check("jev headers: no fitting folder asks for a new category",
               got.get(1, {}).get("needs_new_category") is True and got[1].get("category") is None, got.get(1))
         jev_part = got.get(1, {}).get("jev", {})
-        check("jev headers: the shared result object", jev_part.get("status") == "checked" and jev_part.get("model") == "jev-1.13.0"
+        check("jev headers: the shared result object", jev_part.get("status") == "checked" and jev_part.get("model") == "jev-1.14.0"
               and jev_part.get("content") == "headers" and jev_part.get("derived_from_untrusted_content") is True
               and jev_part.get("decision") == "proceeded" and jev_part.get("signals", {}).get("reply_needed") == "high", jev_part)
         check("jev headers: a message whose header facts exceed a request is unchecked, the rest proceed",
@@ -3198,7 +3198,7 @@ def jev_headers(srv, work, key_file):
               and by_uid.get(1, {}).get("attachments") == []
               and by_uid.get(10, {}).get("attachments") == [f"f{i:02d}.txt" for i in range(40)], by_uid.get(10))
         check("jev headers: the request names the pinned model and sends no personal User-Agent",
-              all(q["body"]["model"] == "jev-1.13.0" and q["user_agent"] == "mailbend" for q in sent), sent[:1])
+              all(q["body"]["model"] == "jev-1.14.0" and q["user_agent"] == "mailbend" for q in sent), sent[:1])
         check("jev headers: each request goes through CONNECT api.typesafe.ai:443",
               all(q["connect"] == "CONNECT api.typesafe.ai:443 HTTP/1.1" for q in ts.records()), ts.records()[:1])
         envs = [names for q in sent for names in q["env_names"]]
