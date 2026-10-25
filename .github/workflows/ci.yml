@@ -113,6 +113,9 @@ jobs:
       - name: Build
         run: scripts/install.sh
 
+      - name: Installer fallback warnings
+        run: python3 tests/test-install.py
+
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
 

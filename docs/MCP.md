@@ -10,6 +10,7 @@ files and inherited Unix stream sockets without a terminal. `mailbend-stdio` ada
 socket input to a pipe; Bend still owns JSON parsing, framing and limits.
 Do not register `bin/mailbend-core` directly: the pinned Bend runtime reopens
 `/dev/stdin`, which fails with `ENXIO` on socket-backed input.
+That failure exits with code 6 and directs you to `scripts/mailbend mcp`.
 
 Modern requests include `params._meta` with
 `io.modelcontextprotocol/protocolVersion: "2026-07-28"` and

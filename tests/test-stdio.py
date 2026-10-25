@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import contextlib
 import json
 import os
 import pathlib
@@ -19,7 +20,10 @@ LAUNCHERS = [ROOT / "scripts/mailbend", ROOT / "scripts/mailbend-cloud"]
 STDIO_BINARY = ROOT / "bin/mailbend-stdio"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
 ENV["MAILBEND_READ_ONLY"] = "1"
+ENV["MAILBEND_TYPESAFE"] = "0"
 ENV["BEND_NO_TELEMETRY"] = "1"
+READ_TOOLS = {"mail_probe", "mail_list_folders", "mail_search", "mail_get",
+              "mail_get_new", "mail_refresh", "mail_get_thread"}
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 META = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {}}
@@ -95,6 +99,58 @@ class Session:
 
 
 class StdioTests(unittest.TestCase):
+    def test_distinct_socket_stdio(self):
+        for launcher in LAUNCHERS:
+            for modern in (False, True):
+                with self.subTest(launcher=launcher.name, modern=modern), contextlib.ExitStack() as stack:
+                    pairs = [socket.socketpair() for _ in range(3)]
+                    for pair in pairs:
+                        for endpoint in pair:
+                            stack.enter_context(endpoint)
+                    peers = [pair[0] for pair in pairs]
+                    children = [pair[1] for pair in pairs]
+                    peers[1].settimeout(30)
+                    peers[2].settimeout(10)
+                    output = stack.enter_context(peers[1].makefile("rb"))
+                    errors = stack.enter_context(peers[2].makefile("rb"))
+                    proc = subprocess.Popen([str(launcher), "mcp"], stdin=children[0],
+                                            stdout=children[1], stderr=children[2], env=ENV,
+                                            cwd="/", start_new_session=True)
+                    for endpoint in children:
+                        endpoint.close()
+                    try:
+                        peers[0].sendall(discovery(modern))
+                        self.assertEqual(json.loads(output.readline())["id"], 1)
+                        params = {"_meta": META} if modern else {}
+                        peers[0].sendall(request("tools/list", 2, params))
+                        reply = json.loads(output.readline())
+                        self.assertEqual(reply["id"], 2)
+                        self.assertEqual({t["name"] for t in reply["result"]["tools"]}, READ_TOOLS)
+                        peers[0].shutdown(socket.SHUT_WR)
+                        self.assertEqual(proc.wait(timeout=10), 0)
+                        self.assertEqual(output.read(), b"")
+                        self.assertEqual(errors.read(), b"")
+                    finally:
+                        if proc.poll() is None:
+                            proc.kill()
+                        proc.wait(timeout=10)
+
+    def test_typesafe_read_only_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(ENV, MAILBEND_TYPESAFE="1", MAILBEND_TYPESAFE_CONTENT="headers",
+                       MAILBEND_TYPESAFE_KEY_FILE=str(pathlib.Path(directory) / "unused-key"))
+            for launcher in LAUNCHERS:
+                with self.subTest(launcher=launcher.name), Session(launcher, env=env) as session:
+                    session.peer.sendall(discovery())
+                    session.line()
+                    session.peer.sendall(request("tools/list", 2))
+                    tools = session.line()["result"]["tools"]
+                    self.assertEqual({t["name"] for t in tools}, READ_TOOLS | {"mail_classify"})
+                    self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools))
+                    session.peer.shutdown(socket.SHUT_WR)
+                    self.assertEqual(session.proc.wait(timeout=10), 0)
+                    self.assertEqual(session.proc.stderr.read(), b"")
+
     def test_socket_discovery_before_eof(self):
         for launcher in LAUNCHERS:
             for modern in (False, True):
@@ -107,7 +163,7 @@ class StdioTests(unittest.TestCase):
                             params = {"_meta": META} if modern else {}
                             session.peer.sendall(request("tools/list", 2, params))
                             result = session.line()["result"]
-                            self.assertEqual(len(result["tools"]), 7)
+                            self.assertEqual({t["name"] for t in result["tools"]}, READ_TOOLS)
                             self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in result["tools"]))
                             core = session.core_pid()
                             session.peer.shutdown(socket.SHUT_WR)
@@ -388,7 +444,7 @@ class StdioTests(unittest.TestCase):
         with Session(ROOT / "bin/mailbend-core") as session:
             self.assertEqual(session.proc.wait(timeout=10), 6)
             self.assertEqual(session.proc.stdout.read(), b"")
-            self.assertIn(b"No such device or address", session.proc.stderr.read())
+            self.assertIn(b"use scripts/mailbend mcp", session.proc.stderr.read())
 
 
 if __name__ == "__main__":

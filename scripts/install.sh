@@ -89,7 +89,13 @@ if command -v clang >/dev/null 2>&1; then
   say "compiling the Bend core to bin/mailbend-core (takes about a minute)"
   bend main.bend -o bin/mailbend-core 2>/dev/null || bend main.bend -o bin/mailbend-core
 else
-  say "clang not found: scripts/mailbend will run main.bend through bend (slower start)"
+  if [ -x bin/mailbend-core ]; then
+    printf '%s\n' \
+      'mailbend: warning: clang not found; keeping existing bin/mailbend-core.' \
+      'mailbend: the launcher will use it, and it may be out of date. Install clang and rerun.' >&2
+  else
+    say "clang not found: scripts/mailbend will run main.bend through bend (slower start)"
+  fi
 fi
 
 say "done. Test it with: scripts/mailbend call mail_probe"
