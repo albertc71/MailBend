@@ -21,9 +21,8 @@ say() { printf 'mailbend: %s\n' "$*"; }
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 
 # cp opens its destination with O_TRUNC, and the kernel rejects that with
-# ETXTBSY while the file is executed. Write a sibling and rename it into
-# place. The rename does not open the running inode, and a failed write
-# never replaces the previous file.
+# ETXTBSY while the file is executed. The rename does not open the running
+# inode.
 install_bin() {
   tmp="$2.new.$$"
   cp "$1" "$tmp"
@@ -99,7 +98,7 @@ bend PROOF.bend
 if command -v clang >/dev/null 2>&1; then
   say "compiling the Bend core to bin/mailbend-core (takes about a minute)"
   # ld unlinks the output before writing it, so a crash would leave a short
-  # core. Compile to a sibling and rename, the same as the native helpers.
+  # core.
   core_tmp="bin/mailbend-core.new.$$"
   if bend main.bend -o "$core_tmp" 2>/dev/null || bend main.bend -o "$core_tmp"; then
     mv -f "$core_tmp" bin/mailbend-core

@@ -1,24 +1,4 @@
 #!/usr/bin/env python3
-"""Exhaustive failure injection for scripts/install.sh binary publish.
-
-Runs the real installer with stub toolchains. One ELF is executing
-bin/mailbend-stdio and another is executing bin/mailbend-core. Every
-cp, mv, and bend -o along the successful publish is failed before it
-mutates the destination, and again after a short write. A separate run
-fails both bend attempts.
-
-After every run, each bin/ target is the complete previous file or the
-complete new file, bin/ has no other names, and no step opened an
-executing inode for writing. The running processes are still alive.
-
-The bend stub follows the measured ld behavior: if the output inode is
-executing, unlink it and then write a new file. That partial window is
-rejected. Compiling to a sibling and renaming is not.
-
-This is a check of the installer's publish sequence, not of the kernel,
-GNU cp, or the Bend compiler. No network, mail, or credentials.
-"""
-
 import os
 import pathlib
 import shutil
