@@ -6097,7 +6097,8 @@ def lookup_go(fuel: Nat, +uid: U32, st: Look) -> Maybe<&2, List<&2, Image.Fate>>
       lookup_go(f, uid, LookScan{rest})
 
 def lookup_survey(uid: U32, +ss: List<&2, Survey>) -> Maybe<&2, List<&2, Image.Fate>>:
-  lookup_go(Nat.add(List.length(&2, Survey, ss), 2n), uid, LookScan{ss})
+  # Each survey needs a scan and a hit test; leave one step for the empty tail.
+  lookup_go(Nat.add(Nat.mul(List.length(&2, Survey, ss), 2n), 1n), uid, LookScan{ss})
 
 def fate_jsons(fs: List<&2, Image.Fate>) -> List<&2, J.Json>:
   match fs:

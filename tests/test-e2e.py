@@ -3110,6 +3110,7 @@ def jev(work):
     jev_structure(work, key_file)
     jev_options(work, key_file)
     jev_images(work, key_file)
+    jev_image_batches(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3361,6 +3362,57 @@ def image_message():
         "--b--\r\n"
     )
     return {"uid": 1, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000", "raw": raw}
+
+
+def jev_image_batches(work, key_file):
+    """The final survey remains visible within and across request batches."""
+    for split in (False, True):
+        fixture = copy.deepcopy(FIX)
+        text = ("x" * 99 + "\r\n") * 180 if split else "hello"
+        final = image_message()
+        final["uid"] = 3
+        fixture["mailboxes"]["INBOX"]["messages"] = [
+            plain_message(1, "First", text), plain_message(2, "Second", text), final]
+        srv = Server(work, fixture=fixture)
+        ts = None
+        try:
+            ts = TypeSafe(work)
+            before = srv.st()
+            c, r = classify(srv, ts, key_file, {"uids": [1, 2, 3]},
+                            MAILBEND_TYPESAFE_CONTENT="body", MAILBEND_TYPESAFE_ZERO_RETENTION="1",
+                            MAILBEND_TYPESAFE_IMAGES="1")
+            messages = r.get("messages", [])
+            got = {m["uid"]: m for m in messages}
+            expected = [
+                {"section": "2", "name": "scan.png", "fate": "used", "format": "png",
+                 "bytes": len(png_still()), "width": 280, "height": 280},
+                {"section": "3", "name": "anim.gif", "fate": "skipped", "reason": "format"},
+            ]
+            label = "multiple requests" if split else "one request"
+            check(f"images {label}: final message reports used and skipped images",
+                  c == 0 and [m["uid"] for m in messages] == [1, 2, 3]
+                  and got.get(1, {}).get("images") == [] and got.get(2, {}).get("images") == []
+                  and got.get(3, {}).get("images") == expected and "image_notice" in r
+                  and "mbimg-" not in json.dumps(r), r)
+            sent = ts.requests()
+            batches = [[e["uid"] for e in q["body"]["state"]["emails"]] for q in sent]
+            check(f"images {label}: request batching is exercised",
+                  len(sent) > 1 if split else len(sent) == 1, batches)
+            wired = [q for q in sent if 3 in [e["uid"] for e in q["body"]["state"]["emails"]]]
+            request = wired[0]["body"] if len(wired) == 1 else {}
+            entry = next((e for e in request.get("state", {}).get("emails", []) if e["uid"] == 3), {})
+            refs = entry.get("images", [])
+            assets = request.get("assets", {})
+            check(f"images {label}: final message references its exact PNG asset",
+                  len(refs) == 1 and set(refs) == set(assets)
+                  and assets[refs[0]] == {"type": "image", "format": "png",
+                                         "data_base64": base64.b64encode(png_still()).decode("ascii")}
+                  and wired[0].get("images_header") == "true", (entry, assets))
+            check(f"images {label}: classification leaves mail unchanged", srv.st() == before)
+        finally:
+            if ts is not None:
+                ts.stop()
+            srv.stop()
 
 
 def jev_images(work, key_file):
