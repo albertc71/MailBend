@@ -310,23 +310,41 @@ def charset_decode.cp1252(yes: Bool, bytes: String) -> String:
     case False{}:
       utf8_decode(bytes)
 
-# `name` is the charset name in lower case. Latin-1 and ASCII bytes are
-# their own code points.
-def charset_decode.latin1(yes: Bool, +name: String, bytes: String) -> String:
-  match yes:
-    case True{}:
-      bytes
-    case False{}:
-      charset_decode.cp1252(
-        String.eq(name, "windows-1252") || String.eq(name, "cp1252"), bytes)
+# Encoding labels trim ASCII whitespace (not vertical tab or Unicode spaces).
+def charset_decode.trim_start(s: String) -> String:
+  match s:
+    case SCon{' ', t}:
+      charset_decode.trim_start(t)
+    case SCon{'\t', t}:
+      charset_decode.trim_start(t)
+    case SCon{'\n', t}:
+      charset_decode.trim_start(t)
+    case SCon{'\u{c}', t}:
+      charset_decode.trim_start(t)
+    case SCon{'\r', t}:
+      charset_decode.trim_start(t)
+    case _:
+      s
+
+# WHATWG's Windows-1252 label family includes Latin-1 and ASCII aliases.
+# In particular, byte 0x85 is an ellipsis, not the NEL line separator.
+def charset_decode.is_cp1252(+name: String) -> Bool:
+  String.eq(name, "ansi_x3.4-1968") || String.eq(name, "ascii")
+    || String.eq(name, "cp1252") || String.eq(name, "cp819")
+    || String.eq(name, "csisolatin1") || String.eq(name, "ibm819")
+    || String.eq(name, "iso-8859-1") || String.eq(name, "iso-ir-100")
+    || String.eq(name, "iso8859-1") || String.eq(name, "iso88591")
+    || String.eq(name, "iso_8859-1") || String.eq(name, "iso_8859-1:1987")
+    || String.eq(name, "l1") || String.eq(name, "latin1")
+    || String.eq(name, "us-ascii") || String.eq(name, "windows-1252")
+    || String.eq(name, "x-cp1252")
 
 # Bytes in a named charset to text. Unknown charsets decode as UTF-8, which
 # keeps ASCII intact and marks anything else with U+FFFD.
 def charset_decode(cs: String, bytes: String) -> String:
-  +name = String.to_lower(cs)
-  latin1 = String.eq(name, "iso-8859-1") || String.eq(name, "latin1")
-    || String.eq(name, "us-ascii") || String.eq(name, "ascii")
-  charset_decode.latin1(latin1, name, bytes)
+  name = String.to_lower(String.reverse(charset_decode.trim_start(
+    String.reverse(charset_decode.trim_start(cs)))))
+  charset_decode.cp1252(charset_decode.is_cp1252(name), bytes)
 
 # Base64
 # ------
