@@ -5432,6 +5432,28 @@ def quote_lines(ls: List<&2, String>) -> String:
     case l <> t:
       "> " ++ l ++ "\n" ++ quote_lines(t)
 
+# Match the line boundaries that a rendered quote may display, including
+# Unicode separators. Normalize only quoting, preserving read projections.
+def quote_text.boundary(+u: U32) -> Bool:
+  C.between(u, 10, 13) || C.between(u, 28, 30) || U32.is_eq(u, 133)
+    || U32.is_eq(u, 8232) || U32.is_eq(u, 8233)
+
+def quote_text.lines(s: String, out: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(out)
+    case SCon{'\r', SCon{'\n', t}}:
+      quote_text.lines(t, SCon{'\n', out})
+    case SCon{+c, t}:
+      quote_text.lines(t, SCon{Bool.pick(Char, quote_text.boundary(C.u(c)), '\n', c), out})
+
+def quote_text(s: String) -> String:
+  quote_lines(String.lines(quote_text.lines(s, "")))
+
+# Header text copied into an attribution or forward note stays on one line.
+def hdr_line(hs: List<&2, M.Hdr>, name: String) -> String:
+  M.header_line(M.header(hs, name))
+
 # An address as a comparison key: its addr-spec, lower-cased.
 def spec_key(a: String) -> String:
   String.to_lower(M.addr_spec(a))
@@ -5454,6 +5476,22 @@ def fresh(xs: List<&2, String>, +seen: List<&2, String>) -> List<&2, String>:
       List.filter.put(String, x,
         fresh(t, Bool.pick(List<&2, String>, repeated, seen, k <> seen)), Bool.not(repeated))
 
+# Sanitize only the decoded display name. The addr-spec and address choice
+# are unchanged, and malformed addresses still reach normal validation.
+def decoded_addr.if(+a: String, angle: Bool) -> String:
+  match angle:
+    case True{}:
+      +name = M.display_part(a)
+      M.header_line.text(name) ++ " " ++ String.drop(a, String.length(name))
+    case False{}:
+      a
+
+def decoded_addr(raw: String) -> String:
+  +a = M.decode_header(raw)
+  decoded_addr.if(a, String.contains(a, "<"))
+
+# Keep decoded source text intact for identity checks such as sender_in:
+# a control character must still make that sender unverified.
 def decoded(xs: List<&2, String>) -> List<&2, String>:
   match xs:
     case Nil{}:
@@ -5461,10 +5499,18 @@ def decoded(xs: List<&2, String>) -> List<&2, String>:
     case x <> t:
       M.decode_header(x) <> decoded(t)
 
+# Only recipient presentation uses sanitized display names.
+def decoded_recipients(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      decoded_addr(x) <> decoded_recipients(t)
+
 # The addresses of a header, split before RFC 2047 decoding (a decoded name
 # may contain commas).
 def hdr_addrs(hs: List<&2, M.Hdr>, name: String) -> List<&2, String>:
-  decoded(M.addr_list(M.header(hs, name)))
+  decoded_recipients(M.addr_list(M.header(hs, name)))
 
 def reply_to(+hs: List<&2, M.Hdr>) -> List<&2, String>:
   hdr_addrs(hs, Bool.pick(String, String.is_empty(M.header(hs, "reply-to")), "from", "reply-to"))
@@ -5499,8 +5545,8 @@ def reply_cc(all: Bool, +hs: List<&2, M.Hdr>, me: String, replied: List<&2, Stri
 
 # The reply's text above the quoted original.
 def reply_body(args: J.Json, +hs: List<&2, M.Hdr>, p: M.Parts, cut: Bool) -> String:
-  str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_text(hs, "date") ++ ", " ++
-    hdr_text(hs, "from") ++ " wrote:\n" ++ quote_lines(String.lines(M.readable_text(p))) ++
+  str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_line(hs, "date") ++ ", " ++
+    hdr_line(hs, "from") ++ " wrote:\n" ++ quote_text(M.readable_text(p)) ++
     cut_note(cut)
 
 def reply_want(
@@ -5521,7 +5567,7 @@ def reply_want(
       fresh(replied, []),
       reply_cc(bool_arg(args, "reply_all", False{}), hs, me, replied),
       strs_arg(args, "bcc"),
-      prefixed("Re:", hdr_text(hs, "subject")),
+      prefixed("Re:", hdr_line(hs, "subject")),
       reply_body(args, hs, p, cut),
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
@@ -5532,9 +5578,9 @@ def reply_want(
     return with_fields(o, quote_fields(cut, quoted, size))
 
 def fwd_note(+hs: List<&2, M.Hdr>) -> String:
-  "\n\n---------- Forwarded message ----------\nFrom: " ++ hdr_text(hs, "from") ++
-    "\nDate: " ++ hdr_text(hs, "date") ++ "\nSubject: " ++ hdr_text(hs, "subject") ++
-    "\nTo: " ++ hdr_text(hs, "to") ++ "\n"
+  "\n\n---------- Forwarded message ----------\nFrom: " ++ hdr_line(hs, "from") ++
+    "\nDate: " ++ hdr_line(hs, "date") ++ "\nSubject: " ++ hdr_line(hs, "subject") ++
+    "\nTo: " ++ hdr_line(hs, "to") ++ "\n"
 
 def fwd_want(
   +hs: List<&2, M.Hdr>,
@@ -5548,7 +5594,7 @@ def fwd_want(
       atts_read_within(attachments_arg(args), (max_attachment() - C.byte_len(raw) : U32))
     with_atts(atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
-      prefixed("Fwd:", hdr_text(hs, "subject")),
+      prefixed("Fwd:", hdr_line(hs, "subject")),
       str_arg(args, "body", "") ++ fwd_note(hs),
       "", "", bool_arg(args, "as_draft", False{}), dry_arg(args), about, jev)
 

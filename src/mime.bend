@@ -249,6 +249,27 @@ def tab_to_space(s: String) -> String:
 def decode_header(v: String) -> String:
   ew_join(String.split(tab_to_space(v), ' '), False{}, True{})
 
+# Text copied from an untrusted header into one visible line. Decode once,
+# replace C0/C1, line separators and directional formatting controls, then
+# trim and bound the display text to 998 code points. Never an addr-spec.
+def header_line.clean(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{+c, t}:
+      +u = C.u(c)
+      control = U32.is_lt(u, 32) || C.between(u, 127, 159)
+        || U32.is_eq(u, 8232) || U32.is_eq(u, 8233)
+        || U32.is_eq(u, 1564) || C.between(u, 8206, 8207) || C.between(u, 8234, 8238)
+        || C.between(u, 8294, 8297)
+      SCon{Bool.pick(Char, control, ' ', c), header_line.clean(t)}
+
+def header_line.text(s: String) -> String:
+  String.take(String.trim(header_line.clean(s)), 998n)
+
+def header_line(v: String) -> String:
+  header_line.text(decode_header(v))
+
 # Parameters (Content-Type, Content-Disposition)
 # ----------------------------------------------
 
