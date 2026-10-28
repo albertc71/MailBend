@@ -338,6 +338,20 @@ READ_UIDVALIDITY = param(
     "Pass the folder the UIDs came from. Required for selected-part reads.",
     minimum=1, maximum=4294967295)
 
+SEED_UIDVALIDITY = param(
+    "integer",
+    "Optional UIDVALIDITY of the seed folder returned with its UID. Checked "
+    "in the seed read session before any message fetch; mismatch returns no "
+    "content and makes no Jev request. Later thread sessions pin each folder's "
+    "own discovered UIDVALIDITY. Omit to preserve legacy behavior.",
+    minimum=1, maximum=4294967295)
+CLASSIFY_UIDVALIDITY = param(
+    "integer",
+    "Optional UIDVALIDITY of the folder returned with these UIDs. Checked in "
+    "the same session before fetching any message or asking Jev; mismatch "
+    "returns no content. Omit to preserve legacy behavior.",
+    minimum=1, maximum=4294967295)
+
 READ_PROJECTION = {
     "projection": param(
         "string", "Body fields to return; default full preserves text and HTML. "
@@ -560,7 +574,7 @@ TOOLS = [
          "can be cut short; searched lists the folders. Changes nothing: "
          "messages stay unread." + JEV_NOTES,
          ANNOTATED_READS,
-         {"folder": FOLDER, "uid": UID},
+         {"folder": FOLDER, "uid": UID, "uidvalidity": SEED_UIDVALIDITY},
          ["uid"]),
     tool("mail_classify",
          "Ask Jev (TypeSafe's model) about messages, changing nothing (they stay "
@@ -584,6 +598,7 @@ TOOLS = [
           "uids": param(
               "array", "Message UIDs in the folder, at most 50.",
               items=UID, minItems=1, maxItems=50),
+          "uidvalidity": CLASSIFY_UIDVALIDITY,
           "candidates": param(
               "array",
               "New folder names Jev may choose besides the existing folders.",

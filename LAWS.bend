@@ -274,6 +274,74 @@ law classify_writes_nothing:
   for max: U32
   {I.any_writes(Ops.plan_classify(mbox, uids, body, max)) == False{} : Bool}
 
+# LAW: optional identities preserve legacy plans; supplied identities precede
+# the exact requested header/classification fetch in the same read-only session.
+law checked_headers_pin_identity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  {Ops.plan_headers_checked(mbox, uids, Some{uidv}) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+     I.CFetch{uids, [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]}]
+    : List<&2, I.Cmd>}
+
+law checked_classify_pin_identity:
+  for mbox: String
+  for uids: List<&2, U32>
+  for body: Bool
+  for max: U32
+  for uidv: U32
+  {Ops.plan_classify_checked(mbox, uids, body, max, Some{uidv}) ==
+    [I.CCapability{}, I.CList{}, I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+     I.CFetch{uids, Ops.classify_items(body, max)}] : List<&2, I.Cmd>}
+
+law checked_reads_without_identity_unchanged:
+  for mbox: String
+  for uids: List<&2, U32>
+  for body: Bool
+  for max: U32
+  ({Ops.plan_headers_checked(mbox, uids, None{}) == Ops.plan_headers(mbox, uids)
+    : List<&2, I.Cmd>} &
+   {Ops.plan_classify_checked(mbox, uids, body, max, None{}) ==
+    Ops.plan_classify(mbox, uids, body, max) : List<&2, I.Cmd>})
+
+law checked_read_expectation:
+  for uidv: U32
+  {Ops.read_expect(Some{uidv}) == [I.CExpect{I.uidv_line(uidv)}] : List<&2, I.Cmd>}
+
+law checked_read_session_order:
+  for mbox: String
+  for rest: List<&2, I.Cmd>
+  for ids: List<&2, Ops.ReadIdentity>
+  {Ops.plan_read_checked(I.CExamine{mbox} <> rest, ids) ==
+    I.CExamine{mbox} <> List.append(&2, I.Cmd,
+      Ops.read_expect(Ops.read_identity(ids, mbox)), Ops.plan_read_checked(rest, ids))
+    : List<&2, I.Cmd>}
+
+# LAW: inserting read expectations never adds a mailbox write, for any plan.
+law checked_read_preserves_writes:
+  for cs: List<&2, I.Cmd>
+  for +ids: List<&2, Ops.ReadIdentity>
+  {I.any_writes(Ops.plan_read_checked(cs, ids)) == I.any_writes(cs) : Bool}
+
+law checked_read_without_identities_unchanged:
+  for cs: List<&2, I.Cmd>
+  {Ops.plan_read_checked(cs, []) == cs : List<&2, I.Cmd>}
+
+law checked_headers_write_nothing:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: Maybe<&2, U32>
+  {I.any_writes(Ops.plan_headers_checked(mbox, uids, uidv)) == False{} : Bool}
+
+law checked_classify_writes_nothing:
+  for mbox: String
+  for uids: List<&2, U32>
+  for body: Bool
+  for max: U32
+  for uidv: Maybe<&2, U32>
+  {I.any_writes(Ops.plan_classify_checked(mbox, uids, body, max, uidv)) == False{} : Bool}
+
 # Read rendering
 # --------------
 

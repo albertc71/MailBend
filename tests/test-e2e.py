@@ -343,6 +343,7 @@ def run_all(work):
     implicit_smtp(work)
     downloads(work)
     whole_read_identity(work)
+    thread_classify_identity(work)
     threads(work)
     flags_first_reads(work)
     dry_runs(work)
@@ -2847,6 +2848,101 @@ def whole_read_identity(work):
               not flags(srv.st(), "INBOX", 1))
     finally:
         srv.stop()
+
+
+def thread_classify_identity(work):
+    """Supplied read generations stop before foreign content reaches a caller or Jev."""
+    key_file = typesafe_key_file(work)
+    ts = TypeSafe(work)
+    env = jev_env(ts, key_file)
+    expected = ("the folder changed, or these UIDs came from another folder: "
+                "pass the folder they were read from")
+    fixture = thread_fixture()
+    uidv = fixture["mailboxes"]["INBOX"]["uidvalidity"]
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        for name, args, over in [
+                ("mail_get_thread", {"uid": 7}, {}),
+                ("mail_get_thread", {"uid": 7, "projection": "metadata"}, {}),
+                ("mail_classify", {"uids": [1, 7, 99]}, {}),
+                ("mail_classify", {"uids": [1, 7]},
+                 {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1"}),
+                ("mail_classify", {"uids": [1, 7]},
+                 {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+                  "MAILBEND_TYPESAFE_IMAGES": "1"})]:
+            c, original = tool(srv, name, args, **(env | over))
+            code, pinned = tool(srv, name, dict(args, uidvalidity=uidv), **(env | over))
+            check(name + ": matching identity preserves the entire result", c == code == 0
+                  and original == pinned, (original, pinned))
+            for invalid in (uidv + 1, fixture["mailboxes"]["Archive"]["uidvalidity"],
+                            0, -1, 4294967296, 18446744073709551616, None, True, "1700000001"):
+                start, requests = len(srv.log_records()), len(ts.requests())
+                code, result = tool(srv, name, dict(args, uidvalidity=invalid), **(env | over))
+                commands = [r["line"] for r in srv.log_records()[start:] if r["proto"] == "imap"]
+                check(name + ": supplied invalid/stale identity stops before content and Jev: "
+                      + repr(invalid), code != 0 and set(result) == {"error"}
+                      and (result["error"] == expected if invalid in (uidv + 1,
+                           fixture["mailboxes"]["Archive"]["uidvalidity"]) else
+                           "uidvalidity" in result["error"])
+                      and not any(" FETCH " in line for line in commands)
+                      and len(ts.requests()) == requests, (result, commands))
+        for name, args in [("mail_get_thread", {"uid": 99}),
+                           ("mail_classify", {"uids": []})]:
+            start, requests = len(srv.log_records()), len(ts.requests())
+            code, result = tool(srv, name, dict(args, uidvalidity=uidv + 1), **env)
+            commands = [r["line"] for r in srv.log_records()[start:] if r["proto"] == "imap"]
+            check(name + ": missing/empty UIDs cannot bypass stale identity", code != 0
+                  and not any(" FETCH " in line for line in commands)
+                  and len(ts.requests()) == requests, result)
+        # Sent has a different generation: never apply the seed's value to it.
+        c, r = tool(srv, "mail_get_thread", {"folder": "Sent Messages", "uid": 1,
+                    "uidvalidity": fixture["mailboxes"]["Sent Messages"]["uidvalidity"]}, **env)
+        check("thread identity: a Sent seed still reads INBOX with its own generation", c == 0
+              and {m["folder"] for m in r.get("messages", [])} == {"INBOX", "Sent Messages"}, r)
+        check("thread/classify identity: all reads leave source state unchanged", srv.st() == before)
+    finally:
+        srv.stop()
+    try:
+        for generation in (0, "missing"):
+            invalid = thread_fixture()
+            invalid["mailboxes"]["Sent Messages"]["uidvalidity"] = generation
+            srv = Server(work, fixture=invalid)
+            try:
+                requests = len(ts.requests())
+                c, r = tool(srv, "mail_get_thread", {"uid": 7, "uidvalidity": uidv}, **env)
+                commands = [x["line"] for x in srv.log_records() if x["proto"] == "imap"]
+                fetches = [line for line in commands if " UID FETCH " in line]
+                check("thread identity: invalid discovered generation blocks later fetch/Jev: "
+                      + repr(generation), c != 0 and "UIDVALIDITY" in r.get("error", "")
+                      and len(fetches) == 1 and " UID FETCH 7 " in fetches[0]
+                      and len(ts.requests()) == requests, (r, commands))
+            finally:
+                srv.stop()
+        # EXAMINE 1 reads the seed; 2/3 search INBOX/Sent; 4/5 fetch their headers.
+        # A reset must stop in the changed session, before any subsequent UID command.
+        for at in (2, 4, 5, 6, 7, 8):
+            changed = thread_fixture()
+            changed["examine_changes"] = [{"at": at, "uidvalidity": 99}]
+            srv = Server(work, fixture=changed)
+            try:
+                requests = len(ts.requests())
+                c, r = tool(srv, "mail_get_thread", {"uid": 7, "uidvalidity": uidv}, **env)
+                commands = [x["line"] for x in srv.log_records() if x["proto"] == "imap"]
+                opens = [i for i, line in enumerate(commands) if " EXAMINE " in line]
+                after = commands[opens[at - 1] + 1:] if len(opens) >= at else ["missing EXAMINE"]
+                check("thread identity: reset at EXAMINE " + str(at) + " stops before UID work", c != 0
+                      and set(r) == {"error"} and len(opens) == at
+                      and not any(" UID " in line for line in after)
+                      and len(ts.requests()) == requests, (r, commands))
+                flag_map = lambda state: {f: {m["uid"]: m["flags"] for m in mb["messages"]}
+                                          for f, mb in state["mailboxes"].items()}
+                check("thread identity: reset never changes message flags",
+                      flag_map(srv.st()) == flag_map(changed), r)
+            finally:
+                srv.stop()
+    finally:
+        ts.stop()
 
 
 def get_attachment(srv, index, uid=FILES_UID, **env):
