@@ -185,6 +185,33 @@ law get_writes_nothing:
   for max: U32
   {I.any_writes(Ops.plan_get(mbox, uid, max)) == False{} : Bool}
 
+# LAW: the optional identity guard never makes a whole-message read write.
+law get_checked_writes_nothing:
+  for mbox: String
+  for uid: U32
+  for max: U32
+  for uidv: Maybe<&2, U32>
+  {I.any_writes(Ops.plan_get_checked(mbox, uid, max, uidv)) == False{} : Bool}
+
+# LAW: a supplied identity is checked after EXAMINE and before the exact
+# UID's full-message PEEK fetch; omitting it preserves the original plan.
+law get_checked_pins_identity:
+  for mbox: String
+  for uid: U32
+  for max: U32
+  for uidv: U32
+  {Ops.plan_get_checked(mbox, uid, max, Some{uidv}) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
+    : List<&2, I.Cmd>}
+
+law get_checked_without_identity_unchanged:
+  for mbox: String
+  for uid: U32
+  for max: U32
+  {Ops.plan_get_checked(mbox, uid, max, None{}) == Ops.plan_get(mbox, uid, max)
+    : List<&2, I.Cmd>}
+
 # LAW: for every mailbox and UIDs, the headers plan writes nothing
 law headers_write_nothing:
   for mbox: String

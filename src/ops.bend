@@ -301,6 +301,17 @@ def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
     I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
   ]
 
+# An optional mailbox identity is checked in the very session that fetches
+# the message. With no identity, keep the existing whole-message plan.
+def plan_get_checked(mbox: String, uid: U32, max: U32, uidv: Maybe<&2, U32>)
+  -> List<&2, I.Cmd>:
+  match uidv:
+    case None{}:
+      plan_get(mbox, uid, max)
+    case Some{v}:
+      [I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
+        I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
+
 # Discover metadata without message content. The caller checks UIDVALIDITY;
 # the selected read then guards that generation before requesting content.
 def plan_parts(mbox: String, uid: U32) -> List<&2, I.Cmd>:

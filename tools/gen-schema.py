@@ -329,6 +329,14 @@ UIDVALIDITY = param(
     "mail_get_new). Checked in the same session as the change; if the folder "
     "changed since, nothing is changed.",
     minimum=1)
+READ_UIDVALIDITY = param(
+    "integer",
+    "The folder's UIDVALIDITY returned with the UIDs (mail_search, mail_get, "
+    "mail_get_new). If supplied, checked in the same session before fetching "
+    "message content; a mismatch returns no content and, for downloads, "
+    "saves no file. "
+    "Pass the folder the UIDs came from. Required for selected-part reads.",
+    minimum=1, maximum=4294967295)
 
 READ_PROJECTION = {
     "projection": param(
@@ -496,7 +504,7 @@ TOOLS = [
          ANNOTATED_READS,
          {"folder": FOLDER,
           "uid": UID,
-          "uidvalidity": UIDVALIDITY,
+          "uidvalidity": READ_UIDVALIDITY,
           "section": param("string", "Optional: list for section metadata, text/html for the first "
                            "inline part, or a numeric section from list. Requires uidvalidity. "
                            "Fetches only that part; incomplete or malformed content fails. "
@@ -614,7 +622,7 @@ TOOLS = [
          CHANGES,
          {"folder": FOLDER,
           "uid": UID,
-          "uidvalidity": UIDVALIDITY,
+          "uidvalidity": READ_UIDVALIDITY,
           "section": param("string", "Numeric section from mail_get(section=list). Requires "
                            "uidvalidity; replaces index. Only complete decoded files are saved."),
           "index": param(
