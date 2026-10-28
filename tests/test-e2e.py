@@ -1085,7 +1085,8 @@ def mcp_modern(srv):
     check("modern MCP: discovery and list have private five-minute cache hints",
           all(cache_hints_ok(by_id[i]["result"]) for i in [1, 2]), res)
     check("modern MCP: calls and protocol errors carry no cache hints",
-          all(no_cache_hints(r.get("result", r.get("error", {}))) for r in res
+          all(no_cache_hints(r) and no_cache_hints(r.get("result", {}))
+              and no_cache_hints(r.get("error", {})) for r in res
               if r.get("id") not in [1, 2]), res)
     tools = by_id[2]["result"]["tools"]
     check("modern MCP: tool list and successful call", len(tools) == TOOL_COUNT and all(
@@ -1170,7 +1171,9 @@ def mcp_modern(srv):
                 modern_request(3), {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
                                     "params": {"name": "mail_search", "arguments": {"limit": 1}}},
                 modern_request(5, _meta={"io.modelcontextprotocol/protocolVersion": None}),
-                {"jsonrpc": "2.0", "id": 6, "method": "tools/list"}]
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/list"},
+                modern_request(7, "tools/list"),
+                {"jsonrpc": "2.0", "id": 8, "method": "tools/list"}]
         res, _ = mcp_session(srv, reqs, legacy=False)
         check(f"MCP legacy {version}: initialization, list, call and modern interleaving",
               res[0].get("result", {}).get("protocolVersion") == version and
@@ -1179,9 +1182,15 @@ def mcp_modern(srv):
               res[3]["result"].get("isError") is False and "resultType" not in res[3]["result"] and
               res[4].get("error", {}).get("code") == -32602 and
               len(res[5].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
-        check(f"MCP legacy {version}: no cache hints before or after modern discovery",
-              all(no_cache_hints(res[i]["result"]) for i in [0, 1, 3, 5]) and
-              cache_hints_ok(res[2]["result"]), res)
+        check(f"MCP legacy {version}: no cache hints before or after modern discovery/list",
+              all(no_cache_hints(res[i]) and no_cache_hints(res[i]["result"])
+                  for i in [0, 1, 3, 5, 7]) and
+              all(cache_hints_ok(res[i]["result"]) for i in [2, 6]), res)
+        check(f"MCP legacy {version}: modern tool list leaves legacy state unchanged",
+              len(res) == 8 and res[6]["result"].get("resultType") == "complete" and
+              [t["name"] for t in res[6]["result"].get("tools", [])] ==
+              [t["name"] for t in res[1]["result"]["tools"]] and
+              res[7].get("result") == res[5]["result"], res)
 
     # Availability is configuration-dependent, so every cacheable result must
     # remain private. These requests need no mail or TypeSafe session.
