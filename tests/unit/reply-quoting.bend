@@ -61,18 +61,21 @@ def extra_breaks() -> Bool:
     "> a\n> b\n> c\n> \n> d\n> e\n")
 
 def bidi_headers() -> Bool:
-  String.eq(M.header_line.text("a\u{61c}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{200e}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{200f}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{202a}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{202b}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{202c}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{202d}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{202e}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{2066}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{2067}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{2068}b"), "a b") &&
-  String.eq(M.header_line.text("a\u{2069}b"), "a b") &&
+  String.eq(M.header_line.text("a\u{61c}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{200e}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{200f}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{202a}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{202b}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{202c}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{202d}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{202e}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{2066}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{2067}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{2068}b"), "ab") &&
+  String.eq(M.header_line.text("a\u{2069}b"), "ab") &&
+  String.eq(M.header_line(C.utf8_encode("ש\u{200f}לום م\u{61c}رحبا")),
+    "שלום مرحبا") &&
+  String.eq(M.header_line.text("a \u{200f}b\u{2028}c"), "a b c") &&
   String.eq(M.header_line(C.utf8_encode("שלום مرحبا\u{200c}\u{200d}")),
     "שלום مرحبا\u{200c}\u{200d}")
 

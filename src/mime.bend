@@ -250,8 +250,15 @@ def decode_header(v: String) -> String:
   ew_join(String.split(tab_to_space(v), ' '), False{}, True{})
 
 # Text copied from an untrusted header into one visible line. Decode once,
-# replace C0/C1, line separators and directional formatting controls, then
-# trim and bound the display text to 998 code points. Never an addr-spec.
+# replace C0/C1 and line separators with spaces, and drop zero-width bidi
+# controls. Trim and bound the display text to 998 code points. Never an addr-spec.
+def header_line.clean.put(drop: Bool, c: Char, rest: String) -> String:
+  match drop:
+    case True{}:
+      rest
+    case False{}:
+      SCon{c, rest}
+
 def header_line.clean(s: String) -> String:
   match s:
     case SNil{}:
@@ -260,9 +267,9 @@ def header_line.clean(s: String) -> String:
       +u = C.u(c)
       control = U32.is_lt(u, 32) || C.between(u, 127, 159)
         || U32.is_eq(u, 8232) || U32.is_eq(u, 8233)
-        || U32.is_eq(u, 1564) || C.between(u, 8206, 8207) || C.between(u, 8234, 8238)
+      bidi = U32.is_eq(u, 1564) || C.between(u, 8206, 8207) || C.between(u, 8234, 8238)
         || C.between(u, 8294, 8297)
-      SCon{Bool.pick(Char, control, ' ', c), header_line.clean(t)}
+      header_line.clean.put(bidi, Bool.pick(Char, control, ' ', c), header_line.clean(t))
 
 def header_line.text(s: String) -> String:
   String.take(String.trim(header_line.clean(s)), 998n)

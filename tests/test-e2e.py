@@ -1043,11 +1043,11 @@ def reply_unicode_quoting(work):
                       "> break_RS", "> break_NEL", "> break_LS", "> break_PS", "> مرحبا שלום"]
     fixture = copy.deepcopy(FIX)
     fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
-        "From: " + encoded("שלום\u200c\u200d" + bidi + "Bob") + " <bob@example.com>\r\n"
-        "Reply-To: " + encoded("مرحبا\u200c\u200d" + bidi + "Alice") + " <a@example.com>\r\n"
-        "Date: " + encoded("Monday" + bidi + "date") + "\r\n"
-        "Subject: " + encoded("שלום\u200c\u200d" + bidi + "subject") + "\r\n"
-        "To: " + encoded("مرحبا\u200c\u200d" + bidi + "recipient") + " <" + FIX["user"] + ">\r\n"
+        "From: " + encoded("ש" + bidi + "לום\u200c\u200d Bob") + " <bob@example.com>\r\n"
+        "Reply-To: " + encoded("م" + bidi + "رحبا\u200c\u200d Alice") + " <a@example.com>\r\n"
+        "Date: " + encoded("Monday " + bidi + "date") + "\r\n"
+        "Subject: " + encoded("ש" + bidi + "לום\u200c\u200d subject") + "\r\n"
+        "To: " + encoded("م" + bidi + "رحبا\u200c\u200d recipient") + " <" + FIX["user"] + ">\r\n"
         "Message-ID: <unicode-quote@example.com>\r\n"
         "Content-Type: text/plain; charset=utf-8\r\n"
         "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
@@ -1074,14 +1074,14 @@ def reply_unicode_quoting(work):
                   code == 0 and lines[:2] == ["My answer", ""]
                   and lines[3:] == expected_quote, (result, lines))
             check(f"Unicode quoting (draft={draft}): copied header text loses only bidi controls",
-                  code == 0 and lines[2] == "On Monday            date, שלום\u200c\u200d            Bob <bob@example.com> wrote:"
-                  and str(message["Subject"]) == "Re: שלום\u200c\u200d            subject"
+                  code == 0 and lines[2] == "On Monday date, שלום\u200c\u200d Bob <bob@example.com> wrote:"
+                  and str(message["Subject"]) == "Re: שלום\u200c\u200d subject"
                   and not any(char in "\n".join(lines) + str(message["To"]) for char in bidi),
                   (lines, str(message["Subject"]), str(message["To"])))
             addresses = message["To"].addresses if message["To"] else ()
             check(f"Unicode quoting (draft={draft}): RTL name and exact recipient are preserved",
                   code == 0 and len(addresses) == 1 and addresses[0].addr_spec == "a@example.com"
-                  and addresses[0].display_name.split() == ["مرحبا\u200c\u200d", "Alice"]
+                  and addresses[0].display_name == "مرحبا\u200c\u200d Alice"
                   and (draft or state["sent"][-1]["rcpt_to"] == ["a@example.com"]), result)
         code, result = tool(srv, "mail_forward", {
             "uid": 1, "uidvalidity": INBOX_VALIDITY, "to": "friend@example.com", "body": "FYI"})
@@ -1091,9 +1091,9 @@ def reply_unicode_quoting(work):
         lines = text.get_content().splitlines() if text else []
         check("Unicode quoting: all four forwarded headers have sanitized display text",
               code == 0 and lines == ["FYI", "", "---------- Forwarded message ----------",
-                  "From: שלום\u200c\u200d            Bob <bob@example.com>", "Date: Monday            date",
-                  "Subject: שלום\u200c\u200d            subject", "To: مرحبا\u200c\u200d            recipient <" + FIX["user"] + ">"]
-              and str(message["Subject"]) == "Fwd: שלום\u200c\u200d            subject", (result, lines))
+                  "From: שלום\u200c\u200d Bob <bob@example.com>", "Date: Monday date",
+                  "Subject: שלום\u200c\u200d subject", "To: مرحبا\u200c\u200d recipient <" + FIX["user"] + ">"]
+              and str(message["Subject"]) == "Fwd: שלום\u200c\u200d subject", (result, lines))
         check("Unicode quoting: originals and flags remain unchanged",
               srv.st()["mailboxes"]["INBOX"] == original)
     finally:
