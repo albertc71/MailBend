@@ -1048,6 +1048,15 @@ def modern_request(identifier, method="server/discover", **params):
                   "io.modelcontextprotocol/clientCapabilities": {}}, **params}}
 
 
+def cache_hints_ok(result):
+    return (type(result.get("ttlMs")) is int and result["ttlMs"] == 300000 and
+            result.get("cacheScope") == "private")
+
+
+def no_cache_hints(result):
+    return "ttlMs" not in result and "cacheScope" not in result
+
+
 def mcp_modern(srv):
     # Official schema examples and normative requirements are mapped in docs/MCP.md.
     versions = ["2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"]
@@ -1073,6 +1082,11 @@ def mcp_modern(srv):
         r["result"].get("resultType") == "complete" and
         r["result"].get("_meta", {}).get("io.modelcontextprotocol/serverInfo", {}).get("name") == "mailbend"
         for r in res if "result" in r), res)
+    check("modern MCP: discovery and list have private five-minute cache hints",
+          all(cache_hints_ok(by_id[i]["result"]) for i in [1, 2]), res)
+    check("modern MCP: calls and protocol errors carry no cache hints",
+          all(no_cache_hints(r.get("result", r.get("error", {}))) for r in res
+              if r.get("id") not in [1, 2]), res)
     tools = by_id[2]["result"]["tools"]
     check("modern MCP: tool list and successful call", len(tools) == TOOL_COUNT and all(
         t["inputSchema"].get("type") == "object" for t in tools) and
@@ -1085,7 +1099,9 @@ def mcp_modern(srv):
           all(by_id[i].get("error", {}).get("code") == -32601 for i in [9, 10, 11]), res)
     check("modern MCP: notifications have no replies", len(res) == 13, res)
     res, _ = mcp_session(srv, [modern_request(1, "tools/list")], legacy=False)
-    check("modern MCP: discovery is optional", len(res[0].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
+    check("modern MCP: discovery is optional and list still has cache hints",
+          len(res[0].get("result", {}).get("tools", [])) == TOOL_COUNT and
+          cache_hints_ok(res[0]["result"]), res)
     res, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "ping"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}], legacy=False)
     check("legacy ping before initialization cannot establish a legacy session",
@@ -1163,6 +1179,32 @@ def mcp_modern(srv):
               res[3]["result"].get("isError") is False and "resultType" not in res[3]["result"] and
               res[4].get("error", {}).get("code") == -32602 and
               len(res[5].get("result", {}).get("tools", [])) == TOOL_COUNT, res)
+        check(f"MCP legacy {version}: no cache hints before or after modern discovery",
+              all(no_cache_hints(res[i]["result"]) for i in [0, 1, 3, 5]) and
+              cache_hints_ok(res[2]["result"]), res)
+
+    # Availability is configuration-dependent, so every cacheable result must
+    # remain private. These requests need no mail or TypeSafe session.
+    # A valid Jev-on configuration needs an absolute key path. Listing never
+    # reads it, so no key file or TypeSafe service is needed here.
+    key_file = str(pathlib.Path(srv.work).resolve() / "unused-cache-hints-key")
+    for read_only in ["0", "1"]:
+        for drafts_only in ["0", "1"]:
+            for jev in ["0", "1"]:
+                env = {"MAILBEND_READ_ONLY": read_only, "MAILBEND_DRAFTS_ONLY": drafts_only,
+                       "MAILBEND_TYPESAFE": jev, "MAILBEND_TYPESAFE_KEY_FILE": key_file}
+                if read_only == "1":
+                    expected_names = READ_TOOLS + (["mail_classify"] if jev == "1" else [])
+                else:
+                    expected_names = [t["name"] for t in _schema.TOOLS
+                                      if (jev == "1" or t["name"] not in {"mail_classify", "mail_triage"})
+                                      and (drafts_only == "0" or t["name"] != "mail_send")]
+                res, code = mcp_session(srv, [modern_request(1), modern_request(2, "tools/list")],
+                                        legacy=False, **env)
+                check(f"modern MCP: private cache hints with configuration {env}",
+                      code == 0 and len(res) == 2 and all(
+                          cache_hints_ok(r.get("result", {})) for r in res) and
+                      [t["name"] for t in res[1]["result"]["tools"]] == expected_names, res)
 
     # The same guards serve both eras; metadata cannot enable a forbidden tool.
     for env, forbidden, hidden, args in [
@@ -1176,6 +1218,7 @@ def mcp_modern(srv):
             modern_request(2, "tools/call", name=forbidden, arguments=args)], legacy=False, **env)
         check(f"modern MCP: safety configuration {env} fails closed",
               (not hidden or forbidden not in [t["name"] for t in res[0]["result"]["tools"]]) and
+              cache_hints_ok(res[0]["result"]) and
               res[1].get("result", {}).get("isError") is True and len(srv.log_lines()) == start, res)
 
 

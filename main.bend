@@ -194,10 +194,10 @@ def respond(
     case "tools/list":
       do IO<Unit>:
         ts : J.Json <- offered_tools()
-        IO.print(rpc_result(id, MCP.result(modern,
+        IO.print(rpc_result(id, MCP.cacheable_result(modern,
           J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
     case "server/discover":
-      IO.print(rpc_result(id, MCP.complete_result(J.obj([
+      IO.print(rpc_result(id, MCP.cacheable_result(True{}, J.obj([
         J.kv("supportedVersions", MCP.versions()),
         J.kv("capabilities", J.obj([J.kv("tools", J.obj([]))])),
         J.kv("instructions", J.str(instructions()))
