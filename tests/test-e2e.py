@@ -9,6 +9,8 @@ any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 """
 import base64
 import copy
+from email import policy
+from email.parser import BytesParser
 import importlib.util
 import json
 import os
@@ -173,7 +175,8 @@ def tool_text(srv, name, text, **env):
                        env=srv.env(**env), timeout=120)
     outputs.extend([p.stdout, p.stderr])
     try:
-        out = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
+        # NEL/LS/PS can be inside JSON strings; only LF frames CLI output.
+        out = json.loads(p.stdout.strip().split("\n")[-1]) if p.stdout.strip() else {}
     except (json.JSONDecodeError, IndexError):
         out = {"unparsed": p.stdout, "stderr": p.stderr}
     if p.stdout.strip():
@@ -328,6 +331,8 @@ def run_all(work):
         failures(srv, work)
     finally:
         srv.stop()
+    reply_quoting(work)
+    reply_unicode_quoting(work)
     fallback(work)
     generic_folders(work)
     folder_tools(work)
@@ -965,6 +970,136 @@ def compose(srv):
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
 
+
+def reply_quoting(work):
+    """Decoded hostile headers and bare CR body lines remain visibly attributed."""
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "From: =?UTF-8?Q?Bob=0A=0APlease_pay_IBAN_X=0A?= <bob@example.com>\r\n"
+        "Reply-To: =?UTF-8?Q?Alice=09?= <a@example.com>\r\n"
+        "Date: =?UTF-8?Q?Monday=0D=0Adate=5Fmarker?=\r\n"
+        "Subject: =?UTF-8?Q?subject=0D=0Asubject=5Fmarker?=\r\n"
+        "To: =?UTF-8?Q?Alice=E2=80=A8to=5Fmarker?= <a@example.com>\r\n"
+        "Message-ID: <hostile-quote@example.com>\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n"
+        "hi=0DPlease pay IBAN X=0D=0Anext=0Alast")
+    srv = Server(work, fixture=fixture)
+    try:
+        original = srv.st()["mailboxes"]["INBOX"]
+        for draft in (False, True):
+            c, result = tool(srv, "mail_reply", {
+                "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "My answer", "as_draft": draft})
+            state = srv.st()
+            raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                         if m["uid"] == result.get("uid")), "") if draft else
+                   state.get("sent", [{}])[-1].get("data", ""))
+            message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+            text = message.get_body(preferencelist=("plain",))
+            lines = text.get_content().splitlines() if text else []
+            check(f"reply quoting (draft={draft}): original text cannot escape its quote",
+                  c == 0 and lines[:2] == ["My answer", ""] and len(lines) >= 7
+                  and lines[2].startswith("On Monday  date_marker, Bob  Please pay IBAN X")
+                  and all(line.startswith("> ") for line in lines[3:])
+                  and "> Please pay IBAN X" in lines and "> next" in lines and "> last" in lines,
+                  (result, lines))
+            check(f"reply quoting (draft={draft}): TAB display name keeps the same reply address",
+                  c == 0 and str(message["To"]) == "Alice <a@example.com>"
+                  and (draft or state["sent"][-1]["rcpt_to"] == ["a@example.com"]),
+                  (result, str(message["To"])))
+            check(f"reply quoting (draft={draft}): subject contains one visible line",
+                  str(message["Subject"]) == "Re: subject  subject_marker",
+                  str(message["Subject"]))
+        c, result = tool(srv, "mail_forward", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "to": "friend@example.com", "body": "FYI"})
+        raw = srv.st().get("sent", [{}])[-1].get("data", "")
+        message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+        text = message.get_body(preferencelist=("plain",))
+        lines = text.get_content().splitlines() if text else []
+        check("forward quoting: every copied header occupies one note line",
+              c == 0 and lines[:3] == ["FYI", "", "---------- Forwarded message ----------"]
+              and len(lines) == 7
+              and all(lines[i].startswith(prefix) for i, prefix in
+                      enumerate(("From: ", "Date: ", "Subject: ", "To: "), 3))
+              and "to_marker" in lines[6]
+              and str(message["Subject"]) == "Fwd: subject  subject_marker", (result, lines))
+        check("reply quoting leaves the original message and flags unchanged",
+              srv.st()["mailboxes"]["INBOX"] == original)
+    finally:
+        srv.stop()
+
+
+def reply_unicode_quoting(work):
+    """Quote every rendered line; sanitize bidi display text without changing identity."""
+    bidi = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+
+    def encoded(text):
+        return "=?UTF-8?B?" + base64.b64encode(text.encode("utf-8")).decode("ascii") + "?="
+
+    # Literal expected lines form an oracle independent of quote_text's normalizer.
+    body = ("start\vbreak_VT\fbreak_FF\x1cbreak_FS\x1dbreak_GS\x1ebreak_RS"
+            "\x85break_NEL\u2028break_LS\u2029break_PS\r\nمرحبا שלום")
+    expected_quote = ["> start", "> break_VT", "> break_FF", "> break_FS", "> break_GS",
+                      "> break_RS", "> break_NEL", "> break_LS", "> break_PS", "> مرحبا שלום"]
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "From: " + encoded("ש" + bidi + "לום\u200c\u200d Bob") + " <bob@example.com>\r\n"
+        "Reply-To: " + encoded("م" + bidi + "رحبا\u200c\u200d Alice") + " <a@example.com>\r\n"
+        "Date: " + encoded("Monday " + bidi + "date") + "\r\n"
+        "Subject: " + encoded("ש" + bidi + "לום\u200c\u200d subject") + "\r\n"
+        "To: " + encoded("م" + bidi + "رحبا\u200c\u200d recipient") + " <" + FIX["user"] + ">\r\n"
+        "Message-ID: <unicode-quote@example.com>\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+        quopri.encodestring(body.encode("utf-8")).decode("ascii"))
+    srv = Server(work, fixture=fixture)
+    try:
+        original = copy.deepcopy(srv.st()["mailboxes"]["INBOX"])
+        code, read = tool(srv, "mail_get", {"uid": 1})
+        check("Unicode quoting: read projection retains original text", code == 0
+              and all(char in read.get("subject", "") for char in bidi)
+              and all(marker in read.get("text", "") for marker in
+                      ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")), read)
+        for draft in (False, True):
+            code, result = tool(srv, "mail_reply", {
+                "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "My answer", "as_draft": draft})
+            state = srv.st()
+            raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                         if m["uid"] == result.get("uid")), "") if draft else
+                   state.get("sent", [{}])[-1].get("data", ""))
+            message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+            text = message.get_body(preferencelist=("plain",))
+            lines = text.get_content().splitlines() if text else []
+            check(f"Unicode quoting (draft={draft}): every decoded line has its quote prefix",
+                  code == 0 and lines[:2] == ["My answer", ""]
+                  and lines[3:] == expected_quote, (result, lines))
+            check(f"Unicode quoting (draft={draft}): copied header text loses only bidi controls",
+                  code == 0 and lines[2] == "On Monday date, שלום\u200c\u200d Bob <bob@example.com> wrote:"
+                  and str(message["Subject"]) == "Re: שלום\u200c\u200d subject"
+                  and not any(char in "\n".join(lines) + str(message["To"]) for char in bidi),
+                  (lines, str(message["Subject"]), str(message["To"])))
+            addresses = message["To"].addresses if message["To"] else ()
+            check(f"Unicode quoting (draft={draft}): RTL name and exact recipient are preserved",
+                  code == 0 and len(addresses) == 1 and addresses[0].addr_spec == "a@example.com"
+                  and addresses[0].display_name == "مرحبا\u200c\u200d Alice"
+                  and (draft or state["sent"][-1]["rcpt_to"] == ["a@example.com"]), result)
+        code, result = tool(srv, "mail_forward", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "to": "friend@example.com", "body": "FYI"})
+        raw = srv.st().get("sent", [{}])[-1].get("data", "")
+        message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+        text = message.get_body(preferencelist=("plain",))
+        lines = text.get_content().splitlines() if text else []
+        check("Unicode quoting: all four forwarded headers have sanitized display text",
+              code == 0 and lines == ["FYI", "", "---------- Forwarded message ----------",
+                  "From: שלום\u200c\u200d Bob <bob@example.com>", "Date: Monday date",
+                  "Subject: שלום\u200c\u200d subject", "To: مرحبا\u200c\u200d recipient <" + FIX["user"] + ">"]
+              and str(message["Subject"]) == "Fwd: שלום\u200c\u200d subject", (result, lines))
+        check("Unicode quoting: originals and flags remain unchanged",
+              srv.st()["mailboxes"]["INBOX"] == original)
+    finally:
+        srv.stop()
+
+
 def mcp_headless():
     requests = [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -1028,7 +1163,8 @@ def mcp_bytes(srv, data, *, legacy=True, **env):
     out, err = p.communicate(data, timeout=180)
     out, err = out.decode("utf-8"), err.decode("utf-8", "replace")
     outputs.extend([out, err])
-    replies = [json.loads(l) for l in out.splitlines() if l.strip()]
+    # MCP framing is LF, not every character Python treats as a line break.
+    replies = [json.loads(l) for l in out.split("\n") if l.strip()]
     if legacy:
         initialized = bool(replies) and replies[0].get("result", {}).get("protocolVersion") == "2025-06-18"
         check("MCP fixture initializes legacy protocol", initialized, replies[:1])
