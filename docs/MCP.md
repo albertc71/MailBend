@@ -63,12 +63,17 @@ contain JSON serialized in a text content block. Modern requests and negotiated
 per-tool output schemas; older sessions omit those fields.
 Read-only, drafts-only and Jev settings determine availability through the same
 code used by the CLI. Client capability claims cannot widen that availability.
+Modern `server/discover` and `tools/list` complete results advertise
+`ttlMs: 300000` (five minutes) and `cacheScope: "private"`. Their contents are
+fixed for the process configuration, and the private scope prevents sharing a
+tool list that reveals those settings. Legacy results and tool-call results
+carry no cache hints.
 
 MailBend provides no HTTP transport, MCP authorization, resource or prompt
 capabilities, list-change notifications, subscriptions, logging notifications,
 client sampling/elicitation, asynchronous tasks or resumable calls. Lists fit
 in one response, so no cursor is issued and supplied cursors are rejected.
-No cache lifetime is advertised. Modern `ping` and `initialize` are not methods
+Modern `ping` and `initialize` are not methods
 in this revision; legacy `ping` remains supported. Calls run serially. A queued
 cancellation is consumed after the active call completes; there is no promise
 of interrupting a mail operation already in progress. Notifications receive no
@@ -86,6 +91,7 @@ vendor application compatibility has not been separately exercised.
 | Official contract / example | Local verification |
 | --- | --- |
 | [Discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/discover): `DiscoverRequest`, `DiscoverResultResponse/discover-result-response.json` | `mcp_modern`: discovery identity, versions, tools-only capability and complete result |
+| [Caching](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching): complete cacheable results | `tests/unit/mcp-protocol.bend`; `mcp_modern`: private five-minute hints on discovery and lists across read-only, drafts-only and Jev settings; no hints on legacy results or calls |
 | [Versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning): unsupported version error and dual-era matrix | `mcp_modern`: unknown, empty and legacy modern-version strings; all three legacy initializations and interleaved modern calls |
 | [Base protocol](https://modelcontextprotocol.io/specification/2026-07-28/basic/index): required metadata, result type and request ids | `tests/unit/mcp-protocol.bend`; `mcp_modern`: absent/null/scalar/object/array version values, capabilities, optional identity, null/fractional ids, integer-valued decimal/exponent ids and independent requests |
 | [Tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): `ListToolsRequest/list-tools-request.json`, `CallToolRequest/call-tool-request.json`, `CallToolResult/invalid-tool-input-error.json` | `mcp_modern`: real synthetic-mail search, schema-bearing list, input failure, malformed/unknown tool, safety switches, invalid cursor |

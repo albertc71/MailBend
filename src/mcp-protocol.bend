@@ -115,6 +115,16 @@ def result(modern: Bool, j: J.Json, v: String) -> J.Json:
     case False{}:
       j
 
+# Discovery and tool lists are fixed for the process configuration. Keep
+# their cache private because tool availability reveals that configuration.
+def cacheable_result(modern: Bool, j: J.Json, v: String) -> J.Json:
+  match modern j:
+    case True{} J.JObj{items}:
+      complete_result(J.JObj{J.JCons{J.kv("ttlMs", J.JNum{"300000"}),
+        J.JCons{J.kv("cacheScope", J.str("private")), items}}}, v)
+    case _ _:
+      j
+
 def unsupported(id: J.Json, p: J.Json) -> String:
   data = J.obj([J.kv("supported", versions()), J.kv("requested", J.str(requested(p)))])
   error = J.obj([J.kv("code", J.JNum{"-32022"}),

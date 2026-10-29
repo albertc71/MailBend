@@ -25,6 +25,8 @@ def main() -> IO(Unit):
     IO.print("huge negative exponent fraction id " ++ Bool.show(MCP.id_ok(J.JNum{"1e-999999999999"})))
     IO.print(J.show(MCP.result(False{}, J.obj([]), "1")))
     IO.print(J.show(MCP.result(True{}, J.obj([]), "1")))
+    IO.print(J.show(MCP.cacheable_result(False{}, J.obj([]), "1")))
+    IO.print(J.show(MCP.cacheable_result(True{}, J.obj([]), "1")))
 
 #|valid metadata True
 #|missing capabilities False
@@ -42,3 +44,5 @@ def main() -> IO(Unit):
 #|huge negative exponent fraction id False
 #|{}
 #|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1"}}}
+#|{}
+#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1"}},"ttlMs":300000,"cacheScope":"private"}
