@@ -1789,13 +1789,51 @@ def single_uid(u: Uids(), tool: String) -> Result<&2, &2, String, U32>:
     case Fail{m}:
       Fail{m}
 
-def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32) -> IO(Shown):
-  match u:
-    case Done{+uid}:
+# Read refusals explain that UIDs can also belong to another folder, rather
+# than describing a change that these read-only plans never attempted.
+def checked_read.refusal(r: Run()) -> Run():
+  match r:
+    case Fail{+why}:
+      Fail{Bool.pick(String, String.eq(why, stale_msg()),
+        "the folder changed, or these UIDs came from another folder: " ++
+          "pass the folder they were read from", why)}
+    case Done{lines}:
+      Done{lines}
+
+# Without a supplied identity, preserve errors as well as successful output.
+def checked_read(r: Run(), uidv: Maybe<&2, U32>) -> Run():
+  match uidv:
+    case None{}:
+      r
+    case Some{v}:
+      checked_read.refusal(r)
+
+# A supplied value that cannot be a mailbox identity must never turn into
+# the absent case, even when it passes the schema's integer type check.
+def read_uidv.value(n: Maybe<&2, U32>) -> Result<&2, &2, String, Maybe<&2, U32>>:
+  match n:
+    case Some{v}:
+      Done{Some{v}}
+    case None{}:
+      Fail{"\"uidvalidity\" must be an integer from 1 to 4294967295"}
+
+def read_uidv(m: Maybe<&2, J.Json>) -> Result<&2, &2, String, Maybe<&2, U32>>:
+  match m:
+    case None{}:
+      Done{None{}}
+    case Some{v}:
+      read_uidv.value(positive(J.as_u32(Some{v})))
+
+def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32,
+  v: Result<&2, &2, String, Maybe<&2, U32>>) -> IO(Shown):
+  match u v:
+    case Done{+uid} Done{+uidv}:
       do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_get(folder, uid, max))
-        return get_out(r, folder, uid, max)
-    case Fail{m}:
+        r : Run() <- imap_run(Ops.plan_get_checked(folder, uid, max, uidv))
+        return get_out(checked_read(r, uidv), folder, uid, max)
+    case Fail{m} _:
+      pure_shown(Err{m})
+    case _ Fail{m}:
       pure_shown(Err{m})
 
 # Explicit selected reads leave the legacy whole-message rendering unchanged.
@@ -1995,7 +2033,8 @@ def part_get(u: Result<&2, &2, String, U32>, folder: String, uidv: U32,
 def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String) -> IO(Shown):
   match whole:
     case True{}:
-      get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args), max)
+      get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args), max,
+        read_uidv(J.get(args, "uidvalidity")))
     case False{}:
       part_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
         wanted, max)
@@ -5763,7 +5802,8 @@ def downloads() -> IO(Result<&2, &2, String, Downloads>):
 # its attachments (from 0, in mail_get's order), the file name to save it as
 # ("" for the attachment's own), and whether only to show the file.
 type Download is Data:
-  Download{to: Downloads, folder: String, uid: U32, index: U32, filename: String, dry: Bool}
+  Download{to: Downloads, folder: String, uid: U32, index: U32, filename: String,
+    dry: Bool, uidv: Maybe<&2, U32>}
 
 def index_arg(m: Maybe<&2, U32>) -> Result<&2, &2, String, U32>:
   match m:
@@ -5780,7 +5820,9 @@ def download_request(
     d : Downloads <- s
     uid : U32 <- single_uid(uids_arg(args), "mail_get_attachment")
     index : U32 <- index_arg(J.as_u32(J.get(args, "index")))
-    return Download{d, folder_arg(args), uid, index, str_arg(args, "filename", ""), dry_arg(args)}
+    uidv : Maybe<&2, U32> <- read_uidv(J.get(args, "uidvalidity"))
+    return Download{d, folder_arg(args), uid, index, str_arg(args, "filename", ""), dry_arg(args),
+      uidv}
 
 def whole_body.if(cut: Bool, body: String) -> Result<&2, &2, String, String>:
   match cut:
@@ -5886,10 +5928,11 @@ def download.put(
       preview_or_run(dry, download.file(d, a), download.run(d, a, folder, uid))
 
 def download.fetch(q: Download) -> IO(Out):
-  Download{d, +folder, +uid, index, filename, dry} = q
+  Download{d, +folder, +uid, index, filename, dry, +uidv} = q
   do IO<Out>:
-    r : Run() <- imap_run(Ops.plan_get(folder, uid, max_attachment()))
-    download.put(file_to_save(r, uid, folder, index, filename), d, folder, uid, dry)
+    r : Run() <- imap_run(Ops.plan_get_checked(folder, uid, max_attachment(), uidv))
+    download.put(file_to_save(checked_read(r, uidv), uid, folder, index, filename),
+      d, folder, uid, dry)
 
 def download(r: Result<&2, &2, String, Download>) -> IO(Out):
   match r:

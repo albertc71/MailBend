@@ -98,6 +98,19 @@ def Laws.search_continuation_pins_identity(mbox, keys, uidv, before):
 def Laws.get_writes_nothing(mbox, uid, max):
   {==}
 
+def Laws.get_checked_writes_nothing(mbox, uid, max, uidv):
+  match uidv:
+    case None{}:
+      {==}
+    case Some{v}:
+      {==}
+
+def Laws.get_checked_pins_identity(mbox, uid, max, uidv):
+  {==}
+
+def Laws.get_checked_without_identity_unchanged(mbox, uid, max):
+  {==}
+
 def Laws.headers_write_nothing(mbox, uids):
   {==}
 

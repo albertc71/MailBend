@@ -341,6 +341,7 @@ def run_all(work):
     smtp_outcomes(work)
     implicit_smtp(work)
     downloads(work)
+    whole_read_identity(work)
     threads(work)
     flags_first_reads(work)
     dry_runs(work)
@@ -2775,6 +2776,76 @@ def downloads(work):
     finally:
         srv.stop()
     killed_download(root)
+
+
+def whole_read_identity(work):
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "Subject: Identity fixture\r\nContent-Type: application/octet-stream\r\n"
+        "Content-Disposition: attachment; filename=identity.bin\r\n"
+        "Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n")
+    uidv = fixture["mailboxes"]["INBOX"]["uidvalidity"]
+    target = pathlib.Path(work) / "identity-downloads"
+    target.mkdir()
+    expected_error = ("the folder changed, or these UIDs came from another folder: "
+                      "pass the folder they were read from")
+    srv = Server(work, fixture=fixture)
+    try:
+        # Matching identity and omitted identity have the same public result.
+        c, original = tool(srv, "mail_get", {"uid": 1})
+        code, pinned = tool(srv, "mail_get", {"uid": 1, "uidvalidity": uidv})
+        check("whole read: matching UIDVALIDITY preserves result", c == code == 0
+              and original == pinned, pinned)
+        baseline_args = {"uid": 1, "index": 0, "dry_run": True}
+        c, original = tool(srv, "mail_get_attachment", baseline_args,
+                           MAILBEND_DOWNLOAD_DIR=str(target))
+        code, pinned = tool(srv, "mail_get_attachment", dict(baseline_args, uidvalidity=uidv),
+                            MAILBEND_DOWNLOAD_DIR=str(target))
+        check("whole download: matching UIDVALIDITY preserves preview", c == code == 0
+              and original == pinned and not list(target.iterdir()), pinned)
+        for name, args, env in [
+            ("mail_get", {"uid": 1}, {}),
+            ("mail_get", {"uid": 1, "projection": "metadata"}, {}),
+            ("mail_get_attachment", {"uid": 1, "index": 0},
+             {"MAILBEND_DOWNLOAD_DIR": str(target)}),
+            ("mail_get_attachment", baseline_args,
+             {"MAILBEND_DOWNLOAD_DIR": str(target)})]:
+            before = len(srv.log_records())
+            code, result = tool(srv, name, dict(args, uidvalidity=uidv + 1), **env)
+            commands = [r["line"] for r in srv.log_records()[before:] if r["proto"] == "imap"]
+            check(name + ": stale whole-message identity stops before FETCH", code != 0
+                  and result == {"error": expected_error}
+                  and any(" EXAMINE " in line for line in commands)
+                  and not any(" FETCH " in line for line in commands)
+                  and not list(target.iterdir()), (result, commands))
+        # A valid identity from a different folder is rejected too.
+        before = len(srv.log_records())
+        code, result = tool(srv, "mail_get", {"uid": 1, "uidvalidity":
+                            fixture["mailboxes"]["Archive"]["uidvalidity"]})
+        commands = [r["line"] for r in srv.log_records()[before:] if r["proto"] == "imap"]
+        check("whole read: another folder's identity returns no content", code != 0
+              and result == {"error": expected_error}
+              and not any(" FETCH " in line for line in commands), result)
+        for invalid in (0, -1, 4294967296, 18446744073709551616, None, True, "1700000001"):
+            for name, args, env in [
+                ("mail_get", {"uid": 1}, {}),
+                ("mail_get_attachment", {"uid": 1, "index": 0},
+                 {"MAILBEND_DOWNLOAD_DIR": str(target)})]:
+                before = len(srv.log_records())
+                code, result = tool(srv, name, dict(args, uidvalidity=invalid), **env)
+                commands = [r["line"] for r in srv.log_records()[before:] if r["proto"] == "imap"]
+                check(name + ": invalid supplied identity is never omission: " + repr(invalid),
+                      code != 0 and "uidvalidity" in result.get("error", "")
+                      and not any(" FETCH " in line for line in commands)
+                      and not list(target.iterdir()), (result, commands))
+        code, result = tool(srv, "mail_get_attachment", {"uid": 1, "index": 0,
+                            "uidvalidity": uidv}, MAILBEND_DOWNLOAD_DIR=str(target))
+        check("whole download: matching identity saves complete attachment", code == 0
+              and (target / "identity.bin").read_bytes() == b"hello", result)
+        check("whole read: identity checks never change message flags",
+              not flags(srv.st(), "INBOX", 1))
+    finally:
+        srv.stop()
 
 
 def get_attachment(srv, index, uid=FILES_UID, **env):
