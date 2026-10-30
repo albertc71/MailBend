@@ -42,6 +42,8 @@ FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
 TOOL_COUNT = 22
 READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread"]
+THREAD_MOVED = ("a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name "
+                "other messages: read the thread again")
 
 # Validate every CLI result in the existing scenario matrix against the source
 # of the advertised contract, including Jev and interrupted mutation cases.
@@ -2932,7 +2934,7 @@ def thread_classify_identity(work):
                 opens = [i for i, line in enumerate(commands) if " EXAMINE " in line]
                 after = commands[opens[at - 1] + 1:] if len(opens) >= at else ["missing EXAMINE"]
                 check("thread identity: reset at EXAMINE " + str(at) + " stops before UID work", c != 0
-                      and set(r) == {"error"} and len(opens) == at
+                      and r == {"error": THREAD_MOVED} and len(opens) == at
                       and not any(" UID " in line for line in after)
                       and len(ts.requests()) == requests, (r, commands))
                 flag_map = lambda state: {f: {m["uid"]: m["flags"] for m in mb["messages"]}

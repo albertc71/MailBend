@@ -2371,10 +2371,19 @@ def thread_plan(checked: Bool, cs: List<&2, I.Cmd>, opened: List<&2, Found>)
         ids : List<&2, Ops.ReadIdentity> <- thread_identities(opened)
         return Ops.plan_read_checked(cs, ids)
 
+# A later session's folder may change after the caller's identity matched,
+# so report what an unchecked thread read reports, not a wrong-folder error.
+def thread_checked.refusal(r: Run()) -> Run():
+  match r:
+    case Fail{+why}:
+      Fail{Bool.pick(String, String.eq(why, stale_msg()), thread_moved_msg(), why)}
+    case Done{lines}:
+      Done{lines}
+
 def thread_checked(r: Run(), check: Bool) -> Run():
   match check:
     case True{}:
-      checked_read.refusal(r)
+      thread_checked.refusal(r)
     case False{}:
       r
 
