@@ -333,6 +333,7 @@ def run_all(work):
         srv.stop()
     reply_quoting(work)
     reply_unicode_quoting(work)
+    latin1_quotes(work)
     fallback(work)
     generic_folders(work)
     folder_tools(work)
@@ -5020,6 +5021,80 @@ def selected_parts_errors(work):
         saved = target / "original.eml"
         check("sections: message/rfc822 remains a complete opaque attachment",
               c == 0 and saved.read_text() == attached, r)
+    finally:
+        srv.stop()
+
+
+def latin1_quotes(work):
+    """Mislabelled CP1252 punctuation stays on its original quoted line."""
+    fixture = copy.deepcopy(FIX)
+    messages = fixture["mailboxes"]["INBOX"]["messages"]
+    messages[0]["raw"] = (
+        "From: =?ISO-8859-1?Q?Alice=85?= <alice@example.com>\r\n"
+        "Reply-To: =?latin1?Q?Alice=85?= <alice@example.com>\r\n"
+        "Subject: =?ISO-8859-1?Q?Wait=85_=93hello=94?=\r\n"
+        "Date: Monday\r\nTo: " + FIX["user"] + "\r\n"
+        "Message-ID: <latin1-quote@example.com>\r\n"
+        "Content-Type: multipart/mixed; boundary=latin1\r\n\r\n"
+        "--latin1\r\nContent-Type: text/plain; charset=iso-8859-1\r\n"
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n"
+        "Wait=85 =93hello=94\r\nnext\r\n"
+        "--latin1\r\nContent-Type: application/octet-stream\r\n"
+        "Content-Disposition: attachment; filename*=latin1''report%85.txt\r\n"
+        "Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--latin1--\r\n")
+    messages[1]["raw"] = (
+        "From: sender@example.com\r\nSubject: UTF8 NEL\r\nDate: Monday\r\n"
+        "Message-ID: <utf8-nel@example.com>\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\na=C2=85b")
+    srv = Server(work, fixture=fixture)
+    try:
+        original = copy.deepcopy(srv.st()["mailboxes"]["INBOX"])
+        code, read = tool(srv, "mail_get", {"uid": 1})
+        check("Latin-1: body, encoded header and extended filename use CP1252",
+              code == 0 and read.get("subject") == "Wait… “hello”"
+              and read.get("text", "").splitlines() == ["Wait… “hello”", "next"]
+              and any(a.get("filename") == "report….txt" for a in read.get("attachments", [])),
+              read)
+        for draft in (False, True):
+            code, result = tool(srv, "mail_reply", {
+                "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "My answer", "as_draft": draft})
+            state = srv.st()
+            raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                         if m["uid"] == result.get("uid")), "") if draft else
+                   state.get("sent", [{}])[-1].get("data", ""))
+            message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+            text = message.get_body(preferencelist=("plain",))
+            lines = text.get_content().splitlines() if text else []
+            check(f"Latin-1 reply (draft={draft}): ellipsis never inserts a quoted line",
+                  code == 0 and lines == ["My answer", "",
+                      "On Monday, Alice… <alice@example.com> wrote:", "> Wait… “hello”", "> next"]
+                  and str(message["Subject"]) == "Re: Wait… “hello”"
+                  and message["To"].addresses[0].display_name == "Alice…"
+                  and message["To"].addresses[0].addr_spec == "alice@example.com"
+                  and (draft or state["sent"][-1]["rcpt_to"] == ["alice@example.com"]),
+                  (result, lines, str(message["To"])))
+        code, result = tool(srv, "mail_forward", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "to": "friend@example.com", "body": "FYI"})
+        raw = srv.st().get("sent", [{}])[-1].get("data", "")
+        message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+        text = message.get_body(preferencelist=("plain",))
+        lines = text.get_content().splitlines() if text else []
+        check("Latin-1 forward: copied punctuation remains visible on one header line",
+              code == 0 and str(message["Subject"]) == "Fwd: Wait… “hello”"
+              and lines == ["FYI", "", "---------- Forwarded message ----------",
+                  "From: Alice… <alice@example.com>", "Date: Monday",
+                  "Subject: Wait… “hello”", "To: " + FIX["user"]], (result, lines))
+        code, result = tool(srv, "mail_reply", {
+            "uid": messages[1]["uid"], "uidvalidity": INBOX_VALIDITY, "body": "My answer"})
+        raw = srv.st().get("sent", [{}])[-1].get("data", "")
+        message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+        text = message.get_body(preferencelist=("plain",))
+        lines = text.get_content().splitlines() if text else []
+        check("Latin-1 fix: genuine UTF-8 NEL still starts a quoted line",
+              code == 0 and lines[3:] == ["> a", "> b"], (result, lines))
+        check("Latin-1 quoting leaves original messages and flags unchanged",
+              srv.st()["mailboxes"]["INBOX"] == original)
     finally:
         srv.stop()
 
