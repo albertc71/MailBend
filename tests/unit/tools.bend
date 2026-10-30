@@ -1327,6 +1327,30 @@ def check_triage() -> IO(Unit):
     IO.print(show_out(T.with_fields_first(T.Err{"no"}, [J.kv("folder", J.str("INBOX"))])))
     IO.print(T.jev_off("mail_triage"))
 
+# A checked thread cannot authorize later UID reads from absent/zero generation
+# evidence. The optional legacy path still keeps its exact original plan.
+def read_identity_refused(r: Result<&2, &2, String, List<&2, Ops.ReadIdentity>>) -> Bool:
+  match r:
+    case Fail{m}:
+      True{}
+    case Done{ids}:
+      False{}
+
+def read_identity_legacy(r: Result<&2, &2, String, List<&2, I.Cmd>>) -> Bool:
+  match r:
+    case Fail{m}:
+      False{}
+    case Done{cs}:
+      String.eq(I.script(cs), "a1 EXAMINE \"Sent\"\r\n")
+
+def check_read_identity() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(Bool.show(
+      read_identity_refused(T.thread_identities([T.Found{"Sent", None{}, [7], []}])) &&
+      read_identity_refused(T.thread_identities([T.Found{"Sent", Some{0}, [7], []}]))))
+    IO.print(Bool.show(read_identity_legacy(T.thread_plan(False{}, [I.CExamine{"Sent"}],
+      [T.Found{"Sent", None{}, [7], []}]))))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     check_switches()
@@ -1351,6 +1375,7 @@ def main() -> IO(Unit):
     check_thread()
     check_classify()
     check_triage()
+    check_read_identity()
 
 #|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|{"has_more":false,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
@@ -1673,3 +1698,6 @@ def main() -> IO(Unit):
 #|partial {"folder":"INBOX","ok":false}
 #|err no
 #|mail_triage is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off
+
+#|True
+#|True

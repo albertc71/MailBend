@@ -2343,41 +2343,97 @@ def thread_fetch.put(found: Result<&2, &2, String, List<&2, Found>>, st: Threadi
     case Done{fs}:
       Done{thread_grown(st, fs)}
 
+# Checked threads carry each folder's own discovered generation into the
+# next session. Missing generation evidence must not permit a UID fetch.
+def thread_identities(fs: List<&2, Found>)
+  -> Result<&2, &2, String, List<&2, Ops.ReadIdentity>>:
+  match fs:
+    case Nil{}:
+      Done{[]}
+    case Found{f, None{}, us, ms} <> t:
+      Fail{"a folder did not report valid UIDVALIDITY while the thread was read: " ++
+        "read the thread again"}
+    case Found{f, Some{0}, us, ms} <> t:
+      Fail{"a folder did not report valid UIDVALIDITY while the thread was read: " ++
+        "read the thread again"}
+    case Found{f, Some{v}, us, ms} <> t:
+      do Result<&2, &2, String, List<&2, Ops.ReadIdentity>>:
+        rest : List<&2, Ops.ReadIdentity> <- thread_identities(t)
+        return Ops.ReadIdentity{f, v} <> rest
+
+def thread_plan(checked: Bool, cs: List<&2, I.Cmd>, opened: List<&2, Found>)
+  -> Result<&2, &2, String, List<&2, I.Cmd>>:
+  match checked:
+    case False{}:
+      Done{cs}
+    case True{}:
+      do Result<&2, &2, String, List<&2, I.Cmd>>:
+        ids : List<&2, Ops.ReadIdentity> <- thread_identities(opened)
+        return Ops.plan_read_checked(cs, ids)
+
+# A later session's folder may change after the caller's identity matched,
+# so report what an unchecked thread read reports, not a wrong-folder error.
+def thread_checked.refusal(r: Run()) -> Run():
+  match r:
+    case Fail{+why}:
+      Fail{Bool.pick(String, String.eq(why, stale_msg()), thread_moved_msg(), why)}
+    case Done{lines}:
+      Done{lines}
+
+def thread_checked(r: Run(), check: Bool) -> Run():
+  match check:
+    case True{}:
+      thread_checked.refusal(r)
+    case False{}:
+      r
+
+def thread_run(p: Result<&2, &2, String, List<&2, I.Cmd>>, +opened: List<&2, Found>, check: Bool)
+  -> IO(Result<&2, &2, String, List<&2, Found>>):
+  match p:
+    case Fail{m}:
+      IO.pure(Result<&2, &2, String, List<&2, Found>>, Fail{m})
+    case Done{+plan}:
+      do IO<Result<&2, &2, String, List<&2, Found>>>:
+        r : Run() <- imap_run(plan)
+        return session_found(thread_checked(r, check), plan, opened)
+
 # Fetches the summaries of the UIDs a round wants and keeps the linked
 # messages. When it wants none, the round ends there.
-def thread_fetch(wants: List<&2, Ops.FolderUids>, st: Threading) -> IO(Thread()):
+def thread_fetch(wants: List<&2, Ops.FolderUids>, st: Threading, +check: Bool) -> IO(Thread()):
   match wants st:
     case Nil{} _:
       IO.pure(Thread(), Done{thread_grown(st, [])})
     case h <> t Threading{ids, searched, nodes, +opened}:
-      +plan = Ops.plan_thread_headers(h <> t)
       do IO<Thread()>:
-        r : Run() <- imap_run(plan)
-        return thread_fetch.put(session_found(r, plan, opened),
-          Threading{ids, searched, nodes, opened})
+        found : Result<&2, &2, String, List<&2, Found>> <- thread_run(
+          thread_plan(check, Ops.plan_thread_headers(h <> t), opened), opened, check)
+        return thread_fetch.put(found, Threading{ids, searched, nodes, opened})
 
-def thread_round.put(found: Result<&2, &2, String, List<&2, Found>>, st: Threading) -> IO(Thread()):
+def thread_round.put(
+  found: Result<&2, &2, String, List<&2, Found>>, st: Threading, check: Bool
+) -> IO(Thread()):
   match found:
     case Fail{m}:
       IO.pure(Thread(), Fail{m})
     case Done{+fs}:
       Threading{ids, searched, +nodes, opened} = st
       thread_fetch(thread_wants(fs, nodes),
-        Threading{ids, searched, nodes, List.append(&2, Found, opened, fs)})
+        Threading{ids, searched, nodes, List.append(&2, Found, opened, fs)}, check)
 
 # One round: every folder searched for the IDs, then what is new fetched. A
 # read with no IDs left to search for does nothing.
-def thread_round(g: Thread(), folders: List<&2, String>) -> IO(Thread()):
+def thread_round(g: Thread(), folders: List<&2, String>, +checked: Bool) -> IO(Thread()):
   match g:
     case Fail{m}:
       IO.pure(Thread(), Fail{m})
     case Done{Threading{Nil{}, searched, nodes, opened}}:
       IO.pure(Thread(), Done{Threading{[], searched, nodes, opened}})
     case Done{Threading{+ids, searched, nodes, +opened}}:
-      +plan = Ops.plan_thread_search(folders, T.search_keys(ids))
       do IO<Thread()>:
-        r : Run() <- imap_run(plan)
-        thread_round.put(session_found(r, plan, opened), Threading{ids, searched, nodes, opened})
+        found : Result<&2, &2, String, List<&2, Found>> <- thread_run(
+          thread_plan(checked, Ops.plan_thread_search(folders, T.search_keys(ids)), opened), opened,
+          checked)
+        thread_round.put(found, Threading{ids, searched, nodes, opened}, checked)
 
 # A message's parent as JSON: its Message-ID, or null for none.
 def parent_json(id: String) -> J.Json:
@@ -2455,7 +2511,7 @@ def thread_folders.put(fs: List<&2, String>, sent: Maybe<&2, String>) -> List<&2
 def thread_folders(mbox: String, sent: Maybe<&2, String>) -> List<&2, String>:
   thread_folders.put(folder_added([mbox], "INBOX"), sent)
 
-def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32) -> IO(Shown):
+def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32, +checked: Bool) -> IO(Shown):
   match f:
     case Fail{m}:
       pure_shown(Err{m})
@@ -2463,18 +2519,18 @@ def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32) -> IO(Shown):
       Folders{all, drafts, trash, sent, junk, archive} = fs
       +folders = thread_folders(mbox, sent)
       do IO<Shown>:
-        one : Thread() <- thread_round(Done{st}, folders)
-        two : Thread() <- thread_round(one, folders)
+        one : Thread() <- thread_round(Done{st}, folders, checked)
+        two : Thread() <- thread_round(one, folders, checked)
         return thread_out(two, fs, folders, mbox, uid)
 
-def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32) -> IO(Shown):
+def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32, checked: Bool) -> IO(Shown):
   match r:
     case Fail{m}:
       pure_shown(Err{m})
     case Done{lines}:
       do IO<Shown>:
         f : Fs() <- folders_io(lines)
-        thread_rounds(f, st, mbox, uid)
+        thread_rounds(f, st, mbox, uid, checked)
 
 # A read that starts at the message `start`, which its session found in
 # `mbox`: the IDs it names are searched for first.
@@ -2482,7 +2538,7 @@ def first_threading(+start: T.Node, mbox: String, uidv: Maybe<&2, U32>) -> Threa
   Threading{T.next_ids([start], []), [], [start], [Found{mbox, uidv, [], []}]}
 
 def thread_start.put(
-  ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32
+  ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32, checked: Bool
 ) -> IO(Shown):
   match ms:
     case Nil{}:
@@ -2490,27 +2546,31 @@ def thread_start.put(
     case m <> t:
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_probe())
-        thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid)
+        thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid, checked)
 
-def thread_start(r: Run(), mbox: String, +uid: U32) -> IO(Shown):
+def thread_start(r: Run(), mbox: String, +uid: U32, checked: Bool) -> IO(Shown):
   match r:
     case Fail{m}:
       pure_shown(Err{m})
     case Done{+lines}:
       thread_start.put(with_uid(I.fetched(lines), uid, False{}), I.ok_code(lines, "UIDVALIDITY"),
-        mbox, uid)
+        mbox, uid, checked)
 
-def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String) -> IO(Shown):
-  match u:
-    case Done{+uid}:
+def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String,
+  v: Result<&2, &2, String, Maybe<&2, U32>>) -> IO(Shown):
+  match u v:
+    case Done{+uid} Done{+uidv}:
       do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_headers(mbox, [uid]))
-        thread_start(r, mbox, uid)
-    case Fail{m}:
+        r : Run() <- imap_run(Ops.plan_headers_checked(mbox, [uid], uidv))
+        thread_start(checked_read(r, uidv), mbox, uid, Maybe.is_some(&2, U32, uidv))
+    case Fail{m} _:
+      pure_shown(Err{m})
+    case _ Fail{m}:
       pure_shown(Err{m})
 
 def t_get_thread(+args: J.Json) -> IO(Shown):
-  thread_uid(single_uid(uids_arg(args), "mail_get_thread"), folder_arg(args))
+  thread_uid(single_uid(uids_arg(args), "mail_get_thread"), folder_arg(args),
+    read_uidv(J.get(args, "uidvalidity")))
 
 # Asking Jev
 # ==========
@@ -6011,7 +6071,8 @@ def option_limit() -> U32:
 # The arguments of a call: the folder, its UIDs (each once, ascending) and
 # the caller's candidate folder names.
 type Classify is Data:
-  Classify{folder: String, uids: List<&2, U32>, candidates: List<&2, String>}
+  Classify{folder: String, uids: List<&2, U32>, candidates: List<&2, String>,
+    uidv: Maybe<&2, U32>}
 
 def options_problem(+n: Nat) -> String:
   Bool.pick(String, Nat.is_gt(n, U32.to_nat(option_limit())),
@@ -6041,7 +6102,8 @@ def classify_request(+args: J.Json) -> Result<&2, &2, String, Classify>:
   do Result<&2, &2, String, Classify>:
     uids : List<&2, U32> <- jev_uids("mail_classify", uids_arg(args))
     cands : List<&2, String> <- classify_candidates(strs_arg(args, "candidates"))
-    return Classify{folder_arg(args), uids, cands}
+    uidv : Maybe<&2, U32> <- read_uidv(J.get(args, "uidvalidity"))
+    return Classify{folder_arg(args), uids, cands, uidv}
 
 # The folders a message can be filed in: those that can be selected and
 # are none MailBend relies on, nor inside one (as for mail_label).
@@ -6767,10 +6829,11 @@ def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content, images: J
   match r:
     case Fail{m}:
       pure_out(Err{m})
-    case Done{Classify{+folder, +uids, cands}}:
+    case Done{Classify{+folder, +uids, cands, +uidv}}:
       do IO<Out>:
-        run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), jev_max()))
-        classify_found(run, folder, uids, cands, c, images)
+        run : Run() <- imap_run(
+          Ops.plan_classify_checked(folder, uids, Jev.is_body(c), jev_max(), uidv))
+        classify_found(checked_read(run, uidv), folder, uids, cands, c, images)
 
 # mail_classify changes nothing: one session examines the folder and
 # fetches the messages' facts with BODY.PEEK, and Jev's answers are

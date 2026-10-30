@@ -312,6 +312,62 @@ def plan_get_checked(mbox: String, uid: U32, max: U32, uidv: Maybe<&2, U32>)
       [I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
         I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
 
+# Identities discovered for read-only multi-folder sessions. A generation
+# belongs only to its own folder, never to every folder in a thread.
+type ReadIdentity is Data:
+  ReadIdentity{folder: String, uidv: U32}
+
+def read_identity.if(found: Bool, v: U32, rest: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  match found:
+    case True{}:
+      Some{v}
+    case False{}:
+      rest
+
+def read_identity(ids: List<&2, ReadIdentity>, +folder: String) -> Maybe<&2, U32>:
+  match ids:
+    case Nil{}:
+      None{}
+    case ReadIdentity{f, v} <> t:
+      read_identity.if(I.same_name(f, folder), v, read_identity(t, folder))
+
+def read_expect(v: Maybe<&2, U32>) -> List<&2, I.Cmd>:
+  match v:
+    case None{}:
+      []
+    case Some{n}:
+      [I.CExpect{I.uidv_line(n)}]
+
+# Insert each known folder's expectation immediately after its EXAMINE.
+# With no identities this leaves every command unchanged.
+def plan_read_checked(cs: List<&2, I.Cmd>, +ids: List<&2, ReadIdentity>) -> List<&2, I.Cmd>:
+  match cs:
+    case Nil{}:
+      []
+    case I.CExamine{+f} <> t:
+      I.CExamine{f} <> List.append(&2, I.Cmd, read_expect(read_identity(ids, f)),
+        plan_read_checked(t, ids))
+    case c <> t:
+      c <> plan_read_checked(t, ids)
+
+def plan_headers_checked(mbox: String, uids: List<&2, U32>, uidv: Maybe<&2, U32>)
+  -> List<&2, I.Cmd>:
+  match uidv:
+    case None{}:
+      plan_headers(mbox, uids)
+    case Some{v}:
+      [I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
+        I.CFetch{uids, [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]}]
+
+def plan_classify_checked(mbox: String, uids: List<&2, U32>, body: Bool, max: U32,
+  uidv: Maybe<&2, U32>) -> List<&2, I.Cmd>:
+  match uidv:
+    case None{}:
+      plan_classify(mbox, uids, body, max)
+    case Some{v}:
+      [I.CCapability{}, I.CList{}, I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
+        I.CFetch{uids, classify_items(body, max)}]
+
 # Discover metadata without message content. The caller checks UIDVALIDITY;
 # the selected read then guards that generation before requesting content.
 def plan_parts(mbox: String, uid: U32) -> List<&2, I.Cmd>:

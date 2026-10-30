@@ -185,6 +185,154 @@ def Laws.classify_writes_nothing(mbox, uids, body, max):
     case False{}:
       {==}
 
+def Laws.checked_headers_pin_identity(mbox, uids, uidv):
+  {==}
+
+def Laws.checked_classify_pin_identity(mbox, uids, body, max, uidv):
+  {==}
+
+def Laws.checked_reads_without_identity_unchanged(mbox, uids, body, max):
+  ({==}, {==})
+
+def Laws.checked_read_expectation(uidv):
+  {==}
+
+def Laws.checked_read_session_order(mbox, rest, ids):
+  {==}
+
+def expect_preserves_writes(v: Maybe<&2, U32>, -rest: List<&2, I.Cmd>)
+  -> {I.any_writes(List.append(&2, I.Cmd, Ops.read_expect(v), rest)) ==
+      I.any_writes(rest) : Bool}:
+  match v:
+    case None{}:
+      {==}
+    case Some{n}:
+      {==}
+
+def Laws.checked_read_preserves_writes(cs, ids):
+  match cs:
+    case Nil{}:
+      {==}
+    case I.CCapability{} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CList{} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CListRoles{} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CLsub{} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CExamine{f} <> t:
+      Equal.trans(Bool,
+        I.any_writes(List.append(&2, I.Cmd, Ops.read_expect(Ops.read_identity(ids, f)),
+          Ops.plan_read_checked(t, ids))),
+        I.any_writes(Ops.plan_read_checked(t, ids)), I.any_writes(t),
+        expect_preserves_writes(Ops.read_identity(ids, f), Ops.plan_read_checked(t, ids)),
+        Laws.checked_read_preserves_writes(t, ids))
+    case I.CSelect{f} <> t:
+      {==}
+    case I.CSearch{keys} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CFetch{uids, items} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CStore{uids, add, flag} <> t:
+      {==}
+    case I.CCopy{uids, dst} <> t:
+      {==}
+    case I.CMove{uids, dst} <> t:
+      {==}
+    case I.CExpunge{uids} <> t:
+      {==}
+    case I.CCreate{f} <> t:
+      {==}
+    case I.CRename{a, b} <> t:
+      {==}
+    case I.CSubscribe{f} <> t:
+      {==}
+    case I.CUnsubscribe{f} <> t:
+      {==}
+    case I.CAppend{f, flags, msg} <> t:
+      {==}
+    case I.CExpect{text} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CExpectWord{word} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+
+def Laws.checked_read_without_identities_unchanged(cs):
+  match cs:
+    case Nil{}:
+      {==}
+    case I.CCapability{} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CCapability{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CList{} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CList{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CListRoles{} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CListRoles{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CLsub{} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CLsub{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CExamine{f} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExamine{f} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CSelect{f} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CSelect{f} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CSearch{keys} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CSearch{keys} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CFetch{uids, items} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CFetch{uids, items} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CStore{uids, add, flag} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CStore{uids, add, flag} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CCopy{uids, dst} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CCopy{uids, dst} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CMove{uids, dst} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CMove{uids, dst} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CExpunge{uids} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpunge{uids} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CCreate{f} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CCreate{f} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CRename{a, b} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CRename{a, b} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CSubscribe{f} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CSubscribe{f} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CUnsubscribe{f} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CUnsubscribe{f} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CAppend{f, flags, msg} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CAppend{f, flags, msg} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CExpect{text} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpect{text} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CExpectWord{word} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpectWord{word} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+
+def Laws.checked_headers_write_nothing(mbox, uids, uidv):
+  match uidv:
+    case None{}:
+      {==}
+    case Some{v}:
+      {==}
+
+def Laws.checked_classify_writes_nothing(mbox, uids, body, max, uidv):
+  match uidv:
+    case None{}:
+      Laws.classify_writes_nothing(mbox, uids, body, max)
+    case Some{v}:
+      {==}
+
 # Read rendering
 # --------------
 

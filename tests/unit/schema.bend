@@ -116,8 +116,8 @@ def main() -> IO(Unit):
 #|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string max_bytes:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_refresh | readOnlyHint,idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
-#|mail_get_thread | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer projection:string[full|text|html|metadata] max_response_bytes:integer
-#|mail_classify | readOnlyHint,openWorldHint | required uids | folder:string uids:array candidates:array
+#|mail_get_thread | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer projection:string[full|text|html|metadata] max_response_bytes:integer
+#|mail_classify | readOnlyHint,openWorldHint | required uids | folder:string uids:array uidvalidity:integer candidates:array
 #|mail_triage | openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
 #|mail_get_attachment | - | required uid | folder:string uid:integer uidvalidity:integer section:string index:integer filename:string dry_run:boolean
 #|mail_mark_read | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
@@ -134,5 +134,5 @@ def main() -> IO(Unit):
 #|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
-#|291486 characters
-#|hash 3720454713
+#|292123 characters
+#|hash 198542228
