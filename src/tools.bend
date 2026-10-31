@@ -4913,15 +4913,25 @@ def secs_of(p: Proc) -> U32:
     case _:
       0
 
-def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
+def rand_of(r: Result<&1, &1, U32 & String, U32>) -> Result<&2, &2, String, U32>:
   match r:
     case Done{n}:
-      n
+      Done{n}
     case Fail{e}:
-      0
+      Fail{"cannot compose message: random identifier generation failed"}
 
 def stamp_of(+secs: U32, a: U32, b: U32) -> Stamp:
   Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b)}
+
+def stamp_checked(
+  secs: U32,
+  a: Result<&1, &1, U32 & String, U32>,
+  b: Result<&1, &1, U32 & String, U32>
+) -> Result<&2, &2, String, Stamp>:
+  do Result<&2, &2, String, Stamp>:
+    x : U32 <- rand_of(a)
+    y : U32 <- rand_of(b)
+    return stamp_of(secs, x, y)
 
 # The time in seconds since the epoch; 0 when it cannot be read.
 def now_seconds() -> IO(U32):
@@ -4930,12 +4940,12 @@ def now_seconds() -> IO(U32):
       Process.run("/bin/date", ["+%s"], "", 64, 5000)
     return secs_of(proc_of(r))
 
-def stamp() -> IO(Stamp):
-  do IO<Stamp>:
+def stamp() -> IO(Result<&2, &2, String, Stamp>):
+  do IO<Result<&2, &2, String, Stamp>>:
     secs : U32 <- now_seconds()
     a : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
     b : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
-    return stamp_of(secs, rand_of(a), rand_of(b))
+    return stamp_checked(secs, a, b)
 
 def domain_of(addr: String) -> String:
   Maybe.default(&2, String, List.last(&2, String, String.split(M.addr_spec(addr), '@')),
@@ -5472,14 +5482,21 @@ def check_want(+w: Want, from: String) -> String:
       Bool.pick(String, List.is_empty(&2, String, rcpts) && Bool.not(is_draft(w)),
         "at least one recipient (to, cc or bcc) is needed", "")))
 
+def deliver_stamped(w: Want, from: String, st: Result<&2, &2, String, Stamp>) -> IO(Out):
+  match st:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{s}:
+      deliver(w, from, s)
+
 def with_atts.if(problem: String, w: Want, from: String) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       do IO<Out>:
-        st : Stamp <- stamp()
-        deliver(w, from, st)
+        st : Result<&2, &2, String, Stamp> <- stamp()
+        deliver_stamped(w, from, st)
 
 def with_atts.want(+w: Want, +from: String) -> IO(Out):
   with_atts.if(check_want(w, from), w, from)

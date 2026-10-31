@@ -61,8 +61,17 @@ def hex_ups(n: Nat) -> String:
 def bracket(s: String) -> String:
   "[" ++ s ++ "]"
 
+def conformance_cases() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("padded QP soft break [" ++ C.qp_decode("foo= \t\r\nbar", False{}) ++ "]")
+    IO.print("final QP soft break [" ++ C.qp_decode("last=", False{}) ++ "] [" ++ C.qp_decode("last= \t", False{}) ++ "]")
+    IO.print("QP transport padding [" ++ vis_all(C.qp_decode("one \t\r\ntwo\t\nthree  ", False{})) ++ "]")
+    IO.print("QP encoded whitespace [" ++ vis_all(C.qp_decode("one=20\r\ntwo=09", False{})) ++ "]")
+    IO.print("Q header unchanged [" ++ C.qp_decode("last=", True{}) ++ "] [" ++ C.qp_decode("a_b", True{}) ++ "]")
+
 def main() -> IO(Unit):
   do IO<Unit>:
+    conformance_cases()
     IO.print(C.b64_encode(C.utf8_encode("héllo wörld 😀"), False{}))
     IO.print(C.utf8_decode(C.b64_decode("aMOpbGxvIHfDtnJsZCDwn5iA")))
     IO.print(C.b64_encode("Ma", False{}) ++ " " ++ C.b64_encode("M", False{}) ++ " " ++ C.b64_encode("Man", False{}))
@@ -144,6 +153,11 @@ def main() -> IO(Unit):
     # Month abbreviations, and "" outside 1..12.
     IO.print(bracket(C.month_name(0)) ++ " " ++ C.month_name(1) ++ " " ++ C.month_name(6) ++ " " ++ C.month_name(12) ++ " " ++ bracket(C.month_name(13)))
 
+#|padded QP soft break [foobar]
+#|final QP soft break [last] [last]
+#|QP transport padding [one\r\ntwo\nthree]
+#|QP encoded whitespace [one \r\ntwo	]
+#|Q header unchanged [last=] [a b]
 #|aMOpbGxvIHfDtnJsZCDwn5iA
 #|héllo wörld 😀
 #|TWE= TQ== TWFu
@@ -196,7 +210,7 @@ def main() -> IO(Unit):
 #|ab\r\nc\r\n
 #|wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\r\nwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\r\nw\r\n
 #| 0 9 10 15 10 15 16 16 16 16 16 16 0123456789ABCDEF
-#|a=G1b=4 x= =1G
+#|a=G1b=4 x =1G
 #|195 169 255 0
 #|softbreakend\r\nline_x a b
 #|[] [_  ]
