@@ -39,6 +39,7 @@ sh scripts/install-lean.sh                        # once: the Lean that bend --v
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
+python3 tests/formal/check-response-image-budgets.py # budget proofs reject broken admission/cuts
 sh tests/run-unit.sh
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules

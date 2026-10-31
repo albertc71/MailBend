@@ -127,16 +127,20 @@ def prefix.put(p: Prefix, enough: Bool, c: Char, left: U32) -> Prefix:
     case False{}:
       Prefix{"", left}
 
-def prefix(s: String, +left: U32) -> Prefix:
-  match s left:
-    case _ 0:
-      Prefix{"", 0}
-    case SNil{} _:
+def prefix.go(s: String, +left: U32, run: Bool) -> Prefix:
+  match s run:
+    case _ False{}:
       Prefix{"", left}
-    case SCon{+c, t} _:
+    case SNil{} True{}:
+      Prefix{"", left}
+    case SCon{+c, t} True{}:
       +n = C.utf8_len(J.esc_char(c))
       +enough = U32.is_ge(left, n)
-      prefix.put(prefix(t, Bool.pick(U32, enough, (left - n : U32), 0)), enough, c, left)
+      +next = Bool.pick(U32, enough, (left - n : U32), 0)
+      prefix.put(prefix.go(t, next, enough), enough, c, left)
+
+def prefix(s: String, left: U32) -> Prefix:
+  prefix.go(s, left, True{})
 
 type Field is Data:
   Field{kv: J.Json, left: U32, cut: Bool}

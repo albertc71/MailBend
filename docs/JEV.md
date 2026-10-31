@@ -60,6 +60,11 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   A truncated walk, missing image terminator, or PNG with trailing bytes
   is skipped as `unreadable`, never sent unstripped. The request budget
   counts the stripped bytes. The original file and fetch caps still apply.
+  The pure admission fold's count and byte caps are kernel-proven. The byte
+  law requires each accepted string's length to fit its U32 counter exactly.
+  Bounded native fetches and complete request assembly remain tested IO
+  boundaries. Reference binding is proven to use only a token absent from
+  the request corpus, then add that token to the corpus.
   These checks validate framing, not compressed pixels. TypeSafe still
   handles decoding failures.
   The request carries `TypeSafe-Danger-Zone-Images: true` only when an image is
