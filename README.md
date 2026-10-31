@@ -268,6 +268,72 @@ modes. Ports never select a mode, and failures never fall back to another mode
 or plaintext. Empty or unknown mode values are configuration errors.
 OAuth is unsupported.
 
+### Print a provider configuration
+
+Run setup without credentials to print an environment block, an MCP `env`
+JSON block, provider prerequisites, and source links:
+
+```sh
+mailbend setup --provider gmail --email reader@example.com
+```
+
+Replace the example address with your account's primary login address.
+`setup` does not use configured account settings, connect to a server, prompt for
+a password, write a file, or apply settings. Both blocks enable
+`MAILBEND_READ_ONLY=1`. Keep that restriction until you separately decide
+which mail changes to allow.
+
+The output uses `MAILBEND_PASSWORD_FILE`. Replace its absolute placeholder
+path in both blocks. MCP clients do not expand `$HOME` or `~` in JSON.
+The printed Bash instructions use a hidden prompt, `umask 077`, and
+no-clobber output. Run them yourself only after reviewing the path. They
+refuse to replace an existing file. The containing directories must exist
+and must not be symlinks. Remove any other password source from the
+environment before using the configuration. Never paste a password into
+the setup command, a chat, or configuration JSON.
+
+The reviewed table is static. It performs no domain lookup or provider
+autodiscovery. Each output identifies its support tier and review date.
+
+| Provider name | Scope and limitations |
+| --- | --- |
+| `icloud` | Existing default profile. Full primary address for both protocols. |
+| `gmail` | App password with eligible 2-Step Verification. Organization or protected accounts may not offer app passwords. |
+| `yahoo` | Full account address and a third-party app password. |
+| `aol` | AOL endpoints from Thunderbird ISPDB. Not the Verizon.net SMTP profile. Provider help was unreadable during review. |
+| `fastmail` | Primary username and an app password with mail access. Basic plans exclude IMAP and SMTP. |
+| `zoho` | Only the documented `.com` personal-account endpoint set. Compare it with your account's Server Configuration Details. Paid organizations and other datacenters differ. |
+| `gmx` | GMX.com endpoint set. Enable IMAP and use an application-specific password. |
+| `mailbox.org` | Main address. Use an email application password with two-factor authentication. |
+| `posteo` | Endpoints from Thunderbird ISPDB. Provider prerequisites could not be rechecked. Review app-password and additional account-protection requirements locally. |
+| `web.de` | Manual review only. ISPDB specifies a local-part login, but MailBend uses one full address for login and sending. No configuration is printed. |
+| `proton-bridge` | Manual review only. Local ports, connection mode, and trust in Bridge's self-signed certificate need an account-owner decision. No configuration is printed. |
+
+Unknown providers and OAuth-only names such as `outlook`, `hotmail`, and
+`office365` fail without guessed settings. See the
+[password-only authentication decision](https://github.com/albertc71/MailBend/issues/28).
+Do not weaken account protection or TLS verification to make a preset work.
+No provider was live-tested for this setup feature.
+
+The printed Sent-copy setting is `1` for the existing iCloud profile and
+`0` otherwise. Off avoids an extra IMAP APPEND. It is not a promise that
+the provider retains sent mail. Gmail and Zoho document automatic Sent
+filing. Review other providers' behavior before you enable sending.
+
+After applying settings yourself, run `mailbend setup --check`. This
+explicitly connects to both configured servers, as `diagnose --imap --smtp`
+does. It never uses or applies a preset. Its JSON marks the entire output
+`local_only` and nests the redacted diagnostics separately. For unresolved
+roles, it lists existing candidate overrides without selecting or applying
+one. Advertised roles take precedence over exact conventional names.
+Unselectable mailboxes and the review folder are excluded. Failed discovery
+or invalid overrides produce no suggestions. Empty candidate lists mean
+that no safe match was found. Inspect `mail_probe` locally rather than
+guessing or creating a folder. The fixed `INBOX` name has no override.
+
+**Do not share `setup --check` output.** It can contain private folder names.
+Use `mailbend diagnose --imap --smtp` for shareable JSON instead.
+
 | Profile | Transport | Validation |
 | --- | --- | --- |
 | iCloud Mail, existing default profile | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |

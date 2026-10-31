@@ -3,7 +3,7 @@
 # helper, the attachment reader and the TypeSafe helper next to it. Falls back to
 # `bend main.bend` (slower start) when the core was not compiled.
 # MCP uses the stdio helper to adapt inherited sockets before starting the core.
-# Usage: scripts/mailbend mcp | tools | call <tool> [json]
+# Usage: scripts/mailbend mcp | tools | call <tool> [json] | diagnose | setup | version
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${MAILBEND_TLS_HELPER:=$root/bin/mailbend-tls}"
@@ -11,9 +11,14 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${MAILBEND_TYPESAFE_HELPER:=$root/bin/mailbend-typesafe}"
 export MAILBEND_TLS_HELPER MAILBEND_ATTACH_HELPER MAILBEND_TYPESAFE_HELPER
 export BEND_NO_TELEMETRY=1
-if [ -n "${MAILBEND_CA_FILE:-}" ]; then
-  echo "mailbend: warning: MAILBEND_CA_FILE replaces the system trust store; it is meant for local tests" >&2
-fi
+case "${1:-}:${2:-}" in
+  setup:--provider|setup:--email|setup:--help) ;;
+  *)
+    if [ -n "${MAILBEND_CA_FILE:-}" ]; then
+      echo "mailbend: warning: MAILBEND_CA_FILE replaces the system trust store; it is meant for local tests" >&2
+    fi
+    ;;
+esac
 if [ "$#" -eq 1 ] && [ "$1" = mcp ]; then
   if [ ! -x "$root/bin/mailbend-stdio" ]; then
     echo "mailbend: stdio helper is missing; run scripts/install.sh" >&2

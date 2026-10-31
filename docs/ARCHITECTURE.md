@@ -266,7 +266,9 @@ notes; a TypeSafe failure leaves the read working, marked `unchecked`.
 ## Layers
 
 ```text
-main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
+main.bend            CLI (call/tools/mcp/diagnose/setup/version) and the MCP stdio server
+src/providers.bend   reviewed print-only setup presets, prerequisites, and configuration rendering
+src/diagnostics.bend redacted checks and separate local-only setup folder suggestions
 src/tools.bend       the tools: arguments, sessions, results
 src/jev.bend         Jev (TypeSafe's model): message facts, questions, requests, typed
                      answers, the triage verdict, the filing table and the gates
