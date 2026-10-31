@@ -227,6 +227,7 @@ class State:
         self.seen = {}
         self.examine_count = 0
         self.examine_changes = fixture.get("examine_changes", [])
+        self.uidnext_response = fixture.get("uidnext_response", {})
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -978,7 +979,11 @@ class IMAPSession:
         self.send('* 0 RECENT\r\n')
         ok = '* ok [uidvalidity' if self.state.lowercase_codes else '* OK [UIDVALIDITY'
         self.send(f'{ok} {uidvalidity}] UIDs valid\r\n')
-        self.send(f'* OK [UIDNEXT {uidnext}] Predicted next UID\r\n')
+        uidnext = self.state.uidnext_response.get(name, uidnext)
+        if isinstance(uidnext, dict):
+            self.send(uidnext['line'] + '\r\n')
+        elif uidnext is not None:
+            self.send(f'* OK [UIDNEXT {uidnext}] Predicted next UID\r\n')
         if self.state.permanent_flags is not None:
             self.send(f'* OK [PERMANENTFLAGS ({" ".join(self.state.permanent_flags)})] Permanent flags\r\n')
         mode, verb_name = ('READ-ONLY', 'EXAMINE') if readonly else ('READ-WRITE', 'SELECT')

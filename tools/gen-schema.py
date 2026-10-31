@@ -533,12 +533,18 @@ TOOLS = [
          ["uid"]),
     tool("mail_get_new",
          "List messages that arrived after a checkpoint (UIDVALIDITY + UID), "
-         "oldest first. Pass back next_since_uid and uidvalidity on the next "
-         "call. Does not use or change read/unread state." + JEV_NOTES,
+         "oldest first. With since_uid 0 or no checkpoint, lists the oldest mail. "
+         "Use start=\"now\" to take a checkpoint at the current end without "
+         "returning messages. Pass back next_since_uid and uidvalidity on the "
+         "next call. Does not use or change read/unread state." + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
+          "start": param("string", "Set to now to take a current-end checkpoint. "
+                         "Cannot be combined with since_uid. Fails if the server "
+                         "does not report valid UIDNEXT and UIDVALIDITY.", enum=["now"]),
           "since_uid": param(
-              "integer", "Last UID already processed. Default 0.", minimum=0),
+              "integer", "Last UID already processed. Default 0 lists the oldest mail first.",
+              minimum=0),
           "uidvalidity": param(
               "integer",
               "UIDVALIDITY from the previous call; required when since_uid is "

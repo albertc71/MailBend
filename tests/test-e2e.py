@@ -357,6 +357,7 @@ def run_all(work):
     selected_parts_errors(work)
 
     search_pagination(work)
+    get_new_start_now(work)
     refresh_known(work)
     import importlib.util
     spec = importlib.util.spec_from_file_location("response_projection_cases",
@@ -364,6 +365,63 @@ def run_all(work):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+
+
+def get_new_start_now(work):
+    uidv = FIX['mailboxes']['INBOX']['uidvalidity']
+    srv = Server(work)
+    try:
+        before = srv.st()['mailboxes']
+        c, checkpoint = tool(srv, 'mail_get_new', {'start': 'now'}, MAILBEND_READ_ONLY='1')
+        check('get_new start now: returns the current end without messages',
+              c == 0 and checkpoint == {'folder': 'INBOX', 'uidvalidity': uidv,
+                  'uidvalidity_changed': False, 'next_since_uid': 6,
+                  'has_more': False, 'messages': []}, checkpoint)
+        logged = srv.log_lines()
+        check('get_new start now: only EXAMINE, without SEARCH, FETCH, or writes',
+              sum(' EXAMINE ' in line for line in logged) == 1
+              and not any(any(command in line for command in
+                              MUTATING_COMMANDS + (' SELECT ', ' SEARCH ', ' FETCH '))
+                          for line in logged)
+              and before == srv.st()['mailboxes'], logged)
+        c, added = tool(srv, 'mail_save_draft', {'subject': 'Arrived after checkpoint',
+                       'body': 'New synthetic mail'}, MAILBEND_DRAFTS_FOLDER='INBOX')
+        check('get_new start now: fixture appends a message after the checkpoint',
+              c == 0 and 7 in msgs(srv.st(), 'INBOX'), added)
+        c, arrival = tool(srv, 'mail_get_new', {
+            'since_uid': checkpoint.get('next_since_uid', 0),
+            'uidvalidity': checkpoint.get('uidvalidity', 0)})
+        check('get_new start now: the checkpoint returns exactly the appended message',
+              c == 0 and [m['uid'] for m in arrival.get('messages', [])] == [7]
+              and arrival.get('next_since_uid') == 7, arrival)
+        n = len(srv.log_lines())
+        for args in ({'start': 'now', 'since_uid': 0},
+                     {'start': 'now', 'since_uid': 6, 'uidvalidity': uidv},
+                     {'start': ''}, {'start': 'later'}, {'start': 'NOW'},
+                     {'start': None}, {'start': 1}, {'start': True}):
+            c, r = tool(srv, 'mail_get_new', args)
+            check(f'get_new start now: invalid arguments fail before login {args!r}',
+                  c != 0 and 'start' in r.get('error', '')
+                  and ('since_uid' not in args or 'since_uid' in r.get('error', ''))
+                  and len(srv.log_lines()) == n, r)
+        c, empty = tool(srv, 'mail_get_new', {'folder': 'Archive', 'start': 'now'})
+        check('get_new start now: an empty folder starts at zero',
+              c == 0 and empty.get('next_since_uid') == 0
+              and empty.get('messages') == [] and not empty.get('has_more'), empty)
+    finally:
+        srv.stop()
+    for uidnext in (None, 'not-a-number', 0, 4294967296, '07',
+                    {'line': '* OK [UIDNEXT 7'}):
+        fixture = copy.deepcopy(FIX)
+        fixture['uidnext_response'] = {'INBOX': uidnext}
+        srv = Server(work, fixture=fixture)
+        try:
+            c, r = tool(srv, 'mail_get_new', {'start': 'now'})
+            check(f'get_new start now: invalid UIDNEXT {uidnext!r} cannot become a checkpoint',
+                  c != 0 and 'UIDNEXT' in r.get('error', '')
+                  and 'next_since_uid' not in r and 'messages' not in r, r)
+        finally:
+            srv.stop()
 
 
 def refresh_known(work):
