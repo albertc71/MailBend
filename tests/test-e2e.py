@@ -3476,6 +3476,7 @@ def jev(work):
     jev_image_refusals(work, key_file)
     jev_image_quota(work, key_file)
     jev_image_kinds(work, key_file)
+    jev_image_metadata(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3746,7 +3747,7 @@ def part_fetches(lines):
 
 def jev_image_quota(work, key_file):
     """A batch fetches at most 8 image parts, and none once its request has
-    room for no more images or bytes; those parts are reported without a fetch."""
+    room for no more images or bytes. Otherwise the byte budget is checked after stripping."""
     on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
           "MAILBEND_TYPESAFE_IMAGES": "1"}
     small = IMAGES.png(100, 100)
@@ -3760,7 +3761,7 @@ def jev_image_quota(work, key_file):
         ("the byte budget, with a realistic still", [("big1.png", "image/png", big),
                                                      ("big2.png", "image/png", big),
                                                      ("ok.png", "image/png", png_still())],
-         ["used", "skipped:over_budget", "used"], 2),
+         ["used", "skipped:over_budget", "used"], 3),
     )
     for title, parts, fates, fetches in cases:
         fixture = copy.deepcopy(FIX)
@@ -3775,7 +3776,7 @@ def jev_image_quota(work, key_file):
             fetched = part_fetches(srv.log_lines()[log_start:])
             sent = ts.requests()
             assets = sent[0]["body"].get("assets", {}) if sent else {}
-            check(f"images quota, {title}: parts past it are reported without a fetch",
+            check(f"images quota, {title}: admission and fetch counts match",
                   c == 0 and seen == fates and len(fetched) == fetches
                   and len(assets) == fates.count("used") and srv.st() == before,
                   (r.get("error"), seen, len(fetched), len(assets)))
@@ -3808,7 +3809,7 @@ def jev_image_kinds(work, key_file):
               c == 0 and len(over) > 1572864 and images == [
                   {"section": "2", "name": "big.png", "fate": "skipped", "reason": "file_size"},
                   {"section": "3", "name": "photo.jpg", "fate": "used", "format": "jpeg",
-                   "bytes": len(jpeg), "width": 280, "height": 280}]
+                   "bytes": len(jpeg), "width": 280, "height": 280, "metadata_removed_bytes": 0}]
               and len(part_fetches(srv.log_lines()[log_start:])) == 2 and "image_notice" in r
               and [a["format"] for a in assets.values()] == ["jpeg"]
               and [base64.b64decode(a["data_base64"]) for a in assets.values()] == [jpeg]
@@ -3816,6 +3817,52 @@ def jev_image_kinds(work, key_file):
     finally:
         ts.stop()
         srv.stop()
+
+
+def jev_image_metadata(work, key_file):
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    png, jpeg = png_still(), IMAGES.jpeg(280, 280)
+    private_png, private_jpeg = IMAGES.png_with_metadata(png), IMAGES.jpeg_with_metadata(jpeg)
+    late_comment = jpeg[:-2] + IMAGES.jpeg_segment(0xFE, b"private") + jpeg[-2:]
+    big = IMAGES.png(600, 580, seed=7)
+    padded = IMAGES.png_with_metadata(png, padding=300000)
+    cases = (
+        ("metadata and malformed images", [
+            ("private.png", "image/png", private_png),
+            ("private.jpg", "image/jpeg", private_jpeg),
+            ("broken.png", "image/png", private_png[:-1]),
+            ("late.jpg", "image/jpeg", late_comment)],
+         [png, jpeg], [len(private_png) - len(png), len(private_jpeg) - len(jpeg)],
+         ["used", "used", "skipped:unreadable", "skipped:unreadable"]),
+        ("budget after metadata removal", [
+            ("big.png", "image/png", big), ("padded.png", "image/png", padded),
+            ("over.png", "image/png", big)],
+         [big, png], [0, len(padded) - len(png)], ["used", "used", "skipped:over_budget"]),
+    )
+    for title, parts, expected, removed, fates in cases:
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"] = [images_message(1, parts)]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            before = srv.st()
+            c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+            notes = (r.get("messages") or [{}])[0].get("images") or []
+            seen = [n["fate"] + (":" + n["reason"] if "reason" in n else "") for n in notes]
+            used = [n for n in notes if n["fate"] == "used"]
+            requests = ts.requests()
+            assets = [a for q in requests for a in q["body"].get("assets", {}).values()]
+            wire = [base64.b64decode(a["data_base64"]) for a in assets]
+            check(f"images {title}: only stripped bytes reach TypeSafe",
+                  c == 0 and wire == expected and seen == fates
+                  and [n["bytes"] for n in used] == [len(data) for data in expected]
+                  and [n["metadata_removed_bytes"] for n in used] == removed
+                  and all(n["width"] >= 280 and n["height"] >= 280 for n in used)
+                  and len(requests) == 1 and srv.st() == before,
+                  (r.get("error"), seen, [(len(data), n) for data, n in zip(wire, used)]))
+        finally:
+            ts.stop()
+            srv.stop()
 
 
 def jev_image_batches(work, key_file):
@@ -3839,7 +3886,7 @@ def jev_image_batches(work, key_file):
             got = {m["uid"]: m for m in messages}
             expected = [
                 {"section": "2", "name": "scan.png", "fate": "used", "format": "png",
-                 "bytes": len(png_still()), "width": 280, "height": 280},
+                 "bytes": len(png_still()), "width": 280, "height": 280, "metadata_removed_bytes": 0},
                 {"section": "3", "name": "anim.gif", "fate": "skipped", "reason": "format"},
             ]
             label = "multiple requests" if split else "one request"
@@ -3956,7 +4003,8 @@ def jev_images(work, key_file):
                   c == 0 and r.get("image_notice") == notice and len(used) == 1 and len(skipped) == 1
                   and used[0].get("name") == "scan.png" and used[0].get("format") == "png"
                   and used[0].get("width") == 280 and used[0].get("height") == 280
-                  and used[0].get("bytes") == len(png_still()) and "ref" not in used[0]
+                  and used[0].get("bytes") == len(png_still())
+                  and used[0].get("metadata_removed_bytes") == 0 and "ref" not in used[0]
                   and skipped[0].get("name") == "anim.gif" and skipped[0].get("reason") == "format"
                   and "mbimg-" not in json.dumps(r), r)
             sent = ts.requests()

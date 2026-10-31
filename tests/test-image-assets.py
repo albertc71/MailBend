@@ -48,6 +48,10 @@ def main():
         ("header without assets", mod.images_problem(BASE, "true") is not None),
         ("assets with header", mod.images_problem(ASSETS, "true") is None),
         ("a referenced PNG that decodes", mod.assets_problem(ASSETS) is None),
+        ("a metadata PNG remains decodable", mod.assets_problem(with_asset(
+            "png", images.png_with_metadata(images.png(280, 280)))) is None),
+        ("a metadata JPEG remains decodable", mod.assets_problem(with_asset(
+            "jpeg", images.jpeg_with_metadata(images.jpeg(280, 280)))) is None),
         ("a referenced JPEG with a frame and a scan", mod.assets_problem(with_asset("jpeg", images.jpeg(280, 280))) is None),
         ("an asset never referenced", "not referenced" in (mod.assets_problem(
             with_asset("png", images.png(280, 280), referenced=False)) or "")),

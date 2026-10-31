@@ -6291,7 +6291,7 @@ def any_used(ns: List<&2, Image.Note>) -> Bool:
   match ns:
     case Nil{}:
       False{}
-    case Image.NoteUsed{section, name, format, bytes, px} <> t:
+    case Image.NoteUsed{section, name, format, bytes, px, removed} <> t:
       True{}
     case Image.NoteSkipped{section, name, reason} <> t:
       any_used(t)
@@ -6345,22 +6345,22 @@ def see_ahead(m: Maybe<&2, Image.Reason>, rest: List<&2, Part.Part>,
       SeeFetch{rest, acc, Image.quota_fetched(quota), p, format, max}
 
 def see_screen(pre: Image.Pre, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  +quota: Image.Quota, +p: Part.Part, name: String, encoding: String, size: U32) -> ImgSee:
+  +quota: Image.Quota, +p: Part.Part, name: String) -> ImgSee:
   match pre:
     case Image.Omit{reason}:
       SeeParts{rest, Image.VDrop{Part.path(p), name, reason} <> acc, quota}
     case Image.Fetch{format, max}:
-      see_ahead(Image.ahead(quota, encoding, size), rest, acc, quota, p, name, format, max)
+      see_ahead(Image.ahead(quota), rest, acc, quota, p, name, format, max)
 
 def see_part.image(yes: Bool, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, +encoding: String, +size: U32) ->
+  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, encoding: String, size: U32) ->
   ImgSee:
   match yes:
     case False{}:
       SeeParts{rest, acc, quota}
     case True{}:
       see_screen(Image.screen(image_typ(ct, cd), encoding, size), rest, acc, quota, p,
-        image_name(ct, cd), encoding, size)
+        image_name(ct, cd))
 
 def see_part(rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, quota: Image.Quota,
   +p: Part.Part) -> ImgSee:

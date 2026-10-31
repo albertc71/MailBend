@@ -69,4 +69,14 @@ refresh = dict(folder='INBOX', uidvalidity=7, reset_required=False, complete=Fal
                present=[dict(uid=1, flags=[])], absent=[], unknown=[2], reason='incomplete')
 check('mail_refresh', refresh)
 check('mail_refresh', {**refresh, 'present': [dict(uid=1)]}, False)
+image = dict(section='2', name='photo.jpg', fate='used', format='jpeg', bytes=120,
+             width=280, height=280, metadata_removed_bytes=40)
+image_contract = Draft202012Validator(schema.IMAGE_USED)
+assert image_contract.is_valid(image)
+assert image_contract.is_valid({**image, 'metadata_removed_bytes': 0})
+assert not image_contract.is_valid({k: v for k, v in image.items()
+                                    if k != 'metadata_removed_bytes'})
+assert not image_contract.is_valid({**image, 'metadata_removed_bytes': -1})
+assert not image_contract.is_valid({**image, 'metadata_removed_bytes': '40'})
+checks += 5
 print(f'output schemas: {checks} checks passed')
