@@ -414,6 +414,10 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages
 
+For caller-owned systemd user timers, see the
+[read-only brief, notifier, and queued draft recipes](docs/RECIPES.md).
+MailBend itself remains daemon-free.
+
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
