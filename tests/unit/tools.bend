@@ -458,10 +458,18 @@ def check_search() -> IO(Unit):
     IO.print(show_keys(T.keys_of(json(String.concat([
       "{\"before\":\"2026-03-01\",\"since\":\"2026-02-01\",\"from\":\"a\",\"to\":\"b\",",
       "\"cc\":\"c\",\"subject\":\"s\",\"body\":\"y\",\"text\":\"t\",\"unseen\":true,",
-      "\"seen\":true,\"flagged\":true}"])))))
+      "\"seen\":false,\"flagged\":true}"])))))
     IO.print(show_keys(T.keys_of(json("{\"since\":\"bad\",\"before\":\"worse\"}"))))
     IO.print(show_keys(T.keys_of(json("{\"since\":\"2026-02-01\",\"before\":\"worse\"}"))))
     IO.print(show_keys(T.keys_of(json("{\"from\":\"\",\"unseen\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"unseen\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"flagged\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"flagged\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":true,\"unseen\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":true,\"unseen\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":false,\"unseen\":false}"))))
     IO.print(show_msgs(T.requested([message(5, ""), message(9, ""), message(4, "")], [4, 5])) ++
       "|" ++ show_msgs(T.newest_first([message(5, ""), message(9, ""), message(4, "")])) ++
       "|" ++ show_msgs(T.oldest_first([message(5, ""), message(9, ""), message(4, "")])) ++
@@ -1453,10 +1461,18 @@ def main() -> IO(Unit):
 #|ok {"folders":[{"name":"INBOX","delimiter":"/","attributes":["\\HasNoChildren","\\Marked"],"special_use":null,"selectable":true},{"name":"Sent Messages","delimiter":"/","attributes":["\\Sent"],"special_use":"sent","selectable":true},{"name":"New","delimiter":".","attributes":["\\All"],"special_use":"all","selectable":true}]}
 #|Drafts,Trash,Deleted Messages,Sent,Sent Messages,Junk,Archive none none
 #|a1 UID SEARCH ALL\r\n
-#|a1 UID SEARCH FROM "a" TO "b" CC "c" SUBJECT "s" BODY "y" TEXT "t" UNSEEN SEEN FLAGGED SINCE 1-Feb-2026 BEFORE 1-Mar-2026\r\n
+#|a1 UID SEARCH FROM "a" TO "b" CC "c" SUBJECT "s" BODY "y" TEXT "t" UNSEEN FLAGGED SINCE 1-Feb-2026 BEFORE 1-Mar-2026\r\n
 #|error "since" must be a date like 2026-02-01
 #|error "before" must be a date like 2026-02-01
-#|a1 UID SEARCH ALL\r\n
+#|a1 UID SEARCH SEEN\r\n
+#|a1 UID SEARCH SEEN\r\n
+#|a1 UID SEARCH UNSEEN\r\n
+#|a1 UID SEARCH UNSEEN\r\n
+#|a1 UID SEARCH FLAGGED\r\n
+#|a1 UID SEARCH UNFLAGGED\r\n
+#|a1 UID SEARCH SEEN\r\n
+#|error "seen" and "unseen" contradict each other; use opposite values or omit one
+#|error "seen" and "unseen" contradict each other; use opposite values or omit one
 #|5 4 |9 5 4 |4 5 9 |9 3 1 |1 3 9 |True False
 #|ok {"folder":"INBOX","uidvalidity":7,"total":12,"messages":[{"uid":5,"date":"","from":"","to":"","cc":"","subject":"Lunch","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false},{"uid":4,"date":"","from":"","to":"","cc":"","subject":"Hi","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true}]} | shown 5 4 
 #|err the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again | shown 

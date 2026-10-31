@@ -1534,12 +1534,35 @@ def text_keys(+args: J.Json) -> List<&2, I.Key>:
     text_key(args, "text", v => I.KText{v})
   ])
 
-def flag_keys(+args: J.Json) -> List<&2, I.Key>:
-  List.concat(&2, I.Key, [
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "unseen", False{}), [I.KUnseen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "seen", False{}), [I.KSeen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])
-  ])
+def flag_key(value: Maybe<&2, Bool>, yes: I.Key, no: I.Key) -> List<&2, I.Key>:
+  match value:
+    case None{}:
+      []
+    case Some{b}:
+      [Bool.pick(I.Key, b, yes, no)]
+
+def seen_with_unseen(seen: Maybe<&2, Bool>, +unseen: Bool) -> Keys():
+  match seen:
+    case None{}:
+      Done{[Bool.pick(I.Key, unseen, I.KUnseen{}, I.KSeen{})]}
+    case Some{s}:
+      Bool.pick(Keys(), Bool.not(Bool.xor(s, unseen)),
+        Fail{"\"seen\" and \"unseen\" contradict each other; use opposite values or omit one"},
+        Done{[Bool.pick(I.Key, unseen, I.KUnseen{}, I.KSeen{})]})
+
+def seen_keys(seen: Maybe<&2, Bool>, unseen: Maybe<&2, Bool>) -> Keys():
+  match unseen:
+    case None{}:
+      Done{flag_key(seen, I.KSeen{}, I.KUnseen{})}
+    case Some{u}:
+      seen_with_unseen(seen, u)
+
+def flag_keys(+args: J.Json) -> Keys():
+  do Result<&2, &2, String, List<&2, I.Key>>:
+    seen : List<&2, I.Key> <- seen_keys(J.as_bool(J.get(args, "seen")),
+      J.as_bool(J.get(args, "unseen")))
+    return List.concat(&2, I.Key, [seen,
+      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{})])
 
 def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
   match m:
@@ -1565,7 +1588,8 @@ def keys_of(+args: J.Json) -> Keys():
   do Result<&2, &2, String, List<&2, I.Key>>:
     since : List<&2, I.Key> <- date_key(args, "since")
     before : List<&2, I.Key> <- date_key(args, "before")
-    return List.concat(&2, I.Key, [text_keys(args), flag_keys(args), since, before])
+    flags : List<&2, I.Key> <- flag_keys(args)
+    return List.concat(&2, I.Key, [text_keys(args), flags, since, before])
 
 def list_out(folder: String, uidv: Maybe<&2, U32>, total: U32, ms: List<&2, J.Json>) -> Out:
   ok_obj([
