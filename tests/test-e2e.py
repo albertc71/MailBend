@@ -338,6 +338,7 @@ def run_all(work):
     latin1_quotes(work)
     fallback(work)
     generic_folders(work)
+    important_folders(work)
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
@@ -3454,6 +3455,59 @@ def typesafe_key_file(work):
     with open(os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         f.write(TYPESAFE_KEY + "\n")
     return key_file
+
+
+def important_folders(work):
+    fixture = jev_fixture()
+    important = "[Gmail]/Important"
+    special = {"[Gmail]/All Mail": "\\All", "[Gmail]/Starred": "\\Flagged",
+               important: "\\Important"}
+    for name, attr in special.items():
+        fixture["mailboxes"][name] = empty_mailbox([attr])
+    fixture["mailboxes"][important + "/Existing"] = empty_mailbox()
+    fixture["mailboxes"]["Important"] = empty_mailbox()
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    key_file = typesafe_key_file(work)
+    try:
+        c, r = tool(srv, "mail_list_folders")
+        folders = {f["name"]: f for f in r.get("folders", [])}
+        check("Important: advertised role is reported without a name fallback", c == 0
+              and folders.get(important, {}).get("special_use") == "important"
+              and folders.get("Important", {}).get("special_use") is None, r)
+        for name, args in (
+            ("mail_classify", {"uids": [7]}),
+            ("mail_triage", {"uids": [7], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
+            ("mail_get", {"uid": 7}),
+        ):
+            before, start = srv.st(), len(ts.requests())
+            c, r = tool(srv, name, args, **jev_env(ts, key_file))
+            requests = ts.requests()[start:]
+            categories = [q["criteria"] for request in requests
+                          for key, q in request["body"].get("questions", {}).items()
+                          if key.endswith("_category") and q.get("type") == "choice"]
+            check(f"Important: {name} excludes special-use folders and their children", c == 0
+                  and categories and all("Work" in q and "Important" in q
+                      and not any(folder in q for folder in special)
+                      and important + "/Existing" not in q for q in categories), (r, categories))
+            check(f"Important: {name} leaves messages and flags unchanged", srv.st() == before)
+        c, r = tool(srv, "mail_move", {"uids": [2], "uidvalidity": INBOX_VALIDITY,
+                                       "destination": important})
+        check("Important: explicitly named move still works", c == 0
+              and 2 not in msgs(srv.st(), "INBOX")
+              and len(msgs(srv.st(), important)) == 1, r)
+        for name, args in (
+            ("mail_label", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "label": important}),
+            ("mail_label", {"uids": [3], "uidvalidity": INBOX_VALIDITY,
+                            "label": important + "/Existing"}),
+            ("mail_create_folder", {"name": important + "/Child"}),
+            ("mail_rename_folder", {"from": "Work", "to": important + "/Renamed"}),
+            ("mail_rename_folder", {"from": important, "to": "Renamed"}),
+        ):
+            refused(srv, f"Important: {name} protects the reserved folder", name, args, "relies on")
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def jev(work):

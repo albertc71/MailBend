@@ -986,7 +986,8 @@ def role_attrs() -> List<&2, RoleAttr>:
     RoleAttr{"\\Junk", "junk"},
     RoleAttr{"\\Archive", "archive"},
     RoleAttr{"\\All", "all"},
-    RoleAttr{"\\Flagged", "flagged"}
+    RoleAttr{"\\Flagged", "flagged"},
+    RoleAttr{"\\Important", "important"}
   ]
 
 # The first of `roles` that `attrs` advertises.
