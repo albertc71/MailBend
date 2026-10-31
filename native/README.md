@@ -117,13 +117,24 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 ```
 
 - **TLS**: rustls (ring provider), TLS 1.2+, peer certificate required,
-  chain verified against the system trust store (or `MAILBEND_CA_FILE`, which
-  replaces it), host name verified (DNS names against the certificate's DNS
+  chain verified against the selected trust store, host name verified
+  (DNS names against the certificate's DNS
   names, numeric hosts against its IP addresses), SNI sent for DNS names.
   There is no way to skip verification: one function builds every TLS
   configuration, clippy forbids rustls's `dangerous()` API, and CI greps for
   it. Certificates must carry subjectAltName entries (no CN-only
   certificates).
+  Both network helpers use the same trust rule. A nonempty `MAILBEND_CA_FILE`
+  replaces all other roots and is intended for local tests. Otherwise,
+  `SSL_CERT_FILE` or nonempty entries in the colon-separated `SSL_CERT_DIR`
+  replace platform roots. When both are configured, their certificates are
+  combined. Unusable entries are skipped, but no usable roots means failure,
+  never fallback. An empty `SSL_CERT_FILE` fails to load. Empty directory
+  entries are ignored, so an empty `SSL_CERT_DIR` alone uses platform roots.
+  With neither override, the system trust store applies.
+  `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
+  as the trust-store reason, never a file path. The native diagnostic line
+  is `trust_store ok <token>`.
   SMTP defaults to mandatory STARTTLS, with EHLO repeated after the upgrade.
   `MAILBEND_SMTP_TLS_MODE=implicit` instead verifies TLS before the greeting.
   Only `starttls` and `implicit` are accepted; unset defaults to `starttls`.
@@ -136,7 +147,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   budget. The default cloud resolver, `cloudflare-dns.com:443`, is
   bootstrapped with Cloudflare's `1.1.1.1` and `1.0.0.1` anycast addresses.
   Other resolver hostnames use system DNS for bootstrap. DoH verifies both
-  its peer and hostname, using the system CA store or `MAILBEND_CA_FILE`.
+  its peer and hostname, using the same selected trust store.
   Every helper process resolves anew; no addresses or credentials are cached
   on disk. The resolver sees only DNS queries, never mail credentials/content.
 - **Connection overrides**: `MAILBEND_IMAP_CONNECT_IP` and
@@ -271,7 +282,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 - **Environment**: if `MAILBEND_TYPESAFE_API_KEY` is set (even empty) it
   exits 2. Otherwise it re-executes itself with only
   `MAILBEND_TYPESAFE_KEY_FILE`, `MAILBEND_TIMEOUT_MS`, `MAILBEND_DOH_URL`,
-  `MAILBEND_CA_FILE`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`,
+  `MAILBEND_CA_FILE`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`,
   `ALL_PROXY`, `no_proxy` and `NO_PROXY`, so `/proc/<pid>/environ` holds no
   mail password or other setting.
 - **Key**: read from `MAILBEND_TYPESAFE_KEY_FILE` with the same rules as
@@ -291,7 +302,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   `HTTPS_PROXY`, `all_proxy` or `ALL_PROXY`, the first set (HTTP `CONNECT`,
   unless `no_proxy` or `NO_PROXY` lists the host), else the DoH resolver of
   `MAILBEND_DOH_URL`, else system DNS; then the same verified TLS as the
-  mail helper (`MAILBEND_CA_FILE` replaces the trust store). Each attempt
+  mail helper, including the trust rule above. Each attempt
   has `MAILBEND_TIMEOUT_MS` from connecting to the end of the answer, whose
   size is capped at 4 MiB.
 - **Retries**: HTTP 429 and 5xx answers, and timeouts, are tried again after

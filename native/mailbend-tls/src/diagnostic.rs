@@ -26,9 +26,9 @@ fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
     println!("configuration ok");
     let credentials = creds::load().map_err(|_| ("credentials", "invalid"))?;
     println!("credentials ok");
-    let tls =
+    let (tls, source) =
         tls::client_config(settings.ca_file.as_deref()).map_err(|_| ("trust_store", "invalid"))?;
-    println!("trust_store ok");
+    println!("trust_store ok {}", source.token());
     if !network {
         return Ok(());
     }

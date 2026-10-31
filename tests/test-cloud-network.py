@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import select
 import shlex
+import shutil
 import socket
 import ssl
 import struct
@@ -194,6 +195,139 @@ class CloudNetworkTests(unittest.TestCase):
 
     def read_mail_log(self, log):
         return log.read_text() if log.exists() else ""
+
+    @contextlib.contextmanager
+    def typesafe_server(self, cert="typesafe"):
+        with tempfile.TemporaryDirectory(dir=self.work.name) as work:
+            work = Path(work)
+            for suffix in (".pem", "-key.pem"):
+                shutil.copyfile(self.certs / f"{cert}{suffix}", work / f"typesafe{suffix}")
+            key = work / "synthetic-key"
+            key.write_text("trust-store-test-key")
+            key.chmod(0o600)
+            log = work / "log.jsonl"
+            process = subprocess.Popen([
+                "python3", str(ROOT / "tests/fake_typesafe.py"), "--certdir", str(work),
+                "--key", key.read_text(), "--log", str(log)
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                readable, _, _ = select.select([process.stdout], [], [], 5)
+                self.assertTrue(readable, "TypeSafe startup timed out")
+                ready = process.stdout.readline().split()
+                self.assertTrue(ready and ready[0] == "READY", "TypeSafe failed to start")
+                port = ready[1].split("=")[1]
+                yield {"MAILBEND_TYPESAFE_KEY_FILE": str(key),
+                       "https_proxy": f"http://127.0.0.1:{port}"}, log
+            finally:
+                process.terminate()
+                try:
+                    process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+
+    def run_typesafe(self, settings, expected=0, **overrides):
+        env = {"PATH": os.defpath, "MAILBEND_TIMEOUT_MS": "2000", **settings, **overrides}
+        result = subprocess.run(
+            [str(ROOT / "bin/mailbend-typesafe"), "ask", "--once"], env=env,
+            input=b'{"model":"jev-1.14.0","state":{},'
+                  b'"questions":{"check":{"type":"noul","instructions":"Check the fixture"}}}',
+            capture_output=True, timeout=6
+        )
+        self.assertFalse(b"trust-store-test-key" in result.stdout + result.stderr,
+                         "synthetic key leaked (output withheld)")
+        self.assertEqual(result.returncode, expected, "unexpected TypeSafe exit (output withheld)")
+        return result
+
+    def trust_envs(self):
+        ca = str(self.certs / "ca.pem")
+        with tempfile.TemporaryDirectory(dir=self.work.name) as work:
+            shutil.copyfile(ca, Path(work) / "ca.pem")
+            yield {"SSL_CERT_FILE": ca}
+            yield {"SSL_CERT_DIR": work}
+            yield {"SSL_CERT_FILE": ca, "SSL_CERT_DIR": work}
+            yield {"SSL_CERT_FILE": "/missing/ca.pem", "SSL_CERT_DIR": work}
+            yield {"SSL_CERT_FILE": ca, "SSL_CERT_DIR": "/missing/certs"}
+
+    def test_ssl_cert_environment_is_shared_by_both_helpers(self):
+        with self.mail_server() as (ports, _), self.typesafe_server() as (settings, _):
+            for trust in self.trust_envs():
+                with self.subTest(variables=tuple(trust)):
+                    for proto in ("imap", "smtp"):
+                        self.run_helper(proto, ports, MAILBEND_CA_FILE="", **trust,
+                                        **{f"MAILBEND_{proto.upper()}_CONNECT_IP": "127.0.0.1"})
+                    self.run_typesafe(settings, **trust)
+
+    def test_ssl_cert_environment_keeps_peer_and_hostname_verification(self):
+        for cert in ("selfsigned", "wronghost"):
+            with self.subTest(cert=cert), self.mail_server(cert=cert) as (ports, log), \
+                    self.typesafe_server(cert=cert) as (settings, ts_log):
+                for trust in self.trust_envs():
+                    for proto in ("imap", "smtp"):
+                        result = self.run_helper(proto, ports, expected=3, MAILBEND_CA_FILE="",
+                                                 **trust, **{f"MAILBEND_{proto.upper()}_CONNECT_IP": "127.0.0.1"})
+                        self.assertIn(b"TLS verification failed", result.stderr)
+                    result = self.run_typesafe(settings, expected=3, **trust)
+                    self.assertIn(b"TLS verification failed", result.stderr)
+                self.assertNotIn("LOGIN", self.read_mail_log(log))
+                self.assertNotIn("AUTH", self.read_mail_log(log))
+                self.assertNotIn('"request_line"', self.read_mail_log(ts_log))
+
+    def test_unusable_ssl_cert_file_fails_closed_in_both_helpers(self):
+        with tempfile.TemporaryDirectory(dir=self.work.name) as work:
+            empty = Path(work) / "empty.pem"
+            empty.touch()
+            for path in (str(Path(work) / "missing.pem"), str(empty), ""):
+                with self.subTest(path=Path(path).name), self.mail_server() as (ports, log), \
+                        self.typesafe_server() as (settings, ts_log):
+                    for proto in ("imap", "smtp"):
+                        result = self.run_helper(proto, ports, expected=3, MAILBEND_CA_FILE="",
+                                                 SSL_CERT_FILE=path,
+                                                 **{f"MAILBEND_{proto.upper()}_CONNECT_IP": "127.0.0.1"})
+                        self.assertIn(b"cannot load the trust store", result.stderr)
+                    result = self.run_typesafe(settings, expected=3, SSL_CERT_FILE=path)
+                    self.assertIn(b"cannot load the trust store", result.stderr)
+                    self.assertFalse(self.read_mail_log(log))
+                    self.assertFalse(self.read_mail_log(ts_log))
+
+    def test_ssl_cert_file_refuses_another_ca_with_the_correct_hostname(self):
+        trust = {"SSL_CERT_FILE": str(self.certs / "selfsigned.pem")}
+        with self.mail_server() as (ports, log), self.typesafe_server() as (settings, ts_log):
+            for proto in ("imap", "smtp"):
+                result = self.run_helper(proto, ports, expected=3, MAILBEND_CA_FILE="", **trust,
+                                         **{f"MAILBEND_{proto.upper()}_CONNECT_IP": "127.0.0.1"})
+                self.assertIn(b"TLS verification failed", result.stderr)
+            result = self.run_typesafe(settings, expected=3, **trust)
+            self.assertIn(b"TLS verification failed", result.stderr)
+            self.assertNotIn("LOGIN", self.read_mail_log(log))
+            self.assertNotIn("AUTH", self.read_mail_log(log))
+            self.assertNotIn('"request_line"', self.read_mail_log(ts_log))
+
+    def test_mailbend_ca_file_precedes_ssl_cert_environment(self):
+        trust = {"MAILBEND_CA_FILE": str(self.certs / "ca.pem"),
+                 "SSL_CERT_FILE": "/missing/ignored-ca", "SSL_CERT_DIR": "/missing/ignored-dir"}
+        with self.mail_server() as (ports, _), self.typesafe_server() as (settings, _):
+            for proto in ("imap", "smtp"):
+                self.run_helper(proto, ports, **trust,
+                                **{f"MAILBEND_{proto.upper()}_CONNECT_IP": "127.0.0.1"})
+            self.run_typesafe(settings, **trust)
+
+    def test_diagnostics_report_only_the_effective_trust_source(self):
+        cases = [({}, "mailbend_ca_file"),
+                 ({"MAILBEND_CA_FILE": "", "SSL_CERT_FILE": str(self.certs / "ca.pem")}, "ssl_cert_env"),
+                 ({"MAILBEND_CA_FILE": "", "SSL_CERT_DIR": str(self.certs)}, "ssl_cert_env"),
+                 ({"MAILBEND_CA_FILE": ""}, "system"),
+                 ({"MAILBEND_CA_FILE": "", "SSL_CERT_DIR": ""}, "system"),
+                 ({"MAILBEND_CA_FILE": "", "SSL_CERT_DIR": ":"}, "system")]
+        for overrides, source in cases:
+            with self.subTest(source=source, variables=tuple(overrides)):
+                env = self.mail_env({"imap": "993", "smtp": "587"}, **overrides)
+                result = subprocess.run([str(HELPER), "diagnose-config-imap"], env=env,
+                                        capture_output=True, timeout=6)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout.decode().splitlines(),
+                                 ["configuration ok", "credentials ok", f"trust_store ok {source}"])
+                self.assertFalse(result.stderr)
 
     def run_helper(self, proto, ports, expected=0, **overrides):
         env = self.mail_env(ports, **overrides)
@@ -391,6 +525,28 @@ class CloudNetworkTests(unittest.TestCase):
                 lines = self.read_mail_log(log)
                 self.assertFalse("LOGIN" in lines, "IMAP authenticated despite invalid TLS")
                 self.assertFalse("AUTH" in lines, "SMTP authenticated despite invalid TLS")
+
+
+class LauncherTrustTests(unittest.TestCase):
+    def test_launcher_warns_for_each_ssl_cert_variable_without_paths(self):
+        with tempfile.TemporaryDirectory(prefix="mailbend-launcher-") as work:
+            work = Path(work)
+            (work / "scripts").mkdir()
+            (work / "bin").mkdir()
+            shutil.copyfile(ROOT / "scripts/mailbend", work / "scripts/mailbend")
+            core = work / "bin/mailbend-core"
+            core.write_text("#!/bin/sh\nexit 0\n")
+            core.chmod(0o700)
+            for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+                for value in ("/private-ca-path", ""):
+                    with self.subTest(name=name, empty=not value):
+                        result = subprocess.run(["sh", str(work / "scripts/mailbend"), "tools"],
+                                                env={"PATH": os.defpath, name: value},
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0)
+                        self.assertIn("warning", result.stderr)
+                        self.assertIn(name, result.stderr)
+                        self.assertNotIn("/private-ca-path", result.stderr)
 
 
 if __name__ == "__main__":

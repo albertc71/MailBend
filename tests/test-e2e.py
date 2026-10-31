@@ -221,6 +221,9 @@ def setup_diagnostics(work):
         code, checks = diagnose(srv)
         check("diagnostics: default checks local setup without network", code == 0
               and not srv.log_lines() and diagnosed(checks, "smtp", "authentication", "skipped"))
+        check("diagnostics: trust source is a fixed token", all(
+            diagnosed(checks, protocol, "trust_store", "ok", "mailbend_ca_file")
+            for protocol in ("imap", "smtp")))
         code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_READ_ONLY="1",
                                MAILBEND_DRAFTS_ONLY="1", MAILBEND_MAX_SENDS_PER_DAY="1",
                                MAILBEND_STATE_DIR=os.path.join(work, "diagnostic-counter"))
@@ -235,7 +238,8 @@ def setup_diagnostics(work):
                                 env=srv.env(), capture_output=True, text=True, timeout=35)
         outputs.extend([native.stdout, native.stderr])
         check("diagnostics: native output contains only fixed transport facts", native.returncode == 0
-              and not native.stderr and native.stdout.splitlines() == [stage + " ok" for stage in
+              and not native.stderr and native.stdout.splitlines() == [stage + " ok" +
+                  (" mailbend_ca_file" if stage == "trust_store" else "") for stage in
                   ("configuration", "credentials", "trust_store", "dns", "connect", "greeting",
                    "ehlo", "tls", "ehlo_tls", "authentication")], "unexpected native fact stream")
         check("diagnostics: direct native check still sends no message", srv.st() == before)
@@ -1126,7 +1130,8 @@ else:
 print('no controlling terminal', file=sys.stderr, flush=True)
 os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
 """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("MAILBEND_") and k not in {"SSL_CERT_FILE", "SSL_CERT_DIR"}}
     env["MAILBEND_READ_ONLY"] = "1"
     data = "".join(json.dumps(r) + "\n" for r in requests)
     for launcher in (pathlib.Path(LAUNCHER), ROOT / "scripts/mailbend-cloud"):

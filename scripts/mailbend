@@ -14,6 +14,9 @@ export BEND_NO_TELEMETRY=1
 if [ -n "${MAILBEND_CA_FILE:-}" ]; then
   echo "mailbend: warning: MAILBEND_CA_FILE replaces the system trust store; it is meant for local tests" >&2
 fi
+if [ "${SSL_CERT_FILE+x}" = x ] || [ "${SSL_CERT_DIR+x}" = x ]; then
+  echo "mailbend: warning: SSL_CERT_FILE or SSL_CERT_DIR can replace the system trust store for both network helpers" >&2
+fi
 if [ "$#" -eq 1 ] && [ "$1" = mcp ]; then
   if [ ! -x "$root/bin/mailbend-stdio" ]; then
     echo "mailbend: stdio helper is missing; run scripts/install.sh" >&2
