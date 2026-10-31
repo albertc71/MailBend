@@ -503,9 +503,11 @@ synthetic cost measurements and experiment decision are in
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as
-  `UID EXPUNGE` (proven).
+  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID
+  commands. Commands that take a UID list preserve its order. STORE preserves
+  the requested flag and add or remove operation (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
-  caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
+  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.

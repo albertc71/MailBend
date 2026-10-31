@@ -99,6 +99,11 @@ law tools_listed_per_config:
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread"] : List<&2, String>})
 
+# LAW: every operation's tool name resolves back to that operation.
+law from_name_inverts_name:
+  for op: Ops.Op
+  {Ops.from_name(Ops.name(op)) == Some{op} : Maybe<&2, Ops.Op>}
+
 # Read plans
 # ----------
 
@@ -652,6 +657,87 @@ law copy_move_checks_uidplus:
   {Ops.checks_uidplus(Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv)) ==
     True{} : Bool}
 
+# Exact command rendering
+# -----------------------
+
+# Base's List.map accepts affine lists, while command UIDs use Data lists.
+def uid_decimal_strings(uids: List<&2, U32>) -> List<&2, String>:
+  match uids:
+    case Nil{}:
+      []
+    case u <> t:
+      U32.show(u) <> uid_decimal_strings(t)
+
+law uid_set_is_comma_joined:
+  for uids: List<&2, U32>
+  {I.uid_set(uids) == String.join(uid_decimal_strings(uids), ",") : String}
+
+law select_renders_callers_folder:
+  for mbox: String
+  {I.cmd_str(I.CSelect{mbox}) == "SELECT " ++ I.mailbox(mbox) : String}
+
+law copy_renders_exactly:
+  for uids: List<&2, U32>
+  for dest: String
+  {I.cmd_str(I.CCopy{uids, dest}) == "UID COPY " ++ I.uid_set(uids) ++ " " ++
+    I.mailbox(dest) : String}
+
+law move_renders_exactly:
+  for uids: List<&2, U32>
+  for dest: String
+  {I.cmd_str(I.CMove{uids, dest}) == "UID MOVE " ++ I.uid_set(uids) ++ " " ++
+    I.mailbox(dest) : String}
+
+law fetch_renders_exactly:
+  for uids: List<&2, U32>
+  for items: List<&2, I.Item>
+  {I.cmd_str(I.CFetch{uids, items}) == "UID FETCH " ++ I.uid_set(uids) ++ " (" ++
+    I.items_str(items) ++ ")" : String}
+
+law search_renders_uid_search:
+  for keys: List<&2, I.Key>
+  {I.cmd_str(I.CSearch{keys}) == "UID SEARCH " ++ I.search_args(keys) : String}
+
+law guard_search_renders_exact_uids:
+  for uids: List<&2, U32>
+  {I.cmd_str(I.CSearch{[I.KUids{uids}]}) == "UID SEARCH UID " ++ I.uid_set(uids) : String}
+
+# Both operations and every flag name are literals, independent of their renderers.
+law store_renders_exactly:
+  for uids: List<&2, U32>
+  ({I.cmd_str(I.CStore{uids, True{}, I.FSeen{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Seen)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FSeen{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Seen)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FDeleted{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Deleted)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FDeleted{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Deleted)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FDraft{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Draft)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FDraft{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Draft)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FFlagged{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Flagged)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FFlagged{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Flagged)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FAnswered{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Answered)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FAnswered{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Answered)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FColourBit0{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT ($MailFlagBit0)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FColourBit0{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT ($MailFlagBit0)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FColourBit1{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT ($MailFlagBit1)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FColourBit1{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT ($MailFlagBit1)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FColourBit2{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT ($MailFlagBit2)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FColourBit2{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT ($MailFlagBit2)" : String})
+
 # UIDVALIDITY pinning
 # -------------------
 
@@ -763,6 +849,148 @@ law delete_pins_callers_uidvalidity:
   {Ops.pin_line_or(
     Ops.plan_delete(mbox, uids, confirm, uidplus, uidv), I.uidv_line(uidv)) ==
     I.uidv_line(uidv) : String}
+
+# These equalities retain every command, so no later mailbox switch is hidden.
+law mark_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for seen: Bool
+  for uidv: U32
+  {Ops.plan_mark(mbox, uids, seen, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, seen, I.FSeen{}}
+    ] : List<&2, I.Cmd>}
+
+law flag_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: I.Colour
+  for b0: Bool
+  for b1: Bool
+  for b2: Bool
+  for uidv: U32
+  ({Ops.plan_flag(mbox, uids, None{}, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>} &
+   ({I.colour_bits(colour) == I.Bits{b0, b1, b2} : I.Bits} ->
+    {Ops.plan_flag(mbox, uids, Some{colour}, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CStore{uids, b0, I.FColourBit0{}},
+      I.CStore{uids, b1, I.FColourBit1{}},
+      I.CStore{uids, b2, I.FColourBit2{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>}))
+
+law unflag_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  {Ops.plan_unflag(mbox, uids, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, False{}, I.FFlagged{}},
+      I.CStore{uids, False{}, I.FColourBit0{}},
+      I.CStore{uids, False{}, I.FColourBit1{}},
+      I.CStore{uids, False{}, I.FColourBit2{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>}
+
+law move_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_move(mbox, uids, dest, True{}, uidplus, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CMove{uids, dest}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CCopy{uids, dest},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_move(mbox, uids, dest, False{}, False{}, uidv) == [] : List<&2, I.Cmd>})
+
+law trash_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_trash(mbox, uids, trash, True{}, uidplus, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CMove{uids, trash}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_trash(mbox, uids, trash, False{}, True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CCopy{uids, trash},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_trash(mbox, uids, trash, False{}, False{}, uidv) == [] : List<&2, I.Cmd>})
+
+law label_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for label: String
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_label(mbox, uids, label, True{}, uidplus, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CMove{uids, label}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_label(mbox, uids, label, False{}, True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CCopy{uids, label},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_label(mbox, uids, label, False{}, False{}, uidv) == [] : List<&2, I.Cmd>})
+
+law delete_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  ({Ops.plan_delete(mbox, uids, "permanently-delete", True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_delete(mbox, uids, "permanently-delete", False{}, uidv) == [] : List<&2, I.Cmd>})
 
 # Drafts
 # ------

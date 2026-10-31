@@ -51,6 +51,57 @@ def Laws.tools_listed_per_config(drafts):
     case False{}:
       ({==}, {==}, {==}, {==}, {==}, {==})
 
+def Laws.from_name_inverts_name(op):
+  match op:
+    case Ops.OProbe{}:
+      {==}
+    case Ops.OListFolders{}:
+      {==}
+    case Ops.OSearch{}:
+      {==}
+    case Ops.OGet{}:
+      {==}
+    case Ops.OGetNew{}:
+      {==}
+    case Ops.ORefresh{}:
+      {==}
+    case Ops.OGetThread{}:
+      {==}
+    case Ops.OClassify{}:
+      {==}
+    case Ops.OTriage{}:
+      {==}
+    case Ops.OGetAttachment{}:
+      {==}
+    case Ops.OMarkRead{}:
+      {==}
+    case Ops.OMarkUnread{}:
+      {==}
+    case Ops.OFlag{}:
+      {==}
+    case Ops.OUnflag{}:
+      {==}
+    case Ops.OMove{}:
+      {==}
+    case Ops.OLabel{}:
+      {==}
+    case Ops.OTrash{}:
+      {==}
+    case Ops.ODelete{}:
+      {==}
+    case Ops.OCreateFolder{}:
+      {==}
+    case Ops.ORenameFolder{}:
+      {==}
+    case Ops.OSaveDraft{}:
+      {==}
+    case Ops.OSend{}:
+      {==}
+    case Ops.OReply{}:
+      {==}
+    case Ops.OForward{}:
+      {==}
+
 # Read plans
 # ----------
 
@@ -564,6 +615,41 @@ def Laws.delete_checks_uidplus(mbox, uids, confirm, uidplus, uidv):
 def Laws.copy_move_checks_uidplus(mbox, uids, dest, uidv):
   {==}
 
+# Exact command rendering
+# -----------------------
+
+def Laws.uid_set_is_comma_joined(uids):
+  match uids:
+    case Nil{}:
+      {==}
+    case u <> Nil{}:
+      {==}
+    case u <> v <> t:
+      %Laws.uid_set_is_comma_joined(v <> t) :
+        {U32.show(u) ++ "," ++ I.uid_set(v <> t) == U32.show(u) ++ "," ++ _ : String}
+      {==}
+
+def Laws.select_renders_callers_folder(mbox):
+  {==}
+
+def Laws.copy_renders_exactly(uids, dest):
+  {==}
+
+def Laws.move_renders_exactly(uids, dest):
+  {==}
+
+def Laws.fetch_renders_exactly(uids, items):
+  {==}
+
+def Laws.search_renders_uid_search(keys):
+  {==}
+
+def Laws.guard_search_renders_exact_uids(uids):
+  {==}
+
+def Laws.store_renders_exactly(uids):
+  ({==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==}, {==})
+
 # UIDVALIDITY pinning
 # -------------------
 
@@ -667,6 +753,55 @@ def delete_pins_callers_uidvalidity.if(
 def Laws.delete_pins_callers_uidvalidity(mbox, uids, confirm, uidplus, uidv):
   delete_pins_callers_uidvalidity.if(
     String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
+
+def Laws.mark_opens_callers_folder(mbox, uids, seen, uidv):
+  {==}
+
+def flag_opens_callers_folder.put(
+  -mbox: String, -uids: List<&2, U32>, bits: I.Bits,
+  -b0: Bool, -b1: Bool, -b2: Bool, -uidv: U32,
+  e: {bits == I.Bits{b0, b1, b2} : I.Bits})
+  -> {Ops.plan_flag_bits(mbox, uids, bits, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CStore{uids, b0, I.FColourBit0{}},
+      I.CStore{uids, b1, I.FColourBit1{}},
+      I.CStore{uids, b2, I.FColourBit2{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>}:
+  %Equal.sym(I.Bits, bits, I.Bits{b0, b1, b2}, e) :
+    {Ops.plan_flag_bits(mbox, uids, _, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CStore{uids, b0, I.FColourBit0{}},
+      I.CStore{uids, b1, I.FColourBit1{}},
+      I.CStore{uids, b2, I.FColourBit2{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>}
+  {==}
+
+def Laws.flag_opens_callers_folder(mbox, uids, colour, b0, b1, b2, uidv):
+  ({==},
+   e => flag_opens_callers_folder.put(mbox, uids, I.colour_bits(colour), b0, b1, b2, uidv, e))
+
+def Laws.unflag_opens_callers_folder(mbox, uids, uidv):
+  {==}
+
+def Laws.move_opens_callers_folder(mbox, uids, dest, uidplus, uidv):
+  ({==}, {==}, {==})
+
+def Laws.trash_opens_callers_folder(mbox, uids, trash, uidplus, uidv):
+  ({==}, {==}, {==})
+
+def Laws.label_opens_callers_folder(mbox, uids, label, uidplus, uidv):
+  ({==}, {==}, {==})
+
+def Laws.delete_opens_callers_folder(mbox, uids, uidv):
+  ({==}, {==})
 
 # Drafts
 # ------
