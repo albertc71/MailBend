@@ -17,17 +17,7 @@ import ./image.bend as Image
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 import ./response.bend as Response
-
-# Results
-# =======
-
-# A tool's result: its JSON, or an error for the caller.
-type Out is Data:
-  Ok{j: J.Json}
-  Err{msg: String}
-  # An error for the caller that still carries a result: a change that
-  # stopped part-way, or a refusal that reports what the call found.
-  Partial{j: J.Json}
+import ./policy.bend as Policy
 
 # The steps of a tool answer Base's Result: a value, or the message of the
 # tool's error.
@@ -44,20 +34,9 @@ def Uids() -> Data:
 def Keys() -> Data:
   Result<&2, &2, String, List<&2, I.Key>>
 
-# The folders, and the one resolved for each special-use role.
-type Folders is Data:
-  Folders{
-    fs: List<&2, I.Folder>,
-    drafts: Maybe<&2, String>,
-    trash: Maybe<&2, String>,
-    sent: Maybe<&2, String>,
-    junk: Maybe<&2, String>,
-    archive: Maybe<&2, String>
-  }
-
 # The folders, or why their special-use roles could not be read.
 def Fs() -> Data:
-  Result<&2, &2, String, Folders>
+  Result<&2, &2, String, Policy.Folders>
 
 # An attachment read from disk, and all of a message's attachments.
 def Attachment() -> Data:
@@ -66,41 +45,33 @@ def Attachment() -> Data:
 def Attachments() -> Data:
   Result<&2, &2, String, List<&2, M.Attach>>
 
-def ok_obj(kvs: List<&2, J.Json>) -> Out:
-  Ok{J.obj(kvs)}
+def ok_obj(kvs: List<&2, J.Json>) -> Policy.Out:
+  Policy.Ok{J.obj(kvs)}
 
-def pure_out(o: Out) -> IO(Out):
-  IO.pure(Out, o)
+def pure_out(o: Policy.Out) -> IO(Policy.Out):
+  IO.pure(Policy.Out, o)
 
 def pure_str(s: String) -> IO(String):
   IO.pure(String, s)
 
 # Adds fields to a successful result object.
-def with_fields(o: Out, extra: List<&2, J.Json>) -> Out:
+def with_fields(o: Policy.Out, extra: List<&2, J.Json>) -> Policy.Out:
   match o:
-    case Ok{J.JObj{items}}:
-      Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
+    case Policy.Ok{J.JObj{items}}:
+      Policy.Ok{J.JObj{J.chain(List.append(&2, J.Json, J.unchain(items), extra))}}
     case _:
       o
 
 # Puts fields before those of a result object, also of a partial one (where
 # with_fields adds them after, to a successful one only).
-def with_fields_first(o: Out, first: List<&2, J.Json>) -> Out:
+def with_fields_first(o: Policy.Out, first: List<&2, J.Json>) -> Policy.Out:
   match o:
-    case Ok{J.JObj{items}}:
-      Ok{J.JObj{J.chain(List.append(&2, J.Json, first, J.unchain(items)))}}
-    case Partial{J.JObj{items}}:
-      Partial{J.JObj{J.chain(List.append(&2, J.Json, first, J.unchain(items)))}}
+    case Policy.Ok{J.JObj{items}}:
+      Policy.Ok{J.JObj{J.chain(List.append(&2, J.Json, first, J.unchain(items)))}}
+    case Policy.Partial{J.JObj{items}}:
+      Policy.Partial{J.JObj{J.chain(List.append(&2, J.Json, first, J.unchain(items)))}}
     case _:
       o
-
-# A check's problem ("" for none) as a Result, so checks chain in `do`.
-def checked(problem: String) -> Result<&2, &2, String, Unit>:
-  match problem:
-    case SNil{}:
-      Done{Unit{}}
-    case SCon{h, t}:
-      Fail{SCon{h, t}}
 
 # `a`, unless it is empty: the first of two problems.
 def first_of(+a: String, b: String) -> String:
@@ -125,141 +96,10 @@ def env_or(name: String, d: String) -> IO(String):
     r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
     return env_pick(r, d)
 
-# Safety switches
-# ---------------
-
-# The switches every tool depends on. A value that is not clearly on or off
-# is refused rather than read as off: MAILBEND_READ_ONLY=yes must not leave
-# writes on. ConfigBad fails every tool.
-type Config is Data:
-  Config{read_only: Bool, drafts_only: Bool, jev: Jev.Switch, images: Jev.ImageMode}
-  ConfigBad{msg: String}
-
-type Flag is Data:
-  FlagOn{}
-  FlagOff{}
-  FlagBad{msg: String}
-
-def flag_value.if(off: Bool, on: Bool, name: String) -> Flag:
-  match off on:
-    case True{} _:
-      FlagOff{}
-    case False{} True{}:
-      FlagOn{}
-    case False{} False{}:
-      FlagBad{name ++ " must be 1, true, 0, false or empty"}
-
-def flag_value(name: String, +v: String) -> Flag:
-  +low = String.to_lower(v)
-  off = String.is_empty(v) || String.eq(v, "0") || String.eq(low, "false")
-  on = String.eq(v, "1") || String.eq(low, "true")
-  flag_value.if(off, on, name)
-
-def flag(+name: String) -> IO(Flag):
-  do IO<Flag>:
+def flag(+name: String) -> IO(Policy.Flag):
+  do IO<Policy.Flag>:
     v : String <- env_or(name, "")
-    return flag_value(name, v)
-
-def flag_on(f: Flag) -> Result<&2, &2, String, Bool>:
-  match f:
-    case FlagOn{}:
-      Done{True{}}
-    case FlagOff{}:
-      Done{False{}}
-    case FlagBad{m}:
-      Fail{m}
-
-# The TypeSafe key is read only from its file, by mailbend-typesafe: in an
-# environment variable it would reach every helper, mailbend-tls included.
-def api_key_problem(set: Bool) -> String:
-  Bool.pick(String, set,
-    "MAILBEND_TYPESAFE_API_KEY must not be set: put the TypeSafe key in a file readable only " ++
-      "by you and set MAILBEND_TYPESAFE_KEY_FILE to its absolute path",
-    "")
-
-def content_of.if(headers: Bool, body: Bool) -> Result<&2, &2, String, Jev.Content>:
-  match headers body:
-    case True{} _:
-      Done{Jev.Headers{}}
-    case False{} True{}:
-      Done{Jev.Body{}}
-    case False{} False{}:
-      Fail{"MAILBEND_TYPESAFE_CONTENT must be headers, body or empty"}
-
-# MAILBEND_TYPESAFE_CONTENT: what Jev may see, headers (the default) or body.
-def content_of(+v: String) -> Result<&2, &2, String, Jev.Content>:
-  +low = String.to_lower(v)
-  content_of.if(String.is_empty(v) || String.eq(low, "headers"), String.eq(low, "body"))
-
-# Body content sends message text to TypeSafe, so it needs the operator's
-# MAILBEND_TYPESAFE_ZERO_RETENTION=1 (MailBend cannot verify the plan).
-def attested(c: Jev.Content, zero_retention: Bool) -> Result<&2, &2, String, Jev.Content>:
-  match c zero_retention:
-    case Jev.Headers{} _:
-      Done{Jev.Headers{}}
-    case Jev.Body{} True{}:
-      Done{Jev.Body{}}
-    case Jev.Body{} False{}:
-      Fail{"MAILBEND_TYPESAFE_CONTENT=body sends message text to TypeSafe and needs " ++
-        "MAILBEND_TYPESAFE_ZERO_RETENTION=1, the operator's statement that the TypeSafe " ++
-        "account has a zero-retention plan"}
-
-# Jev on needs the absolute path of the key file (which only
-# mailbend-typesafe reads).
-def jev_switch(on: Bool, c: Jev.Content, absolute: Bool) -> Result<&2, &2, String, Jev.Switch>:
-  match on absolute:
-    case False{} _:
-      Done{Jev.Off{}}
-    case True{} True{}:
-      Done{Jev.On{c}}
-    case True{} False{}:
-      Fail{"MAILBEND_TYPESAFE_KEY_FILE must be the absolute path of the TypeSafe key file " ++
-        "when MAILBEND_TYPESAFE is on"}
-
-# The switches, checked in this order; the first bad value fails every tool,
-# including a TypeSafe setting while Jev is off.
-# Off, or on together with body content. On in headers mode, or without
-# the zero-retention statement, is refused. attested still fails first when
-# body mode lacks that statement.
-def image_mode(on: Bool, c: Jev.Content) -> Result<&2, &2, String, Jev.ImageMode>:
-  match on c:
-    case False{} _:
-      Done{Jev.ImagesOff{}}
-    case True{} Jev.Body{}:
-      Done{Jev.ImagesOn{}}
-    case True{} Jev.Headers{}:
-      Fail{"MAILBEND_TYPESAFE_IMAGES needs MAILBEND_TYPESAFE_CONTENT=body and " ++
-        "MAILBEND_TYPESAFE_ZERO_RETENTION=1"}
-
-def config_of(
-  read_only: Flag,
-  drafts_only: Flag,
-  api_key_set: Bool,
-  typesafe: Flag,
-  content: String,
-  zero_retention: Flag,
-  images: Flag,
-  key_file: String
-) -> Result<&2, &2, String, Config>:
-  do Result<&2, &2, String, Config>:
-    ro : Bool <- flag_on(read_only)
-    drafts : Bool <- flag_on(drafts_only)
-    key_ok : Unit <- checked(api_key_problem(api_key_set))
-    on : Bool <- flag_on(typesafe)
-    wanted : Jev.Content <- content_of(content)
-    zr : Bool <- flag_on(zero_retention)
-    +c : Jev.Content <- attested(wanted, zr)
-    images_on : Bool <- flag_on(images)
-    mode : Jev.ImageMode <- image_mode(images_on, c)
-    jev : Jev.Switch <- jev_switch(on, c, String.starts_with(key_file, "/"))
-    return Config{ro, drafts, jev, mode}
-
-def config.put(r: Result<&2, &2, String, Config>) -> Config:
-  match r:
-    case Done{c}:
-      c
-    case Fail{m}:
-      ConfigBad{m}
+    return Policy.flag_value(name, v)
 
 # Whether a variable is set at all, even to "".
 def is_set(r: Result<&1, &1, U32 & String, String>) -> Bool:
@@ -275,17 +115,17 @@ def is_set(r: Result<&1, &1, U32 & String, String>) -> Bool:
 # and replies or forwards without as_draft, so a person reviews every
 # outgoing message in Drafts first. MAILBEND_TYPESAFE=1 turns on the tools
 # that consult TypeSafe's Jev.
-def config() -> IO(Config):
-  do IO<Config>:
-    r : Flag <- flag("MAILBEND_READ_ONLY")
-    d : Flag <- flag("MAILBEND_DRAFTS_ONLY")
+def config() -> IO(Policy.Config):
+  do IO<Policy.Config>:
+    r : Policy.Flag <- flag("MAILBEND_READ_ONLY")
+    d : Policy.Flag <- flag("MAILBEND_DRAFTS_ONLY")
     key : Result<&1, &1, U32 & String, String> <- IO.get_env("MAILBEND_TYPESAFE_API_KEY")
-    t : Flag <- flag("MAILBEND_TYPESAFE")
+    t : Policy.Flag <- flag("MAILBEND_TYPESAFE")
     c : String <- env_or("MAILBEND_TYPESAFE_CONTENT", "")
-    z : Flag <- flag("MAILBEND_TYPESAFE_ZERO_RETENTION")
-    images : Flag <- flag("MAILBEND_TYPESAFE_IMAGES")
+    z : Policy.Flag <- flag("MAILBEND_TYPESAFE_ZERO_RETENTION")
+    images : Policy.Flag <- flag("MAILBEND_TYPESAFE_IMAGES")
     k : String <- env_or("MAILBEND_TYPESAFE_KEY_FILE", "")
-    return config.put(config_of(r, d, is_set(key), t, c, z, images, k))
+    return Policy.config.put(Policy.config_of(r, d, is_set(key), t, c, z, images, k))
 
 # Send settings
 # -------------
@@ -389,7 +229,7 @@ def sending_of(
   home: String
 ) -> Sends():
   do Result<&2, &2, String, Sending>:
-    save_sent : Bool <- flag_on(flag_value("MAILBEND_SAVE_SENT", save))
+    save_sent : Bool <- Policy.flag_on(Policy.flag_value("MAILBEND_SAVE_SENT", save))
     entries : List<&2, String> <- allowlist(allow)
     limit : U32 <- send_limit(max)
     state : String <- state_dir(dir, xdg, home)
@@ -405,54 +245,6 @@ def sending() -> IO(Sends()):
     home : String <- env_or("HOME", "")
     return sending_of(save, allow, max, dir, xdg, home)
 
-# Running the helper
-# ------------------
-
-# How a helper run ended: it exited with `code`; it never started (MailBend
-# refused its path, or spawning it failed); or it failed with errno `code`
-# after it started, or when that is not known, so what it did is unknown.
-type Proc is Data:
-  ProcOk{code: U32, out: String, err: String}
-  ProcRefused{msg: String}
-  ProcFail{code: U32, msg: String}
-
-# Errnos only spawning can give (Process.run: the pipes, posix_spawnp), with
-# the values Linux and macOS share: EPERM, ENOENT, E2BIG, ENOEXEC, EACCES,
-# ENOTDIR, EISDIR, ENFILE, EMFILE, ETXTBSY. Once the helper runs, Process.run
-# fails only with others (timeout, output cap, poll, read, write, waitpid).
-def spawn_errnos() -> List<&2, U32>:
-  [1, 2, 7, 8, 13, 20, 21, 23, 24, 26]
-
-def never_started(code: U32) -> Bool:
-  List.contains(~U32, ~U32.is_eq, spawn_errnos(), code)
-
-def proc_fail.if(refused: Bool, code: U32, msg: String) -> Proc:
-  match refused:
-    case True{}:
-      ProcRefused{msg}
-    case False{}:
-      ProcFail{code, msg}
-
-def proc_fail(+code: U32, msg: String) -> Proc:
-  proc_fail.if(never_started(code), code, msg)
-
-def proc_of(r: Result<&1, &1, U32 & String, U32 & (String & String)>) -> Proc:
-  match r:
-    case Done{(code, (out, err))}:
-      ProcOk{code, out, err}
-    case Fail{(code, msg)}:
-      proc_fail(code, msg)
-
-# Why a helper run gave no exit status ("" when it did).
-def proc_failure(p: Proc) -> String:
-  match p:
-    case ProcOk{code, out, err}:
-      ""
-    case ProcRefused{m}:
-      m
-    case ProcFail{code, m}:
-      m
-
 # Every helper is started only from an absolute path, which
 # scripts/mailbend sets, never from a path relative to the working
 # directory.
@@ -467,68 +259,26 @@ def helper_path(+path: String, variable: String, program: String) -> Result<&2, 
       Fail{helper_refusal(variable, program)}
 
 # A helper run may print up to 128 MiB and take up to five minutes.
-def run_helper(path: String, mode: String, input: String) -> IO(Proc):
-  do IO<Proc>:
+def run_helper(path: String, mode: String, input: String) -> IO(Policy.Proc):
+  do IO<Policy.Proc>:
     r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
       Process.run(path, [mode], input, 134217728, 300000)
-    return proc_of(r)
+    return Policy.proc_of(r)
 
 # The helper gets the password through the environment, which makes the
 # absolute path all the more important.
-def helper_at(+path: String, mode: String, input: String) -> IO(Proc):
+def helper_at(+path: String, mode: String, input: String) -> IO(Policy.Proc):
   match path:
     case SCon{'/', t}:
       run_helper(path, mode, input)
     case _:
-      IO.pure(Proc, ProcRefused{helper_refusal("MAILBEND_TLS_HELPER", "mailbend-tls")})
+      IO.pure(Policy.Proc, Policy.ProcRefused{helper_refusal("MAILBEND_TLS_HELPER",
+        "mailbend-tls")})
 
-def helper(mode: String, input: String) -> IO(Proc):
-  do IO<Proc>:
+def helper(mode: String, input: String) -> IO(Policy.Proc):
+  do IO<Policy.Proc>:
     path : String <- env_or("MAILBEND_TLS_HELPER", "")
     helper_at(path, mode, input)
-
-# Helper results
-# --------------
-
-def strip_prefix.if(has: Bool, s: String, p: String) -> String:
-  match has:
-    case True{}:
-      String.drop(s, String.length(p))
-    case False{}:
-      s
-
-def strip_prefix(+s: String, +p: String) -> String:
-  strip_prefix.if(String.starts_with(s, p), s, p)
-
-# A helper's own message, from its stderr (which never holds credentials):
-# its lines, last first, without the program's `prefix`.
-def stderr_msg(err: String, prefix: String) -> String:
-  lines = List.reverse(&2, String, String.lines(String.trim(err)))
-  strip_prefix(String.trim(String.join(lines, " | ")), prefix)
-
-def helper_msg(err: String) -> String:
-  stderr_msg(err, "mailbend-tls: ")
-
-# Process.run reports a helper killed by a signal as exit status 128 plus the
-# signal; mailbend-tls itself exits with at most 6.
-def signalled(code: U32) -> Bool:
-  U32.is_gt(code, 128)
-
-# What a helper's exit status means, as the start of its error.
-def helper_cause(code: U32) -> String:
-  match code:
-    case 2:
-      "configuration error: "
-    case 3:
-      "connection or TLS verification failed: "
-    case 4:
-      "authentication failed (check MAILBEND_EMAIL and the app-specific password): "
-    case _:
-      Bool.pick(String, signalled(code), "the TLS helper was killed by a signal: ",
-        "mail server error: ")
-
-def helper_error(code: U32, err: String) -> String:
-  helper_cause(code) ++ helper_msg(err)
 
 def stale_msg() -> String:
   "the folder's UIDVALIDITY changed since these UIDs were read, so they may name other " ++
@@ -552,27 +302,27 @@ def imap_code(code: U32, lines: List<&2, I.RLine>, err: String) -> Run():
     case 5:
       Fail{imap_refusal(String.contains(err, "[UIDVALIDITY "), lines)}
     case _:
-      Fail{helper_error(code, err)}
+      Fail{Policy.helper_error(code, err)}
 
-def imap_result(p: Proc) -> Run():
+def imap_result(p: Policy.Proc) -> Run():
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       imap_code(code, I.frame(out), err)
     case _:
-      Fail{"cannot run the TLS helper: " ++ proc_failure(p)}
+      Fail{"cannot run the TLS helper: " ++ Policy.proc_failure(p)}
 
-def imap_proc(cmds: List<&2, I.Cmd>) -> IO(Proc):
+def imap_proc(cmds: List<&2, I.Cmd>) -> IO(Policy.Proc):
   helper("imap", I.script(cmds))
 
 # Runs one IMAP session: the helper logs in, runs the plan, logs out.
 def imap_run(cmds: List<&2, I.Cmd>) -> IO(Run()):
   do IO<Run()>:
-    p : Proc <- imap_proc(cmds)
+    p : Policy.Proc <- imap_proc(cmds)
     return imap_result(p)
 
-def proc_lines(p: Proc) -> List<&2, I.RLine>:
+def proc_lines(p: Policy.Proc) -> List<&2, I.RLine>:
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       I.frame(out)
     case _:
       []
@@ -584,125 +334,26 @@ def run_failure(r: Run()) -> String:
     case Done{lines}:
       ""
 
-# Whether the helper may have acted on the mailbox without leaving a whole
-# transcript: it failed after it started (or may have), or a signal killed
-# it. The one classifier for flag changes, COPY-based moves and folder
-# changes. A helper that never started did nothing.
-def helper_lost(p: Proc) -> Bool:
-  match p:
-    case ProcOk{code, out, err}:
-      signalled(code)
-    case ProcRefused{m}:
-      False{}
-    case ProcFail{code, m}:
-      True{}
-
 # Whether command `n` was answered OK.
 def ok_at(lines: List<&2, I.RLine>, n: U32) -> Bool:
   String.eq(I.status(lines, n), "OK")
 
-def smtp_phase.step(line: String, phase: String) -> String:
-  match line:
-    case "mailbend-smtp: before_data":
-      "before_data"
-    case "mailbend-smtp: data_started":
-      "data_started"
-    case "mailbend-smtp: data_accepted":
-      "data_accepted"
-    case "mailbend-smtp: data_rejected":
-      "data_rejected"
-    case _:
-      phase
-
-# Outcome and bounded protocol phase/reason; guidance belongs to Bend.
-def smtp_fields(outcome: String, phase: String, reason: String, next: String) ->
-  List<&2, J.Json>:
-  [J.kv("smtp_outcome", J.str(outcome)), J.kv("smtp_phase", J.str(phase)),
-    J.kv("smtp_reason", J.str(reason)), J.kv("next_action", J.str(next))]
-
-def smtp_failure(msg: String, +outcome: String, phase: String, reason: String) -> Out:
-  next = Bool.pick(String, String.eq(outcome, "unknown"),
-    "Do not retry automatically. Check server records or ask the recipient; a missing " ++
-      "Sent copy does not prove non-delivery.",
-    "SMTP did not accept this message. Resolve the reported problem before a new attempt.")
-  Partial{J.obj(J.kv("error", J.str(msg)) <> smtp_fields(outcome, phase, reason, next))}
-
 # A local refusal before the SMTP attempt, retaining any Jev/scan evidence.
-def send_not_attempted(o: Out) -> Out:
+def send_not_attempted(o: Policy.Out) -> Policy.Out:
   match o:
-    case Err{m}:
-      smtp_failure(m, "not_sent", "before_smtp", "local_refusal")
-    case Partial{j}:
-      with_fields_first(Partial{j}, smtp_fields("not_sent", "before_smtp", "local_refusal",
+    case Policy.Err{m}:
+      Policy.smtp_failure(m, "not_sent", "before_smtp", "local_refusal")
+    case Policy.Partial{j}:
+      with_fields_first(Policy.Partial{j}, Policy.smtp_fields("not_sent", "before_smtp",
+        "local_refusal",
         "Resolve the reported refusal before a new attempt."))
-    case Ok{j}:
-      Ok{j}
+    case Policy.Ok{j}:
+      Policy.Ok{j}
 
-# Fixed native progress comes only from stderr, never from server replies.
-# Keep the latest marker; absence is not proof that DATA was never sent.
-def smtp_phase(lines: List<&2, String>, phase: String) -> String:
-  match lines:
-    case Nil{}:
-      phase
-    case line <> rest:
-      smtp_phase(rest, smtp_phase.step(String.trim(line), phase))
-
-# Progress is a separate machine channel, not part of the human error.
-def smtp_diagnostics(lines: List<&2, String>) -> List<&2, String>:
-  match lines:
-    case Nil{}:
-      []
-    case +line <> rest:
-      List.filter.put(String, line, smtp_diagnostics(rest),
-        Bool.not(String.starts_with(line, "mailbend-smtp: ")))
-
-def smtp_error(code: U32, out: String, err: String) -> String:
-  match code:
-    case 0:
-      "the helper reported completion without acceptance evidence"
-    case 5:
-      "the SMTP server refused the message: " ++ S.last_error(String.lines(out), "")
-    case _:
-      helper_error(code, err)
-
-# Native data_started/data_accepted/data_rejected map to public data_reply;
-# before_data stays before_data, and missing progress is unknown. Only the
-# data_accepted marker is acceptance evidence, regardless of process exit.
-def smtp_code.phase(phase: String, code: U32, out: String, err: String) -> Out:
-  match phase:
-    case "data_accepted":
-      Ok{J.str(S.last_ok(String.lines(out), ""))}
-    case "before_data":
-      smtp_failure(smtp_error(code, out, err), "not_sent", "before_data", "stopped_before_data")
-    case "data_rejected":
-      smtp_failure("the SMTP server refused the message: " ++ S.last_error(String.lines(out), ""),
-        "not_sent", "data_reply", "explicit_rejection")
-    case "data_started":
-      smtp_failure(helper_error(code, err), "unknown", "data_reply", "acceptance_unconfirmed")
-    case _:
-      smtp_failure("SMTP progress is missing; acceptance is unknown: " ++
-        smtp_error(code, out, err),
-        "unknown", "unknown", "missing_progress")
-
-def smtp_code(code: U32, out: String, +err: String) -> Out:
-  smtp_code.phase(smtp_phase(String.lines(err), ""), code, out,
-    String.join(smtp_diagnostics(String.lines(err)), "\n"))
-
-def smtp_result(p: Proc) -> Out:
-  match p:
-    case ProcOk{code, out, err}:
-      smtp_code(code, out, err)
-    case ProcRefused{m}:
-      smtp_failure("cannot run the TLS helper: " ++ m,
-        "not_sent", "before_smtp", "helper_not_started")
-    case ProcFail{code, m}:
-      smtp_failure("cannot run the TLS helper: " ++ m,
-        "unknown", "unknown", "missing_progress")
-
-def smtp_run(envelope: String) -> IO(Out):
-  do IO<Out>:
-    p : Proc <- helper("smtp", envelope)
-    return smtp_result(p)
+def smtp_run(envelope: String) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    p : Policy.Proc <- helper("smtp", envelope)
+    return Policy.smtp_result(p)
 
 # Dry runs
 # --------
@@ -717,7 +368,7 @@ type Preview is Data:
   SmtpPreview{from: String, rcpts: List<&2, String>, msg: String, sent_copy: Bool}
   FilePreview{path: String, data: String}
 
-def preview.result(kind: String, j: J.Json) -> Out:
+def preview.result(kind: String, j: J.Json) -> Policy.Out:
   ok_obj([J.kv("dry_run", J.bool(True{})), J.kv(kind, j)])
 
 # The preview of plans that each run in a session of their own, one after
@@ -734,7 +385,7 @@ def plans_preview(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, String>:
 # file shows only its size, and no line holds a credential: the helper logs
 # in by itself. `sent_copy` states the intent under MAILBEND_SAVE_SENT; the
 # real send still skips the copy when the server has filed one itself.
-def preview(p: Preview) -> Out:
+def preview(p: Preview) -> Policy.Out:
   match p:
     case ImapPreview{plan}:
       preview.result("imap", J.strs(I.preview(plan)))
@@ -756,34 +407,22 @@ def preview(p: Preview) -> Out:
 # Every tool that changes or sends mail, or saves a file, makes its change
 # here, once its read-only checks have passed: `run` makes it, and a dry
 # run only shows it. `run` is an IO action, so a dry run never performs it.
-def preview_or_run(dry: Bool, p: Preview, run: IO(Out)) -> IO(Out):
+def preview_or_run(dry: Bool, p: Preview, run: IO(Policy.Out)) -> IO(Policy.Out):
   match dry:
     case True{}:
       pure_out(preview(p))
     case False{}:
       run
 
-# Arguments and JSON
-# ==================
-
-# Arguments
-# ---------
-
-def str_arg(args: J.Json, key: String, d: String) -> String:
-  Maybe.default(&2, String, J.as_str(J.get(args, key)), d)
-
-def bool_arg(args: J.Json, key: String, d: Bool) -> Bool:
-  Maybe.default(&2, Bool, J.as_bool(J.get(args, key)), d)
-
 def u32_arg(args: J.Json, key: String, d: U32) -> U32:
   Maybe.default(&2, U32, J.as_u32(J.get(args, key)), d)
 
 # Whether a tool that changes or sends mail is only to show the change.
 def dry_arg(args: J.Json) -> Bool:
-  bool_arg(args, "dry_run", False{})
+  Policy.bool_arg(args, "dry_run", False{})
 
 def folder_arg(args: J.Json) -> String:
-  str_arg(args, "folder", "INBOX")
+  Policy.str_arg(args, "folder", "INBOX")
 
 def clamp(n: U32, lo: U32, hi: U32) -> U32:
   U32.max(lo, U32.min(n, hi))
@@ -970,140 +609,8 @@ def source_review_problem(delim: String, folder: String) -> String:
       "\", which the user reviews",
     "")
 
-# Special-use attributes
-# ----------------------
-
-# A special-use attribute and the role name the tools report for it.
-type RoleAttr is Data:
-  RoleAttr{attr: String, name: String}
-
-# The special-use roles MailBend recognises, in the order role_of reports them.
-def role_attrs() -> List<&2, RoleAttr>:
-  [
-    RoleAttr{"\\Drafts", "drafts"},
-    RoleAttr{"\\Sent", "sent"},
-    RoleAttr{"\\Trash", "trash"},
-    RoleAttr{"\\Junk", "junk"},
-    RoleAttr{"\\Archive", "archive"},
-    RoleAttr{"\\All", "all"},
-    RoleAttr{"\\Flagged", "flagged"}
-  ]
-
-# The first of `roles` that `attrs` advertises.
-def role_in(roles: List<&2, RoleAttr>, +attrs: List<&2, String>) -> Maybe<&2, String>:
-  match roles:
-    case Nil{}:
-      None{}
-    case RoleAttr{attr, name} <> t:
-      Bool.pick(Maybe<&2, String>, I.has_attr(attrs, attr), Some{name}, role_in(t, attrs))
-
-# Attribute checks retain the server's actual LIST metadata. Role resolution
-# never adds attributes to a conventionally named or overridden mailbox.
-def recognized_role(attrs: List<&2, String>) -> Bool:
-  Maybe.is_some(&2, String, role_in(role_attrs(), attrs))
-
 def role_of(attrs: List<&2, String>) -> J.Json:
-  maybe_str(role_in(role_attrs(), attrs))
-
-def selectable(+attrs: List<&2, String>) -> Bool:
-  Bool.not(I.has_attr(attrs, "\\Noselect") || I.has_attr(attrs, "\\NonExistent"))
-
-# Role resolution
-# ---------------
-
-# Whether a folder may take the role: with `advertised`, it carries the
-# role's attribute; otherwise it has one of the conventional names `a` and
-# `b`, can be selected, and advertises no role of its own.
-def role_match(
-  advertised: Bool,
-  +name: String,
-  +attrs: List<&2, String>,
-  attr: String,
-  a: String,
-  b: String
-) -> Bool:
-  match advertised:
-    case True{}:
-      I.has_attr(attrs, attr)
-    case False{}:
-      (I.same_name(name, a) || I.same_name(name, b)) && selectable(attrs) &&
-        Bool.not(recognized_role(attrs))
-
-# Keep all matches until uniqueness has been established. An advertised but
-# unselectable role still blocks fallback to a different mailbox.
-def role_candidates(
-  fs: List<&2, I.Folder>,
-  +attr: String,
-  +a: String,
-  +b: String,
-  +advertised: Bool
-) -> List<&2, I.Folder>:
-  match fs:
-    case Nil{}:
-      []
-    case I.Folder{+name, delimiter, +attrs} <> t:
-      List.filter.put(I.Folder, I.Folder{name, delimiter, attrs},
-        role_candidates(t, attr, a, b, advertised),
-        role_match(advertised, name, attrs, attr, a, b))
-
-def unique_folder(fs: List<&2, I.Folder>) -> Maybe<&2, String>:
-  match fs:
-    case I.Folder{name, d, attrs} <> Nil{}:
-      Bool.pick(Maybe<&2, String>, selectable(attrs), Some{name}, None{})
-    case _:
-      None{}
-
-def role_fallback(
-  marked: List<&2, I.Folder>,
-  fs: List<&2, I.Folder>,
-  attr: String,
-  a: String,
-  b: String
-) -> Maybe<&2, String>:
-  match marked:
-    case Nil{}:
-      unique_folder(role_candidates(fs, attr, a, b, False{}))
-    case _:
-      unique_folder(marked)
-
-def role(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) -> Maybe<&2, String>:
-  role_fallback(role_candidates(fs, attr, a, b, True{}), fs, attr, a, b)
-
-def override_candidates(fs: List<&2, I.Folder>, +want: String) -> List<&2, I.Folder>:
-  match fs:
-    case Nil{}:
-      []
-    case +f <> t:
-      I.Folder{name, d, attrs} = f
-      List.filter.put(I.Folder, f, override_candidates(t, want), I.same_name(name, want))
-
-# The one selectable folder named `name`, if there is exactly one.
-def named_folder(fs: List<&2, I.Folder>, name: String) -> Maybe<&2, String>:
-  unique_folder(override_candidates(fs, name))
-
-def resolved_role.if(
-  unset: Bool,
-  fs: List<&2, I.Folder>,
-  override: String,
-  attr: String,
-  a: String,
-  b: String
-) -> Maybe<&2, String>:
-  match unset:
-    case True{}:
-      role(fs, attr, a, b)
-    case False{}:
-      named_folder(fs, override)
-
-# A role's folder: the configured `override`, else the role resolved.
-def resolved_role(
-  fs: List<&2, I.Folder>,
-  +override: String,
-  attr: String,
-  a: String,
-  b: String
-) -> Maybe<&2, String>:
-  resolved_role.if(String.is_empty(override), fs, override, attr, a, b)
+  maybe_str(Policy.role_in(Policy.role_attrs(), attrs))
 
 # Why the override `value` of `variable` cannot be used; "" when it is unset
 # or names one existing selectable mailbox outside the review folder, which
@@ -1113,59 +620,8 @@ def invalid_override(+fs: List<&2, I.Folder>, +value: String, +variable: String)
     variable ++ " cannot name the review folder \"" ++ Ops.review_folder() ++
       "\" or a folder inside it",
     Bool.pick(String,
-      String.is_empty(value) || Maybe.is_some(&2, String, named_folder(fs, value)), "",
+      String.is_empty(value) || Maybe.is_some(&2, String, Policy.named_folder(fs, value)), "",
       variable ++ " must name one existing selectable mailbox"))
-
-# The conventional names role resolution falls back to. reserved_names uses
-# the same list, so a name added here is protected as well.
-def drafts_name() -> String:
-  "Drafts"
-
-def trash_name() -> String:
-  "Trash"
-
-def deleted_messages_name() -> String:
-  "Deleted Messages"
-
-def sent_name() -> String:
-  "Sent"
-
-def sent_messages_name() -> String:
-  "Sent Messages"
-
-def junk_name() -> String:
-  "Junk"
-
-def archive_name() -> String:
-  "Archive"
-
-def conventional_names() -> List<&2, String>:
-  [
-    drafts_name(),
-    trash_name(),
-    deleted_messages_name(),
-    sent_name(),
-    sent_messages_name(),
-    junk_name(),
-    archive_name()
-  ]
-
-def resolved_folders(
-  +fs: List<&2, I.Folder>,
-  drafts: String,
-  trash: String,
-  sent: String,
-  junk: String,
-  archive: String
-) -> Folders:
-  Folders{
-    fs,
-    resolved_role(fs, drafts, "\\Drafts", drafts_name(), drafts_name()),
-    resolved_role(fs, trash, "\\Trash", trash_name(), deleted_messages_name()),
-    resolved_role(fs, sent, "\\Sent", sent_name(), sent_messages_name()),
-    resolved_role(fs, junk, "\\Junk", junk_name(), junk_name()),
-    resolved_role(fs, archive, "\\Archive", archive_name(), archive_name())
-  }
 
 # The roles resolved, once every override names a usable mailbox; the first
 # that does not is reported.
@@ -1177,13 +633,13 @@ def validate_overrides(
   +junk: String,
   +archive: String
 ) -> Fs():
-  do Result<&2, &2, String, Folders>:
-    drafts_ok : Unit <- checked(invalid_override(fs, drafts, "MAILBEND_DRAFTS_FOLDER"))
-    trash_ok : Unit <- checked(invalid_override(fs, trash, "MAILBEND_TRASH_FOLDER"))
-    sent_ok : Unit <- checked(invalid_override(fs, sent, "MAILBEND_SENT_FOLDER"))
-    junk_ok : Unit <- checked(invalid_override(fs, junk, "MAILBEND_JUNK_FOLDER"))
-    archive_ok : Unit <- checked(invalid_override(fs, archive, "MAILBEND_ARCHIVE_FOLDER"))
-    return resolved_folders(fs, drafts, trash, sent, junk, archive)
+  do Result<&2, &2, String, Policy.Folders>:
+    drafts_ok : Unit <- Policy.checked(invalid_override(fs, drafts, "MAILBEND_DRAFTS_FOLDER"))
+    trash_ok : Unit <- Policy.checked(invalid_override(fs, trash, "MAILBEND_TRASH_FOLDER"))
+    sent_ok : Unit <- Policy.checked(invalid_override(fs, sent, "MAILBEND_SENT_FOLDER"))
+    junk_ok : Unit <- Policy.checked(invalid_override(fs, junk, "MAILBEND_JUNK_FOLDER"))
+    archive_ok : Unit <- Policy.checked(invalid_override(fs, archive, "MAILBEND_ARCHIVE_FOLDER"))
+    return Policy.resolved_folders(fs, drafts, trash, sent, junk, archive)
 
 def folders_overrides(fs: List<&2, I.Folder>) -> IO(Fs()):
   do IO<Fs()>:
@@ -1265,10 +721,10 @@ def folders_io.if(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
 def folders_io(+lines: List<&2, I.RLine>) -> IO(Fs()):
   folders_io.if(I.has_cap(I.caps(lines), "SPECIAL-USE"), merge_folders(I.folders(lines), []))
 
-def special_json(f: Folders) -> J.Json:
-  Folders{fs, drafts, trash, sent, junk, archive} = f
+def special_json(f: Policy.Folders) -> J.Json:
+  Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   J.obj([
-    J.kv("inbox", maybe_str(named_folder(fs, "INBOX"))),
+    J.kv("inbox", maybe_str(Policy.named_folder(fs, "INBOX"))),
     J.kv("drafts", maybe_str(drafts)),
     J.kv("sent", maybe_str(sent)),
     J.kv("trash", maybe_str(trash)),
@@ -1283,7 +739,7 @@ def folder_json(f: I.Folder) -> J.Json:
     J.kv("delimiter", J.str(delim)),
     J.kv("attributes", J.strs(attrs)),
     J.kv("special_use", role_of(attrs)),
-    J.kv("selectable", J.bool(selectable(attrs)))
+    J.kv("selectable", J.bool(Policy.selectable(attrs)))
   ])
 
 def folders_json(fs: List<&2, I.Folder>) -> List<&2, J.Json>:
@@ -1429,11 +885,11 @@ def uidv_missing() -> String:
 
 def probe_json(
   lines: List<&2, I.RLine>,
-  +f: Folders,
+  +f: Policy.Folders,
   host: String,
   email: String
-) -> Out:
-  Folders{fs, drafts, trash, sent, junk, archive} = f
+) -> Policy.Out:
+  Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   +caps = I.caps(lines)
   ok_obj([
     J.kv("ok", J.bool(True{})),
@@ -1448,47 +904,47 @@ def probe_json(
     J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs))))
   ])
 
-def probe_fs(f: Fs(), lines: List<&2, I.RLine>, host: String, email: String) -> Out:
+def probe_fs(f: Fs(), lines: List<&2, I.RLine>, host: String, email: String) -> Policy.Out:
   match f:
     case Fail{m}:
-      Err{m}
+      Policy.Err{m}
     case Done{folders}:
       probe_json(lines, folders, host, email)
 
-def probe_out(r: Run(), host: String, email: String) -> IO(Out):
+def probe_out(r: Run(), host: String, email: String) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         return probe_fs(f, lines, host, email)
 
-def t_probe(args: J.Json) -> IO(Out):
-  do IO<Out>:
+def t_probe(args: J.Json) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     r : Run() <- imap_run(Ops.plan_probe())
     host : String <- env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com")
     email : String <- env_or("MAILBEND_EMAIL", "")
     probe_out(r, host, email)
 
-def folders_fs(f: Fs()) -> Out:
+def folders_fs(f: Fs()) -> Policy.Out:
   match f:
     case Fail{m}:
-      Err{m}
-    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+      Policy.Err{m}
+    case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
       ok_obj([J.kv("folders", J.arr(folders_json(fs)))])
 
-def folders_out(r: Run()) -> IO(Out):
+def folders_out(r: Run()) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{lines}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         return folders_fs(f)
 
-def t_folders(args: J.Json) -> IO(Out):
-  do IO<Out>:
+def t_folders(args: J.Json) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     r : Run() <- imap_run(Ops.plan_folders())
     folders_out(r)
 
@@ -1501,12 +957,12 @@ def t_folders(args: J.Json) -> IO(Out):
 # bytes. With Jev on, each message gets a jev object (see Read
 # annotations).
 type Shown is Data:
-  Listed{out: Out, msgs: List<&2, I.Msg>}
-  Threaded{out: Out, msgs: List<&2, I.Msg>, folders: Folders}
-  Whole{out: Out, msg: I.Msg, max: U32}
-  Selected{out: Out, fetched: Jev.Fetched}
+  Listed{out: Policy.Out, msgs: List<&2, I.Msg>}
+  Threaded{out: Policy.Out, msgs: List<&2, I.Msg>, folders: Policy.Folders}
+  Whole{out: Policy.Out, msg: I.Msg, max: U32}
+  Selected{out: Policy.Out, fetched: Jev.Fetched}
 
-def pure_shown(o: Out) -> IO(Shown):
+def pure_shown(o: Policy.Out) -> IO(Shown):
   IO.pure(Shown, Listed{o, []})
 
 # mail_search
@@ -1521,7 +977,7 @@ def text_key.if(empty: Bool, v: String, key: String -> I.Key) -> List<&2, I.Key>
 
 # The search key `key` makes of the string argument `name`, if it is given.
 def text_key(args: J.Json, name: String, key: String -> I.Key) -> List<&2, I.Key>:
-  +v = str_arg(args, name, "")
+  +v = Policy.str_arg(args, name, "")
   text_key.if(String.is_empty(v), v, key)
 
 def text_keys(+args: J.Json) -> List<&2, I.Key>:
@@ -1536,9 +992,9 @@ def text_keys(+args: J.Json) -> List<&2, I.Key>:
 
 def flag_keys(+args: J.Json) -> List<&2, I.Key>:
   List.concat(&2, I.Key, [
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "unseen", False{}), [I.KUnseen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "seen", False{}), [I.KSeen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])
+    Bool.pick(List<&2, I.Key>, Policy.bool_arg(args, "unseen", False{}), [I.KUnseen{}], []),
+    Bool.pick(List<&2, I.Key>, Policy.bool_arg(args, "seen", False{}), [I.KSeen{}], []),
+    Bool.pick(List<&2, I.Key>, Policy.bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])
   ])
 
 def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
@@ -1557,7 +1013,7 @@ def date_key.if(empty: Bool, v: String, name: String) -> Keys():
 
 # The key of the date argument `name` ("since" or "before"), if it is given.
 def date_key(args: J.Json, +name: String) -> Keys():
-  +v = str_arg(args, name, "")
+  +v = Policy.str_arg(args, name, "")
   date_key.if(String.is_empty(v), v, name)
 
 # The search keys; a bad "since" is reported before a bad "before".
@@ -1567,7 +1023,7 @@ def keys_of(+args: J.Json) -> Keys():
     before : List<&2, I.Key> <- date_key(args, "before")
     return List.concat(&2, I.Key, [text_keys(args), flag_keys(args), since, before])
 
-def list_out(folder: String, uidv: Maybe<&2, U32>, total: U32, ms: List<&2, J.Json>) -> Out:
+def list_out(folder: String, uidv: Maybe<&2, U32>, total: U32, ms: List<&2, J.Json>) -> Policy.Out:
   ok_obj([
     J.kv("folder", J.str(folder)),
     J.kv("uidvalidity", maybe_num(uidv)),
@@ -1589,7 +1045,7 @@ def search_headers.if(
       +ms = newest_first(fetched_msgs(lines, uids, False{}))
       Listed{with_fields(list_out(folder, uidv, total, summaries(ms)), page), ms}
     case False{}:
-      Listed{Err{moved_msg()}, []}
+      Listed{Policy.Err{moved_msg()}, []}
 
 # The fetch runs in a second session: its EXAMINE must report the same
 # UIDVALIDITY as the search, or the UIDs may name other messages.
@@ -1603,7 +1059,7 @@ def search_headers(
 ) -> Shown:
   match r:
     case Fail{m}:
-      Listed{Err{m}, []}
+      Listed{Policy.Err{m}, []}
     case Done{+lines}:
       search_headers.if(same_uidv(uidv, I.ok_code(lines, "UIDVALIDITY")), lines, folder, uidv,
         total, uids, page)
@@ -1653,7 +1109,7 @@ def search_found.if(
 ) -> IO(Shown):
   match same:
     case False{}:
-      pure_shown(Err{SC.identity_problem(cursor)})
+      pure_shown(Policy.Err{SC.identity_problem(cursor)})
     case True{}:
       +uids = I.search_uids(lines)
       search_page(SC.eligible(cursor, uids), folder, I.ok_code(lines, "UIDVALIDITY"),
@@ -1664,7 +1120,7 @@ def search_found(
 ) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{+lines}:
       search_found.if(SC.same(cursor, I.ok_code(lines, "UIDVALIDITY")), lines,
         folder, limit, cursor, binding)
@@ -1674,7 +1130,7 @@ def search_run(
 ) -> IO(Shown):
   match c:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{+cursor}:
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_search_page(folder, keys, cursor))
@@ -1683,7 +1139,7 @@ def search_run(
 def search_keys(ks: Keys(), args: J.Json, +folder: String, limit: U32) -> IO(Shown):
   match ks:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{+keys}:
       +binding = SC.binding(folder, I.search_args(keys))
       search_run(SC.read(J.get(args, "cursor"), binding), folder, keys, limit, binding)
@@ -1709,7 +1165,7 @@ def get_json(
   max: U32,
   +hs: List<&2, M.Hdr>,
   +p: M.Parts
-) -> Out:
+) -> Policy.Out:
   I.Msg{uid, +flags, date, +size, headers, body, _} = m
   M.Parts{_, +html, atts} = p
   ok_obj([
@@ -1766,7 +1222,7 @@ def get_msg(
 ) -> Shown:
   match ms:
     case Nil{}:
-      Listed{Err{no_message(uid, folder)}, []}
+      Listed{Policy.Err{no_message(uid, folder)}, []}
     case +m <> t:
       +body = msg_body(m)
       Whole{get_json(m, folder, uidv, max, body_headers(body), M.parts(body)), m, max}
@@ -1774,7 +1230,7 @@ def get_msg(
 def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Shown:
   match r:
     case Fail{m}:
-      Listed{Err{m}, []}
+      Listed{Policy.Err{m}, []}
     case Done{+lines}:
       get_msg(with_uid(I.fetched(lines), uid, True{}), folder, uid,
         I.ok_code(lines, "UIDVALIDITY"), max)
@@ -1832,9 +1288,9 @@ def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32,
         r : Run() <- imap_run(Ops.plan_get_checked(folder, uid, max, uidv))
         return get_out(checked_read(r, uidv), folder, uid, max)
     case Fail{m} _:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case _ Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
 
 # Explicit selected reads leave the legacy whole-message rendering unchanged.
 def part_metadata.first(ms: List<&2, I.Msg>) -> Result<&2, &2, String, List<&2, Part.Part>>:
@@ -1933,10 +1389,10 @@ def part_content.fields(text: Bool, ct: String, bytes: String) -> List<&2, J.Jso
         J.kv("content_encoding", J.str("base64"))]
 
 def part_content(r: Result<&2, &2, String, String>, p: Part.Part,
-  folder: String, uid: U32, uidv: U32) -> Out:
+  folder: String, uid: U32, uidv: U32) -> Policy.Out:
   match r:
     case Fail{why}:
-      Err{why}
+      Policy.Err{why}
     case Done{bytes}:
       Part.Part{path, +ct, cd, encoding, size} = p
       ok_obj(List.append(&2, J.Json,
@@ -1970,9 +1426,9 @@ def part_get.shown(
 ) -> Shown:
   match r ms:
     case Fail{why} _:
-      Listed{Err{why}, []}
+      Listed{Policy.Err{why}, []}
     case _ Nil{}:
-      Listed{Err{"missing selected message metadata"}, []}
+      Listed{Policy.Err{"missing selected message metadata"}, []}
     case Done{+bytes} m <> t:
       text = part_get.text(p, bytes)
       Selected{part_content(Done{bytes}, p, folder, uid, uidv),
@@ -1982,7 +1438,7 @@ def part_get.fetched(r: Run(), +p: Part.Part, folder: String,
   +uid: U32, +uidv: U32, max: U32) -> Shown:
   match r:
     case Fail{why}:
-      Listed{Err{why}, []}
+      Listed{Policy.Err{why}, []}
     case Done{+lines}:
       part_get.shown(part_bytes(Done{lines}, uid, uidv, p, max),
         part_metadata.filter(I.fetched(lines), uid), p, folder, uid, uidv)
@@ -1991,17 +1447,17 @@ def part_get.fetch(r: Result<&2, &2, String, Part.Part>, +folder: String,
   +uid: U32, +uidv: U32, +max: U32) -> IO(Shown):
   match r:
     case Fail{why}:
-      pure_shown(Err{why})
+      pure_shown(Policy.Err{why})
     case Done{+p}:
       do IO<Shown>:
         lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p), max))
         return part_get.fetched(lines, p, folder, uid, uidv, max)
 
 def part_get.list(r: Result<&2, &2, String, List<&2, Part.Part>>,
-  folder: String, uid: U32, uidv: U32) -> Out:
+  folder: String, uid: U32, uidv: U32) -> Policy.Out:
   match r:
     case Fail{why}:
-      Err{why}
+      Policy.Err{why}
     case Done{ps}:
       ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
         J.kv("uidvalidity", J.num(uidv)), J.kv("parts", J.arr(parts_json(ps)))])
@@ -2024,9 +1480,9 @@ def part_get(u: Result<&2, &2, String, U32>, folder: String, uidv: U32,
   +wanted: String, max: U32) -> IO(Shown):
   match u uidv:
     case Fail{why} _:
-      pure_shown(Err{why})
+      pure_shown(Policy.Err{why})
     case _ 0:
-      pure_shown(Err{uidv_missing()})
+      pure_shown(Policy.Err{uidv_missing()})
     case Done{uid} _:
       part_get.run(String.eq(wanted, "list"), folder, uid, uidv, wanted, max)
 
@@ -2040,7 +1496,7 @@ def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String) -> IO(Shown):
         wanted, max)
 
 def t_get(+args: J.Json) -> IO(Shown):
-  +wanted = str_arg(args, "section", "")
+  +wanted = Policy.str_arg(args, "section", "")
   t_get.if(String.is_empty(wanted), args,
     clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216), wanted)
 
@@ -2064,7 +1520,7 @@ def new_out(
   next: U32,
   more: Bool,
   ms: List<&2, J.Json>
-) -> Out:
+) -> Policy.Out:
   ok_obj([
     J.kv("folder", J.str(folder)),
     J.kv("uidvalidity", J.num(uidv)),
@@ -2103,7 +1559,7 @@ def new_headers(
 ) -> Shown:
   match r:
     case Fail{m}:
-      Listed{Err{m}, []}
+      Listed{Policy.Err{m}, []}
     case Done{+lines}:
       +now = I.ok_code(lines, "UIDVALIDITY")
       new_headers.if(uidv_is(now, uidv), lines, now, folder, uidv, next, more, uids)
@@ -2154,7 +1610,7 @@ def new_check(
 def new_found(r: Run(), folder: String, +since: U32, known: U32, limit: U32) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{+lines}:
       new_check(Maybe.default(&2, U32, I.ok_code(lines, "UIDVALIDITY"), 0),
         asc(above(I.search_uids(lines), since)), folder, since, known, limit)
@@ -2170,7 +1626,7 @@ def new_request(since: U32, known: U32) -> String:
 def t_get_new.if(problem: String, +args: J.Json) -> IO(Shown):
   match problem:
     case SCon{h, t}:
-      pure_shown(Err{SCon{h, t}})
+      pure_shown(Policy.Err{SCon{h, t}})
     case SNil{}:
       +folder = folder_arg(args)
       +since = u32_arg(args, "since_uid", 0)
@@ -2361,9 +1817,9 @@ def thread_identities(fs: List<&2, Found>)
         rest : List<&2, Ops.ReadIdentity> <- thread_identities(t)
         return Ops.ReadIdentity{f, v} <> rest
 
-def thread_plan(checked: Bool, cs: List<&2, I.Cmd>, opened: List<&2, Found>)
+def thread_plan(Policy.checked: Bool, cs: List<&2, I.Cmd>, opened: List<&2, Found>)
   -> Result<&2, &2, String, List<&2, I.Cmd>>:
-  match checked:
+  match Policy.checked:
     case False{}:
       Done{cs}
     case True{}:
@@ -2422,7 +1878,7 @@ def thread_round.put(
 
 # One round: every folder searched for the IDs, then what is new fetched. A
 # read with no IDs left to search for does nothing.
-def thread_round(g: Thread(), folders: List<&2, String>, +checked: Bool) -> IO(Thread()):
+def thread_round(g: Thread(), folders: List<&2, String>, +Policy.checked: Bool) -> IO(Thread()):
   match g:
     case Fail{m}:
       IO.pure(Thread(), Fail{m})
@@ -2431,9 +1887,10 @@ def thread_round(g: Thread(), folders: List<&2, String>, +checked: Bool) -> IO(T
     case Done{Threading{+ids, searched, nodes, +opened}}:
       do IO<Thread()>:
         found : Result<&2, &2, String, List<&2, Found>> <- thread_run(
-          thread_plan(checked, Ops.plan_thread_search(folders, T.search_keys(ids)), opened), opened,
-          checked)
-        thread_round.put(found, Threading{ids, searched, nodes, opened}, checked)
+          thread_plan(Policy.checked, Ops.plan_thread_search(folders, T.search_keys(ids)),
+            opened), opened,
+          Policy.checked)
+        thread_round.put(found, Threading{ids, searched, nodes, opened}, Policy.checked)
 
 # A message's parent as JSON: its Message-ID, or null for none.
 def parent_json(id: String) -> J.Json:
@@ -2470,14 +1927,14 @@ def placed_msgs(ps: List<&2, T.Placed>) -> List<&2, I.Msg>:
 # those it searched.
 def thread_out(
   g: Thread(),
-  fs: Folders,
+  fs: Policy.Folders,
   folders: List<&2, String>,
   mbox: String,
   uid: U32
 ) -> Shown:
   match g:
     case Fail{m}:
-      Listed{Err{m}, []}
+      Listed{Policy.Err{m}, []}
     case Done{Threading{ids, searched, nodes, opened}}:
       +placed = T.thread_order(nodes)
       Threaded{ok_obj([
@@ -2511,26 +1968,28 @@ def thread_folders.put(fs: List<&2, String>, sent: Maybe<&2, String>) -> List<&2
 def thread_folders(mbox: String, sent: Maybe<&2, String>) -> List<&2, String>:
   thread_folders.put(folder_added([mbox], "INBOX"), sent)
 
-def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32, +checked: Bool) -> IO(Shown):
+def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32,
+  +Policy.checked: Bool) -> IO(Shown):
   match f:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{+fs}:
-      Folders{all, drafts, trash, sent, junk, archive} = fs
+      Policy.Folders{all, drafts, trash, sent, junk, archive} = fs
       +folders = thread_folders(mbox, sent)
       do IO<Shown>:
-        one : Thread() <- thread_round(Done{st}, folders, checked)
-        two : Thread() <- thread_round(one, folders, checked)
+        one : Thread() <- thread_round(Done{st}, folders, Policy.checked)
+        two : Thread() <- thread_round(one, folders, Policy.checked)
         return thread_out(two, fs, folders, mbox, uid)
 
-def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32, checked: Bool) -> IO(Shown):
+def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32,
+  Policy.checked: Bool) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{lines}:
       do IO<Shown>:
         f : Fs() <- folders_io(lines)
-        thread_rounds(f, st, mbox, uid, checked)
+        thread_rounds(f, st, mbox, uid, Policy.checked)
 
 # A read that starts at the message `start`, which its session found in
 # `mbox`: the IDs it names are searched for first.
@@ -2538,23 +1997,24 @@ def first_threading(+start: T.Node, mbox: String, uidv: Maybe<&2, U32>) -> Threa
   Threading{T.next_ids([start], []), [], [start], [Found{mbox, uidv, [], []}]}
 
 def thread_start.put(
-  ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32, checked: Bool
+  ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32, Policy.checked: Bool
 ) -> IO(Shown):
   match ms:
     case Nil{}:
-      pure_shown(Err{no_message(uid, mbox)})
+      pure_shown(Policy.Err{no_message(uid, mbox)})
     case m <> t:
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_probe())
-        thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid, checked)
+        thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid,
+          Policy.checked)
 
-def thread_start(r: Run(), mbox: String, +uid: U32, checked: Bool) -> IO(Shown):
+def thread_start(r: Run(), mbox: String, +uid: U32, Policy.checked: Bool) -> IO(Shown):
   match r:
     case Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case Done{+lines}:
       thread_start.put(with_uid(I.fetched(lines), uid, False{}), I.ok_code(lines, "UIDVALIDITY"),
-        mbox, uid, checked)
+        mbox, uid, Policy.checked)
 
 def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String,
   v: Result<&2, &2, String, Maybe<&2, U32>>) -> IO(Shown):
@@ -2564,26 +2024,13 @@ def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String,
         r : Run() <- imap_run(Ops.plan_headers_checked(mbox, [uid], uidv))
         thread_start(checked_read(r, uidv), mbox, uid, Maybe.is_some(&2, U32, uidv))
     case Fail{m} _:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
     case _ Fail{m}:
-      pure_shown(Err{m})
+      pure_shown(Policy.Err{m})
 
 def t_get_thread(+args: J.Json) -> IO(Shown):
   thread_uid(single_uid(uids_arg(args), "mail_get_thread"), folder_arg(args),
     read_uidv(J.get(args, "uidvalidity")))
-
-# Asking Jev
-# ==========
-
-# With MAILBEND_TYPESAFE on, tools ask TypeSafe's Jev through these:
-# mail_classify and mail_triage, the gates before a send or a permanent
-# delete, and the annotations of reads.
-
-# One request
-# -----------
-
-def jev_off(name: String) -> String:
-  name ++ " is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off"
 
 # How one TypeSafe request ended: its answer; TypeSafe refused it (the
 # helper exits with 8), which a smaller request may cure; or any other
@@ -2621,11 +2068,11 @@ def typesafe_cause(code: U32) -> String:
     case 9:
       "try again later: "
     case _:
-      Bool.pick(String, signalled(code), "the TypeSafe helper was killed by a signal: ",
+      Bool.pick(String, Policy.signalled(code), "the TypeSafe helper was killed by a signal: ",
         "TypeSafe error: ")
 
 def typesafe_msg(err: String) -> String:
-  stderr_msg(err, "mailbend-typesafe: ")
+  Policy.stderr_msg(err, "mailbend-typesafe: ")
 
 def asked_code(code: U32, out: String, err: String) -> Asked:
   match code:
@@ -2636,12 +2083,12 @@ def asked_code(code: U32, out: String, err: String) -> Asked:
     case _:
       AskFailed{typesafe_cause(code) ++ typesafe_msg(err)}
 
-def asked(p: Proc) -> Asked:
+def asked(p: Policy.Proc) -> Asked:
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       asked_code(code, out, err)
     case _:
-      AskFailed{"cannot run the TypeSafe helper: " ++ proc_failure(p)}
+      AskFailed{"cannot run the TypeSafe helper: " ++ Policy.proc_failure(p)}
 
 # How often a request is tried: once, or again after an overload or a
 # timeout; the helper only follows this choice. Read annotations try once,
@@ -2674,15 +2121,15 @@ def ask_args(t: Tries, h: Jev.ImageHeader) -> List<&1, String>:
 # take up to five minutes (it may retry an overloaded service twice). It is
 # not run_helper, whose 128 MiB cap is for mail: this cap is a second guard.
 def typesafe_run(path: Result<&2, &2, String, String>, t: Tries, header: Jev.ImageHeader,
-  body: String) -> IO(Proc):
+  body: String) -> IO(Policy.Proc):
   match path:
     case Done{p}:
-      do IO<Proc>:
+      do IO<Policy.Proc>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
           Process.run(p, ask_args(t, header), body, 8388608, 300000)
-        return proc_of(r)
+        return Policy.proc_of(r)
     case Fail{m}:
-      IO.pure(Proc, ProcRefused{m})
+      IO.pure(Policy.Proc, Policy.ProcRefused{m})
 
 # Sends one request through mailbend-typesafe, the only program that reads
 # the TypeSafe key. The danger-zone flag is the cargo's header, not a second
@@ -2691,7 +2138,7 @@ def ask_jev(t: Tries, cargo: Jev.Cargo) -> IO(Asked):
   Jev.Cargo{body, header} = cargo
   do IO<Asked>:
     path : String <- env_or("MAILBEND_TYPESAFE_HELPER", "")
-    p : Proc <- typesafe_run(
+    p : Policy.Proc <- typesafe_run(
       helper_path(path, "MAILBEND_TYPESAFE_HELPER", "mailbend-typesafe"), t, header, body)
     return asked(p)
 
@@ -2930,8 +2377,8 @@ def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
 # =============
 
 # A change or send the gates blocked: why, and what they found.
-def gate_blocked(reason: String, report: List<&2, J.Json>) -> Out:
-  Partial{J.obj(J.kv("ok", J.bool(False{})) <> J.kv("error", J.str(reason)) <> report)}
+def gate_blocked(reason: String, report: List<&2, J.Json>) -> Policy.Out:
+  Policy.Partial{J.obj(J.kv("ok", J.bool(False{})) <> J.kv("error", J.str(reason)) <> report)}
 
 # Change results
 # --------------
@@ -2952,10 +2399,10 @@ def changed_found.if(
   uids: List<&2, U32>,
   folder: String,
   kvs: List<&2, J.Json>
-) -> Out:
+) -> Policy.Out:
   match none:
     case True{}:
-      Err{none_exist(folder)}
+      Policy.Err{none_exist(folder)}
     case False{}:
       ok_obj(List.append(&2, J.Json, kvs, [
         J.kv("changed", uids_json(found)),
@@ -2970,7 +2417,7 @@ def changed_found(
   uids: List<&2, U32>,
   folder: String,
   kvs: List<&2, J.Json>
-) -> Out:
+) -> Policy.Out:
   changed_found.if(List.is_empty(&2, U32, found), found, uids, folder, kvs)
 
 def changed_of(
@@ -2978,13 +2425,13 @@ def changed_of(
   uids: List<&2, U32>,
   folder: String,
   kvs: List<&2, J.Json>
-) -> Out:
+) -> Policy.Out:
   changed_found(asc(I.search_uids(lines)), uids, folder, kvs)
 
-def changed_out(r: Run(), uids: List<&2, U32>, folder: String, kvs: List<&2, J.Json>) -> Out:
+def changed_out(r: Run(), uids: List<&2, U32>, folder: String, kvs: List<&2, J.Json>) -> Policy.Out:
   match r:
     case Fail{m}:
-      Err{m}
+      Policy.Err{m}
     case Done{lines}:
       changed_of(lines, uids, folder, kvs)
 
@@ -3086,10 +2533,11 @@ def refresh_uids.go(xs: List<&2, U32>, prev: U32) -> List<&2, U32>:
 def refresh_request(+args: J.Json) -> Uids():
   do Result<&2, &2, String, List<&2, U32>>:
     +us : List<&2, U32> <- uids_arg(args)
-    bound : Unit <- checked(Bool.pick(String,
+    bound : Unit <- Policy.checked(Bool.pick(String,
       Nat.is_gt(List.length(&2, U32, us), 100n), "mail_refresh takes at most 100 UIDs", ""))
-    pinned : Unit <- checked(Bool.pick(String, U32.is_zero(uidv_arg(args)), uidv_missing(), ""))
-    folder : Unit <- checked(Bool.pick(String, U32.is_gt(C.utf8_len(folder_arg(args)), 1024),
+    pinned : Unit <- Policy.checked(Bool.pick(String, U32.is_zero(uidv_arg(args)),
+      uidv_missing(), ""))
+    folder : Unit <- Policy.checked(Bool.pick(String, U32.is_gt(C.utf8_len(folder_arg(args)), 1024),
       "mail_refresh folder exceeds 1024 UTF-8 bytes", ""))
     return refresh_uids.go(asc(us), 0)
 
@@ -3225,7 +2673,7 @@ def refresh_present(os: List<&2, Observed>) -> List<&2, Observed>:
 def refresh_out(
   folder: String, uidv: Maybe<&2, U32>, +reset: Bool, +unknown: List<&2, U32>,
   absent: List<&2, U32>, present: List<&2, Observed>, reason: String
-) -> Out:
+) -> Policy.Out:
   ok_obj([
     J.kv("folder", J.str(folder)), J.kv("uidvalidity", maybe_num(uidv)),
     J.kv("reset_required", J.bool(reset)),
@@ -3235,23 +2683,23 @@ def refresh_out(
     J.kv("reason", J.str(reason))
   ])
 
-def refresh_failed.put(out: Out) -> Out:
+def refresh_failed.put(out: Policy.Out) -> Policy.Out:
   match out:
-    case Ok{j}:
-      Partial{j}
+    case Policy.Ok{j}:
+      Policy.Partial{j}
     case _:
       out
 
 # Protocol failures retain bounded evidence but remain visible as tool errors.
 def refresh_failed(
   folder: String, uidv: Maybe<&2, U32>, us: List<&2, U32>, reason: String
-) -> Out:
+) -> Policy.Out:
   refresh_failed.put(refresh_out(folder, uidv, False{}, us, [], [], reason))
 
 def refresh_found(
   search: Maybe<&2, List<&2, U32>>, lines: List<&2, I.RLine>,
   +us: List<&2, U32>, folder: String, uidv: Maybe<&2, U32>
-) -> Out:
+) -> Policy.Out:
   match search:
     case None{}:
       refresh_failed(folder, uidv, us, "incomplete SEARCH evidence")
@@ -3263,7 +2711,7 @@ def refresh_found(
 def refresh_result.if(
   complete: Bool, +lines: List<&2, I.RLine>, +us: List<&2, U32>,
   folder: String, uidv: Maybe<&2, U32>
-) -> Out:
+) -> Policy.Out:
   match complete:
     case False{}:
       refresh_failed(folder, uidv, us, "incomplete protocol evidence")
@@ -3272,7 +2720,7 @@ def refresh_result.if(
 
 def refresh_result(
   r: Run(), us: List<&2, U32>, folder: String, +uidv: Maybe<&2, U32>
-) -> Out:
+) -> Policy.Out:
   match r:
     case Fail{m}:
       refresh_failed(folder, uidv, us, m)
@@ -3282,15 +2730,15 @@ def refresh_result(
         lines, us, folder, uidv)
 
 def refresh_proc.if(
-  reset: Bool, p: Proc, us: List<&2, U32>, folder: String, uidv: Maybe<&2, U32>
-) -> Out:
+  reset: Bool, p: Policy.Proc, us: List<&2, U32>, folder: String, uidv: Maybe<&2, U32>
+) -> Policy.Out:
   match reset:
     case True{}:
       refresh_out(folder, uidv, True{}, [], [], [], "discard this mailbox's cached UIDs")
     case False{}:
       refresh_result(imap_result(p), us, folder, uidv)
 
-def refresh_proc(+p: Proc, us: List<&2, U32>, folder: String, want: U32) -> Out:
+def refresh_proc(+p: Policy.Proc, us: List<&2, U32>, folder: String, want: U32) -> Policy.Out:
   +lines = proc_lines(p)
   +now = positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"))
   reset = ok_at(lines, 1) && Maybe.is_some(&2, U32, now) && Bool.not(uidv_is(now, want))
@@ -3299,46 +2747,48 @@ def refresh_proc(+p: Proc, us: List<&2, U32>, folder: String, want: U32) -> Out:
 # JSON escaping can expand flags. Bound the tool result too, with no
 # identity decisions retained when rendering would exceed the result cap.
 def refresh_bounded.if(
-  over: Bool, out: Out, us: List<&2, U32>, folder: String, uidv: U32
-) -> Out:
+  over: Bool, out: Policy.Out, us: List<&2, U32>, folder: String, uidv: U32
+) -> Policy.Out:
   match over:
     case True{}:
       refresh_failed(folder, Some{uidv}, us, "result exceeds 256 KiB")
     case False{}:
       out
 
-def refresh_bounded(out: Out, us: List<&2, U32>, folder: String, uidv: U32) -> Out:
+def refresh_bounded(out: Policy.Out, us: List<&2, U32>, folder: String, uidv: U32) -> Policy.Out:
   match out:
-    case Ok{+j}:
-      refresh_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), Ok{j}, us, folder, uidv)
-    case Partial{+j}:
-      refresh_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), Partial{j}, us, folder, uidv)
+    case Policy.Ok{+j}:
+      refresh_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), Policy.Ok{j}, us, folder, uidv)
+    case Policy.Partial{+j}:
+      refresh_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), Policy.Partial{j}, us,
+        folder, uidv)
     case _:
       out
 
 # Process.run enforces this 256 KiB output and 30 second bound before the
 # core frames any response. The native helper still only executes the plan.
-def refresh_run.at(path: String, plan: List<&2, I.Cmd>) -> IO(Proc):
+def refresh_run.at(path: String, plan: List<&2, I.Cmd>) -> IO(Policy.Proc):
   match path:
     case SCon{'/', t}:
-      do IO<Proc>:
+      do IO<Policy.Proc>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
           Process.run(SCon{'/', t}, ["imap"], I.script(plan), 262144, 30000)
-        return proc_of(r)
+        return Policy.proc_of(r)
     case _:
-      IO.pure(Proc, ProcRefused{helper_refusal("MAILBEND_TLS_HELPER", "mailbend-tls")})
+      IO.pure(Policy.Proc, Policy.ProcRefused{helper_refusal("MAILBEND_TLS_HELPER",
+        "mailbend-tls")})
 
-def t_refresh.put(req: Uids(), +folder: String, +uidv: U32) -> IO(Out):
+def t_refresh.put(req: Uids(), +folder: String, +uidv: U32) -> IO(Policy.Out):
   match req:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+us}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         path : String <- env_or("MAILBEND_TLS_HELPER", "")
-        p : Proc <- refresh_run.at(path, Ops.plan_refresh(folder, us, uidv))
+        p : Policy.Proc <- refresh_run.at(path, Ops.plan_refresh(folder, us, uidv))
         return refresh_bounded(refresh_proc(p, us, folder, uidv), us, folder, uidv)
 
-def t_refresh(+args: J.Json) -> IO(Out):
+def t_refresh(+args: J.Json) -> IO(Policy.Out):
   t_refresh.put(refresh_request(args), folder_arg(args), uidv_arg(args))
 
 # Whether a message has a colour bit exactly when the colour sets it.
@@ -3443,7 +2893,7 @@ def flag_done(
   uids: List<&2, U32>,
   +folder: String,
   +mark: Mark
-) -> Out:
+) -> Policy.Out:
   +found = asc(I.search_uids(lines))
   +os = observed(found, I.flag_fetches(I.replies(lines, I.tag_count(plan))))
   perm = I.permanent_flags(I.replies(lines, 1))
@@ -3459,10 +2909,10 @@ def flag_run(
   uids: List<&2, U32>,
   folder: String,
   mark: Mark
-) -> Out:
+) -> Policy.Out:
   match r:
     case Fail{m}:
-      Err{m}
+      Policy.Err{m}
     case Done{lines}:
       flag_done(lines, plan, uids, folder, mark)
 
@@ -3520,9 +2970,9 @@ def cut_text(all_acked: Bool, acked: List<&2, String>, unconfirmed: List<&2, Str
 
 # A flag change that stopped where it may have changed something. It is an
 # error for the caller, but not one that implies nothing changed.
-def flag_partial(reason: String, folder: String, c: Cut) -> Out:
+def flag_partial(reason: String, folder: String, c: Cut) -> Policy.Out:
   Cut{+acked, +unconfirmed, all_acked} = c
-  Partial{J.obj([
+  Policy.Partial{J.obj([
     J.kv("ok", J.bool(False{})),
     J.kv("partial", J.bool(True{})),
     J.kv("folder", J.str(folder)),
@@ -3540,9 +2990,9 @@ def searched_none(+lines: List<&2, I.RLine>) -> Bool:
 # finish (or its transcript is not whole), a store was acknowledged or may
 # have run unanswered, and the search did not show that no UID exists. None
 # for a finished run, or one that stopped before any store could run.
-def flag_cut(+p: Proc, +plan: List<&2, I.Cmd>) -> Maybe<&2, Cut>:
+def flag_cut(+p: Policy.Proc, +plan: List<&2, I.Cmd>) -> Maybe<&2, Cut>:
   +lines = proc_lines(p)
-  +lost = helper_lost(p)
+  +lost = Policy.helper_lost(p)
   +last = I.tag_count(plan)
   +acked = store_changes(plan, 1, lines, Acked{})
   +unconfirmed = store_changes(plan, 1, lines, Unanswered{lost})
@@ -3553,12 +3003,12 @@ def flag_cut(+p: Proc, +plan: List<&2, I.Cmd>) -> Maybe<&2, Cut>:
 
 def flag_out.put(
   cut: Maybe<&2, Cut>,
-  p: Proc,
+  p: Policy.Proc,
   plan: List<&2, I.Cmd>,
   uids: List<&2, U32>,
   folder: String,
   mark: Mark
-) -> Out:
+) -> Policy.Out:
   match cut:
     case Some{c}:
       flag_partial(run_failure(imap_result(p)), folder, c)
@@ -3568,21 +3018,21 @@ def flag_out.put(
 # A flag change's result: partial when it stopped where it may have changed
 # something, else the finished result or a plain error.
 def flag_out(
-  +p: Proc,
+  +p: Policy.Proc,
   +plan: List<&2, I.Cmd>,
   uids: List<&2, U32>,
   folder: String,
   mark: Mark
-) -> Out:
+) -> Policy.Out:
   flag_out.put(flag_cut(p, plan), p, plan, uids, folder, mark)
 
 def mark_result(
-  p: Proc,
+  p: Policy.Proc,
   plan: List<&2, I.Cmd>,
   uids: List<&2, U32>,
   +folder: String,
   +mark: Mark
-) -> Out:
+) -> Policy.Out:
   match mark:
     case MarkSeen{seen}:
       changed_out(imap_result(p), uids, folder, mark_kvs(folder, mark))
@@ -3594,9 +3044,9 @@ def mark_uids.run(
   uids: List<&2, U32>,
   folder: String,
   mark: Mark
-) -> IO(Out):
-  do IO<Out>:
-    p : Proc <- imap_proc(plan)
+) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    p : Policy.Proc <- imap_proc(plan)
     return mark_result(p, plan, uids, folder, mark)
 
 def mark_uids.if(
@@ -3606,40 +3056,40 @@ def mark_uids.if(
   +mark: Mark,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match missing:
     case True{}:
-      pure_out(Err{uidv_missing()})
+      pure_out(Policy.Err{uidv_missing()})
     case False{}:
       +plan = mark_plan(uids, folder, mark, uidv)
       preview_or_run(dry, ImapPreview{plan}, mark_uids.run(plan, uids, folder, mark))
 
-def mark_uids(u: Uids(), folder: String, mark: Mark, +uidv: U32, dry: Bool) -> IO(Out):
+def mark_uids(u: Uids(), folder: String, mark: Mark, +uidv: U32, dry: Bool) -> IO(Policy.Out):
   match u:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{uids}:
       mark_uids.if(U32.is_zero(uidv), uids, folder, mark, uidv, dry)
 
-def t_mark(+args: J.Json, mark: Mark) -> IO(Out):
+def t_mark(+args: J.Json, mark: Mark) -> IO(Policy.Out):
   mark_uids(uids_arg(args), folder_arg(args), mark, uidv_arg(args), dry_arg(args))
 
-def flag_colour(m: Maybe<&2, I.Colour>, args: J.Json) -> IO(Out):
+def flag_colour(m: Maybe<&2, I.Colour>, args: J.Json) -> IO(Policy.Out):
   match m:
     case Some{c}:
       t_mark(args, MarkFlag{Some{c}})
     case None{}:
-      pure_out(Err{"\"colour\" must be one of " ++ String.join(I.colour_names(), ", ")})
+      pure_out(Policy.Err{"\"colour\" must be one of " ++ String.join(I.colour_names(), ", ")})
 
 # Without a "colour", flagging leaves the message's colour bits as they are.
-def flag_named(m: Maybe<&2, String>, args: J.Json) -> IO(Out):
+def flag_named(m: Maybe<&2, String>, args: J.Json) -> IO(Policy.Out):
   match m:
     case None{}:
       t_mark(args, MarkFlag{None{}})
     case Some{n}:
       flag_colour(I.colour_from_name(n), args)
 
-def t_flag(+args: J.Json) -> IO(Out):
+def t_flag(+args: J.Json) -> IO(Policy.Out):
   flag_named(J.as_str(J.get(args, "colour")), args)
 
 # Move, trash and delete
@@ -3664,8 +3114,8 @@ def copy_unfinished(+plan: List<&2, I.Cmd>, +lines: List<&2, I.RLine>) -> Bool:
 
 # A move that may have copied without finishing. A UID MOVE plan has no COPY,
 # so it is never interrupted. A lost helper counts when the plan has a COPY.
-def interrupted(+plan: List<&2, I.Cmd>, +p: Proc) -> Bool:
-  (helper_lost(p) && has_copy(plan)) || copy_unfinished(plan, proc_lines(p))
+def interrupted(+plan: List<&2, I.Cmd>, +p: Policy.Proc) -> Bool:
+  (Policy.helper_lost(p) && has_copy(plan)) || copy_unfinished(plan, proc_lines(p))
 
 # The fields a finished move or label opens with.
 def moved_kvs(folder: String, dest: String, move: Bool) -> List<&2, J.Json>:
@@ -3680,8 +3130,8 @@ def moved_kvs(folder: String, dest: String, move: Bool) -> List<&2, J.Json>:
 # not one that implies nothing changed: the one-copy guarantee holds only for
 # a completed move. `reason` is never empty here: a finished run is not
 # interrupted.
-def partial_out(reason: String, +folder: String, +dest: String, move: Bool) -> Out:
-  Partial{J.obj([
+def partial_out(reason: String, +folder: String, +dest: String, move: Bool) -> Policy.Out:
+  Policy.Partial{J.obj([
     J.kv("ok", J.bool(False{})),
     J.kv("partial", J.bool(True{})),
     J.kv("folder", J.str(folder)),
@@ -3700,7 +3150,7 @@ def moved_out.if(
   uids: List<&2, U32>,
   dest: String,
   move: Bool
-) -> Out:
+) -> Policy.Out:
   match cut:
     case True{}:
       partial_out(run_failure(r), folder, dest, move)
@@ -3708,13 +3158,13 @@ def moved_out.if(
       changed_out(r, uids, folder, moved_kvs(folder, dest, move))
 
 def moved_out(
-  +p: Proc,
+  +p: Policy.Proc,
   plan: List<&2, I.Cmd>,
   folder: String,
   uids: List<&2, U32>,
   dest: String,
   move: Bool
-) -> Out:
+) -> Policy.Out:
   moved_out.if(interrupted(plan, p), imap_result(p), folder, uids, dest, move)
 
 def move_plan.run(
@@ -3723,9 +3173,9 @@ def move_plan.run(
   uids: List<&2, U32>,
   dest: String,
   move: Bool
-) -> IO(Out):
-  do IO<Out>:
-    p : Proc <- imap_proc(plan)
+) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    p : Policy.Proc <- imap_proc(plan)
     return moved_out(p, plan, folder, uids, dest, move)
 
 # Why a server can take no move plan (see Ops.plan_move).
@@ -3740,10 +3190,10 @@ def move_plan(
   dest: String,
   move: Bool,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match plan:
     case Nil{}:
-      pure_out(Err{no_move_problem()})
+      pure_out(Policy.Err{no_move_problem()})
     case h <> t:
       preview_or_run(dry, ImapPreview{plan}, move_plan.run(plan, folder, uids, dest, move))
 
@@ -3755,10 +3205,10 @@ def move_caps.if(
   +dest: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       +move = I.has_cap(caps, "MOVE")
       move_plan(Ops.plan_move(folder, uids, dest, move, I.has_cap(caps, "UIDPLUS"), uidv),
@@ -3771,10 +3221,10 @@ def move_caps(
   +dest: String,
   +uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
       move_caps.if(
         first_of(uidv_problem(lines, uidv), review_move_problem(delim_of(I.folders(lines)), dest)),
@@ -3792,24 +3242,25 @@ def move_uids.if(
   dest: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
         move_caps(r, folder, uids, dest, uidv, dry)
 
-def move_uids(u: Uids(), +folder: String, +dest: String, +uidv: U32, dry: Bool) -> IO(Out):
+def move_uids(u: Uids(), +folder: String, +dest: String, +uidv: U32, dry: Bool) -> IO(Policy.Out):
   match u:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{uids}:
       move_uids.if(move_request(uidv, folder, dest), folder, uids, dest, uidv, dry)
 
-def t_move(+args: J.Json) -> IO(Out):
-  move_uids(uids_arg(args), folder_arg(args), str_arg(args, "destination", ""), uidv_arg(args),
+def t_move(+args: J.Json) -> IO(Policy.Out):
+  move_uids(uids_arg(args), folder_arg(args), Policy.str_arg(args, "destination", ""),
+    uidv_arg(args),
     dry_arg(args))
 
 def trash_into(
@@ -3820,10 +3271,10 @@ def trash_into(
   +uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match same:
     case True{}:
-      pure_out(Err{
+      pure_out(Policy.Err{
         "these messages are already in " ++ trash ++
           "; use mail_delete to remove them permanently"})
     case False{}:
@@ -3839,10 +3290,10 @@ def trash_to.if(
   uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       trash_into(I.same_name(trash, folder), trash, caps, folder, uids, uidv, dry)
 
@@ -3854,10 +3305,10 @@ def trash_to(
   uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match trash:
     case None{}:
-      pure_out(Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
+      pure_out(Policy.Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
     case Some{+t}:
       trash_to.if(review_trash_problem(delim, folder, t), t, caps, folder, uids, uidv, dry)
 
@@ -3868,11 +3319,11 @@ def trash_fs(
   uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match f:
     case Fail{m}:
-      pure_out(Err{m ++ "; nothing was changed"})
-    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+      pure_out(Policy.Err{m ++ "; nothing was changed"})
+    case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
       trash_to(trash, delim_of(fs), caps, folder, uids, uidv, dry)
 
 def trash_found.if(
@@ -3882,12 +3333,12 @@ def trash_found.if(
   uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         trash_fs(f, I.caps(lines), folder, uids, uidv, dry)
 
@@ -3897,10 +3348,10 @@ def trash_found(
   uids: List<&2, U32>,
   +uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
       trash_found.if(uidv_problem(lines, uidv), lines, folder, uids, uidv, dry)
 
@@ -3910,27 +3361,27 @@ def trash_uids.if(
   uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match missing:
     case True{}:
-      pure_out(Err{uidv_missing()})
+      pure_out(Policy.Err{uidv_missing()})
     case False{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
         trash_found(r, folder, uids, uidv, dry)
 
-def trash_uids(u: Uids(), folder: String, +uidv: U32, dry: Bool) -> IO(Out):
+def trash_uids(u: Uids(), folder: String, +uidv: U32, dry: Bool) -> IO(Policy.Out):
   match u:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{uids}:
       trash_uids.if(U32.is_zero(uidv), folder, uids, uidv, dry)
 
-def t_trash(+args: J.Json) -> IO(Out):
+def t_trash(+args: J.Json) -> IO(Policy.Out):
   trash_uids(uids_arg(args), folder_arg(args), uidv_arg(args), dry_arg(args))
 
-def delete_plan.run(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) -> IO(Out):
-  do IO<Out>:
+def delete_plan.run(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     r : Run() <- imap_run(plan)
     return changed_out(r, uids, folder, [
       J.kv("ok", J.bool(True{})),
@@ -3938,10 +3389,11 @@ def delete_plan.run(plan: List<&2, I.Cmd>, +folder: String, uids: List<&2, U32>)
       J.kv("permanently_deleted", J.bool(True{}))
     ])
 
-def delete_refused(blocked: String, report: List<&2, J.Json>) -> Out:
+def delete_refused(blocked: String, report: List<&2, J.Json>) -> Policy.Out:
   match blocked:
     case SNil{}:
-      Err{"the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"}
+      Policy.Err{
+        "the server lacks UIDPLUS; refusing a plain EXPUNGE, which could remove other messages"}
     case SCon{h, t}:
       gate_blocked(SCon{h, t} ++ "; nothing was deleted", report)
 
@@ -3954,13 +3406,14 @@ def delete_plan(
   folder: String,
   uids: List<&2, U32>,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match plan:
     case Nil{}:
       pure_out(delete_refused(blocked, report))
     case h <> t:
-      do IO<Out>:
-        o : Out <- preview_or_run(dry, ImapPreview{plan}, delete_plan.run(plan, folder, uids))
+      do IO<Policy.Out>:
+        o : Policy.Out <- preview_or_run(dry, ImapPreview{plan}, delete_plan.run(plan, folder,
+          uids))
         return with_fields(o, report)
 
 # The delete once the gate has decided: its plan, over the UIDs `planned`,
@@ -3976,7 +3429,7 @@ def delete_decided(
   confirm: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   Jev.Decision{+g, report} = d
   delete_plan(Jev.delete_checked(g, Ops.plan_delete(folder, planned, confirm, uidplus, uidv)),
     Jev.gate_reason(g), report, folder, uids, dry)
@@ -4002,14 +3455,14 @@ def delete_ask(
   confirm: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match ms:
     case Nil{}:
-      pure_out(Err{none_exist(folder)})
+      pure_out(Policy.Err{none_exist(folder)})
     case m <> t:
       +asked : List<&2, I.Msg> = m <> t
       steps = Jev.requests(c, fetched_list(asked, jev_max()), Jev.options_for(Jev.Deleting{}, []))
-      do IO<Out>:
+      do IO<Policy.Out>:
         tally : Tally() <- ask_all(Retried{}, steps, [])
         delete_decided(delete_answered(tally, c), True{}, folder, msg_uids(asked), uids, confirm,
           uidv, dry)
@@ -4026,7 +3479,7 @@ def delete_gated(
   confirm: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match jev uidplus:
     case Jev.On{+c} True{}:
       delete_ask(fetched_msgs(lines, uids, Jev.is_body(c)), c, folder, uids, confirm, uidv, dry)
@@ -4046,10 +3499,10 @@ def delete_caps.if(
   confirm: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       delete_gated(jev, lines, I.has_cap(I.caps(lines), "UIDPLUS"), folder, uids, confirm, uidv,
         dry)
@@ -4062,10 +3515,10 @@ def delete_caps(
   confirm: String,
   +uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
       delete_caps.if(uidv_problem(lines, uidv), jev, lines, folder, uids, confirm, uidv, dry)
 
@@ -4086,12 +3539,12 @@ def delete_uids.if(
   confirm: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(delete_preflight(jev, folder, uids))
         delete_caps(r, jev, folder, uids, confirm, uidv, dry)
 
@@ -4110,10 +3563,10 @@ def delete_uids(
   +confirm: String,
   +uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match u:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{uids}:
       delete_uids.if(delete_request(confirm, uidv), jev, folder, uids, confirm, uidv, dry)
 
@@ -4126,9 +3579,9 @@ def delete_uids_of(jev: Jev.Switch, u: Uids()) -> Uids():
     case Jev.On{c}:
       jev_uids("mail_delete", u)
 
-def t_delete(+args: J.Json, +jev: Jev.Switch) -> IO(Out):
+def t_delete(+args: J.Json, +jev: Jev.Switch) -> IO(Policy.Out):
   delete_uids(delete_uids_of(jev, uids_arg(args)), jev, folder_arg(args),
-    str_arg(args, "confirm", ""), uidv_arg(args), dry_arg(args))
+    Policy.str_arg(args, "confirm", ""), uidv_arg(args), dry_arg(args))
 
 # Folders: create, rename, label
 # ------------------------------
@@ -4153,7 +3606,7 @@ type FolderChange is Data:
 # Names reserved whether or not the server advertises them: the review folder,
 # and the conventional role names that role resolution falls back to.
 def reserved_names() -> List<&2, String>:
-  Ops.review_folder() <> conventional_names()
+  Ops.review_folder() <> Policy.conventional_names()
 
 def reserved_note() -> String:
   "INBOX, Drafts, Sent, Trash, Junk, Archive (also under their usual names), To Delete, " ++
@@ -4172,7 +3625,7 @@ def advertised_names(fs: List<&2, I.Folder>) -> List<&2, String>:
     case Nil{}:
       []
     case I.Folder{name, d, attrs} <> t:
-      List.filter.put(String, name, advertised_names(t), recognized_role(attrs))
+      List.filter.put(String, name, advertised_names(t), Policy.recognized_role(attrs))
 
 # Kept by hand: List.map takes only affine lists.
 def lowered(xs: List<&2, String>) -> List<&2, String>:
@@ -4209,8 +3662,8 @@ def guard_of(
   Guard{fs, lowered(List.append(&2, String, roles, reserved_names())), delim_of(fs)}
 
 # The guard for the folders and their resolved roles.
-def guard_for(f: Folders) -> Guard:
-  Folders{fs, drafts, trash, sent, junk, archive} = f
+def guard_for(f: Policy.Folders) -> Guard:
+  Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   guard_of(fs, drafts, trash, sent, junk, archive)
 
 def guard_fs(g: Guard) -> List<&2, I.Folder>:
@@ -4391,7 +3844,7 @@ def label_problem(+g: Guard, +label: String) -> String:
     Bool.pick(String, has_folder(g, label), "",
       "the label folder \"" ++ label ++ "\" does not exist: create it with mail_create_folder"),
     first_of(
-      Bool.pick(String, Maybe.is_none(&2, String, named_folder(guard_fs(g), label)),
+      Bool.pick(String, Maybe.is_none(&2, String, Policy.named_folder(guard_fs(g), label)),
         "the label folder \"" ++ label ++ "\" cannot be selected", ""),
       reserved_problem(g, label)))
 
@@ -4483,23 +3936,23 @@ def subscription_kvs(
 
 # The change went through; only the subscriptions may have failed, which a
 # retry would not fix (the folder now exists, or the old name is gone).
-def folder_done(names_ok: Bool, all_ok: Bool, +c: FolderChange, reason: String) -> Out:
+def folder_done(names_ok: Bool, all_ok: Bool, +c: FolderChange, reason: String) -> Policy.Out:
   ok_obj(List.append(&2, J.Json, change_result(c), subscription_kvs(all_ok, names_ok, c, reason)))
 
 # Whether the change (tag 2, after the CAPABILITY anchor) may have run
 # unanswered: the session got past the anchor and the change got no answer,
 # or the helper was lost. Anything earlier changed nothing.
-def folder_unanswered(+p: Proc) -> Bool:
+def folder_unanswered(+p: Policy.Proc) -> Bool:
   +lines = proc_lines(p)
-  helper_lost(p) || (ok_at(lines, 1) && String.is_empty(I.status(lines, 2)))
+  Policy.helper_lost(p) || (ok_at(lines, 1) && String.is_empty(I.status(lines, 2)))
 
 def folder_out.if(
   changed: Bool,
-  p: Proc,
+  p: Policy.Proc,
   +plan: List<&2, I.Cmd>,
   c: FolderChange,
   +reason: String
-) -> Out:
+) -> Policy.Out:
   match changed:
     case True{}:
       +lines = proc_lines(p)
@@ -4507,20 +3960,20 @@ def folder_out.if(
       folder_done(ok_at(lines, (last - I.unsubscribe_count(plan) : U32)), ok_at(lines, last), c,
         reason)
     case False{}:
-      Bool.pick(Out, folder_unanswered(p),
-        Err{"the folder may have been " ++ change_verb(c) ++
+      Bool.pick(Policy.Out, folder_unanswered(p),
+        Policy.Err{"the folder may have been " ++ change_verb(c) ++
           "; list the folders before retrying (" ++ reason ++ ")"},
-        Err{reason})
+        Policy.Err{reason})
 
 # The plan is CAPABILITY, the change, then its subscriptions. A refused change
 # or one that never started is a plain error; one that may have run
 # unanswered tells the agent to look before retrying.
-def folder_out(+p: Proc, plan: List<&2, I.Cmd>, c: FolderChange) -> Out:
+def folder_out(+p: Policy.Proc, plan: List<&2, I.Cmd>, c: FolderChange) -> Policy.Out:
   folder_out.if(ok_at(proc_lines(p), 2), p, plan, c, run_failure(imap_result(p)))
 
-def folder_guarded.run(+plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Out):
-  do IO<Out>:
-    p : Proc <- imap_proc(plan)
+def folder_guarded.run(+plan: List<&2, I.Cmd>, c: FolderChange) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    p : Policy.Proc <- imap_proc(plan)
     return folder_out(p, plan, c)
 
 def folder_guarded.if(
@@ -4528,51 +3981,53 @@ def folder_guarded.if(
   +plan: List<&2, I.Cmd>,
   c: FolderChange,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       preview_or_run(dry, ImapPreview{plan}, folder_guarded.run(plan, c))
 
-def folder_guarded(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange, dry: Bool) -> IO(Out):
+def folder_guarded(+g: Guard, subs: List<&2, I.Folder>, c: FolderChange,
+  dry: Bool) -> IO(Policy.Out):
   +canonical = change_canonical(g, c)
   folder_guarded.if(change_problem(g, canonical), change_plan(g, subs, canonical), canonical,
     dry)
 
-def folder_fs(f: Fs(), subs: List<&2, I.Folder>, c: FolderChange, dry: Bool) -> IO(Out):
+def folder_fs(f: Fs(), subs: List<&2, I.Folder>, c: FolderChange, dry: Bool) -> IO(Policy.Out):
   match f:
     case Fail{m}:
-      pure_out(Err{m ++ "; nothing was changed"})
+      pure_out(Policy.Err{m ++ "; nothing was changed"})
     case Done{folders}:
       folder_guarded(guard_for(folders), subs, c, dry)
 
-def folder_found(r: Run(), c: FolderChange, dry: Bool) -> IO(Out):
+def folder_found(r: Run(), c: FolderChange, dry: Bool) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         folder_fs(f, I.subscribed(lines), c, dry)
 
-def folder_change.if(problem: String, c: FolderChange, dry: Bool) -> IO(Out):
+def folder_change.if(problem: String, c: FolderChange, dry: Bool) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_folder_scan())
         folder_found(r, c, dry)
 
-def folder_change(+c: FolderChange, dry: Bool) -> IO(Out):
+def folder_change(+c: FolderChange, dry: Bool) -> IO(Policy.Out):
   folder_change.if(change_raw_problem(c), c, dry)
 
-def t_create_folder(+args: J.Json) -> IO(Out):
-  folder_change(FolderCreate{str_arg(args, "name", "")}, dry_arg(args))
+def t_create_folder(+args: J.Json) -> IO(Policy.Out):
+  folder_change(FolderCreate{Policy.str_arg(args, "name", "")}, dry_arg(args))
 
-def t_rename_folder(+args: J.Json) -> IO(Out):
-  folder_change(FolderRename{str_arg(args, "from", ""), str_arg(args, "to", "")}, dry_arg(args))
+def t_rename_folder(+args: J.Json) -> IO(Policy.Out):
+  folder_change(FolderRename{Policy.str_arg(args, "from", ""), Policy.str_arg(args, "to", "")},
+    dry_arg(args))
 
 # Runs the label plan unless `problem` rules it out.
 def label_fs.if(
@@ -4583,10 +4038,10 @@ def label_fs.if(
   label: String,
   move: Bool,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       move_plan(plan, folder, uids, label, move, dry)
 
@@ -4598,10 +4053,10 @@ def label_fs(
   +label: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match f:
     case Fail{m}:
-      pure_out(Err{m ++ "; nothing was changed"})
+      pure_out(Policy.Err{m ++ "; nothing was changed"})
     case Done{folders}:
       +move = I.has_cap(caps, "MOVE")
       label_fs.if(label_problem(guard_for(folders), label),
@@ -4616,12 +4071,12 @@ def label_found.if(
   label: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         label_fs(f, I.caps(lines), folder, uids, label, uidv, dry)
 
@@ -4632,10 +4087,10 @@ def label_found(
   label: String,
   +uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
       label_found.if(uidv_problem(lines, uidv), lines, folder, uids, label, uidv, dry)
 
@@ -4646,12 +4101,12 @@ def label_uids.if(
   label: String,
   uidv: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_preflight(folder))
         label_found(r, folder, uids, label, uidv, dry)
 
@@ -4660,15 +4115,15 @@ def label_request(uidv: U32, folder: String, +label: String) -> String:
     "\"label\" must name a folder other than the one the messages are in",
     Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
 
-def label_uids(u: Uids(), +folder: String, +label: String, +uidv: U32, dry: Bool) -> IO(Out):
+def label_uids(u: Uids(), +folder: String, +label: String, +uidv: U32, dry: Bool) -> IO(Policy.Out):
   match u:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{uids}:
       label_uids.if(label_request(uidv, folder, label), folder, uids, label, uidv, dry)
 
-def t_label(+args: J.Json) -> IO(Out):
-  label_uids(uids_arg(args), folder_arg(args), str_arg(args, "label", ""), uidv_arg(args),
+def t_label(+args: J.Json) -> IO(Policy.Out):
+  label_uids(uids_arg(args), folder_arg(args), Policy.str_arg(args, "label", ""), uidv_arg(args),
     dry_arg(args))
 
 # Composing
@@ -4721,18 +4176,18 @@ def pure_att(a: Attachment()) -> IO(Attachment()):
 
 # mailbend-attach's own message.
 def attach_msg(err: String) -> String:
-  strip_prefix(helper_msg(err), "mailbend-attach: ")
+  Policy.strip_prefix(Policy.helper_msg(err), "mailbend-attach: ")
 
-def att_proc(p: Proc, name: String, ctype: String) -> Attachment():
+def att_proc(p: Policy.Proc, name: String, ctype: String) -> Attachment():
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       match code:
         case 0:
           Done{M.Attach{name, ctype, out}}
         case _:
           Fail{attach_msg(err)}
     case _:
-      Fail{"cannot run mailbend-attach: " ++ proc_failure(p)}
+      Fail{"cannot run mailbend-attach: " ++ Policy.proc_failure(p)}
 
 # `budget` is what is left of the 25 MB all attachments may take together;
 # the reader refuses a file larger than that before reading it.
@@ -4747,7 +4202,7 @@ def att_read(
   do IO<Attachment()>:
     r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
       Process.run(helper, [dir, path, U32.show(budget)], "", 60000000, 60000)
-    return att_proc(proc_of(r), name, ctype)
+    return att_proc(Policy.proc_of(r), name, ctype)
 
 def att_at(
   helper: String,
@@ -4803,9 +4258,10 @@ def att_path(
         att_dir(dir, path, name, ctype, budget)
 
 def att_one(+a: J.Json, budget: U32) -> IO(Attachment()):
-  +path = str_arg(a, "path", "")
-  +name = str_arg(a, "filename", basename(path))
-  att_path(String.is_empty(path), path, name, str_arg(a, "content_type", ext_type(name)), budget)
+  +path = Policy.str_arg(a, "path", "")
+  +name = Policy.str_arg(a, "filename", basename(path))
+  att_path(String.is_empty(path), path, name, Policy.str_arg(a, "content_type", ext_type(name)),
+    budget)
 
 def max_attachments() -> U32:
   32
@@ -4906,9 +4362,9 @@ type Want is Data:
     jev: Jev.Switch
   }
 
-def secs_of(p: Proc) -> U32:
+def secs_of(p: Policy.Proc) -> U32:
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       Maybe.default(&2, U32, U32.read(String.trim(out)), 0)
     case _:
       0
@@ -4928,7 +4384,7 @@ def now_seconds() -> IO(U32):
   do IO<U32>:
     r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
       Process.run("/bin/date", ["+%s"], "", 64, 5000)
-    return secs_of(proc_of(r))
+    return secs_of(Policy.proc_of(r))
 
 def stamp() -> IO(Stamp):
   do IO<Stamp>:
@@ -4997,10 +4453,10 @@ def appenduid(ws: List<&2, String>) -> J.Json:
 def appended_uid(lines: List<&2, I.RLine>) -> J.Json:
   appenduid(String.split(I.resp_code(I.status_text(lines, 1)), ' '))
 
-def draft_saved(r: Run(), drafts: String, msgid: String) -> Out:
+def draft_saved(r: Run(), drafts: String, msgid: String) -> Policy.Out:
   match r:
     case Fail{m}:
-      Err{"failed or unconfirmed (check " ++ drafts ++ " before saving again): " ++ m}
+      Policy.Err{"failed or unconfirmed (check " ++ drafts ++ " before saving again): " ++ m}
     case Done{lines}:
       ok_obj([
         J.kv("ok", J.bool(True{})),
@@ -5009,42 +4465,42 @@ def draft_saved(r: Run(), drafts: String, msgid: String) -> Out:
         J.kv("message_id", J.str(msgid))
       ])
 
-def draft_append.run(plan: List<&2, I.Cmd>, drafts: String, msgid: String) -> IO(Out):
-  do IO<Out>:
+def draft_append.run(plan: List<&2, I.Cmd>, drafts: String, msgid: String) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     r : Run() <- imap_run(plan)
     return draft_saved(r, drafts, msgid)
 
-def draft_append(m: Maybe<&2, String>, msg: String, msgid: String, dry: Bool) -> IO(Out):
+def draft_append(m: Maybe<&2, String>, msg: String, msgid: String, dry: Bool) -> IO(Policy.Out):
   match m:
     case None{}:
-      pure_out(Err{"no unique selectable Drafts folder: configure MAILBEND_DRAFTS_FOLDER"})
+      pure_out(Policy.Err{"no unique selectable Drafts folder: configure MAILBEND_DRAFTS_FOLDER"})
     case Some{+drafts}:
       +plan = Ops.plan_draft(drafts, msg)
       preview_or_run(dry, ImapPreview{plan}, draft_append.run(plan, drafts, msgid))
 
-def draft_fs(f: Fs(), msg: String, msgid: String, dry: Bool) -> IO(Out):
+def draft_fs(f: Fs(), msg: String, msgid: String, dry: Bool) -> IO(Policy.Out):
   match f:
     case Fail{m}:
-      pure_out(Err{m ++ "; no draft was saved"})
-    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+      pure_out(Policy.Err{m ++ "; no draft was saved"})
+    case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
       draft_append(drafts, msg, msgid, dry)
 
-def draft_folder(r: Run(), msg: String, msgid: String, dry: Bool) -> IO(Out):
+def draft_folder(r: Run(), msg: String, msgid: String, dry: Bool) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{lines}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         draft_fs(f, msg, msgid, dry)
 
-def sent_out(o: Out, msgid: String, n: U32) -> Out:
+def sent_out(o: Policy.Out, msgid: String, n: U32) -> Policy.Out:
   match o:
-    case Err{m}:
-      Err{m}
-    case Partial{j}:
-      Partial{j}
-    case Ok{reply}:
+    case Policy.Err{m}:
+      Policy.Err{m}
+    case Policy.Partial{j}:
+      Policy.Partial{j}
+    case Policy.Ok{reply}:
       ok_obj([
         J.kv("ok", J.bool(True{})),
         J.kv("sent", J.bool(True{})),
@@ -5128,7 +4584,7 @@ def sent_copy.folder(f: Fs(), +msgid: String, msg: String) -> IO(String):
   match f:
     case Fail{m}:
       pure_str("failed: " ++ m)
-    case Done{Folders{fs, drafts, trash, sent, junk, archive}}:
+    case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
       match sent:
         case None{}:
           pure_str(
@@ -5173,16 +4629,16 @@ def reservation.answer(+out: String, limit: U32) -> String:
       "mailbend-attach gave an unexpected count"))
 
 # Why the reservation refuses the send ("" when it may go).
-def reservation(p: Proc, limit: U32) -> String:
+def reservation(p: Policy.Proc, limit: U32) -> String:
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       match code:
         case 0:
           reservation.answer(String.trim(out), limit)
         case _:
           "cannot count this send for MAILBEND_MAX_SENDS_PER_DAY: " ++ attach_msg(err)
     case _:
-      "cannot run mailbend-attach: " ++ proc_failure(p)
+      "cannot run mailbend-attach: " ++ Policy.proc_failure(p)
 
 def reserve.run(helper: String, dir: String, +limit: U32, day: String) -> IO(String):
   match helper:
@@ -5190,7 +4646,7 @@ def reserve.run(helper: String, dir: String, +limit: U32, day: String) -> IO(Str
       do IO<String>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
           Process.run(helper, ["count", dir, U32.show(limit), day], "", 4096, 60000)
-        return reservation(proc_of(r), limit)
+        return reservation(Policy.proc_of(r), limit)
     case _:
       pure_str(helper_refusal("MAILBEND_ATTACH_HELPER", "mailbend-attach"))
 
@@ -5222,32 +4678,32 @@ def reserve(+limit: U32, dir: String, day: String) -> IO(String):
 type Sent is Data:
   Sent{msgid: String, rcpts: U32, save: Bool, copy: M.Draft, boundary: String}
 
-def send_allowed.copy(o: Out, save: Bool, msgid: String, copy: M.Draft, boundary: String) ->
-  IO(Out):
+def send_allowed.copy(o: Policy.Out, save: Bool, msgid: String, copy: M.Draft, boundary: String) ->
+  IO(Policy.Out):
   match o save:
-    case Ok{j} True{}:
-      do IO<Out>:
+    case Policy.Ok{j} True{}:
+      do IO<Policy.Out>:
         c : String <- sent_copy(msgid, M.compose(copy, boundary))
-        return with_fields(Ok{j}, [J.kv("sent_copy", J.str(c))])
-    case Ok{j} False{}:
-      pure_out(Ok{j})
-    case Err{m} _:
-      pure_out(Err{m})
-    case Partial{j} _:
-      pure_out(Partial{j})
+        return with_fields(Policy.Ok{j}, [J.kv("sent_copy", J.str(c))])
+    case Policy.Ok{j} False{}:
+      pure_out(Policy.Ok{j})
+    case Policy.Err{m} _:
+      pure_out(Policy.Err{m})
+    case Policy.Partial{j} _:
+      pure_out(Policy.Partial{j})
 
 # An SMTP-accepted message's result, with what became of its Sent copy.
-def send_allowed.fin(o: Out, s: Sent) -> IO(Out):
+def send_allowed.fin(o: Policy.Out, s: Sent) -> IO(Policy.Out):
   Sent{+msgid, n, save, copy, boundary} = s
   send_allowed.copy(sent_out(o, msgid, n), save, msgid, copy, boundary)
 
-def send_allowed.if(problem: String, envelope: String, s: Sent) -> IO(Out):
+def send_allowed.if(problem: String, envelope: String, s: Sent) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(send_not_attempted(Err{SCon{h, t} ++ "; nothing was sent"}))
+      pure_out(send_not_attempted(Policy.Err{SCon{h, t} ++ "; nothing was sent"}))
     case SNil{}:
-      do IO<Out>:
-        o : Out <- smtp_run(envelope)
+      do IO<Policy.Out>:
+        o : Policy.Out <- smtp_run(envelope)
         send_allowed.fin(o, s)
 
 def unlisted_msg(refused: List<&2, String>) -> String:
@@ -5256,8 +4712,8 @@ def unlisted_msg(refused: List<&2, String>) -> String:
 
 # The send counts against the UTC day read just before its reservation,
 # after the gates, which may take a while.
-def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(Out):
-  do IO<Out>:
+def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     secs : U32 <- now_seconds()
     problem : String <- reserve(limit, dir, M.iso_date(secs))
     send_allowed.if(problem, envelope, s)
@@ -5285,10 +4741,10 @@ def send_refused(
   allow: List<&2, String>,
   rcpts: List<&2, String>,
   report: List<&2, J.Json>
-) -> Out:
+) -> Policy.Out:
   match blocked:
     case SNil{}:
-      Err{unlisted_msg(S.refused(allow, rcpts))}
+      Policy.Err{unlisted_msg(S.refused(allow, rcpts))}
     case SCon{h, t}:
       gate_blocked(SCon{h, t} ++ "; nothing was sent (mail_save_draft can still save it as a " ++
         "draft)", report)
@@ -5301,15 +4757,15 @@ def send_allowed(
   blocked: String,
   report: List<&2, J.Json>,
   r: Ready
-) -> IO(Out):
+) -> IO(Policy.Out):
   match envelope:
     case None{}:
       Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       pure_out(send_not_attempted(send_refused(blocked, allow, rcpts, report)))
     case Some{e}:
       Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
-      do IO<Out>:
-        o : Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
+      do IO<Policy.Out>:
+        o : Policy.Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
         return with_fields_first(o, report)
 
 # The send once the gates have decided: the envelope comes only from
@@ -5320,7 +4776,7 @@ def send_checked(
   +g: Jev.Gate,
   report: List<&2, J.Json>,
   +r: Ready
-) -> IO(Out):
+) -> IO(Policy.Out):
   Ready{from, rcpts, msg, allow, l, dr, s, y, p} = r
   send_allowed(Jev.outbound_checked(scan, allow, g, rcpts, from, msg),
     Jev.blocked_reason(scan, g), report, r)
@@ -5330,7 +4786,7 @@ def scan_kvs(s: Secrets.Scan) -> List<&2, J.Json>:
   [J.kv("secret_scan", J.str(Secrets.scan_name(s)))]
 
 # With Jev on, a send reports the secret scan's result and Jev's decision.
-def send_decided(+scan: Secrets.Scan, d: Jev.Decision, r: Ready) -> IO(Out):
+def send_decided(+scan: Secrets.Scan, d: Jev.Decision, r: Ready) -> IO(Policy.Out):
   Jev.Decision{g, report} = d
   send_checked(scan, g, List.append(&2, J.Json, scan_kvs(scan), report), r)
 
@@ -5356,9 +4812,9 @@ def send_ask(
   o: Jev.Outgoing,
   +vs: List<&2, Jev.Veto>,
   r: Ready
-) -> IO(Out):
+) -> IO(Policy.Out):
   Jev.Text{shown, whole} = t
-  do IO<Out>:
+  do IO<Policy.Out>:
     a : Asked <- ask_jev(Retried{}, Jev.plain_cargo(Jev.outgoing_request(c, o, vs, shown)))
     send_decided(Secrets.Clean{}, outgoing_answered(a, c, vs, whole), r)
 
@@ -5370,7 +4826,7 @@ def send_scanned(
   vs: List<&2, Jev.Veto>,
   text: String,
   r: Ready
-) -> IO(Out):
+) -> IO(Policy.Out):
   match scan:
     case Secrets.Clean{}:
       send_ask(Jev.outgoing_text(c, text), c, o, vs, r)
@@ -5409,7 +4865,7 @@ def send_jev.put(
   w: Want,
   from: String,
   r: Ready
-) -> IO(Out):
+) -> IO(Policy.Out):
   match refused:
     case Nil{}:
       Want{to, cc, bcc, subject, +text, irt, refs, +atts, draft, dry, +about, jev} = w
@@ -5419,25 +4875,25 @@ def send_jev.put(
       send_scanned(scan, c, Jev.Outgoing{fields, attach_names(atts), about},
         Jev.outgoing_vetoes(about), text, r)
     case h <> t:
-      pure_out(send_not_attempted(Err{unlisted_msg(h <> t)}))
+      pure_out(send_not_attempted(Policy.Err{unlisted_msg(h <> t)}))
 
 # With Jev on, a send passes the allowlist, then the local secret scan of
 # its content, then Jev's veto questions, before its envelope is built.
-def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Out):
+def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Policy.Out):
   Ready{f, rcpts, m, allow, l, dr, s, y, p} = r
   send_jev.put(S.refused(allow, rcpts), c, w, from, r)
 
-def send_gated(jev: Jev.Switch, w: Want, from: String, r: Ready) -> IO(Out):
+def send_gated(jev: Jev.Switch, w: Want, from: String, r: Ready) -> IO(Policy.Out):
   match jev:
     case Jev.Off{}:
       send_checked(Secrets.Clean{}, Jev.JevOff{}, [], r)
     case Jev.On{c}:
       send_jev(c, w, from, r)
 
-def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Out):
+def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Policy.Out):
   match cfg:
     case Fail{m}:
-      pure_out(Err{"configuration error: " ++ m})
+      pure_out(Policy.Err{"configuration error: " ++ m})
     case Done{Sending{+save, allow, limit, dir}}:
       +d = draft_of(w, from, st, False{})
       +rcpts = specs(all_rcpts(w))
@@ -5448,19 +4904,19 @@ def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Out):
           draft_of(w, from, st, True{}), boundary_of(st)},
         is_dry(w), SmtpPreview{sender, rcpts, msg, save}})
 
-def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
+def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Policy.Out):
   match draft:
     case True{}:
       +d = draft_of(w, from, st, True{})
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_probe())
         draft_folder(r, M.compose(d, boundary_of(st)), msgid_of(d), is_dry(w))
     case False{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         cfg : Sends() <- sending()
         send_with(cfg, w, from, st)
 
-def deliver(+w: Want, from: String, st: Stamp) -> IO(Out):
+def deliver(+w: Want, from: String, st: Stamp) -> IO(Policy.Out):
   deliver_as(is_draft(w), w, from, st)
 
 def check_want(+w: Want, from: String) -> String:
@@ -5472,16 +4928,16 @@ def check_want(+w: Want, from: String) -> String:
       Bool.pick(String, List.is_empty(&2, String, rcpts) && Bool.not(is_draft(w)),
         "at least one recipient (to, cc or bcc) is needed", "")))
 
-def with_atts.if(problem: String, w: Want, from: String) -> IO(Out):
+def with_atts.if(problem: String, w: Want, from: String) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         st : Stamp <- stamp()
         deliver(w, from, st)
 
-def with_atts.want(+w: Want, +from: String) -> IO(Out):
+def with_atts.want(+w: Want, +from: String) -> IO(Policy.Out):
   with_atts.if(check_want(w, from), w, from)
 
 def with_atts(
@@ -5497,24 +4953,25 @@ def with_atts(
   dry: Bool,
   about: Jev.Context,
   jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   match a:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{xs}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         from : String <- env_or("MAILBEND_EMAIL", "")
         with_atts.want(Want{to, cc, bcc, subject, text, irt, refs, xs, draft, dry, about, jev},
           from)
 
 # Composes from the common arguments: to, cc, bcc, subject, body,
 # in_reply_to, references and attachments ([{path, filename?, content_type?}]).
-def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
-  do IO<Out>:
+def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     rs : List<&2, Attachment()> <- atts_read(attachments_arg(args))
     with_atts(atts_collect(rs), strs_arg(args, "to"), strs_arg(args, "cc"),
-      strs_arg(args, "bcc"), str_arg(args, "subject", ""), str_arg(args, "body", ""),
-      str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft, dry_arg(args),
+      strs_arg(args, "bcc"), Policy.str_arg(args, "subject", ""), Policy.str_arg(args, "body", ""),
+      Policy.str_arg(args, "in_reply_to", ""), Policy.str_arg(args, "references", ""), draft,
+        dry_arg(args),
       Jev.Fresh{}, jev)
 
 # Reply and forward
@@ -5644,7 +5101,7 @@ def reply_cc(all: Bool, +hs: List<&2, M.Hdr>, me: String, replied: List<&2, Stri
 
 # The reply's text above the quoted original.
 def reply_body(args: J.Json, +hs: List<&2, M.Hdr>, p: M.Parts, cut: Bool) -> String:
-  str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_line(hs, "date") ++ ", " ++
+  Policy.str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_line(hs, "date") ++ ", " ++
     hdr_line(hs, "from") ++ " wrote:\n" ++ quote_text(M.readable_text(p)) ++
     cut_note(cut)
 
@@ -5658,19 +5115,19 @@ def reply_want(
   me: String,
   about: Jev.Context,
   jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   +replied = reply_to(hs)
-  do IO<Out>:
+  do IO<Policy.Out>:
     rs : List<&2, Attachment()> <- atts_read(attachments_arg(args))
-    o : Out <- with_atts(atts_collect(rs),
+    o : Policy.Out <- with_atts(atts_collect(rs),
       fresh(replied, []),
-      reply_cc(bool_arg(args, "reply_all", False{}), hs, me, replied),
+      reply_cc(Policy.bool_arg(args, "reply_all", False{}), hs, me, replied),
       strs_arg(args, "bcc"),
       prefixed("Re:", hdr_line(hs, "subject")),
       reply_body(args, hs, p, cut),
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
-      bool_arg(args, "as_draft", False{}),
+      Policy.bool_arg(args, "as_draft", False{}),
       dry_arg(args),
       about,
       jev)
@@ -5687,15 +5144,15 @@ def fwd_want(
   +args: J.Json,
   about: Jev.Context,
   jev: Jev.Switch
-) -> IO(Out):
-  do IO<Out>:
+) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     rs : List<&2, Attachment()> <-
       atts_read_within(attachments_arg(args), (max_attachment() - C.byte_len(raw) : U32))
     with_atts(atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
       prefixed("Fwd:", hdr_line(hs, "subject")),
-      str_arg(args, "body", "") ++ fwd_note(hs),
-      "", "", bool_arg(args, "as_draft", False{}), dry_arg(args), about, jev)
+      Policy.str_arg(args, "body", "") ++ fwd_note(hs),
+      "", "", Policy.bool_arg(args, "as_draft", False{}), dry_arg(args), about, jev)
 
 def respond_to(
   reply: Bool,
@@ -5706,7 +5163,7 @@ def respond_to(
   me: String,
   about: Jev.Context,
   jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   match reply:
     case True{}:
       reply_want(body_headers(body), M.parts(body), too_big, C.byte_len(body), size, args, me,
@@ -5714,7 +5171,7 @@ def respond_to(
     case False{}:
       match too_big:
         case True{}:
-          pure_out(Err{"the original is larger than 25 MB and cannot be forwarded whole"})
+          pure_out(Policy.Err{"the original is larger than 25 MB and cannot be forwarded whole"})
         case False{}:
           fwd_want(body_headers(body), body, args, about, jev)
 
@@ -5736,17 +5193,17 @@ def orig_msg(
   max: U32,
   me: String,
   +jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   match ms:
     case Nil{}:
-      pure_out(Err{
+      pure_out(Policy.Err{
         "no message with UID " ++ U32.show(u32_arg(args, "uid", 0)) ++ " in " ++
           folder_arg(args)})
     case +m <> t:
       I.Msg{uid, flags, date, +size, headers, body, _} = m
       +reply = U32.is_eq(mode, 0)
       respond_to(reply, U32.is_gt(size, max), size, body, args, me,
-        respond_context(jev, reply, bool_arg(args, "reply_all", False{}), m), jev)
+        respond_context(jev, reply, Policy.bool_arg(args, "reply_all", False{}), m), jev)
 
 def orig_found.if(
   stale: Bool,
@@ -5756,10 +5213,10 @@ def orig_found.if(
   max: U32,
   me: String,
   jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   match stale:
     case True{}:
-      pure_out(Err{stale_msg()})
+      pure_out(Policy.Err{stale_msg()})
     case False{}:
       orig_msg(with_uid(I.fetched(lines), u32_arg(args, "uid", 0), True{}), args, mode, max,
         me, jev)
@@ -5773,10 +5230,10 @@ def orig_found(
   max: U32,
   me: String,
   jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
       orig_found.if(Bool.not(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv_arg(args))), lines,
         args, mode, max, me, jev)
@@ -5792,17 +5249,17 @@ def t_respond.if(
   mode: U32,
   +max: U32,
   jev: Jev.Switch
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         me : String <- env_or("MAILBEND_EMAIL", "")
         r : Run() <- imap_run(Ops.plan_get(folder_arg(args), u32_arg(args, "uid", 0), max))
         orig_found(r, args, mode, max, me, jev)
 
-def t_respond(+args: J.Json, +mode: U32, jev: Jev.Switch) -> IO(Out):
+def t_respond(+args: J.Json, +mode: U32, jev: Jev.Switch) -> IO(Policy.Out):
   t_respond.if(respond_request(args), args, mode,
     Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()), jev)
 
@@ -5881,7 +5338,8 @@ def download_request(
     uid : U32 <- single_uid(uids_arg(args), "mail_get_attachment")
     index : U32 <- index_arg(J.as_u32(J.get(args, "index")))
     uidv : Maybe<&2, U32> <- read_uidv(J.get(args, "uidvalidity"))
-    return Download{d, folder_arg(args), uid, index, str_arg(args, "filename", ""), dry_arg(args),
+    return Download{d, folder_arg(args), uid, index, Policy.str_arg(args, "filename", ""),
+      dry_arg(args),
       uidv}
 
 def whole_body.if(cut: Bool, body: String) -> Result<&2, &2, String, String>:
@@ -5941,25 +5399,25 @@ def file_path(+dir: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(dir, "/"), dir ++ name, dir ++ "/" ++ name)
 
 # mailbend-attach's answer to a save, as the tool's result.
-def saved_out(p: Proc, kvs: List<&2, J.Json>) -> Out:
+def saved_out(p: Policy.Proc, kvs: List<&2, J.Json>) -> Policy.Out:
   match p:
-    case ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       match code:
         case 0:
           ok_obj(kvs)
         case _:
-          Err{"cannot save the attachment: " ++ attach_msg(err)}
+          Policy.Err{"cannot save the attachment: " ++ attach_msg(err)}
     case _:
-      Err{"cannot run mailbend-attach: " ++ proc_failure(p)}
+      Policy.Err{"cannot run mailbend-attach: " ++ Policy.proc_failure(p)}
 
-def download.run(d: Downloads, a: M.Attach, folder: String, uid: U32) -> IO(Out):
+def download.run(d: Downloads, a: M.Attach, folder: String, uid: U32) -> IO(Policy.Out):
   Downloads{+dir, attach_dir, path, helper} = d
   M.Attach{+name, ctype, +data} = a
-  do IO<Out>:
+  do IO<Policy.Out>:
     r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
       Process.run(helper, ["save", attach_dir, dir, name, U32.show(max_attachment()), path],
         data, 4096, 60000)
-    return saved_out(proc_of(r), [
+    return saved_out(Policy.proc_of(r), [
       J.kv("folder", J.str(folder)),
       J.kv("uid", J.num(uid)),
       J.kv("filename", J.str(name)),
@@ -5980,24 +5438,24 @@ def download.put(
   folder: String,
   uid: U32,
   dry: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+a}:
       preview_or_run(dry, download.file(d, a), download.run(d, a, folder, uid))
 
-def download.fetch(q: Download) -> IO(Out):
+def download.fetch(q: Download) -> IO(Policy.Out):
   Download{d, +folder, +uid, index, filename, dry, +uidv} = q
-  do IO<Out>:
+  do IO<Policy.Out>:
     r : Run() <- imap_run(Ops.plan_get_checked(folder, uid, max_attachment(), uidv))
     download.put(file_to_save(checked_read(r, uidv), uid, folder, index, filename),
       d, folder, uid, dry)
 
-def download(r: Result<&2, &2, String, Download>) -> IO(Out):
+def download(r: Result<&2, &2, String, Download>) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{q}:
       download.fetch(q)
 
@@ -6011,12 +5469,12 @@ def part_download.attach(r: Result<&2, &2, String, String>, p: Part.Part,
       save_as(M.Attach{M.file_name(ct, cd), M.main_value(ct), bytes}, filename)
 
 def part_download.fetch(r: Result<&2, &2, String, Part.Part>, d: Downloads,
-  +folder: String, +uid: U32, +uidv: U32, filename: String, dry: Bool) -> IO(Out):
+  +folder: String, +uid: U32, +uidv: U32, filename: String, dry: Bool) -> IO(Policy.Out):
   match r:
     case Fail{why}:
-      pure_out(Err{why})
+      pure_out(Policy.Err{why})
     case Done{+p}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p),
           max_attachment()))
         download.put(part_download.attach(part_bytes(lines, uid, uidv, p,
@@ -6033,30 +5491,30 @@ def part_download.request(s: Result<&2, &2, String, Downloads>, +args: J.Json)
     Part.check(Bool.not(U32.is_zero(uidv_arg(args))), uidv_missing())
     return PartDownload{d, uid}
 
-def part_download(r: Result<&2, &2, String, PartDownload>, +args: J.Json) -> IO(Out):
+def part_download(r: Result<&2, &2, String, PartDownload>, +args: J.Json) -> IO(Policy.Out):
   match r:
     case Fail{why}:
-      pure_out(Err{why})
+      pure_out(Policy.Err{why})
     case Done{PartDownload{d, +uid}}:
       +folder = folder_arg(args)
       +uidv = uidv_arg(args)
-      do IO<Out>:
+      do IO<Policy.Out>:
         lines : Run() <- imap_run(Ops.plan_parts(folder, uid))
-        part_download.fetch(part_discovered(lines, uid, uidv, str_arg(args, "section", "")),
-          d, folder, uid, uidv, str_arg(args, "filename", ""), dry_arg(args))
+        part_download.fetch(part_discovered(lines, uid, uidv, Policy.str_arg(args, "section", "")),
+          d, folder, uid, uidv, Policy.str_arg(args, "filename", ""), dry_arg(args))
 
 def t_get_attachment.if(whole: Bool, s: Result<&2, &2, String, Downloads>,
-  +args: J.Json) -> IO(Out):
+  +args: J.Json) -> IO(Policy.Out):
   match whole:
     case True{}:
       download(download_request(s, args))
     case False{}:
       part_download(part_download.request(s, args), args)
 
-def t_get_attachment(+args: J.Json) -> IO(Out):
-  do IO<Out>:
+def t_get_attachment(+args: J.Json) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     s : Result<&2, &2, String, Downloads> <- downloads()
-    t_get_attachment.if(String.is_empty(str_arg(args, "section", "")), s, args)
+    t_get_attachment.if(String.is_empty(Policy.str_arg(args, "section", "")), s, args)
 
 # Classifying with Jev
 # ====================
@@ -6094,8 +5552,8 @@ def raw_candidates_problem(cs: List<&2, String>) -> String:
 # names are.
 def classify_candidates(+cs: List<&2, String>) -> Result<&2, &2, String, List<&2, String>>:
   do Result<&2, &2, String, List<&2, String>>:
-    counted : Unit <- checked(options_problem(List.length(&2, String, cs)))
-    named : Unit <- checked(raw_candidates_problem(cs))
+    counted : Unit <- Policy.checked(options_problem(List.length(&2, String, cs)))
+    named : Unit <- Policy.checked(raw_candidates_problem(cs))
     return cs
 
 def classify_request(+args: J.Json) -> Result<&2, &2, String, Classify>:
@@ -6113,7 +5571,7 @@ def category_names(+g: Guard, fs: List<&2, I.Folder>) -> List<&2, String>:
       []
     case I.Folder{+name, d, attrs} <> t:
       List.filter.put(String, name, category_names(g, t),
-        selectable(attrs) && Bool.not(reserved_target(g, name)))
+        Policy.selectable(attrs) && Bool.not(reserved_target(g, name)))
 
 # The category folders, sorted.
 def categories(+g: Guard) -> List<&2, String>:
@@ -6713,10 +6171,10 @@ def classify_out(
   head: List<&2, J.Json>,
   not_found: List<&2, U32>,
   +surveys: List<&2, Survey>
-) -> Out:
+) -> Policy.Out:
   match t:
     case Fail{m}:
-      Err{m}
+      Policy.Err{m}
     case Done{Progress{xs, reqs}}:
       ok_obj(List.append(&2, J.Json, head, List.append(&2, J.Json, [
         J.kv("messages", J.arr(classify_messages(List.reverse(&2, Jev.Answered, xs), c, cands,
@@ -6732,7 +6190,7 @@ def classify_gathered(
   none: String,
   head: List<&2, J.Json>,
   not_found: List<&2, U32>
-) -> Out:
+) -> Policy.Out:
   Gathered{t, surveys} = g
   classify_out(t, c, cands, none, head, not_found, surveys)
 
@@ -6749,10 +6207,10 @@ def classify_ask(
   folder: String,
   uidv: U32,
   +images: Jev.ImageMode
-) -> IO(Out):
+) -> IO(Policy.Out):
   +fetched = classify_fetched(images, ms, jev_max())
   +steps = Jev.requests(c, fetched, opts)
-  do IO<Out>:
+  do IO<Policy.Out>:
     g : Gathered <- classify_asked(images, c, folder, uidv, names, steps, ms,
       Jev.option_keys(names, opts))
     return classify_gathered(g, c, cands, Jev.options_none(opts), head, not_found)
@@ -6769,10 +6227,10 @@ def classify_folders.if(
   folder: String,
   uidv: U32,
   images: Jev.ImageMode
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       classify_ask(c, names, opts, cands, ms, head, not_found, folder, uidv, images)
 
@@ -6786,10 +6244,10 @@ def classify_folders(
   cands: List<&2, String>,
   +c: Jev.Content,
   images: Jev.ImageMode
-) -> IO(Out):
+) -> IO(Policy.Out):
   match f:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{folders}:
       +g = guard_for(folders)
       +cats = categories(g)
@@ -6815,22 +6273,22 @@ def classify_found(
   cands: List<&2, String>,
   c: Jev.Content,
   images: Jev.ImageMode
-) -> IO(Out):
+) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         classify_folders(f, lines, folder, uids, cands, c, images)
 
 def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content, images: Jev.ImageMode) ->
-  IO(Out):
+  IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{Classify{+folder, +uids, cands, +uidv}}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         run : Run() <- imap_run(
           Ops.plan_classify_checked(folder, uids, Jev.is_body(c), jev_max(), uidv))
         classify_found(checked_read(run, uidv), folder, uids, cands, c, images)
@@ -6838,12 +6296,12 @@ def classify_run(r: Result<&2, &2, String, Classify>, +c: Jev.Content, images: J
 # mail_classify changes nothing: one session examines the folder and
 # fetches the messages' facts with BODY.PEEK, and Jev's answers are
 # reported, never acted on.
-def t_classify(+args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) -> IO(Out):
+def t_classify(+args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) -> IO(Policy.Out):
   match jev:
     case Jev.On{c}:
       classify_run(classify_request(args), c, images)
     case Jev.Off{}:
-      pure_out(Err{jev_off("mail_classify")})
+      pure_out(Policy.Err{Policy.jev_off("mail_classify")})
 
 # mail_triage
 # -----------
@@ -6901,27 +6359,27 @@ def triage_request(+args: J.Json) -> Result<&2, &2, String, Triage>:
   +uidv = uidv_arg(args)
   do Result<&2, &2, String, Triage>:
     uids : List<&2, U32> <- jev_uids("mail_triage", uids_arg(args))
-    pinned : Unit <- checked(Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
+    pinned : Unit <- Policy.checked(Bool.pick(String, U32.is_zero(uidv), uidv_missing(), ""))
     return Triage{folder_arg(args), uids, uidv, dry_arg(args)}
 
 # The role folders of `f` (see role_names).
-def role_folders(f: Folders) -> List<&2, String>:
-  Folders{fs, drafts, trash, sent, junk, archive} = f
+def role_folders(f: Policy.Folders) -> List<&2, String>:
+  Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   role_names(fs, drafts, trash, sent, junk, archive)
 
 # The review folder can take mail when it exists, can be selected and is
 # none of the role folders `roles`. Unlike the rules under "The review
 # folder", this one needs role_names, so it comes after it.
-def review_problem(f: Folders, roles: List<&2, String>) -> String:
-  Folders{fs, drafts, trash, sent, junk, archive} = f
+def review_problem(f: Policy.Folders, roles: List<&2, String>) -> String:
+  Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   +review = Ops.review_folder()
-  Bool.pick(String, Maybe.is_none(&2, String, named_folder(fs, review)),
+  Bool.pick(String, Maybe.is_none(&2, String, Policy.named_folder(fs, review)),
     "it does not exist or cannot be selected: create it with mail_create_folder",
     Bool.pick(String, Ops.named_in(roles, review),
       "it is also a special folder, which MailBend never fills", ""))
 
-def sent_of(f: Folders) -> Maybe<&2, String>:
-  Folders{fs, drafts, trash, sent, junk, archive} = f
+def sent_of(f: Policy.Folders) -> Maybe<&2, String>:
+  Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   sent
 
 # The values of every header field `name` (lower-case), in order.
@@ -7202,13 +6660,13 @@ type Moved is Data:
 def moved_error(dest: String, m: String) -> J.Json:
   J.obj([J.kv("ok", J.bool(False{})), J.kv("destination", J.str(dest)), J.kv("error", J.str(m))])
 
-def moved_add(o: Out, dest: String, results: List<&2, J.Json>) -> Moved:
+def moved_add(o: Policy.Out, dest: String, results: List<&2, J.Json>) -> Moved:
   match o:
-    case Ok{j}:
+    case Policy.Ok{j}:
       Moved{j <> results, False{}}
-    case Err{m}:
+    case Policy.Err{m}:
       Moved{moved_error(dest, m) <> results, True{}}
-    case Partial{j}:
+    case Policy.Partial{j}:
       Moved{j <> results, True{}}
 
 # One move, unless an earlier one did not finish.
@@ -7225,7 +6683,7 @@ def triage_moving.step(
       IO.pure(Moved, Moved{results, True{}})
     case Moved{results, False{}}:
       do IO<Moved>:
-        o : Out <- move_plan.run(p, folder, uids, dest, move)
+        o : Policy.Out <- move_plan.run(p, folder, uids, dest, move)
         return moved_add(o, dest, results)
 
 # Runs each move's plan in turn, each in a session of its own.
@@ -7250,12 +6708,12 @@ def triage_moving(
 
 # The moves' result. A move that did not finish stopped the rest: those
 # before it are done, so the call is partial.
-def triage_result(s: Moved) -> Out:
+def triage_result(s: Moved) -> Policy.Out:
   match s:
     case Moved{results, False{}}:
       ok_obj([J.kv("moves", J.arr(List.reverse(&2, J.Json, results)))])
     case Moved{results, True{}}:
-      Partial{J.obj([
+      Policy.Partial{J.obj([
         J.kv("ok", J.bool(False{})),
         J.kv("partial", J.bool(True{})),
         J.kv("message", J.str("a move did not finish, so the moves after it were not made; " ++
@@ -7268,8 +6726,8 @@ def triage_filed.run(
   ps: List<&2, List<&2, I.Cmd>>,
   folder: String,
   move: Bool
-) -> IO(Out):
-  do IO<Out>:
+) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     s : Moved <- triage_moving(ms, ps, folder, move, Moved{[], False{}})
     return triage_result(s)
 
@@ -7284,16 +6742,17 @@ def triage_filed.if(
   +plans: List<&2, List<&2, I.Cmd>>,
   folder: String,
   move: Bool
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(with_fields_first(Partial{J.obj([
+      pure_out(with_fields_first(Policy.Partial{J.obj([
         J.kv("ok", J.bool(False{})),
         J.kv("error", J.str(SCon{h, t} ++ "; nothing was moved"))
       ])}, kvs))
     case SNil{}:
-      do IO<Out>:
-        o : Out <- preview_or_run(dry, ImapPlans{plans}, triage_filed.run(ms, plans, folder, move))
+      do IO<Policy.Out>:
+        o : Policy.Out <- preview_or_run(dry, ImapPlans{plans}, triage_filed.run(ms, plans,
+          folder, move))
         return with_fields_first(o, kvs)
 
 # Files the messages Jev answered about (`xs`, in UID order), with the
@@ -7304,7 +6763,7 @@ def triage_filed(
   reqs: List<&2, J.Json>,
   reread: List<&2, I.Msg>,
   t: Triaging
-) -> IO(Out):
+) -> IO(Policy.Out):
   Triaging{Triage{+folder, uids, +uidv, dry}, +c, +cats, opts, roles, +caps, review, found,
     not_found} = t
   Jev.Options{purpose, json, +none} = opts
@@ -7328,10 +6787,10 @@ def triage_filed(
   triage_filed.if(problem, kvs, dry, moves, plans, folder, move)
 
 def triage_reread(r: Run(), xs: List<&2, Jev.Answered>, reqs: List<&2, J.Json>, t: Triaging)
-  -> IO(Out):
+  -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{"cannot read the flags of the messages for review again (" ++ m ++
+      pure_out(Policy.Err{"cannot read the flags of the messages for review again (" ++ m ++
         "); nothing was moved"})
     case Done{lines}:
       triage_filed(xs, reqs, I.flag_fetches(lines), t)
@@ -7343,12 +6802,12 @@ def triage_review.if(
   xs: List<&2, Jev.Answered>,
   reqs: List<&2, J.Json>,
   t: Triaging
-) -> IO(Out):
+) -> IO(Policy.Out):
   match skip:
     case True{}:
       triage_filed(xs, reqs, [], t)
     case False{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_reread_flags(folder, uids))
         triage_reread(r, xs, reqs, t)
 
@@ -7357,46 +6816,47 @@ def triage_review.if(
 # read when none is, or when the review folder cannot take them (the call
 # is then refused).
 def triage_review(+xs: List<&2, Jev.Answered>, reqs: List<&2, J.Json>, +t: Triaging)
-  -> IO(Out):
+  -> IO(Policy.Out):
   Triaging{Triage{folder, uids, uidv, dry}, c, cats, Jev.Options{p, json, none}, roles, caps,
     review, found, not_found} = t
   +bound = to_review(filings(xs, c, none, found))
   triage_review.if(List.is_empty(&2, U32, bound) || Bool.not(String.is_empty(review)), folder,
     bound, xs, reqs, t)
 
-def triage_answered(r: Tally(), t: Triaging) -> IO(Out):
+def triage_answered(r: Tally(), t: Triaging) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m ++ "; nothing was moved"})
+      pure_out(Policy.Err{m ++ "; nothing was moved"})
     case Done{Progress{xs, reqs}}:
       triage_review(List.sort(~Jev.Answered,
         ~(a => b => U32.is_le(answered_uid(a), answered_uid(b))), xs), reqs, t)
 
 # Asks Jev about every message: those that can still be found safe to
 # delete one per request, the others in batches.
-def triage_ask(+t: Triaging) -> IO(Out):
+def triage_ask(+t: Triaging) -> IO(Policy.Out):
   Triaging{call, +c, cats, +opts, roles, caps, review, +found, not_found} = t
   steps : List<&2, Jev.Step> = List.append(&2, Jev.Step,
     Jev.requests(c, asked_messages(c, found, False{}), opts),
     requests_alone(c, asked_messages(c, found, True{}), opts))
-  do IO<Out>:
+  do IO<Policy.Out>:
     r : Tally() <- ask_all(Retried{}, steps, Jev.option_keys(cats, opts))
     triage_answered(r, t)
 
-def triage_written(r: Run(), addrs: List<&2, String>, t: Triaging) -> IO(Out):
+def triage_written(r: Run(), addrs: List<&2, String>, t: Triaging) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{"cannot search the Sent folder for mail to the senders (" ++ m ++
+      pure_out(Policy.Err{"cannot search the Sent folder for mail to the senders (" ++ m ++
         "); nothing was moved"})
     case Done{lines}:
       triage_ask(settle(t, Some{written_to(addrs, lines, 2)}))
 
-def triage_sent.put(sent: Maybe<&2, String>, +addrs: List<&2, String>, t: Triaging) -> IO(Out):
+def triage_sent.put(sent: Maybe<&2, String>, +addrs: List<&2, String>,
+  t: Triaging) -> IO(Policy.Out):
   match sent:
     case None{}:
       triage_ask(settle(t, None{}))
     case Some{box}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         r : Run() <- imap_run(Ops.plan_sent_search(box, addrs))
         triage_written(r, addrs, t)
 
@@ -7405,7 +6865,7 @@ def triage_sent.if(
   sent: Maybe<&2, String>,
   addrs: List<&2, String>,
   t: Triaging
-) -> IO(Out):
+) -> IO(Policy.Out):
   match no_senders:
     case True{}:
       triage_ask(t)
@@ -7415,24 +6875,24 @@ def triage_sent.if(
 # Searches the Sent folder, read-only, for mail to each sender still in
 # question; without a known Sent folder, whether the user wrote to them
 # cannot be told, which vetoes the review.
-def triage_sent(+t: Triaging, sent: Maybe<&2, String>) -> IO(Out):
+def triage_sent(+t: Triaging, sent: Maybe<&2, String>) -> IO(Policy.Out):
   Triaging{call, c, cats, opts, roles, caps, review, found, not_found} = t
   +addrs = senders(found, [])
   triage_sent.if(List.is_empty(&2, String, addrs), sent, addrs, t)
 
 def triage_folders.if(
   problem: String,
-  +folders: Folders,
+  +folders: Policy.Folders,
   +lines: List<&2, I.RLine>,
   +call: Triage,
   +c: Jev.Content,
   now: U32,
   cats: List<&2, String>,
   opts: Jev.Options
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       Triage{folder, +uids, uidv, dry} = call
       +ms = fetched_msgs(lines, uids, Jev.is_body(c))
@@ -7444,10 +6904,10 @@ def triage_folders.if(
 # The categories come from the folders LIST gave in the same session as the
 # fetch, as for mail_classify; triage takes no candidates.
 def triage_folders(f: Fs(), lines: List<&2, I.RLine>, +call: Triage, +c: Jev.Content, now: U32)
-  -> IO(Out):
+  -> IO(Policy.Out):
   match f:
     case Fail{m}:
-      pure_out(Err{m ++ "; nothing was moved"})
+      pure_out(Policy.Err{m ++ "; nothing was moved"})
     case Done{+folders}:
       Triage{folder, uids, uidv, dry} = call
       +g = guard_for(folders)
@@ -7458,41 +6918,41 @@ def triage_folders(f: Fs(), lines: List<&2, I.RLine>, +call: Triage, +c: Jev.Con
       triage_folders.if(problem, folders, lines, call, c, now, cats, opts)
 
 def triage_found.if(problem: String, +lines: List<&2, I.RLine>, call: Triage, c: Jev.Content)
-  -> IO(Out):
+  -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         now : U32 <- now_seconds()
         triage_folders(f, lines, call, c, now)
 
-def triage_found(r: Run(), call: Triage, c: Jev.Content) -> IO(Out):
+def triage_found(r: Run(), call: Triage, c: Jev.Content) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{+lines}:
       Triage{folder, uids, +uidv, dry} = call
       triage_found.if(uidv_problem(lines, uidv), lines, Triage{folder, uids, uidv, dry}, c)
 
-def triage_run(r: Result<&2, &2, String, Triage>, +c: Jev.Content) -> IO(Out):
+def triage_run(r: Result<&2, &2, String, Triage>, +c: Jev.Content) -> IO(Policy.Out):
   match r:
     case Fail{m}:
-      pure_out(Err{m})
+      pure_out(Policy.Err{m})
     case Done{Triage{+folder, +uids, uidv, dry}}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         run : Run() <- imap_run(Ops.plan_classify(folder, uids, Jev.is_body(c), jev_max()))
         triage_found(run, Triage{folder, uids, uidv, dry}, c)
 
 # mail_triage reads like mail_classify (EXAMINE, BODY.PEEK) and then only
 # moves, each message at most once, through Ops.plan_triage.
-def t_triage(args: J.Json, jev: Jev.Switch) -> IO(Out):
+def t_triage(args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
   match jev:
     case Jev.On{c}:
       triage_run(triage_request(args), c)
     case Jev.Off{}:
-      pure_out(Err{jev_off("mail_triage")})
+      pure_out(Policy.Err{Policy.jev_off("mail_triage")})
 
 # Read annotations
 # ================
@@ -7573,13 +7033,13 @@ def jev_field(js: List<&2, J.Json>) -> List<&2, J.Json>:
       [J.kv("jev", j)]
 
 # The read's result with the jev objects `js` of the messages it shows.
-def annotation_out(a: Annotation, js: List<&2, J.Json>) -> Out:
+def annotation_out(a: Annotation, js: List<&2, J.Json>) -> Policy.Out:
   Annotation{fields, listed, c, ms} = a
   match listed:
     case True{}:
-      Ok{J.JObj{J.chain(messages_jevs(J.unchain(fields), js))}}
+      Policy.Ok{J.JObj{J.chain(messages_jevs(J.unchain(fields), js))}}
     case False{}:
-      with_fields(Ok{J.JObj{fields}}, jev_field(js))
+      with_fields(Policy.Ok{J.JObj{fields}}, jev_field(js))
 
 def unchecked_jsons(n: Nat, +c: Jev.Content, +reason: String) -> List<&2, J.Json>:
   match n:
@@ -7589,11 +7049,11 @@ def unchecked_jsons(n: Nat, +c: Jev.Content, +reason: String) -> List<&2, J.Json
       Jev.unchecked_json(c, reason) <> unchecked_jsons(k, c, reason)
 
 # Every message of the read unchecked, and why.
-def annotation_unchecked(+a: Annotation, reason: String) -> Out:
+def annotation_unchecked(+a: Annotation, reason: String) -> Policy.Out:
   Annotation{fields, listed, c, ms} = a
   annotation_out(a, unchecked_jsons(List.length(&2, Jev.Fetched, ms), c, reason))
 
-def annotation_answered(t: Tally(), none: String, +a: Annotation) -> Out:
+def annotation_answered(t: Tally(), none: String, +a: Annotation) -> Policy.Out:
   match t:
     case Fail{m}:
       annotation_unchecked(a, m)
@@ -7607,17 +7067,17 @@ def annotate.run(
   names: List<&2, String>,
   +opts: Jev.Options,
   +a: Annotation
-) -> IO(Out):
+) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
       pure_out(annotation_unchecked(a, SCon{h, t}))
     case SNil{}:
       Annotation{fields, listed, c, ms} = a
-      do IO<Out>:
+      do IO<Policy.Out>:
         t : Tally() <- ask_options(Once{}, c, ms, names, opts)
         return annotation_answered(t, Jev.options_none(opts), a)
 
-def annotate.ask(f: Fs(), +a: Annotation) -> IO(Out):
+def annotate.ask(f: Fs(), +a: Annotation) -> IO(Policy.Out):
   match f:
     case Fail{m}:
       pure_out(annotation_unchecked(a, m))
@@ -7627,33 +7087,33 @@ def annotate.ask(f: Fs(), +a: Annotation) -> IO(Out):
       +opts = Jev.options_for(Jev.Annotating{}, names)
       annotate.run(jev_options_problem(c, names, opts, ""), names, opts, a)
 
-def annotate.folders(r: Run(), a: Annotation) -> IO(Out):
+def annotate.folders(r: Run(), a: Annotation) -> IO(Policy.Out):
   match r:
     case Fail{m}:
       pure_out(annotation_unchecked(a, m))
     case Done{lines}:
-      do IO<Out>:
+      do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
         annotate.ask(f, a)
 
 # The categories come from the folders, listed in a session of their own.
-def annotate.list(a: Annotation) -> IO(Out):
-  do IO<Out>:
+def annotate.list(a: Annotation) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     r : Run() <- imap_run(Ops.plan_folders())
     annotate.folders(r, a)
 
 # A read's result, annotated with Jev on when it shows any message. A
 # thread read has listed the folders already.
-def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
+def annotate(jev: Jev.Switch, s: Shown) -> IO(Policy.Out):
   match jev s:
-    case Jev.On{c} Listed{Ok{J.JObj{fields}}, m <> t}:
+    case Jev.On{c} Listed{Policy.Ok{J.JObj{fields}}, m <> t}:
       annotate.list(Annotation{fields, True{}, Jev.Headers{}, listed_fetched(m <> t, 1)})
-    case Jev.On{c} Threaded{Ok{J.JObj{fields}}, m <> t, folders}:
+    case Jev.On{c} Threaded{Policy.Ok{J.JObj{fields}}, m <> t, folders}:
       annotate.ask(Done{folders},
         Annotation{fields, True{}, Jev.Headers{}, listed_fetched(m <> t, 1)})
-    case Jev.On{c} Selected{Ok{J.JObj{fields}}, fetched}:
+    case Jev.On{c} Selected{Policy.Ok{J.JObj{fields}}, fetched}:
       annotate.list(Annotation{fields, False{}, c, [fetched]})
-    case Jev.On{+c} Whole{Ok{J.JObj{fields}}, m, max}:
+    case Jev.On{+c} Whole{Policy.Ok{J.JObj{fields}}, m, max}:
       annotate.list(Annotation{fields, False{}, c, [whole_fetched(c, m, max)]})
     case _ Listed{o, ms}:
       pure_out(o)
@@ -7664,37 +7124,37 @@ def annotate(jev: Jev.Switch, s: Shown) -> IO(Out):
     case _ Selected{o, fetched}:
       pure_out(o)
 
-def annotated(jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
-  do IO<Out>:
+def annotated(jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out):
+  do IO<Policy.Out>:
     s : Shown <- read
     annotate(jev, s)
 
 # Apply presentation after annotation: Jev always receives the original read.
-def projected.result(r: Result<&2, &2, String, J.Json>) -> Out:
+def projected.result(r: Result<&2, &2, String, J.Json>) -> Policy.Out:
   match r:
     case Done{v}:
-      Ok{v}
+      Policy.Ok{v}
     case Fail{m}:
-      Err{m}
+      Policy.Err{m}
 
-def projected.out(o: Out, mode: String, max: U32) -> Out:
+def projected.out(o: Policy.Out, mode: String, max: U32) -> Policy.Out:
   match o:
-    case Ok{j}:
+    case Policy.Ok{j}:
       projected.result(Response.apply(j, mode, max))
     case _:
       o
 
-def projected.if(enabled: Bool, o: Out, +args: J.Json) -> Out:
+def projected.if(enabled: Bool, o: Policy.Out, +args: J.Json) -> Policy.Out:
   match enabled:
     case False{}:
       o
     case True{}:
-      projected.out(o, str_arg(args, "projection", "full"),
+      projected.out(o, Policy.str_arg(args, "projection", "full"),
         u32_arg(args, "max_response_bytes", 0))
 
-def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
-  do IO<Out>:
-    o : Out <- annotated(jev, read)
+def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    o : Policy.Out <- annotated(jev, read)
     return projected.if(Maybe.is_some(&2, J.Json, J.get(args, "projection")) ||
       Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), o, args)
 
@@ -7704,7 +7164,7 @@ def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Out):
 # Running a tool
 # --------------
 
-def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) -> IO(Out):
+def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) -> IO(Policy.Out):
   match op:
     case Ops.OProbe{}:
       t_probe(args)
@@ -7755,50 +7215,28 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
     case Ops.OForward{}:
       t_respond(args, 1, jev)
 
-# Whether this call would send mail over SMTP.
-def sends(op: Ops.Op, args: J.Json) -> Bool:
-  match op:
-    case Ops.OSend{}:
-      True{}
-    case Ops.OReply{}:
-      Bool.not(bool_arg(args, "as_draft", False{}))
-    case Ops.OForward{}:
-      Bool.not(bool_arg(args, "as_draft", False{}))
-    case _:
-      False{}
-
-def refusal(+op: Ops.Op, args: J.Json, ro: Bool, drafts: Bool, jev: Bool) -> String:
-  Bool.pick(String, ro && Bool.not(Ops.is_read_only(op)),
-    Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
-    Bool.pick(String, drafts && sends(op, args),
-      Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
-        "mail_save_draft, or as_draft for a reply or forward",
-      Bool.pick(String, Bool.not(jev) && Ops.needs_jev(op),
-        jev_off(Ops.name(op)),
-        "")))
-
 def gated.if(problem: String, op: Ops.Op, args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
-  IO(Out):
+  IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       run_op(op, args, jev, images)
 
-def gated(+op: Ops.Op, +args: J.Json, c: Config) -> IO(Out):
+def gated(+op: Ops.Op, +args: J.Json, c: Policy.Config) -> IO(Policy.Out):
   match c:
-    case Config{ro, drafts, +jev, images}:
-      gated.if(refusal(op, args, ro, drafts, Jev.is_on(jev)), op, args, jev, images)
-    case ConfigBad{msg}:
-      pure_out(Err{"configuration error: " ++ msg})
+    case Policy.Config{ro, drafts, +jev, images}:
+      gated.if(Policy.refusal(op, args, ro, drafts, Jev.is_on(jev)), op, args, jev, images)
+    case Policy.ConfigBad{msg}:
+      pure_out(Policy.Err{"configuration error: " ++ msg})
 
-def call_op(m: Maybe<&2, Ops.Op>, name: String, args: J.Json) -> IO(Out):
+def call_op(m: Maybe<&2, Ops.Op>, name: String, args: J.Json) -> IO(Policy.Out):
   match m:
     case None{}:
-      pure_out(Err{"unknown tool: " ++ name})
+      pure_out(Policy.Err{"unknown tool: " ++ name})
     case Some{op}:
-      do IO<Out>:
-        c : Config <- config()
+      do IO<Policy.Out>:
+        c : Policy.Config <- config()
         gated(op, args, c)
 
 # The tools offered
@@ -7819,7 +7257,7 @@ def offered_items.if(keep: Bool, t: J.Json, rest: J.Json) -> J.Json:
 def offered_items(ts: J.Json, +names: List<&2, String>) -> J.Json:
   match ts:
     case J.JCons{+t, rest}:
-      offered_items.if(C.is_in(str_arg(t, "name", ""), names), t, offered_items(rest, names))
+      offered_items.if(C.is_in(Policy.str_arg(t, "name", ""), names), t, offered_items(rest, names))
     case _:
       J.JEnd{}
 
@@ -7831,17 +7269,17 @@ def offered_in(ts: J.Json, names: List<&2, String>) -> J.Json:
     case _:
       ts
 
-def offered_for(ts: J.Json, c: Config) -> J.Json:
+def offered_for(ts: J.Json, c: Policy.Config) -> J.Json:
   match c:
-    case Config{ro, drafts, jev, images}:
+    case Policy.Config{ro, drafts, jev, images}:
       offered_in(ts, Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev)))
-    case ConfigBad{msg}:
+    case Policy.ConfigBad{msg}:
       offered_in(ts, Ops.listed_names(Ops.all_ops(), True{}, False{}, False{}))
 
 # The tool definitions `ts` (a JSON array) that this configuration offers.
 def offered_tools(ts: J.Json) -> IO(J.Json):
   do IO<J.Json>:
-    c : Config <- config()
+    c : Policy.Config <- config()
     return offered_for(ts, c)
 
 # Arguments checked against the tool's input schema
@@ -7853,7 +7291,7 @@ def offered_tools(ts: J.Json) -> IO(J.Json):
 def tool_named(ts: J.Json, +name: String) -> Maybe<&2, J.Json>:
   match ts:
     case J.JCons{+t, rest}:
-      Bool.pick(Maybe<&2, J.Json>, String.eq(str_arg(t, "name", ""), name), Some{t},
+      Bool.pick(Maybe<&2, J.Json>, String.eq(Policy.str_arg(t, "name", ""), name), Some{t},
         tool_named(rest, name))
     case _:
       None{}
@@ -7925,10 +7363,10 @@ def type_words(+want: String, +item: String) -> String:
             "an array of " ++ item ++ "s")))))
 
 def want_of(s: J.Json) -> String:
-  str_arg(s, "type", "")
+  Policy.str_arg(s, "type", "")
 
 def item_of(s: J.Json) -> String:
-  str_arg(Maybe.default(&2, J.Json, J.get(s, "items"), J.JNull{}), "type", "")
+  Policy.str_arg(Maybe.default(&2, J.Json, J.get(s, "items"), J.JNull{}), "type", "")
 
 def prop_problem(p: Maybe<&2, J.Json>, k: String, v: J.Json, tool: String) -> String:
   match p:
@@ -8034,10 +7472,10 @@ def schema_problem(input: Maybe<&2, J.Json>, args: J.Json, tool: String) -> Stri
     case Some{i}:
       args_obj_problem(args, i, tool)
 
-def call.if(problem: String, +name: String, args: J.Json) -> IO(Out):
+def call.if(problem: String, +name: String, args: J.Json) -> IO(Policy.Out):
   match problem:
     case SCon{h, t}:
-      pure_out(Err{SCon{h, t}})
+      pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       call_op(Ops.from_name(name), name, args)
 
@@ -8058,7 +7496,7 @@ def response_budget(m: Maybe<&2, J.Json>) -> String:
 
 def projection_problem(+args: J.Json) -> String:
   first_of(Bool.pick(String,
-    C.is_in(str_arg(args, "projection", "full"), ["full", "text", "html", "metadata"]), "",
+    C.is_in(Policy.str_arg(args, "projection", "full"), ["full", "text", "html", "metadata"]), "",
     "projection must be full, text, html or metadata"),
     response_budget(J.get(args, "max_response_bytes")))
 
@@ -8068,5 +7506,5 @@ def call_problem(+name: String, +args: J.Json) -> String:
       projection_problem(args), ""))
 
 # Runs the named tool with its JSON arguments, once they match its schema.
-def call(+name: String, +args: J.Json) -> IO(Out):
+def call(+name: String, +args: J.Json) -> IO(Policy.Out):
   call.if(call_problem(name, args), name, args)

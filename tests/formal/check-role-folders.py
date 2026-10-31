@@ -2,7 +2,7 @@
 """Check the role-folder proofs, and require Bend to reject broken resolution.
 
 Copies src/ and tests/formal/role-folders.bend into a temporary directory and
-breaks Tools.resolved_role's helpers in src/tools.bend there, one mutation at
+breaks Policy.resolved_role's helpers in src/policy.bend there, one mutation at
 a time; the checkout is never modified. Each mutant must fail the check twice:
 at the example of the law it violates, which comes before the proofs, so the
 failure names the folder the broken code would pick; and, with the examples
@@ -22,7 +22,7 @@ PROOFS = "tests/formal/role-folders.bend"
 EXAMPLES = "# Examples\n# --------\n"
 PROOFS_SECTION = "# Proofs\n# ======\n"
 
-# (name, original text in src/tools.bend, broken text, example that must fail)
+# (name, original text in src/policy.bend, broken text, example that must fail)
 MUTATIONS = [
     ("override-ignored",
      "resolved_role.if(String.is_empty(override), fs, override, attr, a, b)",
@@ -122,7 +122,7 @@ def rejected(root, name):
 
 def main():
     require_checks(ROOT, "role-folder proofs")
-    source = (ROOT / "src/tools.bend").read_text(encoding="utf-8")
+    source = (ROOT / "src/policy.bend").read_text(encoding="utf-8")
     proofs = (ROOT / PROOFS).read_text(encoding="utf-8")
     laws_only = proofs[:proofs.index(EXAMPLES)] + proofs[proofs.index(PROOFS_SECTION):]
     proof_defs = set(re.findall(r"^def ([\w.]+)", laws_only[laws_only.index(PROOFS_SECTION):],
@@ -131,12 +131,12 @@ def main():
         shutil.copytree(ROOT / "src", Path(scratch, "src"))
         Path(scratch, "tests/formal").mkdir(parents=True)
         target = Path(scratch, PROOFS)
-        tools = Path(scratch, "src/tools.bend")
+        policy = Path(scratch, "src/policy.bend")
         target.write_text(laws_only, encoding="utf-8")
         require_checks(scratch, "role-folder proofs without the examples")
         for name, original, broken, example in MUTATIONS:
             require(source.count(original) == 1, (name, "mutation target not found once"))
-            tools.write_text(source.replace(original, broken), encoding="utf-8")
+            policy.write_text(source.replace(original, broken), encoding="utf-8")
             target.write_text(proofs, encoding="utf-8")
             output = rejected(scratch, name)
             require(location(output) == example, (name, example, output))

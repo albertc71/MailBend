@@ -20,6 +20,7 @@ import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 import ./src/response.bend as Response
+import ./src/policy.bend as Policy
 import ./tests/formal/smtp-tls.bend as SmtpTls
 import ./tests/formal/role-folders.bend as RoleFolders
 
@@ -1643,3 +1644,483 @@ def Laws.response_preserves_nonbody(key, value, left, nonbody):
       {==}
     case J.JKv{k, v}:
       {==}
+
+# Policy and classifier soundness
+# -------------------------------
+
+def Laws.store_classifies_as_writing(uids, add, flag):
+  ({==}, {==}, {==})
+
+def Laws.copy_classifies_as_writing(uids, dest):
+  ({==}, {==}, {==})
+
+def Laws.move_classifies_as_writing(uids, dest):
+  ({==}, {==}, {==})
+
+def Laws.expunge_classifies_as_writing(uids):
+  ({==}, {==}, {==})
+
+def Laws.append_classifies_as_writing(mbox, flags, msg):
+  ({==}, {==}, {==})
+
+def Laws.create_classifies_as_writing(mbox):
+  ({==}, {==}, {==})
+
+def Laws.rename_classifies_as_writing(from, to):
+  ({==}, {==}, {==})
+
+def Laws.subscribe_classifies_as_writing(mbox):
+  ({==}, {==}, {==})
+
+def Laws.unsubscribe_classifies_as_writing(mbox):
+  ({==}, {==}, {==})
+
+def Laws.select_classifies_as_writing(mbox):
+  ({==}, {==}, {==})
+
+def Laws.any_writes_checks_each_command(command, rest):
+  ({==}, {==})
+
+def Laws.draft_is_exact_append(drafts, msg):
+  {==}
+
+def Laws.refused_helper_is_not_lost(msg):
+  {==}
+
+def Laws.sending_calls_are_exact(op, args):
+  match op:
+    case Ops.OProbe{}:
+      {==}
+    case Ops.OListFolders{}:
+      {==}
+    case Ops.OSearch{}:
+      {==}
+    case Ops.OGet{}:
+      {==}
+    case Ops.OGetNew{}:
+      {==}
+    case Ops.ORefresh{}:
+      {==}
+    case Ops.OGetThread{}:
+      {==}
+    case Ops.OClassify{}:
+      {==}
+    case Ops.OTriage{}:
+      {==}
+    case Ops.OGetAttachment{}:
+      {==}
+    case Ops.OMarkRead{}:
+      {==}
+    case Ops.OMarkUnread{}:
+      {==}
+    case Ops.OFlag{}:
+      {==}
+    case Ops.OUnflag{}:
+      {==}
+    case Ops.OMove{}:
+      {==}
+    case Ops.OLabel{}:
+      {==}
+    case Ops.OTrash{}:
+      {==}
+    case Ops.ODelete{}:
+      {==}
+    case Ops.OCreateFolder{}:
+      {==}
+    case Ops.ORenameFolder{}:
+      {==}
+    case Ops.OSaveDraft{}:
+      {==}
+    case Ops.OSend{}:
+      {==}
+    case Ops.OReply{}:
+      {==}
+    case Ops.OForward{}:
+      {==}
+def append_nonempty(a: String, -b: String, e: {String.is_empty(b) == False{} : Bool})
+  -> {String.is_empty(a ++ b) == False{} : Bool}:
+  match a:
+    case SNil{}:
+      e
+    case SCon{h, t}:
+      {==}
+
+def pick_nonempty(
+  pick: Bool,
+  -left: String,
+  -right: String,
+  l: {String.is_empty(left) == False{} : Bool},
+  r: {String.is_empty(right) == False{} : Bool}
+) -> {String.is_empty(Bool.pick(String, pick, left, right)) == False{} : Bool}:
+  match pick:
+    case True{}:
+      l
+    case False{}:
+      r
+
+def Laws.read_only_refuses_writes(op, args, drafts, jev, write):
+  %Equal.sym(Bool, Ops.is_read_only(op), False{}, write) :
+    {String.is_empty(Bool.pick(String, Bool.not(_),
+      Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
+      Bool.pick(String, drafts && Policy.sends(op, args),
+        Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+          "mail_save_draft, or as_draft for a reply or forward",
+        Bool.pick(String, Bool.not(jev) && Ops.needs_jev(op),
+          Policy.jev_off(Ops.name(op)), "")))) == False{} : Bool}
+  append_nonempty(Ops.name(op), " is disabled: MAILBEND_READ_ONLY is set", {==})
+
+def Laws.drafts_only_refuses_sends(op, args, ro, jev, sending):
+  %Equal.sym(Bool, Policy.sends(op, args), True{}, sending) :
+    {String.is_empty(Bool.pick(String, ro && Bool.not(Ops.is_read_only(op)),
+      Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
+      Bool.pick(String, _,
+        Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+          "mail_save_draft, or as_draft for a reply or forward",
+        Bool.pick(String, Bool.not(jev) && Ops.needs_jev(op),
+          Policy.jev_off(Ops.name(op)), "")))) == False{} : Bool}
+  pick_nonempty(ro && Bool.not(Ops.is_read_only(op)),
+    Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
+    Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+      "mail_save_draft, or as_draft for a reply or forward",
+    append_nonempty(Ops.name(op), " is disabled: MAILBEND_READ_ONLY is set", {==}),
+    append_nonempty(Ops.name(op),
+      " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+        "mail_save_draft, or as_draft for a reply or forward", {==}))
+
+def Laws.jev_off_refuses_jev_calls(op, args, ro, drafts, needs):
+  %Equal.sym(Bool, Ops.needs_jev(op), True{}, needs) :
+    {String.is_empty(Bool.pick(String, ro && Bool.not(Ops.is_read_only(op)),
+      Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
+      Bool.pick(String, drafts && Policy.sends(op, args),
+        Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+          "mail_save_draft, or as_draft for a reply or forward",
+        Bool.pick(String, _, Policy.jev_off(Ops.name(op)), "")))) == False{} : Bool}
+  pick_nonempty(ro && Bool.not(Ops.is_read_only(op)),
+    Ops.name(op) ++ " is disabled: MAILBEND_READ_ONLY is set",
+    Bool.pick(String, drafts && Policy.sends(op, args),
+      Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+        "mail_save_draft, or as_draft for a reply or forward", Policy.jev_off(Ops.name(op))),
+    append_nonempty(Ops.name(op), " is disabled: MAILBEND_READ_ONLY is set", {==}),
+    pick_nonempty(drafts && Policy.sends(op, args),
+      Ops.name(op) ++ " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+        "mail_save_draft, or as_draft for a reply or forward", Policy.jev_off(Ops.name(op)),
+      append_nonempty(Ops.name(op),
+        " would send mail, which MAILBEND_DRAFTS_ONLY forbids: use " ++
+          "mail_save_draft, or as_draft for a reply or forward", {==}),
+      append_nonempty(Ops.name(op),
+        " is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off", {==})))
+
+def Laws.malformed_switch_is_bad(name, value, not_empty, not_zero, not_false, not_one, not_true):
+  %Equal.sym(Bool, String.is_empty(value), False{}, not_empty) :
+    {Policy.flag_value.if(_ || String.eq(value, "0") || String.eq(String.to_lower(value),
+      "false"), String.eq(value, "1") || String.eq(String.to_lower(value), "true"), name) ==
+      Policy.FlagBad{name ++ " must be 1, true, 0, false or empty"} : Policy.Flag}
+  %Equal.sym(Bool, String.eq(value, "0"), False{}, not_zero) :
+    {Policy.flag_value.if(False{} || _ || String.eq(String.to_lower(value), "false"),
+      String.eq(value, "1") || String.eq(String.to_lower(value), "true"), name) ==
+      Policy.FlagBad{name ++ " must be 1, true, 0, false or empty"} : Policy.Flag}
+  %Equal.sym(Bool, String.eq(String.to_lower(value), "false"), False{}, not_false) :
+    {Policy.flag_value.if(False{} || False{} || _, String.eq(value,
+      "1") || String.eq(String.to_lower(value), "true"), name) ==
+      Policy.FlagBad{name ++ " must be 1, true, 0, false or empty"} : Policy.Flag}
+  %Equal.sym(Bool, String.eq(value, "1"), False{}, not_one) :
+    {Policy.flag_value.if(False{} || False{} || False{}, _ || String.eq(String.to_lower(value),
+      "true"), name) ==
+      Policy.FlagBad{name ++ " must be 1, true, 0, false or empty"} : Policy.Flag}
+  %Equal.sym(Bool, String.eq(String.to_lower(value), "true"), False{}, not_true) :
+    {Policy.flag_value.if(False{} || False{} || False{}, False{} || _, name) ==
+      Policy.FlagBad{name ++ " must be 1, true, 0, false or empty"} : Policy.Flag}
+  {==}
+
+
+def bind_fails(
+  -A: Data,
+  -B: Data,
+  r: Result<&2, &2, String, A>,
+  -f: A -> Result<&2, &2, String, B>,
+  p: @x: A -> {Result.is_done(&2, &2, String, B, f(x)) == False{} : Bool}
+) -> {Result.is_done(&2, &2, String, B, Result.bind(&2, &2, String, A, B, r, f)) ==
+  False{} : Bool}:
+  match r:
+    case Fail{e}:
+      {==}
+    case Done{x}:
+      p(x)
+
+def Laws.bad_read_only_rejects_config(
+  drafts_only, api_key_set, typesafe, content, zero_retention, images, key_file, msg):
+  {==}
+
+def Laws.bad_drafts_only_rejects_config(
+  read_only, api_key_set, typesafe, content, zero_retention, images, key_file, msg):
+  bind_fails(Bool, Policy.Config, Policy.flag_on(read_only),
+    ro => Fail{msg},
+    ro => {==})
+
+def Laws.bad_typesafe_rejects_config(
+  read_only, drafts_only, api_key_set, content, zero_retention, images, key_file, msg):
+  bind_fails(Bool, Policy.Config, Policy.flag_on(read_only),
+    ro => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(drafts_only), drafts => Result.bind(&2, &2, String, Unit, Policy.Config,
+    Policy.checked(Policy.api_key_problem(api_key_set)), key_ok => Fail{msg})),
+    ro => bind_fails(Bool, Policy.Config, Policy.flag_on(drafts_only),
+    drafts => Result.bind(&2, &2, String, Unit, Policy.Config,
+    Policy.checked(Policy.api_key_problem(api_key_set)), key_ok => Fail{msg}),
+    drafts => bind_fails(Unit, Policy.Config, Policy.checked(Policy.api_key_problem(api_key_set)),
+    key_ok => Fail{msg},
+    key_ok => {==})))
+
+def Laws.bad_zero_retention_rejects_config(
+  read_only, drafts_only, api_key_set, typesafe, content, images, key_file, msg):
+  bind_fails(Bool, Policy.Config, Policy.flag_on(read_only),
+    ro => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(drafts_only), drafts => Result.bind(&2, &2, String, Unit, Policy.Config,
+    Policy.checked(Policy.api_key_problem(api_key_set)), key_ok => Result.bind(&2, &2, String,
+      Bool, Policy.Config,
+    Policy.flag_on(typesafe), on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Fail{msg})))),
+    ro => bind_fails(Bool, Policy.Config, Policy.flag_on(drafts_only),
+    drafts => Result.bind(&2, &2, String, Unit, Policy.Config,
+    Policy.checked(Policy.api_key_problem(api_key_set)), key_ok => Result.bind(&2, &2, String,
+      Bool, Policy.Config,
+    Policy.flag_on(typesafe), on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Fail{msg}))),
+    drafts => bind_fails(Unit, Policy.Config, Policy.checked(Policy.api_key_problem(api_key_set)),
+    key_ok => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(typesafe), on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Fail{msg})),
+    key_ok => bind_fails(Bool, Policy.Config, Policy.flag_on(typesafe),
+    on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Fail{msg}),
+    on => bind_fails(Jev.Content, Policy.Config, Policy.content_of(content),
+    wanted => Fail{msg},
+    wanted => {==})))))
+
+# The kernel retains the reusable Content binder here. A direct case split
+# avoids passing that continuation through an affine function argument.
+def bad_images_attested(
+  r: Result<&2, &2, String, Jev.Content>,
+  -ro: Bool,
+  -drafts: Bool,
+  -on: Bool,
+  -key_file: String,
+  -msg: String
+) -> {Result.is_done(&2, &2, String, Policy.Config,
+  Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+  r, +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+  Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+    Policy.Config,
+  Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+  Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+    drafts, jev, mode}}))))) == False{} : Bool}:
+  match r:
+    case Fail{e}:
+      {==}
+    case Done{c}:
+      {==}
+
+def Laws.bad_images_rejects_config(
+  read_only, drafts_only, api_key_set, typesafe, content, zero_retention, key_file, msg):
+  bind_fails(Bool, Policy.Config, Policy.flag_on(read_only),
+    ro => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(drafts_only), drafts => Result.bind(&2, &2, String, Unit, Policy.Config,
+    Policy.checked(Policy.api_key_problem(api_key_set)), key_ok => Result.bind(&2, &2, String,
+      Bool, Policy.Config,
+    Policy.flag_on(typesafe), on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(zero_retention), zr => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.attested(wanted, zr), +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+      Policy.Config,
+    Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+    Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+      drafts, jev, mode}}))))))))),
+    ro => bind_fails(Bool, Policy.Config, Policy.flag_on(drafts_only),
+    drafts => Result.bind(&2, &2, String, Unit, Policy.Config,
+    Policy.checked(Policy.api_key_problem(api_key_set)), key_ok => Result.bind(&2, &2, String,
+      Bool, Policy.Config,
+    Policy.flag_on(typesafe), on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(zero_retention), zr => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.attested(wanted, zr), +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+      Policy.Config,
+    Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+    Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+      drafts, jev, mode}})))))))),
+    drafts => bind_fails(Unit, Policy.Config, Policy.checked(Policy.api_key_problem(api_key_set)),
+    key_ok => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(typesafe), on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(zero_retention), zr => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.attested(wanted, zr), +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+      Policy.Config,
+    Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+    Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+      drafts, jev, mode}}))))))),
+    key_ok => bind_fails(Bool, Policy.Config, Policy.flag_on(typesafe),
+    on => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.content_of(content), wanted => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(zero_retention), zr => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.attested(wanted, zr), +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+      Policy.Config,
+    Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+    Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+      drafts, jev, mode}})))))),
+    on => bind_fails(Jev.Content, Policy.Config, Policy.content_of(content),
+    wanted => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(zero_retention), zr => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.attested(wanted, zr), +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+      Policy.Config,
+    Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+    Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+      drafts, jev, mode}}))))),
+    wanted => bind_fails(Bool, Policy.Config, Policy.flag_on(zero_retention),
+    zr => Result.bind(&2, &2, String, Jev.Content, Policy.Config,
+    Policy.attested(wanted, zr), +c => Result.bind(&2, &2, String, Bool, Policy.Config,
+    Policy.flag_on(Policy.FlagBad{msg}), images_on => Result.bind(&2, &2, String, Jev.ImageMode,
+      Policy.Config,
+    Policy.image_mode(images_on, c), mode => Result.bind(&2, &2, String, Jev.Switch, Policy.Config,
+    Policy.jev_switch(on, c, String.starts_with(key_file, "/")), jev => Done{Policy.Config{ro,
+      drafts, jev, mode}})))),
+    zr => bad_images_attested(Policy.attested(wanted, zr), ro, drafts, on, key_file, msg)))))))
+
+def filtered_membership(
+  keep: Bool,
+  head: I.Folder,
+  -rest: List<&2, I.Folder>,
+  -filtered: List<&2, I.Folder>,
+  -name: String,
+  witness: Laws.listed_selectable(List.filter.put(I.Folder, head, filtered, keep), name),
+  lift: Laws.listed_selectable(filtered, name) -> Laws.listed_selectable(rest, name)
+) -> Laws.listed_selectable(head <> rest, name):
+  match keep head:
+    case False{} I.Folder{n, d, attrs}:
+      Inr{lift(witness)}
+    case True{} I.Folder{n, d, attrs}:
+      match witness:
+        case Inl{here}:
+          Inl{here}
+        case Inr{later}:
+          Inr{lift(later)}
+
+def candidates_membership(
+  fs: List<&2, I.Folder>,
+  +attr: String,
+  +a: String,
+  +b: String,
+  +advertised: Bool,
+  +name: String,
+  witness: Laws.listed_selectable(Policy.role_candidates(fs, attr, a, b, advertised), name)
+) -> Laws.listed_selectable(fs, name):
+  match fs:
+    case Nil{}:
+      witness
+    case I.Folder{+n, d, +attrs} <> rest:
+      filtered_membership(Policy.role_match(advertised, n, attrs, attr, a, b),
+        I.Folder{n, d, attrs}, rest, Policy.role_candidates(rest, attr, a, b, advertised),
+        name, witness, w => candidates_membership(rest, attr, a, b, advertised, name, w))
+
+def overrides_membership(
+  fs: List<&2, I.Folder>,
+  +want: String,
+  +name: String,
+  witness: Laws.listed_selectable(Policy.override_candidates(fs, want), name)
+) -> Laws.listed_selectable(fs, name):
+  match fs:
+    case Nil{}:
+      witness
+    case I.Folder{+n, d, +attrs} <> rest:
+      filtered_membership(I.same_name(n, want), I.Folder{n, d, attrs}, rest,
+        Policy.override_candidates(rest, want), name, witness,
+        w => overrides_membership(rest, want, name, w))
+
+def unique_membership.if(
+  sel: Bool,
+  -name: String,
+  -delimiter: String,
+  -attrs: List<&2, String>,
+  selected: {Policy.selectable(attrs) == sel : Bool}
+) -> Laws.resolved_in_listing([I.Folder{name, delimiter, attrs}],
+  Bool.pick(Maybe<&2, String>, sel, Some{name}, None{})):
+  match sel:
+    case False{}:
+      Unit{}
+    case True{}:
+      Inl{({==}, selected)}
+
+def unique_membership(fs: List<&2, I.Folder>) ->
+  Laws.resolved_in_listing(fs, Policy.unique_folder(fs)):
+  match fs:
+    case Nil{}:
+      Unit{}
+    case I.Folder{n, d, attrs} <> Nil{}:
+      unique_membership.if(Policy.selectable(attrs), n, d, attrs, {==})
+    case h <> j <> rest:
+      Unit{}
+
+def resolved_membership(
+  role: Maybe<&2, String>,
+  -filtered: List<&2, I.Folder>,
+  -fs: List<&2, I.Folder>,
+  witness: Laws.resolved_in_listing(filtered, role),
+  lift: @name: String -> Laws.listed_selectable(filtered, name) ->
+    Laws.listed_selectable(fs, name)
+) -> Laws.resolved_in_listing(fs, role):
+  match role:
+    case None{}:
+      Unit{}
+    case Some{name}:
+      lift(name, witness)
+
+def role_membership.if(
+  marked: List<&2, I.Folder>,
+  +fs: List<&2, I.Folder>,
+  +attr: String,
+  +a: String,
+  +b: String,
+  lift: @name: String -> Laws.listed_selectable(marked, name) -> Laws.listed_selectable(fs, name)
+) -> Laws.resolved_in_listing(fs, Policy.role_fallback(marked, fs, attr, a, b)):
+  match marked:
+    case Nil{}:
+      resolved_membership(Policy.unique_folder(Policy.role_candidates(fs, attr, a, b, False{})),
+        Policy.role_candidates(fs, attr, a, b, False{}), fs,
+        unique_membership(Policy.role_candidates(fs, attr, a, b, False{})),
+        name => witness => candidates_membership(fs, attr, a, b, False{}, name, witness))
+    case +h <> +rest:
+      resolved_membership(Policy.unique_folder(h <> rest), h <> rest, fs,
+        unique_membership(h <> rest), lift)
+
+def role_membership(+fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String) ->
+  Laws.resolved_in_listing(fs, Policy.role(fs, attr, a, b)):
+  role_membership.if(Policy.role_candidates(fs, attr, a, b, True{}), fs, attr, a, b,
+    name => witness => candidates_membership(fs, attr, a, b, True{}, name, witness))
+
+def named_membership(+fs: List<&2, I.Folder>, +want: String) ->
+  Laws.resolved_in_listing(fs, Policy.named_folder(fs, want)):
+  resolved_membership(Policy.unique_folder(Policy.override_candidates(fs, want)),
+    Policy.override_candidates(fs, want), fs, unique_membership(Policy.override_candidates(fs,
+      want)),
+    name => witness => overrides_membership(fs, want, name, witness))
+
+def resolved_role_membership.if(
+  unset: Bool,
+  fs: List<&2, I.Folder>,
+  override: String,
+  attr: String,
+  a: String,
+  b: String
+) -> Laws.resolved_in_listing(fs, Policy.resolved_role.if(unset, fs, override, attr, a, b)):
+  match unset:
+    case True{}:
+      role_membership(fs, attr, a, b)
+    case False{}:
+      named_membership(fs, override)
+
+def Laws.resolved_role_names_selectable_folder(fs, override, attr, a, b):
+  resolved_role_membership.if(String.is_empty(override), fs, override, attr, a, b)
+
+# End policy and classifier soundness

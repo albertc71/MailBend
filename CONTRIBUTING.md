@@ -37,6 +37,8 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
+bend src/tools.bend --verdict                     # retain tool-layer kernel coverage
+python3 tests/formal/check-policy.py              # pure policy boundary and rejected mutations
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
 sh tests/run-unit.sh
