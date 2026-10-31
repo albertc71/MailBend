@@ -5520,9 +5520,103 @@ def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
 # Reply and forward
 # -----------------
 
-def prefixed(+p: String, +subject: String) -> String:
-  Bool.pick(String, String.starts_with(String.to_lower(String.trim(subject)), String.to_lower(p)),
-    subject, p ++ " " ++ subject)
+type SubjectHead is Data:
+  SubjectPrefix{rest: String}
+  SubjectTag{tag: String, rest: String}
+  SubjectText{text: String}
+
+def prefixed.known(token: String) -> Bool:
+  C.is_in(token, ["re", "fwd", "fw", "aw", "wg", "sv", "vb", "vs", "vl", "ref", "tr",
+    "r", "rif", "i", "rv", "res", "enc", "odp", "pd", "ynt", "ilt", "回复", "转发"])
+
+def prefixed.colon(ok: Bool, s: String, original: String) -> SubjectHead:
+  match ok s:
+    case True{} SCon{':', t}:
+      SubjectPrefix{t}
+    case True{} SCon{'：', t}:
+      SubjectPrefix{t}
+    case _ _:
+      SubjectText{original}
+
+def prefixed.counter(s: String, close: Char, valid: Bool, original: String) -> SubjectHead:
+  match s valid:
+    case SCon{']', t} True{}:
+      prefixed.colon(Char.is_eq(close, ']'), t, original)
+    case SCon{')', t} True{}:
+      prefixed.colon(Char.is_eq(close, ')'), t, original)
+    case SCon{c, t} True{}:
+      prefixed.counter(t, close, Char.is_digit(c), original)
+    case _ _:
+      SubjectText{original}
+
+def prefixed.counted(ok: Bool, s: String, close: Char, original: String) -> SubjectHead:
+  match ok s:
+    case True{} SCon{c, t}:
+      prefixed.counter(t, close, Char.is_digit(c), original)
+    case _ _:
+      SubjectText{original}
+
+def prefixed.lower(+c: Char) -> Char:
+  Bool.pick(Char, Char.is_eq(c, 'İ'), 'i', Char.to_lower(c))
+
+def prefixed.token(s: String, left: Nat, token: String, original: String) -> SubjectHead:
+  match s left:
+    case SCon{':', t} _:
+      prefixed.colon(prefixed.known(String.reverse(token)), SCon{':', t}, original)
+    case SCon{'：', t} _:
+      prefixed.colon(prefixed.known(String.reverse(token)), SCon{'：', t}, original)
+    case SCon{'[', t} _:
+      prefixed.counted(prefixed.known(String.reverse(token)), t, ']', original)
+    case SCon{'(', t} _:
+      prefixed.counted(prefixed.known(String.reverse(token)), t, ')', original)
+    case SCon{c, t} 1n+n:
+      prefixed.token(t, n, SCon{prefixed.lower(c), token}, original)
+    case _ _:
+      SubjectText{original}
+
+def prefixed.tag(s: String, rev: String, original: String) -> SubjectHead:
+  match s:
+    case SCon{']', t}:
+      SubjectTag{String.reverse(SCon{']', rev}), t}
+    case SCon{'[', t}:
+      SubjectText{original}
+    case SCon{c, t}:
+      prefixed.tag(t, SCon{c, rev}, original)
+    case SNil{}:
+      SubjectText{original}
+
+def prefixed.head(+s: String) -> SubjectHead:
+  match s:
+    case SCon{'[', t}:
+      prefixed.tag(t, "[", s)
+    case _:
+      prefixed.token(s, 3n, "", s)
+
+def prefixed.go(left: Nat, head: SubjectHead, +tags: List<&2, String>, count: U32) ->
+  String & U32:
+  match left head:
+    case 1n+n SubjectPrefix{rest}:
+      prefixed.go(n, prefixed.head(String.trim_start(rest)), tags, (count + 1 : U32))
+    case 1n+n SubjectTag{tag, rest}:
+      prefixed.go(n, prefixed.head(String.trim_start(rest)), tag <> tags, count)
+    case _ SubjectText{+s}:
+      gap = Bool.pick(String, List.is_empty(&2, String, tags) || String.is_empty(s), "", " ")
+      (String.join(List.reverse(&2, String, tags), " ") ++ gap ++ s, count)
+    case 0n _:
+      ("", 0)
+
+def prefixed.fin(+p: String, +original: String, result: String & U32) -> String:
+  match result:
+    case (s, 0):
+      p ++ " " ++ original
+    case (s, 1):
+      Bool.pick(String, String.starts_with(original, p ++ " "), original, p ++ " " ++ s)
+    case (s, n):
+      p ++ " " ++ s
+
+def prefixed(p: String, +subject: String) -> String:
+  prefixed.fin(p, subject,
+    prefixed.go(String.length(subject), prefixed.head(String.trim_start(subject)), [], 0))
 
 def quote_lines(ls: List<&2, String>) -> String:
   match ls:
