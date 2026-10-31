@@ -194,8 +194,8 @@ failed build, check, proof or compile leaves the installation as it was. A
 running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
-the pinned Bend to `~/.bend` after checking the archive's sha256; that
-release is Linux x64 only, so elsewhere install the same version yourself.
+the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
+pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -310,6 +310,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 `special_use: null`.
 
 ## Use
+
+For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
+They keep passwords in private files and use the public launcher.
 
 Check the connection first:
 
