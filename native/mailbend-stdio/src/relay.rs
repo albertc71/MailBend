@@ -5,7 +5,7 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use nix::errno::Errno;
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-use nix::sys::signal::{Signal, killpg};
+use nix::sys::signal::{Signal, kill, killpg};
 use nix::sys::signalfd::{SfdFlags, SignalFd};
 use nix::unistd::{Pid, getpid, read, write};
 
@@ -13,7 +13,7 @@ use crate::{Error, managed_signals};
 
 const CAPACITY: usize = 65536;
 
-fn group(child: &Child) -> Result<Pid, Error> {
+fn child_pid(child: &Child) -> Result<Pid, Error> {
     Ok(Pid::from_raw(
         i32::try_from(child.id()).map_err(|_| "invalid child id")?,
     ))
@@ -34,7 +34,7 @@ pub fn run() -> Result<ExitStatus, Error> {
         .map_err(|_| "cannot start core")?;
     let result = transfer(&mut child, &signals);
     if result.is_err() {
-        if let Ok(pid) = group(&child) {
+        if let Ok(pid) = child_pid(&child) {
             let _killed = killpg(pid, Signal::SIGKILL);
         }
         let _reaped = child.wait();
@@ -57,7 +57,7 @@ fn forward(signals: &SignalFd, pid: Pid) -> Result<(), Error> {
         let number = i32::try_from(info.ssi_signo).map_err(|_| "invalid signal")?;
         let signal = Signal::try_from(number).map_err(|_| "invalid signal")?;
         if signal != Signal::SIGCHLD {
-            match killpg(pid, signal) {
+            match kill(pid, signal) {
                 Ok(()) | Err(Errno::ESRCH) => {}
                 Err(_) => return Err("cannot forward signal"),
             }
@@ -70,7 +70,7 @@ fn transfer(child: &mut Child, signals: &SignalFd) -> Result<ExitStatus, Error> 
     let stdin = std::io::stdin();
     let mut input = child.stdin.take();
     nonblocking(input.as_ref().ok_or("core pipe is missing")?)?;
-    let pid = group(child)?;
+    let pid = child_pid(child)?;
     let mut buffer = [0_u8; CAPACITY];
     let (mut start, mut end) = (0, 0);
     loop {
