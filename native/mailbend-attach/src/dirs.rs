@@ -1,4 +1,4 @@
-//! What the three forms share: opening a directory setting, refusing one
+//! What the forms share: opening a directory setting, refusing one
 //! that is not dedicated, and comparing files and reporting OS errors.
 
 use std::ffi::OsStr;

@@ -221,6 +221,53 @@ def setup_diagnostics(work):
         code, checks = diagnose(srv)
         check("diagnostics: default checks local setup without network", code == 0
               and not srv.log_lines() and diagnosed(checks, "smtp", "authentication", "skipped"))
+        check("diagnostics: local platform facts include unset directories", all(
+            diagnosed(checks, "local", "platform", status, reason) for status, reason in
+            (("ok", "openat2_ok"), ("skipped", "attach_dir_unset"),
+             ("skipped", "download_tmpfile_unset"))))
+        attachments = pathlib.Path(work) / "private-server-marker-attachments"
+        downloads = pathlib.Path(work) / "private-server-marker-downloads"
+        attachments.mkdir()
+        downloads.mkdir()
+        (downloads / "existing").write_bytes(b"unchanged")
+        download_before = sorted(downloads.iterdir())
+        code, checks = diagnose(srv, MAILBEND_ATTACH_DIR=str(attachments),
+                                MAILBEND_DOWNLOAD_DIR=str(downloads))
+        check("diagnostics: platform probes are local and leave no named file", code == 0
+              and not srv.log_lines() and sorted(downloads.iterdir()) == download_before
+              and (downloads / "existing").read_bytes() == b"unchanged"
+              and diagnosed(checks, "local", "platform", "ok", "attach_dir_ok")
+              and diagnosed(checks, "local", "platform", "ok", "download_tmpfile_ok"))
+        code, checks = diagnose(srv, MAILBEND_ATTACH_DIR=str(attachments / "missing"),
+                                MAILBEND_DOWNLOAD_DIR=str(downloads / "missing"))
+        check("diagnostics: platform refusal paths are redacted", code != 0
+              and not srv.log_lines()
+              and diagnosed(checks, "local", "platform", "failed", "attach_dir_refused")
+              and diagnosed(checks, "local", "platform", "failed", "download_tmpfile_refused"))
+        for path in ("relative-helper", "/nonexistent/private-server-marker"):
+            code, checks = diagnose(srv, MAILBEND_ATTACH_HELPER=path)
+            check("diagnostics: unavailable attachment helper is redacted", code != 0
+                  and not srv.log_lines()
+                  and diagnosed(checks, "local", "platform", "failed", "unavailable"))
+        stub = pathlib.Path(work) / "private-server-marker-helper"
+        stub.write_text("#!/bin/sh\nprintf '%s\\n' 'openat2 ok' 'attach_dir unset' "
+                        "'download_tmpfile unset' 'arch other'\n")
+        stub.chmod(0o700)
+        code, checks = diagnose(srv, MAILBEND_ATTACH_HELPER=str(stub))
+        check("diagnostics: architecture is informational on a healthy platform", code == 0
+              and not srv.log_lines()
+              and diagnosed(checks, "local", "platform", "ok", "arch_other"))
+        for response, reason in (
+                ("openat2 ok\nattach_dir unset\ndownload_tmpfile unset\narch x86_64\n"
+                 "private-server-marker", "invalid_diagnostic_response"),
+                ("private-server-marker" * 300, "timeout_or_helper_failure")):
+            stub.write_text("#!/bin/sh\nprintf '%s\\n' '" + response + "'\n"
+                            "printf '%s\\n' private-server-marker >&2\n")
+            stub.chmod(0o700)
+            code, checks = diagnose(srv, MAILBEND_ATTACH_HELPER=str(stub))
+            check("diagnostics: malformed or excessive platform output is redacted", code != 0
+                  and not srv.log_lines()
+                  and diagnosed(checks, "local", "platform", "failed", reason))
         code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_READ_ONLY="1",
                                MAILBEND_DRAFTS_ONLY="1", MAILBEND_MAX_SENDS_PER_DAY="1",
                                MAILBEND_STATE_DIR=os.path.join(work, "diagnostic-counter"))

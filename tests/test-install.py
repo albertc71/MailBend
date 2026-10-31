@@ -57,6 +57,7 @@ class InstallTests(unittest.TestCase):
         for name in ("dirname", "sed", "mkdir", "cp", "mv", "rm", "sync", "flock"):
             (tools / name).symlink_to(shutil.which(name))
         executable(tools / "cc", "exit 0\n")
+        executable(tools / "getconf", "echo 'glibc 2.34'\n")
         executable(tools / "rustc", "echo 'rustc 1.99.0'\n")
         executable(tools / "cargo", cargo or cargo_writing())
         executable(tools / "bend", bend)
@@ -116,6 +117,46 @@ class InstallTests(unittest.TestCase):
         self.assertNotEqual(after, before)
         self.assertIn(b"NEW_CORE", after)
         self.assertIn(b"restart any MCP server already running", proc.stdout)
+
+    def test_compilation_requires_glibc_234_before_building(self):
+        for version in (None, "", "glibc 2.33", "glibc 1.99", "musl 1.2", "glibc invalid",
+                        "glibc 2.34 private-server-marker", "private-server-marker\nglibc 2.34",
+                        "glibc 99999999999999999999999999.34"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                tools = self.prepare(root, clang=True, bend="echo build-ran >&2; exit 1\n")
+                old = self.old_bin(root)
+                if version is None:
+                    (tools / "getconf").unlink()
+                else:
+                    executable(tools / "getconf", f"printf '%s\\n' '{version}'\n")
+                proc = self.run_install(root)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertEqual(proc.stderr,
+                                 b"mailbend: the compiled core needs glibc 2.34 or newer\n")
+                self.assertFalse((root / "native/target").exists())
+                self.assert_unchanged(root, old)
+
+    def test_supported_glibc_builds_and_getconf_receives_its_exact_argument(self):
+        for version in ("2.34", "2.35", "3.0"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                tools = self.prepare(root, clang=True)
+                executable(tools / "getconf", '[ "$#" = 1 ] && '
+                           '[ "$1" = GNU_LIBC_VERSION ] || exit 1\n'
+                           f"echo 'glibc {version}'\n")
+                proc = self.run_install(root)
+                self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+                self.assertEqual((root / "bin/mailbend-core").read_bytes(), NEW_CORE)
+
+    def test_no_clang_does_not_require_getconf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            tools = self.prepare(root)
+            (tools / "getconf").unlink()
+            proc = self.run_install(root)
+            self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+            self.assertIn(b"run main.bend through bend", proc.stdout)
 
     def test_published_binaries_are_executable_by_all_and_writable_only_by_owner(self):
         with tempfile.TemporaryDirectory() as directory:
