@@ -815,6 +815,31 @@ def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
     IO.print(show_line_endings(M.compose(T.draft_of(w, "me@my.org", st, True{}), "B")))
     IO.print(show_line_endings(M.compose(T.draft_of(w, "me@my.org", st, False{}), "B")))
 
+def show_random(r: Result<&2, &2, String, U32>) -> String:
+  match r:
+    case Done{n}:
+      U32.show(n)
+    case Fail{m}:
+      "refused"
+
+def show_stamp(r: Result<&2, &2, String, T.Stamp>) -> String:
+  match r:
+    case Done{T.Stamp{date, token}}:
+      token
+    case Fail{m}:
+      "refused"
+
+def randomness_cases() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("stamp first read " ++ show_stamp(T.stamp_checked(0, Fail{(1, "first")}, Done{1})))
+    IO.print("stamp second read " ++ show_stamp(T.stamp_checked(0, Done{1}, Fail{(1, "second")})))
+    IO.print("stamp both reads " ++ show_stamp(T.stamp_checked(0, Fail{(1, "first")}, Fail{(2, "second")})))
+    IO.print("stamp zero succeeds " ++ show_stamp(T.stamp_checked(0, Done{0}, Done{0})))
+    send : T.Out <- T.deliver_stamped(want(["a@x.com"], [], False{}), "me@example.com", T.stamp_checked(0, Fail{(1, "first")}, Done{0}))
+    draft : T.Out <- T.deliver_stamped(want(["a@x.com"], [], True{}), "me@example.com", T.stamp_checked(0, Done{0}, Fail{(1, "second")}))
+    IO.print("send random failure " ++ show_out(send))
+    IO.print("draft random failure " ++ show_out(draft))
+
 def check_compose() -> IO(Unit):
   do IO<Unit>:
     IO.print(C.bytes_str([72, 105]) ++ " " ++ T.basename("/a/b/c.txt") ++ " " ++
@@ -846,7 +871,7 @@ def check_compose() -> IO(Unit):
     IO.print(U32.show(T.secs_of(T.ProcOk{0, " 1700000000\n", ""})) ++ " " ++
       U32.show(T.secs_of(T.ProcOk{0, "x", ""})) ++ " " ++
       U32.show(T.secs_of(T.ProcRefused{"x"})) ++
-      " " ++ U32.show(T.rand_of(Done{5})) ++ " " ++ U32.show(T.rand_of(Fail{(1, "x")})))
+      " " ++ show_random(T.rand_of(Done{5})) ++ " " ++ show_random(T.rand_of(Fail{(1, "x")})))
     IO.print(T.domain_of("A <a@Example.com>") ++ " " ++ T.domain_of("bad"))
     check_drafts(T.stamp_of(1700000000, 1, 255), want(["A <a@x.com>"], ["b@z.com"], False{}))
     IO.print(
@@ -1353,6 +1378,7 @@ def check_read_identity() -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    randomness_cases()
     check_switches()
     check_helper()
     check_runs()
@@ -1377,6 +1403,12 @@ def main() -> IO(Unit):
     check_triage()
     check_read_identity()
 
+#|stamp first read refused
+#|stamp second read refused
+#|stamp both reads refused
+#|stamp zero succeeds 00000000.0000000000000000
+#|send random failure err cannot compose message: random identifier generation failed
+#|draft random failure err cannot compose message: random identifier generation failed
 #|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|{"has_more":false,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|d v d
@@ -1566,7 +1598,7 @@ def main() -> IO(Unit):
 #|error first
 #|atts f|message/rfc822|raw; | error bad
 #|09af 00000000 deadbeef ffffffff 12345678
-#|1700000000 0 0 5 0
+#|1700000000 0 0 5 refused
 #|Example.com bad
 #|Tue, 14 Nov 2023 22:13:20 +0000 6553f100.00000001000000ff mailbend-6553f100.00000001000000ff
 #|<6553f100.00000001000000ff@my.org> A <a@x.com>,c@y.com,b@z.com False a@x.com,c@y.com,b@z.com

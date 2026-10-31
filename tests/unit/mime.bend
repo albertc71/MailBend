@@ -174,7 +174,7 @@ def compose_cases() -> IO(Unit):
     IO.print(M.safe_ctype("text/") ++ " " ++ M.safe_ctype("/x") ++ " " ++ M.safe_ctype("a/b/c") ++ " " ++ M.safe_ctype("") ++ " " ++ M.safe_ctype("image/svg+xml") ++ " " ++ M.safe_ctype("Message/RFC822"))
     IO.print(Bool.show(M.seven_bit(String.repeat("a", 998n), 0)) ++ " " ++ Bool.show(M.seven_bit(String.repeat("a", 999n), 0)) ++ " " ++ Bool.show(M.seven_bit("a\u{0}", 0)) ++ " " ++ Bool.show(M.seven_bit("a\nb", 0)) ++ " " ++ Bool.show(M.seven_bit("a\rb", 0)) ++ " " ++ Bool.show(M.seven_bit("\u{7F}", 0)) ++ " " ++ Bool.show(M.seven_bit("", 0)))
     IO.print(M.name_param("name", "a\"b\\c") ++ " | " ++ Nat.show(String.length(M.name_param("f", String.repeat("a", 200n)))) ++ " | " ++ show_line_breaks(M.name_param("f", String.repeat("a", 201n))))
-    IO.print("[" ++ M.fold_ids([]) ++ "] [" ++ show_line_breaks(M.fold_ids(["<a@x>", "", "<b@y>"])) ++ "] [" ++ show_line_breaks(M.fold_ids(["<a@x>", String.repeat("x", 901n)])) ++ "]")
+    IO.print("[" ++ M.fold_ids([]) ++ "] [" ++ show_line_breaks(M.fold_ids(M.msg_ids("<a@x> <> <b@y>"))) ++ "] [" ++ show_line_breaks(M.fold_ids(M.msg_ids("<a@x> " ++ String.repeat("x", 901n)))) ++ "]")
     IO.print(show_line_breaks(M.att_part("B", M.Attach{"a.txt", "text/plain", "hi"})) ++ " | " ++ show_line_breaks(M.att_part("B", M.Attach{"m.eml", "message/rfc822", "a\nb"})))
 
 def date_cases() -> IO(Unit):
@@ -271,6 +271,80 @@ def local_name_cases() -> IO(Unit):
     IO.print("[" ++ M.local_name("..") ++ "] [" ++ M.local_name(".") ++ "] [" ++ M.local_name("") ++ "] [" ++ M.local_name("\u{202E}") ++ "]")
     IO.print(Nat.show(String.length(M.local_name(String.repeat("a", 300n)))) ++ " " ++ Nat.show(String.length(M.local_name(String.repeat("\u{E9}", 200n)))) ++ " " ++ Nat.show(String.length(M.local_name("a" ++ String.repeat("\u{1F600}", 64n)))) ++ " " ++ M.local_name("caf\u{E9}.txt"))
 
+def conformance_draft(subject: String, irt: String, refs: String, atts: List<&2, M.Attach>) -> M.Draft:
+  M.Draft{"a@x", ["b@y"], [], [], subject, "body", "D", "<m@x>", irt, refs, atts}
+
+def composed_header(subject: String) -> String:
+  M.head_of(M.split(M.compose(conformance_draft(subject, "", "", []), "B")))
+
+def subject_roundtrip(+subject: String) -> Bool:
+  String.eq(M.decode_header(M.header(M.headers(composed_header(subject)), "subject")), subject)
+
+def unfold(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\r', SCon{'\n', t}}:
+      unfold(t)
+    case SCon{c, t}:
+      SCon{c, unfold(t)}
+
+def composed_thread(irt: String, refs: String, name: String) -> String:
+  String.trim(M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", irt, refs, []), "B")))), name))
+
+def long_refs() -> String:
+  "<root@x> " ++ String.repeat("<middle@x> ", 120n) ++ "<last1@x> <last2@x>"
+
+def conformance_cases() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("encoded subject line bound " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("é", 80n)), 0, 0), 77)))
+    IO.print("encoded display line bound " ++ Bool.show(U32.is_le(max_line("From: " ++ M.encode_addr(String.repeat("é", 39n) ++ " <long.address@example.invalid>"), 0, 0), 77)))
+    IO.print("literal encoded words " ++ Bool.show(subject_roundtrip("=?x?=")) ++ " " ++ Bool.show(subject_roundtrip("Re: =?UTF-8?B?SGFja2Vk?=")))
+    IO.print("long ASCII subject line bound " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("one two ", 20n) ++ "end"), 0, 0), 79)))
+    IO.print("ASCII subject whitespace preserved " ++ Bool.show(String.eq(unfold(M.encode_header(String.repeat("one  two ", 20n) ++ "end")), String.repeat("one  two ", 20n) ++ "end")))
+    IO.print("first subject token bounds " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("a", 69n)), 0, 0), 79)) ++ " " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("a", 70n)), 0, 0), 79)) ++ " " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("a", 77n)), 0, 0), 79)))
+    IO.print("literal display word " ++ Bool.show(String.contains(M.encode_addr("=?UTF-8?B?SGFja2Vk?= <a@x>"), "=?UTF-8?B?PT9VVEYtOD9CP1NHRmphMlZrPz0=?=")))
+    IO.print("UTF-8 attachment charset " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"notes.txt", "text/plain", C.utf8_encode("café")}), "text/plain; charset=utf-8")))
+    IO.print("ASCII attachment charset " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"notes.csv", "text/csv", "one,two\r\n"}), "text/csv; charset=us-ascii")))
+    IO.print("invalid UTF-8 attachment unchanged " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"notes.txt", "text/plain", "caf\u{E9}"}), "text/plain;\r\n name=")))
+    IO.print("binary attachment unchanged " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"data.bin", "application/octet-stream", "ASCII"}), "application/octet-stream;\r\n name=")))
+    IO.print("threading tokens " ++ M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", "<a@x> (by relay)", "(note) <root@x> junk <a@x>", []), "B")))), "in-reply-to"))
+    IO.print("references tokens " ++ M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", "", "(note) <root@x> junk <a@x>", []), "B")))), "references"))
+    IO.print("references bound " ++ Bool.show(Nat.is_le(String.length(M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", "", "<root@x> " ++ String.repeat("<middle@x> ", 120n) ++ "<last1@x> <last2@x>", []), "B")))), "references")), 986n)))
+    IO.print("references keep endpoints " ++ Bool.show(String.starts_with(composed_thread("", long_refs(), "references"), "<root@x> ")) ++ " " ++ Bool.show(String.ends_with(composed_thread("", long_refs(), "references"), "<last1@x> <last2@x>")))
+    IO.print("threading malformed dropped [" ++ composed_thread("(fake <comment@x>) <a@x> <bad> <two@@x> <space @x> <\u{E9}@x> <open", "", "in-reply-to") ++ "]")
+    IO.print("boundary collision encoded " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"original.eml", "message/rfc822", "Subject: old\r\n\r\n--B\r\nbody"}), "Content-Type: application/octet-stream")))
+    IO.print("whole QP padded soft break " ++ M.readable_text(M.parts("Content-Transfer-Encoding: quoted-printable\r\n\r\nfoo= \r\nbar")))
+    IO.print("whole QP final soft break " ++ M.readable_text(M.parts("Content-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nlast=\r\n--B--\r\n")))
+
+def charset_is(data: String, charset: String) -> Bool:
+  +part = M.att_part("B", M.Attach{"text.txt", "text/plain", data})
+  String.eq(M.param(M.header(M.headers(M.head_of(M.split(part))), "content-type"), "charset"), charset)
+
+def attachment_text(+part: String) -> String:
+  +hs = M.headers(M.head_of(M.split(part)))
+  M.leaf.text(M.header(hs, "content-type"), M.leaf_bytes(hs, M.body_of(M.split(part))))
+
+def raw_attachment(data: String) -> Bool:
+  String.contains(M.att_part("B", M.Attach{"m.eml", "message/rfc822", data}), "Content-Transfer-Encoding: 7bit")
+
+def long_id(n: Nat, c: String) -> String:
+  "<" ++ String.repeat(c, n) ++ "@x>"
+
+def conformance_edges() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("single long subject token roundtrip " ++ Bool.show(subject_roundtrip(String.repeat("a", 79n))) ++ " " ++ Bool.show(subject_roundtrip(String.repeat("a", 900n))))
+    IO.print("first subject token roundtrip " ++ Bool.show(subject_roundtrip(String.repeat("a", 69n))) ++ " " ++ Bool.show(subject_roundtrip(String.repeat("a", 70n))) ++ " " ++ Bool.show(subject_roundtrip(String.repeat("a", 77n))))
+    IO.print("text charset validity " ++ Bool.show(charset_is("\u{0}\t\r\n", "us-ascii")) ++ " " ++ Bool.show(charset_is(C.utf8_encode("é€😀�"), "utf-8")) ++ " " ++ Bool.show(charset_is("\u{C0}\u{AF}", "")) ++ " " ++ Bool.show(charset_is("\u{ED}\u{A0}\u{80}", "")) ++ " " ++ Bool.show(charset_is("\u{F4}\u{90}\u{80}\u{80}", "")) ++ " " ++ Bool.show(charset_is("\u{C3}", "")) ++ " " ++ Bool.show(charset_is("\u{80}", "")))
+    IO.print("text attachment roundtrip " ++ attachment_text(M.att_part("B", M.Attach{"café.txt", "text/plain", C.utf8_encode("café")})))
+    IO.print("boundary prefix checks " ++ Bool.show(raw_attachment("--B\r\n")) ++ " " ++ Bool.show(raw_attachment("Subject: s\r\n\r\n--B--\r\n")) ++ " " ++ Bool.show(raw_attachment("Subject: s\r\n\r\n--Bextra\r\n")) ++ " " ++ Bool.show(raw_attachment("Subject: s\r\n\r\ntext --B\r\n")))
+    IO.print("reference exact limits " ++ Bool.show(Nat.is_eq(String.length(composed_thread("", long_id(982n, "a"), "references")), 986n)) ++ " " ++ Bool.show(String.is_empty(composed_thread("", long_id(983n, "a"), "references"))) ++ " " ++ Bool.show(Nat.is_eq(String.length(composed_thread("", long_id(496n, "a") ++ " " ++ long_id(481n, "b"), "references")), 986n)))
+    IO.print("oversized mandatory references omitted " ++ Bool.show(String.is_empty(composed_thread("<reply@x>", long_id(336n, "a") ++ " " ++ long_id(336n, "b") ++ " " ++ long_id(336n, "c"), "references"))) ++ " " ++ composed_thread("<reply@x>", long_id(336n, "a") ++ " " ++ long_id(336n, "b") ++ " " ++ long_id(336n, "c"), "in-reply-to"))
+    IO.print("thread token grammar " ++ composed_thread("<bad<inner@x>> <a..b@x> <a@.x> <ok@[127.0.0.1]> <ok@[IPv6:abcd::1]> (nested (fake <n@x>)) \"quote <q@x>\" <end@x>", "", "in-reply-to"))
+    IO.print("tab and long whitespace preserved " ++ Bool.show(String.eq(unfold(M.encode_header(String.repeat("a\tb ", 40n))), String.repeat("a\tb ", 40n))) ++ " " ++ Bool.show(String.eq(unfold(M.encode_header("start" ++ String.repeat(" ", 200n) ++ "end")), "start" ++ String.repeat(" ", 200n) ++ "end")))
+    IO.print("attachment parameter line bound " ++ Bool.show(U32.is_le(max_line(M.att_part("B", M.Attach{String.repeat("n", 60n), "text/plain", "a"}), 0, 0), 79)))
+    IO.print("bare address line bound " ++ Bool.show(U32.is_le(max_line(M.field_line("From", M.encode_addr(String.repeat("a", 72n) ++ "@x")), 0, 0), 79)))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     show_headers(M.headers(M.head_of(M.split(multipart_message()))))
@@ -302,11 +376,13 @@ def main() -> IO(Unit):
     IO.print(oks(["", "@a", "a@", "a b@c", "<a@b>", "a@b (c)", "Name <a@b>\u{7F}", "A <a@b>, c@d", "a@b\t", "a@b@c", "a@b.c", "ü@b.c"]))
     IO.print(Bool.show(M.all_addrs_ok([])) ++ " " ++ Bool.show(M.all_addrs_ok(["a@b", "c@d"])) ++ " " ++ Bool.show(M.all_addrs_ok(["a@b", "x"])))
     IO.print(Bool.show(M.no_ctl("abc")) ++ " " ++ Bool.show(M.no_ctl("")) ++ " " ++ Bool.show(M.no_ctl("a\tb")) ++ " " ++ Bool.show(M.no_ctl("a\u{7F}")) ++ " " ++ Bool.show(M.no_ctl("é")) ++ " " ++ Bool.show(M.no_ctl("a\u{0}")))
-    IO.print(M.encode_addr("a@b") ++ " | " ++ M.encode_addr("<a@b>") ++ " | " ++ M.encode_addr("José <j@x.com>") ++ " | " ++ M.encode_addr("\"Q \\\"x\\\"\" <q@x>") ++ " | " ++ M.encode_addr("Back\\slash <b@x>") ++ " | " ++ M.encode_addr("Name <a@b> (c)"))
+    IO.print(M.encode_addr("a@b") ++ " | " ++ M.encode_addr("<a@b>") ++ " | " ++ visible(M.encode_addr("José <j@x.com>")) ++ " | " ++ M.encode_addr("\"Q \\\"x\\\"\" <q@x>") ++ " | " ++ M.encode_addr("Back\\slash <b@x>") ++ " | " ++ M.encode_addr("Name <a@b> (c)"))
     IO.print(visible(M.encode_addr(String.repeat("n", 201n) ++ " <a@b>")) ++ " | " ++ Nat.show(String.length(M.encode_addr(String.repeat("n", 200n) ++ " <a@b>"))))
     IO.print(M.iso_date(0) ++ " " ++ M.iso_date(951782400) ++ " " ++ M.iso_date(1790480370) ++ " " ++ M.iso_date(4102444799))
     attachment_cases()
     local_name_cases()
+    conformance_cases()
+    conformance_edges()
 
 #|José <jose@example.com>
 #|Café menu today
@@ -322,7 +398,7 @@ def main() -> IO(Unit):
 #|Thu, 1 Jan 1970 00:00:00 +0000 / Tue, 29 Feb 2000 00:00:00 +0000 / Sun, 27 Sep 2026 03:39:30 +0000 / Thu, 31 Dec 2099 23:59:59 +0000
 #|True text/plain application/octet-stream True False
 #|filename="r_sum_.pdf";\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf | filename="plain.txt"
-#|1595 True <a@x>\r\n <b@y>
+#|1640 True <a@x>\r\n <b@y>
 #|True True
 #|Q1; final "v2".pdf | text/plain | john@example.com
 #|real@y.com plain@z.com
@@ -354,14 +430,14 @@ def main() -> IO(Unit):
 #|text= html= atts=
 #|[a b] [ x y ] [unclosed ] [stray > here]
 #|[1 > 0 && "q" 's' &foo; &lt;] [ tab sp ] [] [<b>]
-#|From: =?UTF-8?B?Wm/DqyDDkQ==?= <z@example.com>\r\nCc: c1@example.com,\r\n "Doe, J" <j@x.com>,\r\n bare@x.com\r\nBcc: hidden@example.com\r\nSubject: plain subject\r\nDate: D\r\nMessage-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <r1@x>\r\n <r2@x>\r\n <r3@x>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BB"\r\n\r\nThis is a multi-part message in MIME format.\r\n--BB\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\na\r\nb\r\nc\r\nd=3De =C3=A9\r\n--BB\r\nContent-Type: application/pdf; name="r_sum_.pdf";\r\n name*0*=utf-8''r%C3%A9sum%C3%A9.pdf\r\nContent-Disposition: attachment; filename="r_sum_.pdf";\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERv8=\r\n--BB\r\nContent-Type: application/octet-stream; name="bad.bin"\r\nContent-Disposition: attachment; filename="bad.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n--BB\r\nContent-Type: application/octet-stream; name="m.eml"\r\nContent-Disposition: attachment; filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nU3ViamVjdDog6Q0KDQpoaQ==\r\n--BB--\r\n
+#|From: =?UTF-8?B?Wm/DqyDDkQ==?=\r\n <z@example.com>\r\nCc: c1@example.com,\r\n "Doe, J" <j@x.com>,\r\n bare@x.com\r\nBcc: hidden@example.com\r\nSubject: plain subject\r\nDate: D\r\nMessage-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <r1@x>\r\n <r2@x>\r\n <r3@x>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BB"\r\n\r\nThis is a multi-part message in MIME format.\r\n--BB\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\na\r\nb\r\nc\r\nd=3De =C3=A9\r\n--BB\r\nContent-Type: application/pdf;\r\n name="r_sum_.pdf";\r\n name*0*=utf-8''r%C3%A9sum%C3%A9.pdf\r\nContent-Disposition: attachment;\r\n filename="r_sum_.pdf";\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERv8=\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="bad.bin"\r\nContent-Disposition: attachment;\r\n filename="bad.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nU3ViamVjdDog6Q0KDQpoaQ==\r\n--BB--\r\n
 #|From: a@b.c\r\nTo: x@y.z\r\nSubject: \r\nDate: D\r\nMessage-ID: <i@x>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n
-#||=?UTF-8?B?Q2Fmw6k=?=|=?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?=\r\n =?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqQ==?=|900 1516
+#||=?UTF-8?B?Q2Fmw6k=?=|=?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?=\r\n =?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqQ==?=|900 1561
 #|application/octet-stream application/octet-stream application/octet-stream application/octet-stream image/svg+xml message/rfc822
 #|True False False False False False True
 #|name="a\"b\\c" | 204 | f="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";\r\n f*0*=utf-8''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*1*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*2*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*3*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*4*=a
 #|[] [<a@x>\r\n <b@y>] [<a@x>]
-#|--B\r\nContent-Type: text/plain; name="a.txt"\r\nContent-Disposition: attachment; filename="a.txt"\r\nContent-Transfer-Encoding: base64\r\n\r\naGk=\r\n | --B\r\nContent-Type: application/octet-stream; name="m.eml"\r\nContent-Disposition: attachment; filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nYQpi\r\n
+#|--B\r\nContent-Type: text/plain; charset=us-ascii;\r\n name="a.txt"\r\nContent-Disposition: attachment;\r\n filename="a.txt"\r\nContent-Transfer-Encoding: base64\r\n\r\naGk=\r\n | --B\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nYQpi\r\n
 #|Thu, 29 Feb 2024 00:00:00 +0000 / Fri, 31 Dec 1999 23:59:59 +0000 / Sun, 7 Feb 2106 06:28:15 +0000 / Thu, 1 Jan 1970 23:59:59 +0000 / Mon, 6 May 2024 12:53:20 +0000
 #|[]
 #|A <a@x.com>|b@y.com|c@z.com
@@ -372,8 +448,8 @@ def main() -> IO(Unit):
 #|False False False False True True False True False False True False 
 #|True True False
 #|True True False False True False
-#|a@b | a@b | =?UTF-8?B?Sm9zw6k=?= <j@x.com> | "Q \"x\"" <q@x> | "Back\\slash" <b@x> | "Name" <a@b>
-#|=?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5u?= <a@b> | 208
+#|a@b | a@b | =?UTF-8?B?Sm9zw6k=?=\r\n <j@x.com> | "Q \"x\"" <q@x> | "Back\\slash" <b@x> | "Name" <a@b>
+#|=?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5u?=\r\n =?UTF-8?B?bm5ubm5u?=\r\n <a@b> | 210
 #|1970-01-01 2000-02-29 2026-09-27 2099-12-31
 #|text=body text html= atts=b64.bin|application/octet-stream|4;résumé.txt|text/plain|9;|image/png|9;
 #|b64.bin|application/octet-stream|0,255,128,10
@@ -387,3 +463,33 @@ def main() -> IO(Unit):
 #|gnp.exe | hidden | abcdefgh |  .x
 #|[] [] [] []
 #|255 127 64 café.txt
+#|encoded subject line bound True
+#|encoded display line bound True
+#|literal encoded words True True
+#|long ASCII subject line bound True
+#|ASCII subject whitespace preserved True
+#|first subject token bounds True True True
+#|literal display word True
+#|UTF-8 attachment charset True
+#|ASCII attachment charset True
+#|invalid UTF-8 attachment unchanged True
+#|binary attachment unchanged True
+#|threading tokens <a@x>
+#|references tokens <root@x> <a@x>
+#|references bound True
+#|references keep endpoints True True
+#|threading malformed dropped [<a@x>]
+#|boundary collision encoded True
+#|whole QP padded soft break foobar
+#|whole QP final soft break last
+#|single long subject token roundtrip True True
+#|first subject token roundtrip True True True
+#|text charset validity True True True True True True True
+#|text attachment roundtrip café
+#|boundary prefix checks False False False True
+#|reference exact limits True True True
+#|oversized mandatory references omitted True <reply@x>
+#|thread token grammar <ok@[127.0.0.1]> <ok@[IPv6:abcd::1]> <end@x>
+#|tab and long whitespace preserved True True
+#|attachment parameter line bound True
+#|bare address line bound True
