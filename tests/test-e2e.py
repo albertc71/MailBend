@@ -3568,10 +3568,13 @@ def jev_headers(srv, work, key_file):
               all(q["body"]["model"] == "jev-1.14.0" and q["user_agent"] == "mailbend" for q in sent), sent[:1])
         check("jev headers: each request goes through CONNECT api.typesafe.ai:443",
               all(q["connect"] == "CONNECT api.typesafe.ai:443 HTTP/1.1" for q in ts.records()), ts.records()[:1])
-        envs = [names for q in sent for names in q["env_names"]]
-        check("jev headers: mailbend-typesafe runs without the mail password or any other setting",
-              envs and all("MAILBEND_TYPESAFE_KEY_FILE" in names and "MAILBEND_APP_PASSWORD" not in names
-                           and "MAILBEND_EMAIL" not in names and "UNRELATED_SETTING" not in names for names in envs), envs)
+        envs = [entry for q in sent for entry in q["env_names"]]
+        check("jev headers: each TypeSafe request has a protected or readable confined helper",
+              sent and all(q["env_names"] for q in sent) and all(
+                  entry == {"non_dumpable": True}
+                  or ("MAILBEND_TYPESAFE_KEY_FILE" in entry.get("names", [])
+                      and not {"MAILBEND_APP_PASSWORD", "MAILBEND_EMAIL", "UNRELATED_SETTING"}
+                      .intersection(entry["names"])) for entry in envs), envs)
         reported = r.get("requests", [])
         check("jev headers: requests report the UTF-8 bytes sent and TypeSafe's token count",
               [q["bytes"] for q in reported] == [q["bytes"] for q in sent]

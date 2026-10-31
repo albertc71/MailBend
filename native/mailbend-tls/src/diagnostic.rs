@@ -21,6 +21,7 @@ pub fn run(protocol: Protocol, network: bool) -> Result<Outcome, Exit> {
 type Problem = (&'static str, &'static str);
 
 fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
+    mailbend_io::process::no_dumps().map_err(|_| ("configuration", "invalid"))?;
     refuse_typesafe_api_key().map_err(|_| ("configuration", "invalid"))?;
     let settings = Settings::from_env(protocol).map_err(|_| ("configuration", "invalid"))?;
     println!("configuration ok");
@@ -49,13 +50,13 @@ fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
     // Empty plans mean authentication and orderly disconnect only.
     // Diagnostics bypass envelope parsing and never accept message input.
     let result = match protocol {
-        Protocol::Imap => imap::session::run(&mut conn, &tls, &settings.host, &credentials, &[]),
+        Protocol::Imap => imap::session::run(&mut conn, &tls, &settings.host, credentials, &[]),
         Protocol::Smtp => smtp::session::run(
             &mut conn,
             &tls,
             &settings.host,
             settings.smtp_tls_mode,
-            &credentials,
+            credentials,
             &[],
         ),
     };

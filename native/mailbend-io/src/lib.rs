@@ -7,5 +7,6 @@
 pub mod core_bytes;
 pub mod env;
 pub mod fs;
+pub mod process;
 pub mod report;
 pub mod secret;

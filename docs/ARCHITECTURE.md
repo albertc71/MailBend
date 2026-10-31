@@ -299,15 +299,26 @@ run a short discovery session before the action session.
 
 ## Credentials
 
-The core never reads `MAILBEND_APP_PASSWORD`; only the helper does. The
-helper wipes its copies after login and does not forward the server's
-login replies, so no transcript, tool result or log can contain the
-password. An environment variable is still inherited by the core and
-readable by any process of the same user; with `MAILBEND_PASSWORD_FILE`
-(absolute, a regular file owned by the user, mode 600, no symlink in any
-path component) the
-helper reads the password from that file instead, and it is in no
-environment. Setting both is refused.
+The core never reads `MAILBEND_APP_PASSWORD`; only `mailbend-tls` does.
+The helper drops and wipes its credential buffers after authentication,
+before the first plan command. It does not forward the server's login
+replies. This does not erase copies in library buffers or server replies.
+`MAILBEND_APP_PASSWORD` stays in the helper's process environment and is
+also inherited by the core. With `MAILBEND_PASSWORD_FILE` (absolute, a
+regular file owned by the user, mode 600, no symlink in any path component),
+the helper reads the password from that file instead, keeping it out of
+every environment. Setting both is refused.
+
+Before reading secrets, `mailbend-tls` and `mailbend-typesafe` set both
+core limits to zero and disable Linux process dumpability. TypeSafe does
+this after its environment-only re-execution. If either control fails,
+the helper stops without reading a secret. These process-local controls
+prevent core dumps, including piped crash collectors, and deny ordinary
+same-user access to the helpers' `/proc/<pid>/environ`. They do not protect
+against a privileged debugger. The launcher also sets a zero core limit
+inherited by the core. That limit alone does not block every piped crash
+collector or same-user environment read. The credential-free attachment
+helper is unchanged.
 
 ### Authentication scope: retain password-only support
 
