@@ -60,8 +60,8 @@ def main():
     missing = [name for name in REASONS if not has(name)]
     if missing:
         sys.exit("schema omits image reasons: " + ", ".join(missing))
-    if "image_notice" not in schema or not has("images"):
-        sys.exit("schema omits images or image_notice")
+    if "image_notice" not in schema or not has("images") or not has("metadata_removed_bytes"):
+        sys.exit("schema omits images, image_notice or metadata_removed_bytes")
     print(f"image budget {printed} matches MAX_REQUEST")
 
 

@@ -50,10 +50,19 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools
   do not. A part outside those rules is skipped and reported; it is not
-  resized or re-encoded: it is sent as the sender wrote it, with any
-  metadata in it (a photo's EXIF data, which can hold its GPS position), and
-  TypeSafe says it removes such metadata when it receives an image. The
-  request carries `TypeSafe-Danger-Zone-Images: true` only when an image is
+  resized or re-encoded. MailBend removes JPEG APP1 through APP13, APP15,
+  and COM segments locally before sending, including EXIF, XMP, and ICC
+  profiles. APP0 and APP14 remain. It copies the scan bytes unchanged and
+  drops bytes after EOI. JPEGs with metadata between scans or unsupported
+  frame changes are skipped as `unreadable`.
+  For PNG, it removes `tEXt`, `zTXt`, `iTXt`, `eXIf`, and `tIME` chunks
+  before and after IDAT. All other chunks and their CRCs remain unchanged.
+  A truncated walk, missing image terminator, or PNG with trailing bytes
+  is skipped as `unreadable`, never sent unstripped. The request budget
+  counts the stripped bytes. The original file and fetch caps still apply.
+  These checks validate framing, not compressed pixels. TypeSafe still
+  handles decoding failures.
+  The request carries `TypeSafe-Danger-Zone-Images: true` only when an image is
   actually sent. TypeSafe refuses a whole request when it cannot
   use one of its images (a damaged file, for example), so a refused request
   that carried images is asked once more without them; see
@@ -180,8 +189,10 @@ A message whose header facts alone exceed a request is `unchecked`. The
 result also lists `not_found` UIDs and the requests made.
 
 With `MAILBEND_TYPESAFE_IMAGES` on, each message Jev was asked about has an
-`images` array. A used image reports its section, name, format, decoded
-size, and pixel width and height. A skipped image reports a reason:
+`images` array. A used image reports its section, name, format, pixel width
+and height, `bytes` as the decoded size actually sent after metadata
+removal, and `metadata_removed_bytes` as the number removed locally. The
+removed count includes any JPEG data after EOI. A skipped image reports a reason:
 `format`, `animated`, `dimensions`, `file_size`, `over_count`,
 `over_budget`, `unreadable`, `ref`, or `refused`. TypeSafe answers no part
 of a request in which it rejects an image, and does not say which image it

@@ -23,7 +23,7 @@ def found(m: Maybe<&2, List<&2, Image.Note>>) -> String:
       "unexpected"
 
 def used() -> List<&2, T.Survey>:
-  [T.Survey{3, [Image.NoteUsed{[2], "scan.png", Image.Png{}, 308, Image.Pixels{280, 280}},
+  [T.Survey{3, [Image.NoteUsed{[2], "scan.png", Image.Png{}, 308, Image.Pixels{280, 280}, 0},
     Image.NoteSkipped{[3], "anim.gif", Image.Format{}}]}]
 
 def shown(+ss: List<&2, T.Survey>) -> String:
@@ -48,5 +48,5 @@ def main() -> IO(Unit):
 #|last-three format
 #|last-fifty format
 #|absent missing
-#|used [{"section":"2","name":"scan.png","fate":"used","format":"png","bytes":308,"width":280,"height":280},{"section":"3","name":"anim.gif","fate":"skipped","reason":"format"}] True
+#|used [{"section":"2","name":"scan.png","fate":"used","format":"png","bytes":308,"width":280,"height":280,"metadata_removed_bytes":0},{"section":"3","name":"anim.gif","fate":"skipped","reason":"format"}] True
 #|refused [{"section":"2","name":"scan.png","fate":"skipped","reason":"refused"},{"section":"3","name":"anim.gif","fate":"skipped","reason":"format"}] False

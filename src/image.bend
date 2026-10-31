@@ -36,7 +36,8 @@ type Still is Data:
     name: String,
     format: Format,
     pixels: Pixels,
-    data: String
+    data: String,
+    metadata_removed_bytes: U32
   }
 
 # Before the fetch. Fetch carries the BODY.PEEK window (size + 1).
@@ -444,9 +445,7 @@ def jpeg_skip.at(ok: Bool, +rest: String) -> JpegStep:
 def jpeg_skip(+rest: String) -> JpegStep:
   jpeg_skip.at(has2(rest), rest)
 
-# EOI and SOS end the header walk. APP1 is a length-prefixed segment, so
-# this walk skips its payload, EXIF included. The still is sent as it is,
-# EXIF and GPS data included.
+# EOI and SOS end the header walk. APP1 carries a length-prefixed payload.
 def jpeg_marked.if(stop: Bool, alone: Bool, sof: Bool, rest: String) -> JpegStep:
   match stop alone sof:
     case True{} _ _:
@@ -509,21 +508,301 @@ def judge.jpeg.start(ok: Bool, fuel: Nat, bytes: String) -> Parsed:
 def judge.jpeg(fuel: Nat, +bytes: String) -> Parsed:
   judge.jpeg.start(jpeg_magic(bytes), fuel, bytes)
 
-def judge.size(over: Bool, section: List<&2, U32>, name: String, format: Format, px: Pixels,
-  data: String) -> Verdict:
+type Strip is Data:
+  Stripped{data: String}
+  StripBroken{}
+  StripMoving{}
+
+type StripChunk is Data:
+  StripChunk{kind: String, length: U32, bytes: String, rest: String, left: U32}
+
+def strip_chunk.fit(ok: Bool, kind: String, length: U32, +size: U32, +data: String,
+  left: U32) -> Maybe<&2, StripChunk>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      Some{StripChunk{kind, length, String.take(data, U32.to_nat(size)),
+        String.drop(data, U32.to_nat(size)), (left - size : U32)}}
+
+def strip_chunk.length(+length: U32, kind: String, data: String, +left: U32) ->
+  Maybe<&2, StripChunk>:
+  strip_chunk.fit(U32.is_le(length, (left - 12 : U32)), kind, length,
+    (length + 12 : U32), data, left)
+
+def strip_chunk.header(ok: Bool, +data: String, left: U32) -> Maybe<&2, StripChunk>:
+  match ok data:
+    case True{} SCon{a, SCon{b, SCon{c, SCon{d, rest}}}}:
+      strip_chunk.length(be_from(a, b, c, d), String.take(rest, 4n), data, left)
+    case _ _:
+      None{}
+
+def strip_chunk(data: String, +left: U32) -> Maybe<&2, StripChunk>:
+  strip_chunk.header(U32.is_ge(left, 12), data, left)
+
+def png_metadata(+kind: String) -> Bool:
+  String.eq(kind, "tEXt") || String.eq(kind, "zTXt") || String.eq(kind, "iTXt") ||
+    String.eq(kind, "eXIf") || String.eq(kind, "tIME")
+
+def png_animation(+kind: String) -> Bool:
+  String.eq(kind, "acTL") || String.eq(kind, "fcTL") || String.eq(kind, "fdAT")
+
+def strip_keep(drop: Bool, bytes: String, acc: List<&2, String>) -> List<&2, String>:
+  match drop:
+    case True{}:
+      acc
+    case False{}:
+      bytes <> acc
+
+type PngStrip is Data:
+  PsWalk{rest: String, left: U32, first: Bool, data_seen: Bool, acc: List<&2, String>}
+  PsEnd{result: Strip}
+
+def strip_png.end(ok: Bool, bytes: String, acc: List<&2, String>) -> PngStrip:
+  match ok:
+    case False{}:
+      PsEnd{StripBroken{}}
+    case True{}:
+      PsEnd{Stripped{String.concat(List.reverse(&2, String, bytes <> acc))}}
+
+def strip_png.kind(bad: Bool, moving: Bool, end: Bool, +kind: String, length: U32,
+  bytes: String, rest: String, left: U32, seen: Bool, acc: List<&2, String>) -> PngStrip:
+  match bad moving end:
+    case True{} _ _:
+      PsEnd{StripBroken{}}
+    case False{} True{} _:
+      PsEnd{StripMoving{}}
+    case False{} False{} True{}:
+      strip_png.end(seen && U32.is_zero(length) && U32.is_zero(left), bytes, acc)
+    case False{} False{} False{}:
+      PsWalk{rest, left, False{}, seen || String.eq(kind, "IDAT"),
+        strip_keep(png_metadata(kind), bytes, acc)}
+
+def strip_png.step(chunk: Maybe<&2, StripChunk>, +first: Bool, seen: Bool,
+  acc: List<&2, String>) -> PngStrip:
+  match chunk:
+    case None{}:
+      PsEnd{StripBroken{}}
+    case Some{StripChunk{+kind, length, bytes, rest, left}}:
+      strip_png.kind((first && Bool.not(String.eq(kind, "IHDR"))) ||
+        (Bool.not(first) && String.eq(kind, "IHDR")),
+        png_animation(kind), String.eq(kind, "IEND"), kind, length, bytes, rest, left, seen, acc)
+
+def strip_png.go(fuel: Nat, state: PngStrip) -> Strip:
+  match fuel state:
+    case _ PsEnd{result}:
+      result
+    case 0n _:
+      StripBroken{}
+    case 1n+f PsWalk{rest, left, first, seen, acc}:
+      strip_png.go(f, strip_png.step(strip_chunk(rest, left), first, seen, acc))
+
+def strip_png(+data: String, +n: U32) -> Strip:
+  strip_png.go(U32.to_nat((n / 12 + 1 : U32)),
+    PsWalk{String.drop(data, 8n), (n - 8 : U32), True{}, False{}, [String.take(data, 8n)]})
+
+type StripMark is Data:
+  StripMark{code: U32, rest: String, size: U32}
+
+type MarkRead is Data:
+  MrSeek{scan: Bool, ff: Bool, used: U32}
+  MrFound{code: U32, used: U32}
+  MrBad{}
+
+def strip_mark.step(+scan: Bool, ff: Bool, fill: Bool, escaped: Bool, code: U32,
+  used: U32) -> MarkRead:
+  match scan ff fill escaped:
+    case _ True{} True{} _:
+      MrSeek{scan, True{}, used}
+    case True{} True{} False{} True{}:
+      MrSeek{True{}, False{}, used}
+    case _ True{} False{} _:
+      MrFound{code, used}
+    case _ False{} True{} _:
+      MrSeek{scan, True{}, used}
+    case True{} False{} False{} _:
+      MrSeek{True{}, False{}, used}
+    case False{} False{} False{} _:
+      MrBad{}
+
+def strip_mark.byte(scan: Bool, ff: Bool, +m: U32, used: U32) -> MarkRead:
+  strip_mark.step(scan, ff, U32.is_eq(m, 255), U32.is_zero(m) ||
+    (U32.is_ge(m, 208) && U32.is_le(m, 215)) || U32.is_eq(m, 1), m, (used + 1 : U32))
+
+def strip_mark.go(data: String, state: MarkRead) -> Maybe<&2, StripMark>:
+  match data state:
+    case _ MrFound{code, used}:
+      Some{StripMark{code, data, used}}
+    case _ MrBad{}:
+      None{}
+    case SNil{} _:
+      None{}
+    case SCon{c, rest} MrSeek{scan, ff, used}:
+      strip_mark.go(rest, strip_mark.byte(scan, ff, C.u(c), used))
+
+def strip_mark(data: String, scan: Bool) -> Maybe<&2, StripMark>:
+  strip_mark.go(data, MrSeek{scan, False{}, 0})
+
+def segment_length.fit(ok: Bool, length: U32) -> Maybe<&2, U32>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      Some{length}
+
+def segment_length.at(+length: U32, left: U32, min: U32) -> Maybe<&2, U32>:
+  segment_length.fit(U32.is_ge(length, min) && U32.is_le(length, left), length)
+
+def segment_length(data: String, left: U32, min: U32) -> Maybe<&2, U32>:
+  segment_length.at(be16(data), left, min)
+
+def jpeg_tables(+code: U32) -> Bool:
+  U32.is_eq(code, 196) || U32.is_eq(code, 204) || U32.is_eq(code, 219) ||
+    U32.is_eq(code, 221)
+
+type JpegTail is Data:
+  JtWalk{rest: String, left: U32, used: U32, scan: Bool}
+  JtEnd{length: Maybe<&2, U32>}
+
+def jpeg_tail.segment(length: Maybe<&2, U32>, code: U32, rest: String, left: U32,
+  used: U32) -> JpegTail:
+  match length:
+    case None{}:
+      JtEnd{None{}}
+    case Some{+n}:
+      JtWalk{String.drop(rest, U32.to_nat(n)), (left - n : U32), (used + n : U32),
+        U32.is_eq(code, 218)}
+
+def jpeg_tail.code(end: Bool, allowed: Bool, +code: U32, +rest: String, +left: U32,
+  used: U32) -> JpegTail:
+  match end allowed:
+    case True{} _:
+      JtEnd{Some{used}}
+    case False{} False{}:
+      JtEnd{None{}}
+    case False{} True{}:
+      jpeg_tail.segment(segment_length(rest, left,
+        Bool.pick(U32, U32.is_eq(code, 218), 6, 2)), code, rest, left, used)
+
+def jpeg_tail.step(marker: Maybe<&2, StripMark>, left: U32, used: U32) -> JpegTail:
+  match marker:
+    case None{}:
+      JtEnd{None{}}
+    case Some{StripMark{+code, rest, +size}}:
+      jpeg_tail.code(U32.is_eq(code, 217), jpeg_tables(code) || U32.is_eq(code, 218),
+        code, rest, (left - size : U32), (used + size : U32))
+
+def jpeg_tail.go(fuel: Nat, state: JpegTail) -> Maybe<&2, U32>:
+  match fuel state:
+    case _ JtEnd{length}:
+      length
+    case 0n _:
+      None{}
+    case 1n+f JtWalk{rest, left, used, scan}:
+      jpeg_tail.go(f, jpeg_tail.step(strip_mark(rest, scan), left, used))
+
+def strip_jpeg.tail(length: Maybe<&2, U32>, data: String, acc: List<&2, String>) -> Strip:
+  match length:
+    case None{}:
+      StripBroken{}
+    case Some{n}:
+      Stripped{String.concat(List.reverse(&2, String, String.take(data, U32.to_nat(n)) <> acc))}
+
+def jpeg_metadata(+code: U32) -> Bool:
+  (U32.is_ge(code, 225) && U32.is_le(code, 237)) || U32.is_eq(code, 239) ||
+    U32.is_eq(code, 254)
+
+type JpegStrip is Data:
+  JsWalk{rest: String, left: U32, frame_seen: Bool, acc: List<&2, String>}
+  JsScan{rest: String, left: U32, acc: List<&2, String>}
+  JsBroken{}
+
+def strip_jpeg.segment(length: Maybe<&2, U32>, +code: U32, prefix: U32, +original: String,
+  left: U32, seen: Bool, acc: List<&2, String>) -> JpegStrip:
+  match length:
+    case None{}:
+      JsBroken{}
+    case Some{n}:
+      +size = (prefix + n : U32)
+      JsWalk{String.drop(original, U32.to_nat(size)), (left - size : U32),
+        seen || is_sof(code), strip_keep(jpeg_metadata(code),
+          String.take(original, U32.to_nat(size)), acc)}
+
+def strip_jpeg.code(bad: Bool, scan: Bool, alone: Bool, code: U32, rest: String,
+  +prefix: U32, original: String, +left: U32, seen: Bool, acc: List<&2, String>) -> JpegStrip:
+  match bad scan alone:
+    case True{} _ _:
+      JsBroken{}
+    case False{} True{} _:
+      JsScan{original, left, acc}
+    case False{} False{} True{}:
+      JsWalk{rest, (left - prefix : U32), seen,
+        String.take(original, U32.to_nat(prefix)) <> acc}
+    case False{} False{} False{}:
+      strip_jpeg.segment(segment_length(rest, (left - prefix : U32), 2), code, prefix,
+        original, left, seen, acc)
+
+def strip_jpeg.mark(marker: Maybe<&2, StripMark>, original: String, left: U32,
+  +seen: Bool, acc: List<&2, String>) -> JpegStrip:
+  match marker:
+    case None{}:
+      JsBroken{}
+    case Some{StripMark{+code, rest, prefix}}:
+      +scan = U32.is_eq(code, 218)
+      +frame = is_sof(code)
+      allowed = frame || scan || jpeg_tables(code) || U32.is_eq(code, 1) ||
+        (U32.is_ge(code, 224) && U32.is_le(code, 239)) || U32.is_eq(code, 254)
+      strip_jpeg.code(Bool.not(allowed) || (frame && seen) || (scan && Bool.not(seen)),
+        scan, U32.is_eq(code, 1), code, rest, prefix, original, left, seen, acc)
+
+def strip_jpeg.go(fuel: Nat, state: JpegStrip) -> Strip:
+  match fuel state:
+    case _ JsBroken{}:
+      StripBroken{}
+    case _ JsScan{+rest, +left, acc}:
+      strip_jpeg.tail(jpeg_tail.go(U32.to_nat((left / 2 + 1 : U32)),
+        JtWalk{rest, left, 0, False{}}), rest, acc)
+    case 0n _:
+      StripBroken{}
+    case 1n+f JsWalk{+rest, left, seen, acc}:
+      strip_jpeg.go(f, strip_jpeg.mark(strip_mark(rest, False{}), rest, left, seen, acc))
+
+def strip_jpeg(+data: String, +n: U32) -> Strip:
+  strip_jpeg.go(U32.to_nat((n / 2 + 1 : U32)),
+    JsWalk{String.drop(data, 2n), (n - 2 : U32), False{}, [String.take(data, 2n)]})
+
+def strip(format: Format, data: String, n: U32) -> Strip:
+  match format:
+    case Png{}:
+      strip_png(data, n)
+    case Jpeg{}:
+      strip_jpeg(data, n)
+
+def judge.stripped(s: Strip, n: U32, section: List<&2, U32>, name: String, format: Format,
+  px: Pixels) -> Verdict:
+  match s:
+    case StripBroken{}:
+      VDrop{section, name, Unreadable{}}
+    case StripMoving{}:
+      VDrop{section, name, Animated{}}
+    case Stripped{+data}:
+      Keep{Still{section, name, format, px, data, (n - C.byte_len(data) : U32)}}
+
+def judge.size(over: Bool, +n: U32, section: List<&2, U32>, name: String, +format: Format,
+  px: Pixels, data: String) -> Verdict:
   match over:
     case True{}:
       VDrop{section, name, FileSize{}}
     case False{}:
-      Keep{Still{section, name, format, px, data}}
+      judge.stripped(strip(format, data, n), n, section, name, format, px)
 
-def judge.still(ok: Bool, n: U32, section: List<&2, U32>, name: String, format: Format,
+def judge.still(ok: Bool, +n: U32, section: List<&2, U32>, name: String, format: Format,
   px: Pixels, data: String) -> Verdict:
   match ok:
     case False{}:
       VDrop{section, name, Dimensions{}}
     case True{}:
-      judge.size(U32.is_gt(n, image_file_cap()), section, name, format, px, data)
+      judge.size(U32.is_gt(n, image_file_cap()), n, section, name, format, px, data)
 
 def judge.parsed(p: Parsed, section: List<&2, U32>, name: String, format: Format,
   +data: String) -> Verdict:
@@ -557,22 +836,22 @@ def room_new() -> Room:
 def admit.budget(over: Bool, still: Still, count: U32, bytes: U32) -> Admitted:
   match over:
     case True{}:
-      Still{section, name, format, px, data} = still
+      Still{section, name, format, px, data, removed} = still
       Leave{section, name, OverBudget{}, Room{count, bytes}}
     case False{}:
-      Still{section, name, format, px, +data} = still
-      Take{Still{section, name, format, px, data},
+      Still{section, name, format, px, +data, removed} = still
+      Take{Still{section, name, format, px, data, removed},
         Room{(count - 1 : U32), (bytes - C.byte_len(data) : U32)}}
 
 def admit.count(none: Bool, still: Still, count: U32, +bytes: U32) -> Admitted:
   match none:
     case True{}:
-      Still{section, name, format, px, data} = still
+      Still{section, name, format, px, data, removed} = still
       Leave{section, name, OverCount{}, Room{count, bytes}}
     case False{}:
-      Still{section, name, format, px, +data} = still
-      admit.budget(U32.is_gt(C.byte_len(data), bytes), Still{section, name, format, px, data},
-        count, bytes)
+      Still{section, name, format, px, +data, removed} = still
+      admit.budget(U32.is_gt(C.byte_len(data), bytes),
+        Still{section, name, format, px, data, removed}, count, bytes)
 
 def admit.keep(room: Room, still: Still) -> Admitted:
   Room{+count, bytes} = room
@@ -593,18 +872,6 @@ type Quota is Data:
 def quota_new() -> Quota:
   Quota{room_new(), fetch_cap()}
 
-def least_b64(+size: U32) -> U32:
-  Bool.pick(U32, U32.is_lt(size, 16), 0, (((size - 2) * 8 / 11 : U32) - 2 : U32))
-
-# The fewest decoded bytes a part of `size` encoded bytes can hold. An
-# identity encoding holds its size. base64 holds 3 bytes per 4 characters,
-# less 2 of padding, with a CRLF at most every 64 characters, as the fetch
-# ceiling assumes: at least (size - 2) * 8 / 11 - 2. Quoted-printable may
-# be all soft breaks, so nothing is assumed of it.
-def least_bytes(+encoding: String, +size: U32) -> U32:
-  Bool.pick(U32, String.eq(encoding, "base64"), least_b64(size),
-    Bool.pick(U32, String.eq(encoding, "quoted-printable"), 0, size))
-
 def ahead.if(over_count: Bool, over_budget: Bool) -> Maybe<&2, Reason>:
   match over_count over_budget:
     case True{} _:
@@ -614,14 +881,9 @@ def ahead.if(over_count: Bool, over_budget: Bool) -> Maybe<&2, Reason>:
     case False{} False{}:
       None{}
 
-# Why a part that screen would fetch is not fetched: the batch has made
-# fetch_cap fetches, or its request has room for no more images
-# (over_count), or even the part's fewest decoded bytes exceed the bytes
-# left (over_budget); None when it is fetched.
-def ahead(q: Quota, encoding: String, size: U32) -> Maybe<&2, Reason>:
+def ahead(q: Quota) -> Maybe<&2, Reason>:
   Quota{Room{count, bytes}, fetches} = q
-  ahead.if(U32.is_zero(fetches) || U32.is_zero(count),
-    U32.is_gt(least_bytes(encoding, size), bytes))
+  ahead.if(U32.is_zero(fetches) || U32.is_zero(count), U32.is_zero(bytes))
 
 def quota_fetched(q: Quota) -> Quota:
   Quota{room, fetches} = q
@@ -676,7 +938,7 @@ type Bind is Data:
     rest: List<&2, Verdict>, acc: List<&2, Fate>}
 
 def skipped_ref(s: Still) -> Fate:
-  Still{section, name, format, px, data} = s
+  Still{section, name, format, px, data, removed} = s
   Skipped{section, name, NoRef{}}
 
 def bind_admit(rest: List<&2, Verdict>, corpus: String, acc: List<&2, Fate>, a: Admitted) ->
@@ -766,7 +1028,7 @@ def ref_slot() -> U32:
   (with - bare : U32)
 
 def asset_body(st: Still) -> J.Json:
-  Still{section, name, format, px, data} = st
+  Still{section, name, format, px, data, removed} = st
   J.obj([J.kv("type", J.str("image")), J.kv("format", J.str(format_name(format))),
     J.kv("data_base64", J.str(C.b64_encode(data, False{})))])
 
@@ -785,7 +1047,7 @@ def assets(used: List<&2, Sent>) -> Maybe<&2, J.Json>:
       Some{J.obj(asset_kvs(s <> t))}
 
 def frame_sent() -> Sent:
-  Sent{Still{[], "", Jpeg{}, Pixels{280, 280}, ""}, slot_ref()}
+  Sent{Still{[], "", Jpeg{}, Pixels{280, 280}, "", 0}, slot_ref()}
 
 def frame_used() -> List<&2, Sent>:
   [frame_sent(), frame_sent(), frame_sent(), frame_sent()]
@@ -812,13 +1074,14 @@ def section_text(xs: List<&2, U32>) -> String:
 # format, decoded size and pixels, never its bytes; or a skipped part's
 # reason.
 type Note is Data:
-  NoteUsed{section: List<&2, U32>, name: String, format: Format, bytes: U32, pixels: Pixels}
+  NoteUsed{section: List<&2, U32>, name: String, format: Format, bytes: U32, pixels: Pixels,
+    metadata_removed_bytes: U32}
   NoteSkipped{section: List<&2, U32>, name: String, reason: Reason}
 
 def note_of(f: Fate) -> Note:
   match f:
-    case Used{Sent{Still{section, name, format, px, data}, r}}:
-      NoteUsed{section, name, format, C.byte_len(data), px}
+    case Used{Sent{Still{section, name, format, px, data, removed}, r}}:
+      NoteUsed{section, name, format, C.byte_len(data), px, removed}
     case Skipped{section, name, reason}:
       NoteSkipped{section, name, reason}
 
@@ -833,7 +1096,7 @@ def notes_of(fs: List<&2, Fate>) -> List<&2, Note>:
 # image it rejected, so every still of that request is reported refused.
 def refused(n: Note) -> Note:
   match n:
-    case NoteUsed{section, name, format, bytes, px}:
+    case NoteUsed{section, name, format, bytes, px, removed}:
       NoteSkipped{section, name, Refused{}}
     case NoteSkipped{section, name, reason}:
       NoteSkipped{section, name, reason}
@@ -847,10 +1110,11 @@ def refused_all(ns: List<&2, Note>) -> List<&2, Note>:
 
 def note_json(n: Note) -> J.Json:
   match n:
-    case NoteUsed{section, name, format, bytes, Pixels{w, h}}:
+    case NoteUsed{section, name, format, bytes, Pixels{w, h}, removed}:
       J.obj([J.kv("section", J.str(section_text(section))), J.kv("name", J.str(name)),
         J.kv("fate", J.str("used")), J.kv("format", J.str(format_name(format))),
-        J.kv("bytes", J.num(bytes)), J.kv("width", J.num(w)), J.kv("height", J.num(h))])
+        J.kv("bytes", J.num(bytes)), J.kv("width", J.num(w)), J.kv("height", J.num(h)),
+        J.kv("metadata_removed_bytes", J.num(removed))])
     case NoteSkipped{section, name, reason}:
       J.obj([J.kv("section", J.str(section_text(section))), J.kv("name", J.str(name)),
         J.kv("fate", J.str("skipped")), J.kv("reason", J.str(reason_name(reason)))])
