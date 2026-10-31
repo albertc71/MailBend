@@ -600,6 +600,10 @@ synthetic cost measurements and experiment decision are in
 
 ### What the proofs cover
 
+`PROOF.bend` imports the pure policy module rather than tool orchestration or the
+generated schema. CI separately kernel-checks `src/tools.bend` so this separation
+does not reduce the previous tool-layer coverage.
+
 The bounded [SMTP TLS-ordering model](.agents/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
 It does not prove the Rust transport or cryptography.
@@ -616,6 +620,19 @@ from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Fold
 discovery, override validation and how each tool uses the resolved folder are
 covered by the end-to-end tests.
 
+The switch laws cover every operation and JSON argument value. Read-only calls
+that can write, drafts-only calls that send, and Jev-dependent calls with Jev off
+all return a non-empty refusal. The send classifier is fixed independently to the
+operation and `as_draft` field. Unrecognized Boolean switch strings produce a bad
+flag, and a bad flag in any of the five configuration positions rejects the whole
+configuration. Environment reads and tool dispatch remain end-to-end tested.
+
+Each mutating IMAP constructor has a law for its exact effect and write status,
+for every argument. A draft plan is exactly one APPEND with Draft and Seen flags.
+Every resolved role has a structural witness of its exact name and selectability
+in the original listing, with no bound on the list length. The policy mutation
+check rejects changed gates, classifiers, draft plans and invented role names.
+
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
@@ -629,8 +646,8 @@ makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome la
 for every exit code and transcript, and that confirmed acceptance survives a
 later process failure. Native progress production itself remains a tested IO
 boundary. The native
-helpers, TLS, MIME parsing, the agent's choices and the runtime
-configuration are covered by tests and review, not by proofs, and nothing
+helpers, TLS, MIME parsing, the agent's choices and environment
+loading are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)

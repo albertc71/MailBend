@@ -10,6 +10,7 @@ import Base
 import ./src/codec.bend as C
 import ./src/json.bend as J
 import ./src/tools.bend as T
+import ./src/policy.bend as Policy
 import ./src/schema.bend as Schema
 import ./src/mcp-protocol.bend as MCP
 import ./src/ops.bend as Ops
@@ -27,23 +28,23 @@ def offered_tools() -> IO(J.Json):
 # ============
 
 # The JSON a tool answers; a failure carries only its message.
-def result_json(o: T.Out) -> J.Json:
+def result_json(o: Policy.Out) -> J.Json:
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       j
-    case T.Err{m}:
+    case Policy.Err{m}:
       J.obj([J.kv("error", J.str(m))])
-    case T.Partial{j}:
+    case Policy.Partial{j}:
       j
 
 # A change that stopped part-way is an error too.
-def is_error(o: T.Out) -> Bool:
+def is_error(o: Policy.Out) -> Bool:
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       False{}
-    case T.Err{m}:
+    case Policy.Err{m}:
       True{}
-    case T.Partial{j}:
+    case Policy.Partial{j}:
       True{}
 
 # MCP
@@ -95,7 +96,7 @@ def instructions() -> String:
 
 # A client asking for a version we do not know is offered the latest legacy revision.
 def legacy_version(params: J.Json) -> String:
-  +asked = T.str_arg(params, "protocolVersion", "")
+  +asked = Policy.str_arg(params, "protocolVersion", "")
   known = List.contains(~String, ~String.eq, MCP.legacy_versions(), asked)
   Bool.pick(String, known, asked, MCP.latest_legacy_version())
 
@@ -114,7 +115,7 @@ def initialize_result(params: J.Json) -> J.Json:
 # ----------
 
 # Serialize the same result value as text and, when negotiated, structured content.
-def call_result_for(structured: Bool, +o: T.Out) -> J.Json:
+def call_result_for(structured: Bool, +o: Policy.Out) -> J.Json:
   +value = result_json(o)
   text = J.str(J.show(value))
   content = J.obj([J.kv("type", J.str("text")), J.kv("text", text)])
@@ -124,7 +125,7 @@ def call_result_for(structured: Bool, +o: T.Out) -> J.Json:
   J.obj(List.append(&2, J.Json, fields,
     Bool.pick(List<&2, J.Json>, structured, [J.kv("structuredContent", value)], [])))
 
-def call_result(o: T.Out) -> J.Json:
+def call_result(o: Policy.Out) -> J.Json:
   call_result_for(True{}, o)
 
 # outputSchema arrived with structuredContent in MCP 2025-06-18.
@@ -174,12 +175,12 @@ def run_tool(
         "invalid params: \"arguments\" must be an object"))
     case Some{a}:
       do IO<Unit>:
-        o : T.Out <- T.call(name, a)
+        o : Policy.Out <- T.call(name, a)
         IO.print(rpc_result(id, MCP.result(modern, call_result_for(structured, o), version())))
 
 def call_tool(modern: Bool, structured: Bool, id: J.Json, +params: J.Json) -> IO(Unit):
   args = object_or_empty(J.get(params, "arguments"))
-  run_tool(modern, structured, id, T.str_arg(params, "name", ""), args)
+  run_tool(modern, structured, id, Policy.str_arg(params, "name", ""), args)
 
 # Requests
 # --------
@@ -216,7 +217,7 @@ def modern_request.problem(method: String, +p: J.Json) -> String:
     case "tools/call":
       Bool.pick(String,
         MCP.is_string(J.get(p, "name")) &&
-        Maybe.is_some(&2, Ops.Op, Ops.from_name(T.str_arg(p, "name", ""))) &&
+        Maybe.is_some(&2, Ops.Op, Ops.from_name(Policy.str_arg(p, "name", ""))) &&
         MCP.optional_object(p, "arguments") &&
         Bool.not(MCP.has(p, "inputResponses") || MCP.has(p, "requestState")),
         "", "invalid params: unknown tool or malformed tools/call")
@@ -317,7 +318,7 @@ def request(
     case None{}:
       IO.pure(Maybe<&2, String>, legacy)
     case Some{i}:
-      method = T.str_arg(req, "method", "")
+      method = Policy.str_arg(req, "method", "")
       respond_with(legacy, i, method, object_or_empty(J.get(req, "params")))
 
 # A JSON-RPC id is a string, a number or null.
@@ -355,7 +356,7 @@ def envelope_ok(+req: J.Json) -> Bool:
 # inherit a legacy session's permissive JSON-RPC ids or null-id error format.
 def modern_message(legacy: Maybe<&2, String>, +req: J.Json) -> Bool:
   params = Maybe.default(&2, J.Json, J.get(req, "params"), J.obj([]))
-  is_modern(legacy, T.str_arg(req, "method", ""), params)
+  is_modern(legacy, Policy.str_arg(req, "method", ""), params)
 
 def envelope_ok_for(legacy: Maybe<&2, String>, +req: J.Json) -> Bool:
   modern = modern_message(legacy, req)
@@ -585,20 +586,20 @@ def fail_with(j: J.Json) -> IO(Unit):
 
 # The JSON result always goes to stdout; a failed or part-way tool also exits
 # with 1.
-def print_out(o: T.Out) -> IO(Unit):
+def print_out(o: Policy.Out) -> IO(Unit):
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       IO.print(J.show(j))
-    case T.Err{m}:
+    case Policy.Err{m}:
       fail_with(result_json(o))
-    case T.Partial{j}:
+    case Policy.Partial{j}:
       fail_with(j)
 
 def call_parsed(name: String, parsed: Maybe<&2, J.Json>) -> IO(Unit):
   match parsed:
     case Some{args}:
       do IO<Unit>:
-        o : T.Out <- T.call(name, args)
+        o : Policy.Out <- T.call(name, args)
         print_out(o)
     case None{}:
       IO.die(Unit, 2, "the arguments are not valid JSON")
@@ -624,7 +625,7 @@ def command_args(xs: List<String>) -> List<&2, String>:
 
 def diagnose_cli(imap: Bool, smtp: Bool) -> IO(Unit):
   do IO<Unit>:
-    o : T.Out <- Diagnostics.run(imap, smtp)
+    o : Policy.Out <- Diagnostics.run(imap, smtp)
     print_out(o)
 
 def cli(args: List<&2, String>) -> IO(Unit):

@@ -11,19 +11,20 @@ import ../../src/mime.bend as M
 import ../../src/ops.bend as Ops
 import ../../src/schema.bend as Schema
 import ../../src/tools.bend as T
+import ../../src/policy.bend as Policy
 import ../../src/jev.bend as Jev
 import ../../src/thread.bend as Th
 
 # Showing values
 # --------------
 
-def show_out(o: T.Out) -> String:
+def show_out(o: Policy.Out) -> String:
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       "ok " ++ J.show(j)
-    case T.Err{m}:
+    case Policy.Err{m}:
       "err " ++ m
-    case T.Partial{j}:
+    case Policy.Partial{j}:
       "partial " ++ J.show(j)
 
 def show_u32s(xs: List<&2, U32>) -> String:
@@ -50,13 +51,13 @@ def show_maybe(m: Maybe<&2, String>) -> String:
 def show_bool(b: Bool) -> String:
   Bool.show(b)
 
-def show_flag(f: T.Flag) -> String:
+def show_flag(f: Policy.Flag) -> String:
   match f:
-    case T.FlagOn{}:
+    case Policy.FlagOn{}:
       "on"
-    case T.FlagOff{}:
+    case Policy.FlagOff{}:
       "off"
-    case T.FlagBad{m}:
+    case Policy.FlagBad{m}:
       "bad " ++ m
 
 def show_switch(s: Jev.Switch) -> String:
@@ -66,44 +67,44 @@ def show_switch(s: Jev.Switch) -> String:
     case Jev.On{c}:
       Jev.content_name(c)
 
-def show_config(c: T.Config) -> String:
+def show_config(c: Policy.Config) -> String:
   match c:
-    case T.Config{ro, drafts, jev, images}:
+    case Policy.Config{ro, drafts, jev, images}:
       "config " ++ Bool.show(ro) ++ " " ++ Bool.show(drafts) ++ " " ++ show_switch(jev)
-    case T.ConfigBad{m}:
+    case Policy.ConfigBad{m}:
       "bad " ++ m
 
 # The configuration of the read-only and drafts-only switches alone.
-def switches(r: T.Flag, d: T.Flag) -> String:
-  show_config(T.config.put(T.config_of(r, d, False{}, T.FlagOff{}, "", T.FlagOff{}, T.FlagOff{}, "")))
+def switches(r: Policy.Flag, d: Policy.Flag) -> String:
+  show_config(Policy.config.put(Policy.config_of(r, d, False{}, Policy.FlagOff{}, "", Policy.FlagOff{}, Policy.FlagOff{}, "")))
 
 # The configuration of the TypeSafe settings alone.
-def typesafe(key_set: Bool, t: T.Flag, content: String, zr: T.Flag, key: String) -> String:
-  show_config(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, key_set, t, content, zr, T.FlagOff{},
+def typesafe(key_set: Bool, t: Policy.Flag, content: String, zr: Policy.Flag, key: String) -> String:
+  show_config(Policy.config.put(Policy.config_of(Policy.FlagOff{}, Policy.FlagOff{}, key_set, t, content, zr, Policy.FlagOff{},
     key)))
 
-def show_images(c: T.Config) -> String:
+def show_images(c: Policy.Config) -> String:
   match c:
-    case T.Config{ro, drafts, jev, images}:
+    case Policy.Config{ro, drafts, jev, images}:
       match images:
         case Jev.ImagesOff{}:
           "off"
         case Jev.ImagesOn{}:
           "on"
-    case T.ConfigBad{m}:
+    case Policy.ConfigBad{m}:
       "bad " ++ m
 
 def image_switch(v: String) -> String:
-  show_images(T.config.put(T.config_of(T.FlagOff{}, T.FlagOff{}, False{}, T.FlagOn{}, "body", T.FlagOn{},
-    T.flag_value("MAILBEND_TYPESAFE_IMAGES", v), "/k")))
+  show_images(Policy.config.put(Policy.config_of(Policy.FlagOff{}, Policy.FlagOff{}, False{}, Policy.FlagOn{}, "body", Policy.FlagOn{},
+    Policy.flag_value("MAILBEND_TYPESAFE_IMAGES", v), "/k")))
 
-def show_proc(p: T.Proc) -> String:
+def show_proc(p: Policy.Proc) -> String:
   match p:
-    case T.ProcOk{code, out, err}:
+    case Policy.ProcOk{code, out, err}:
       "ok " ++ U32.show(code) ++ " " ++ out ++ " " ++ err
-    case T.ProcRefused{m}:
+    case Policy.ProcRefused{m}:
       "refused " ++ m
-    case T.ProcFail{code, m}:
+    case Policy.ProcFail{code, m}:
       "fail " ++ U32.show(code) ++ " " ++ m
 
 def show_msgs(ms: List<&2, I.Msg>) -> String:
@@ -118,7 +119,7 @@ def show_shown(s: T.Shown) -> String:
   match s:
     case T.Listed{o, ms}:
       show_out(o) ++ " | shown " ++ show_msgs(ms)
-    case T.Threaded{o, ms, T.Folders{fs, drafts, trash, sent, junk, archive}}:
+    case T.Threaded{o, ms, Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
       show_out(o) ++ " | shown " ++ show_msgs(ms) ++ "with the folders, Sent " ++
         Maybe.default(&2, String, sent, "unknown")
     case T.Whole{o, m, max}:
@@ -213,32 +214,32 @@ def check_switches() -> IO(Unit):
     IO.print(T.env_pick(Done{""}, "d") ++ " " ++ T.env_pick(Done{"v"}, "d") ++ " " ++
       T.env_pick(Fail{(2, "unset")}, "d"))
     IO.print(String.join([
-      show_flag(T.flag_value("X", "")),
-      show_flag(T.flag_value("X", "0")),
-      show_flag(T.flag_value("X", "FALSE")),
-      show_flag(T.flag_value("X", "1")),
-      show_flag(T.flag_value("X", "True")),
-      show_flag(T.flag_value("X", "yes")),
-      show_flag(T.flag_value("X", " 1"))], "|"))
+      show_flag(Policy.flag_value("X", "")),
+      show_flag(Policy.flag_value("X", "0")),
+      show_flag(Policy.flag_value("X", "FALSE")),
+      show_flag(Policy.flag_value("X", "1")),
+      show_flag(Policy.flag_value("X", "True")),
+      show_flag(Policy.flag_value("X", "yes")),
+      show_flag(Policy.flag_value("X", " 1"))], "|"))
     IO.print(String.join([
-      switches(T.FlagOn{}, T.FlagOff{}),
-      switches(T.FlagOff{}, T.FlagOn{}),
-      switches(T.FlagBad{"r"}, T.FlagBad{"d"}),
-      switches(T.FlagOn{}, T.FlagBad{"d"}),
-      switches(T.FlagOff{}, T.FlagOff{})], "|"))
-    IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, "/k"))
-    IO.print(typesafe(False{}, T.FlagOn{}, "Headers", T.FlagOff{}, "/k"))
-    IO.print(typesafe(False{}, T.FlagOn{}, "BODY", T.FlagOn{}, "/k"))
-    IO.print(typesafe(False{}, T.FlagOff{}, "body", T.FlagOn{}, ""))
-    IO.print(typesafe(True{}, T.FlagOff{}, "", T.FlagOff{}, ""))
-    IO.print(typesafe(True{}, T.FlagOn{}, "", T.FlagOff{}, "/k"))
-    IO.print(typesafe(False{}, T.FlagOn{}, "body", T.FlagOff{}, "/k"))
-    IO.print(typesafe(False{}, T.FlagOff{}, "body", T.FlagOff{}, ""))
-    IO.print(typesafe(False{}, T.FlagOff{}, "full", T.FlagOff{}, ""))
-    IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, "k"))
-    IO.print(typesafe(False{}, T.FlagOn{}, "", T.FlagOff{}, ""))
-    IO.print(typesafe(False{}, T.FlagBad{"t"}, "", T.FlagOff{}, "/k"))
-    IO.print(typesafe(False{}, T.FlagOff{}, "", T.FlagBad{"z"}, ""))
+      switches(Policy.FlagOn{}, Policy.FlagOff{}),
+      switches(Policy.FlagOff{}, Policy.FlagOn{}),
+      switches(Policy.FlagBad{"r"}, Policy.FlagBad{"d"}),
+      switches(Policy.FlagOn{}, Policy.FlagBad{"d"}),
+      switches(Policy.FlagOff{}, Policy.FlagOff{})], "|"))
+    IO.print(typesafe(False{}, Policy.FlagOn{}, "", Policy.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, Policy.FlagOn{}, "Headers", Policy.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, Policy.FlagOn{}, "BODY", Policy.FlagOn{}, "/k"))
+    IO.print(typesafe(False{}, Policy.FlagOff{}, "body", Policy.FlagOn{}, ""))
+    IO.print(typesafe(True{}, Policy.FlagOff{}, "", Policy.FlagOff{}, ""))
+    IO.print(typesafe(True{}, Policy.FlagOn{}, "", Policy.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, Policy.FlagOn{}, "body", Policy.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, Policy.FlagOff{}, "body", Policy.FlagOff{}, ""))
+    IO.print(typesafe(False{}, Policy.FlagOff{}, "full", Policy.FlagOff{}, ""))
+    IO.print(typesafe(False{}, Policy.FlagOn{}, "", Policy.FlagOff{}, "k"))
+    IO.print(typesafe(False{}, Policy.FlagOn{}, "", Policy.FlagOff{}, ""))
+    IO.print(typesafe(False{}, Policy.FlagBad{"t"}, "", Policy.FlagOff{}, "/k"))
+    IO.print(typesafe(False{}, Policy.FlagOff{}, "", Policy.FlagBad{"z"}, ""))
     IO.print(String.join([
       image_switch("1"), image_switch("true"), image_switch("TRUE"), image_switch("false"),
       image_switch("FALSE"), image_switch("0"), image_switch(""), image_switch("yes")], "|"))
@@ -247,32 +248,32 @@ def check_switches() -> IO(Unit):
 def check_helper() -> IO(Unit):
   do IO<Unit>:
     IO.print(String.join([
-      show_bool(T.never_started(1)), show_bool(T.never_started(2)),
-      show_bool(T.never_started(3)), show_bool(T.never_started(26)),
-      show_bool(T.never_started(110))], " "))
+      show_bool(Policy.never_started(1)), show_bool(Policy.never_started(2)),
+      show_bool(Policy.never_started(3)), show_bool(Policy.never_started(26)),
+      show_bool(Policy.never_started(110))], " "))
     IO.print(String.join([
-      show_proc(T.proc_of(Done{(0, ("out", "err"))})),
-      show_proc(T.proc_of(Fail{(2, "no such file")})),
-      show_proc(T.proc_of(Fail{(110, "timed out")}))], "|"))
-    IO.print("[" ++ T.proc_failure(T.ProcOk{0, "o", "e"}) ++ "] " ++
-      T.proc_failure(T.ProcRefused{"refused"}) ++ " " ++ T.proc_failure(T.ProcFail{5, "lost"}))
+      show_proc(Policy.proc_of(Done{(0, ("out", "err"))})),
+      show_proc(Policy.proc_of(Fail{(2, "no such file")})),
+      show_proc(Policy.proc_of(Fail{(110, "timed out")}))], "|"))
+    IO.print("[" ++ Policy.proc_failure(Policy.ProcOk{0, "o", "e"}) ++ "] " ++
+      Policy.proc_failure(Policy.ProcRefused{"refused"}) ++ " " ++ Policy.proc_failure(Policy.ProcFail{5, "lost"}))
     IO.print(String.join([
-      show_bool(T.helper_lost(T.ProcOk{0, "", ""})),
-      show_bool(T.helper_lost(T.ProcOk{137, "", ""})),
-      show_bool(T.helper_lost(T.ProcRefused{"m"})),
-      show_bool(T.helper_lost(T.ProcFail{110, "m"}))], " "))
-    IO.print(T.strip_prefix("mailbend-tls: x", "mailbend-tls: ") ++ "|" ++
-      T.strip_prefix("y", "mailbend-tls: "))
-    IO.print(T.helper_msg("mailbend-tls: first\nsecond\n") ++ "|" ++ T.helper_msg("  plain  "))
+      show_bool(Policy.helper_lost(Policy.ProcOk{0, "", ""})),
+      show_bool(Policy.helper_lost(Policy.ProcOk{137, "", ""})),
+      show_bool(Policy.helper_lost(Policy.ProcRefused{"m"})),
+      show_bool(Policy.helper_lost(Policy.ProcFail{110, "m"}))], " "))
+    IO.print(Policy.strip_prefix("mailbend-tls: x", "mailbend-tls: ") ++ "|" ++
+      Policy.strip_prefix("y", "mailbend-tls: "))
+    IO.print(Policy.helper_msg("mailbend-tls: first\nsecond\n") ++ "|" ++ Policy.helper_msg("  plain  "))
     IO.print(show_str(T.helper_path("/bin/x", "MAILBEND_X", "x")) ++ "|" ++
       show_str(T.helper_path("bin/x", "MAILBEND_X", "x")))
-    IO.print(T.helper_error(1, "e1"))
-    IO.print(T.helper_error(2, "e2"))
-    IO.print(T.helper_error(3, "e3"))
-    IO.print(T.helper_error(4, "e4"))
-    IO.print(T.helper_error(5, "e5"))
-    IO.print(T.helper_error(128, "e128"))
-    IO.print(T.helper_error(130, "e130"))
+    IO.print(Policy.helper_error(1, "e1"))
+    IO.print(Policy.helper_error(2, "e2"))
+    IO.print(Policy.helper_error(3, "e3"))
+    IO.print(Policy.helper_error(4, "e4"))
+    IO.print(Policy.helper_error(5, "e5"))
+    IO.print(Policy.helper_error(128, "e128"))
+    IO.print(Policy.helper_error(130, "e130"))
 
 def failed_transcript() -> String:
   "L OK in\r\na1 OK done\r\n* SEARCH 3\r\na2 NO [TRYCREATE] no such mailbox\r\nZ OK bye\r\n"
@@ -285,20 +286,20 @@ def check_runs() -> IO(Unit):
     IO.print(T.run_failure(T.imap_code(3, I.frame(failed_transcript()), "mailbend-tls: bad cert")))
     IO.print(show_out(T.changed_out(T.imap_code(0, I.frame(failed_transcript()), ""), [3, 4],
       "INBOX", [])))
-    IO.print(T.run_failure(T.imap_result(T.ProcRefused{"no path"})))
-    IO.print(T.run_failure(T.imap_result(T.ProcFail{110, "timed out"})))
-    IO.print(T.run_failure(T.imap_result(T.ProcOk{4, "", "mailbend-tls: login refused"})))
+    IO.print(T.run_failure(T.imap_result(Policy.ProcRefused{"no path"})))
+    IO.print(T.run_failure(T.imap_result(Policy.ProcFail{110, "timed out"})))
+    IO.print(T.run_failure(T.imap_result(Policy.ProcOk{4, "", "mailbend-tls: login refused"})))
     IO.print(
-      Nat.show(List.length(&2, I.RLine, T.proc_lines(T.ProcOk{0, failed_transcript(), ""}))) ++
-        " " ++ Nat.show(List.length(&2, I.RLine, T.proc_lines(T.ProcFail{1, "x"}))))
+      Nat.show(List.length(&2, I.RLine, T.proc_lines(Policy.ProcOk{0, failed_transcript(), ""}))) ++
+        " " ++ Nat.show(List.length(&2, I.RLine, T.proc_lines(Policy.ProcFail{1, "x"}))))
     IO.print(show_bool(T.ok_at(I.frame(failed_transcript()), 1)) ++ " " ++
       show_bool(T.ok_at(I.frame(failed_transcript()), 2)) ++ " " ++
       show_bool(T.ok_at(I.frame(failed_transcript()), 3)))
-    IO.print(show_out(T.smtp_code(0, "250 2.1.0 ok\r\n250 2.0.0 queued as X\r\n221 bye\r\n", "mailbend-smtp: data_accepted\n")))
-    IO.print(show_out(T.smtp_code(5, "250 ok\r\n550 5.1.1 no such user\r\n", "mailbend-smtp: before_data\n")))
-    IO.print(show_out(T.smtp_code(3, "", "mailbend-smtp: before_data\nmailbend-tls: tls failed")))
-    IO.print(show_out(T.smtp_result(T.ProcRefused{"no path"})))
-    IO.print(show_out(T.smtp_result(T.ProcOk{0, "250 sent\r\n", "mailbend-smtp: data_accepted\n"})))
+    IO.print(show_out(Policy.smtp_code(0, "250 2.1.0 ok\r\n250 2.0.0 queued as X\r\n221 bye\r\n", "mailbend-smtp: data_accepted\n")))
+    IO.print(show_out(Policy.smtp_code(5, "250 ok\r\n550 5.1.1 no such user\r\n", "mailbend-smtp: before_data\n")))
+    IO.print(show_out(Policy.smtp_code(3, "", "mailbend-smtp: before_data\nmailbend-tls: tls failed")))
+    IO.print(show_out(Policy.smtp_result(Policy.ProcRefused{"no path"})))
+    IO.print(show_out(Policy.smtp_result(Policy.ProcOk{0, "250 sent\r\n", "mailbend-smtp: data_accepted\n"})))
 
 # Dry runs
 # --------
@@ -330,9 +331,9 @@ def check_dry_runs() -> IO(Unit):
 def check_arguments() -> IO(Unit):
   +args = json("{\"s\":\"v\",\"b\":true,\"n\":7,\"folder\":\"Work\",\"neg\":-1}")
   do IO<Unit>:
-    IO.print(T.str_arg(args, "s", "d") ++ " " ++ T.str_arg(args, "n", "d") ++ " " ++
-      T.str_arg(args, "x", "d") ++ " " ++ show_bool(T.bool_arg(args, "b", False{})) ++ " " ++
-      show_bool(T.bool_arg(args, "s", False{})) ++ " " ++ U32.show(T.u32_arg(args, "n", 1)) ++
+    IO.print(Policy.str_arg(args, "s", "d") ++ " " ++ Policy.str_arg(args, "n", "d") ++ " " ++
+      Policy.str_arg(args, "x", "d") ++ " " ++ show_bool(Policy.bool_arg(args, "b", False{})) ++ " " ++
+      show_bool(Policy.bool_arg(args, "s", False{})) ++ " " ++ U32.show(T.u32_arg(args, "n", 1)) ++
       " " ++ U32.show(T.u32_arg(args, "neg", 1)) ++ " " ++ T.folder_arg(args) ++ " " ++
       T.folder_arg(json("{}")))
     IO.print(U32.show(T.clamp(0, 1, 200)) ++ " " ++ U32.show(T.clamp(50, 1, 200)) ++ " " ++
@@ -379,20 +380,20 @@ def folders() -> List<&2, I.Folder>:
 
 def check_roles() -> IO(Unit):
   do IO<Unit>:
-    IO.print(show_bool(T.recognized_role(["\\HasChildren", "\\ALL"])) ++ " " ++
-      show_bool(T.recognized_role(["\\HasChildren"])) ++ " " ++
-      show_bool(T.selectable(["\\noselect"])) ++ " " ++
-      show_bool(T.selectable(["\\NonExistent"])) ++ " " ++ show_bool(T.selectable([])))
+    IO.print(show_bool(Policy.recognized_role(["\\HasChildren", "\\ALL"])) ++ " " ++
+      show_bool(Policy.recognized_role(["\\HasChildren"])) ++ " " ++
+      show_bool(Policy.selectable(["\\noselect"])) ++ " " ++
+      show_bool(Policy.selectable(["\\NonExistent"])) ++ " " ++ show_bool(Policy.selectable([])))
     IO.print(String.join([
-      show_maybe(T.resolved_role(folders(), "", "\\Trash", "Trash", "Deleted Messages")),
-      show_maybe(T.resolved_role(folders(), "", "\\Sent", "Sent", "Sent Messages")),
-      show_maybe(T.resolved_role(folders(), "", "\\Drafts", "Drafts", "Drafts")),
-      show_maybe(T.resolved_role(folders(), "", "\\Junk", "Junk", "Junk")),
-      show_maybe(T.resolved_role(folders(), "", "\\Archive", "Archive", "Archive"))], "|"))
-    IO.print(show_maybe(T.resolved_role(folders(), "Notes", "\\Drafts", "Drafts", "Drafts")) ++
-      "|" ++ show_maybe(T.resolved_role(folders(), "Nope", "\\Drafts", "Drafts", "Drafts")) ++
-      "|" ++ show_maybe(T.resolved_role(folders(), "inbox", "\\Drafts", "Drafts", "Drafts")) ++
-      "|" ++ show_maybe(T.resolved_role(folders(), "", "\\Trash", "Trash", "Trash")))
+      show_maybe(Policy.resolved_role(folders(), "", "\\Trash", "Trash", "Deleted Messages")),
+      show_maybe(Policy.resolved_role(folders(), "", "\\Sent", "Sent", "Sent Messages")),
+      show_maybe(Policy.resolved_role(folders(), "", "\\Drafts", "Drafts", "Drafts")),
+      show_maybe(Policy.resolved_role(folders(), "", "\\Junk", "Junk", "Junk")),
+      show_maybe(Policy.resolved_role(folders(), "", "\\Archive", "Archive", "Archive"))], "|"))
+    IO.print(show_maybe(Policy.resolved_role(folders(), "Notes", "\\Drafts", "Drafts", "Drafts")) ++
+      "|" ++ show_maybe(Policy.resolved_role(folders(), "Nope", "\\Drafts", "Drafts", "Drafts")) ++
+      "|" ++ show_maybe(Policy.resolved_role(folders(), "inbox", "\\Drafts", "Drafts", "Drafts")) ++
+      "|" ++ show_maybe(Policy.resolved_role(folders(), "", "\\Trash", "Trash", "Trash")))
     IO.print("[" ++ T.invalid_override(folders(), "", "MAILBEND_X") ++ "] [" ++
       T.invalid_override(folders(), "Notes", "MAILBEND_X") ++ "] " ++
       T.invalid_override(folders(), "Drafts", "MAILBEND_X"))
@@ -408,9 +409,9 @@ def check_roles() -> IO(Unit):
       [I.Folder{"INBOX", "/", ["\\HasNoChildren", "\\Marked"]},
         I.Folder{"Sent Messages", "/", []}]),
       "", "", "", "", ""))))
-    IO.print(String.join(T.conventional_names(), ",") ++ " " ++
-      show_maybe(T.unique_folder([I.Folder{"A", "/", ["\\Noselect"]}])) ++ " " ++
-      show_maybe(T.unique_folder([I.Folder{"A", "/", []}, I.Folder{"B", "/", []}])))
+    IO.print(String.join(Policy.conventional_names(), ",") ++ " " ++
+      show_maybe(Policy.unique_folder([I.Folder{"A", "/", ["\\Noselect"]}])) ++ " " ++
+      show_maybe(Policy.unique_folder([I.Folder{"A", "/", []}, I.Folder{"B", "/", []}])))
 
 # Search, fetch and new mail
 # --------------------------
@@ -548,7 +549,7 @@ def all_stored(flags: String) -> String:
 def blue_plan() -> List<&2, I.Cmd>:
   Ops.plan_flag("INBOX", [3, 4], Some{I.ColBlue{}}, 7)
 
-def flag_out(p: T.Proc, plan: List<&2, I.Cmd>, mark: T.Mark) -> String:
+def flag_out(p: Policy.Proc, plan: List<&2, I.Cmd>, mark: T.Mark) -> String:
   show_out(T.flag_out(p, plan, [3, 4], "INBOX", mark))
 
 def permanent_all() -> String:
@@ -558,7 +559,7 @@ def fetched_flags(flags: String) -> String:
   "* 1 FETCH (UID 3 FLAGS (" ++ flags ++ "))\r\n"
 
 # The result of flagging UIDs 3 and 4 blue, from the helper's run `p`.
-def blue(p: T.Proc) -> String:
+def blue(p: Policy.Proc) -> String:
   flag_out(p, blue_plan(), T.MarkFlag{Some{I.ColBlue{}}})
 
 def check_flags() -> IO(Unit):
@@ -591,31 +592,31 @@ def check_flags() -> IO(Unit):
     IO.print(T.changes_text([]) ++ "|" ++ T.changes_text(["+\\Flagged", "-$MailFlagBit0"]))
     IO.print(T.cut_text(True{}, [], []))
     IO.print(T.cut_text(False{}, ["+\\Flagged"], []))
-    IO.print(blue(T.ProcOk{0, flag_transcript(permanent_all(),
+    IO.print(blue(Policy.ProcOk{0, flag_transcript(permanent_all(),
       all_stored(fetched_flags("\\Flagged $MailFlagBit2"))), ""}))
-    IO.print(blue(T.ProcOk{0, flag_transcript(permanent_all(),
+    IO.print(blue(Policy.ProcOk{0, flag_transcript(permanent_all(),
       all_stored(fetched_flags("\\Flagged $MailFlagBit0"))), ""}))
-    IO.print(blue(T.ProcOk{0, flag_transcript("",
+    IO.print(blue(Policy.ProcOk{0, flag_transcript("",
       all_stored(fetched_flags("\\Flagged $MailFlagBit2"))), ""}))
-    IO.print(blue(T.ProcOk{0, flag_transcript("* OK [PERMANENTFLAGS (\\Flagged)] ok\r\n",
+    IO.print(blue(Policy.ProcOk{0, flag_transcript("* OK [PERMANENTFLAGS (\\Flagged)] ok\r\n",
       all_stored(fetched_flags("\\Flagged $MailFlagBit2"))), ""}))
-    IO.print(blue(T.ProcOk{0, flag_transcript(permanent_all(), all_stored("")), ""}))
-    IO.print(blue(T.ProcOk{5, flag_transcript("", "a3 OK\r\na4 NO keyword refused\r\nZ OK bye\r\n"),
+    IO.print(blue(Policy.ProcOk{0, flag_transcript(permanent_all(), all_stored("")), ""}))
+    IO.print(blue(Policy.ProcOk{5, flag_transcript("", "a3 OK\r\na4 NO keyword refused\r\nZ OK bye\r\n"),
       ""}))
-    IO.print(blue(T.ProcOk{5, flag_transcript("", "a3 OK\r\na4 OK\r\na5 OK\r\na6 OK\r\na7 NO\r\n"),
+    IO.print(blue(Policy.ProcOk{5, flag_transcript("", "a3 OK\r\na4 OK\r\na5 OK\r\na6 OK\r\na7 NO\r\n"),
       ""}))
-    IO.print(blue(T.ProcFail{110, "timed out"}))
-    IO.print(blue(T.ProcOk{5, "L OK in\r\na1 OK\r\n* SEARCH\r\na2 OK\r\na3 NO\r\nZ OK bye\r\n",
+    IO.print(blue(Policy.ProcFail{110, "timed out"}))
+    IO.print(blue(Policy.ProcOk{5, "L OK in\r\na1 OK\r\n* SEARCH\r\na2 OK\r\na3 NO\r\nZ OK bye\r\n",
       ""}))
-    IO.print(blue(T.ProcOk{5, "L OK in\r\na1 OK\r\na2 NO [UIDVALIDITY 9]\r\nZ OK bye\r\n",
+    IO.print(blue(Policy.ProcOk{5, "L OK in\r\na1 OK\r\na2 NO [UIDVALIDITY 9]\r\nZ OK bye\r\n",
       "[UIDVALIDITY 9]"}))
-    IO.print(flag_out(T.ProcOk{0, String.concat(["L OK in\r\na1 OK\r\n* SEARCH 3\r\na2 OK\r\n",
+    IO.print(flag_out(Policy.ProcOk{0, String.concat(["L OK in\r\na1 OK\r\n* SEARCH 3\r\na2 OK\r\n",
       "a3 OK\r\n", fetched_flags("\\Seen \\Flagged"), "a4 OK\r\nZ OK bye\r\n"]), ""},
       Ops.plan_flag("INBOX", [3, 4], None{}, 7), T.MarkFlag{None{}}))
-    IO.print(flag_out(T.ProcOk{0, flag_transcript("", all_stored(fetched_flags(""))), ""},
+    IO.print(flag_out(Policy.ProcOk{0, flag_transcript("", all_stored(fetched_flags(""))), ""},
       Ops.plan_unflag("INBOX", [3, 4], 7), T.MarkUnflag{}))
     IO.print(show_out(T.mark_result(
-      T.ProcOk{0, "L OK\r\na1 OK\r\n* SEARCH 4\r\na2 OK\r\na3 OK\r\n", ""},
+      Policy.ProcOk{0, "L OK\r\na1 OK\r\n* SEARCH 4\r\na2 OK\r\na3 OK\r\n", ""},
       Ops.plan_mark("INBOX", [3, 4], True{}, 7), [3, 4], "INBOX", T.MarkSeen{True{}})))
 
 # Moves, trash, delete and labels
@@ -630,7 +631,7 @@ def move_plan() -> List<&2, I.Cmd>:
 def copy_transcript(rest: String) -> String:
   "L OK\r\na1 OK\r\n* OK [UIDVALIDITY 7]\r\na2 OK\r\n* SEARCH 3\r\na3 OK\r\n" ++ rest
 
-def moved(p: T.Proc, plan: List<&2, I.Cmd>, move: Bool) -> String:
+def moved(p: Policy.Proc, plan: List<&2, I.Cmd>, move: Bool) -> String:
   show_out(T.moved_out(p, plan, "INBOX", [3], "Work", move))
 
 def check_moves() -> IO(Unit):
@@ -642,19 +643,19 @@ def check_moves() -> IO(Unit):
       show_bool(T.copy_unfinished(copy_plan(), I.frame(copy_transcript("a4 NO\r\n")))) ++ " " ++
       show_bool(T.copy_unfinished(copy_plan(), I.frame(copy_transcript(
         "a4 OK\r\na5 OK\r\na6 OK\r\n")))) ++ " " ++
-      show_bool(T.interrupted(copy_plan(), T.ProcFail{110, "x"})) ++ " " ++
-      show_bool(T.interrupted(move_plan(), T.ProcFail{110, "x"})) ++ " " ++
-      show_bool(T.interrupted(copy_plan(), T.ProcRefused{"x"})))
-    IO.print(moved(T.ProcOk{0, "L OK\r\na1 OK\r\n* SEARCH 3\r\na2 OK\r\na3 OK\r\n", ""},
+      show_bool(T.interrupted(copy_plan(), Policy.ProcFail{110, "x"})) ++ " " ++
+      show_bool(T.interrupted(move_plan(), Policy.ProcFail{110, "x"})) ++ " " ++
+      show_bool(T.interrupted(copy_plan(), Policy.ProcRefused{"x"})))
+    IO.print(moved(Policy.ProcOk{0, "L OK\r\na1 OK\r\n* SEARCH 3\r\na2 OK\r\na3 OK\r\n", ""},
       move_plan(), True{}))
-    IO.print(moved(T.ProcOk{0, copy_transcript("a4 OK\r\na5 OK\r\na6 OK\r\n"), ""}, copy_plan(),
+    IO.print(moved(Policy.ProcOk{0, copy_transcript("a4 OK\r\na5 OK\r\na6 OK\r\n"), ""}, copy_plan(),
       False{}))
-    IO.print(moved(T.ProcOk{5, copy_transcript("a4 OK\r\na5 NO cannot\r\n"), ""}, copy_plan(),
+    IO.print(moved(Policy.ProcOk{5, copy_transcript("a4 OK\r\na5 NO cannot\r\n"), ""}, copy_plan(),
       False{}))
-    IO.print(moved(T.ProcOk{5, copy_transcript("a4 NO [OVERQUOTA] full\r\n"), ""}, copy_plan(),
+    IO.print(moved(Policy.ProcOk{5, copy_transcript("a4 NO [OVERQUOTA] full\r\n"), ""}, copy_plan(),
       False{}))
-    IO.print(moved(T.ProcFail{110, "timed out"}, copy_plan(), False{}))
-    IO.print(moved(T.ProcRefused{"not absolute"}, copy_plan(), False{}))
+    IO.print(moved(Policy.ProcFail{110, "timed out"}, copy_plan(), False{}))
+    IO.print(moved(Policy.ProcRefused{"not absolute"}, copy_plan(), False{}))
     IO.print("[" ++ T.move_request(7, "INBOX", "Work") ++ "] " ++
       T.move_request(7, "INBOX", "inbox") ++ " | " ++ T.move_request(7, "INBOX", "") ++ " | " ++
       T.move_request(0, "INBOX", "Work"))
@@ -769,7 +770,7 @@ def check_guard() -> IO(Unit):
 def rename_plan() -> List<&2, I.Cmd>:
   Ops.plan_rename("Work", "Fresh", ["Work", "Work/Sub"])
 
-def folder_out(p: T.Proc, plan: List<&2, I.Cmd>, c: T.FolderChange) -> String:
+def folder_out(p: Policy.Proc, plan: List<&2, I.Cmd>, c: T.FolderChange) -> String:
   show_out(T.folder_out(p, plan, c))
 
 def check_folder_results() -> IO(Unit):
@@ -778,24 +779,24 @@ def check_folder_results() -> IO(Unit):
     IO.print(show_out(T.folder_done(False{}, False{}, T.FolderCreate{"New"}, "refused")))
     IO.print(show_out(T.folder_done(True{}, False{}, T.FolderRename{"A", "B"}, "refused")))
     IO.print(
-      show_bool(T.folder_unanswered(T.ProcOk{5, "L OK\r\na1 OK\r\nZ OK\r\n", ""})) ++ " " ++
-      show_bool(T.folder_unanswered(T.ProcOk{5, "L OK\r\na1 OK\r\na2 NO\r\n", ""})) ++ " " ++
-      show_bool(T.folder_unanswered(T.ProcOk{3, "", ""})) ++ " " ++
-      show_bool(T.folder_unanswered(T.ProcFail{110, "x"})) ++ " " ++
-      show_bool(T.folder_unanswered(T.ProcRefused{"x"})))
-    IO.print(folder_out(T.ProcOk{0, "L OK\r\na1 OK\r\na2 OK\r\na3 OK\r\n", ""},
+      show_bool(T.folder_unanswered(Policy.ProcOk{5, "L OK\r\na1 OK\r\nZ OK\r\n", ""})) ++ " " ++
+      show_bool(T.folder_unanswered(Policy.ProcOk{5, "L OK\r\na1 OK\r\na2 NO\r\n", ""})) ++ " " ++
+      show_bool(T.folder_unanswered(Policy.ProcOk{3, "", ""})) ++ " " ++
+      show_bool(T.folder_unanswered(Policy.ProcFail{110, "x"})) ++ " " ++
+      show_bool(T.folder_unanswered(Policy.ProcRefused{"x"})))
+    IO.print(folder_out(Policy.ProcOk{0, "L OK\r\na1 OK\r\na2 OK\r\na3 OK\r\n", ""},
       Ops.plan_create("New"), T.FolderCreate{"New"}))
-    IO.print(folder_out(T.ProcOk{5, "L OK\r\na1 OK\r\na2 OK\r\na3 NO\r\n", ""},
+    IO.print(folder_out(Policy.ProcOk{5, "L OK\r\na1 OK\r\na2 OK\r\na3 NO\r\n", ""},
       Ops.plan_create("New"), T.FolderCreate{"New"}))
-    IO.print(folder_out(T.ProcOk{5, "L OK\r\na1 OK\r\na2 NO [ALREADYEXISTS] exists\r\n", ""},
+    IO.print(folder_out(Policy.ProcOk{5, "L OK\r\na1 OK\r\na2 NO [ALREADYEXISTS] exists\r\n", ""},
       Ops.plan_create("New"), T.FolderCreate{"New"}))
-    IO.print(folder_out(T.ProcFail{110, "timed out"}, Ops.plan_create("New"),
+    IO.print(folder_out(Policy.ProcFail{110, "timed out"}, Ops.plan_create("New"),
       T.FolderCreate{"New"}))
-    IO.print(folder_out(T.ProcRefused{"not absolute"}, Ops.plan_create("New"),
+    IO.print(folder_out(Policy.ProcRefused{"not absolute"}, Ops.plan_create("New"),
       T.FolderCreate{"New"}))
-    IO.print(folder_out(T.ProcOk{5, "L OK\r\na1 OK\r\na2 OK\r\na3 OK\r\na4 OK\r\na5 NO\r\n", ""},
+    IO.print(folder_out(Policy.ProcOk{5, "L OK\r\na1 OK\r\na2 OK\r\na3 OK\r\na4 OK\r\na5 NO\r\n", ""},
       rename_plan(), T.FolderRename{"Work", "Fresh"}))
-    IO.print(folder_out(T.ProcOk{5, "L OK\r\na1 OK\r\na2 OK\r\na3 NO\r\n", ""},
+    IO.print(folder_out(Policy.ProcOk{5, "L OK\r\na1 OK\r\na2 OK\r\na3 NO\r\n", ""},
       rename_plan(), T.FolderRename{"Work", "Fresh"}))
 
 # Composing
@@ -824,11 +825,11 @@ def check_compose() -> IO(Unit):
       T.ext_type("a.csv"), T.ext_type("a.html"), T.ext_type("a.htm"), T.ext_type("a.json"),
       T.ext_type("a.png"), T.ext_type("a.jpg"), T.ext_type("a.JPEG"), T.ext_type("a.gif"),
       T.ext_type("a.zip"), T.ext_type("a.eml"), T.ext_type("a.doc"), T.ext_type("pdf")], ","))
-    IO.print(show_att(T.att_proc(T.ProcOk{0, "data", ""}, "a.txt", "text/plain")) ++ " | " ++
-      show_att(T.att_proc(T.ProcOk{3, "", "mailbend-tls: mailbend-attach: too big\n"}, "a",
+    IO.print(show_att(T.att_proc(Policy.ProcOk{0, "data", ""}, "a.txt", "text/plain")) ++ " | " ++
+      show_att(T.att_proc(Policy.ProcOk{3, "", "mailbend-tls: mailbend-attach: too big\n"}, "a",
         "b")) ++
-      " | " ++ show_att(T.att_proc(T.ProcRefused{"no path"}, "a", "b")) ++ " | " ++
-      show_att(T.att_proc(T.ProcFail{110, "timed out"}, "a", "b")))
+      " | " ++ show_att(T.att_proc(Policy.ProcRefused{"no path"}, "a", "b")) ++ " | " ++
+      show_att(T.att_proc(Policy.ProcFail{110, "timed out"}, "a", "b")))
     IO.print(U32.show(C.byte_len("héllo")) ++ " " ++
       U32.show(T.att_size(Done{M.Attach{"a", "b", "xyz"}})) ++ " " ++
       U32.show(T.att_size(Fail{"x"})) ++ " " ++
@@ -843,9 +844,9 @@ def check_compose() -> IO(Unit):
     IO.print(SCon{C.hex_low(0), SCon{C.hex_low(9), SCon{C.hex_low(10), SCon{C.hex_low(15),
       SNil{}}}}} ++ " " ++ C.hex8(0) ++ " " ++
       C.hex8(3735928559) ++ " " ++ C.hex8(4294967295) ++ " " ++ C.hex8(305419896))
-    IO.print(U32.show(T.secs_of(T.ProcOk{0, " 1700000000\n", ""})) ++ " " ++
-      U32.show(T.secs_of(T.ProcOk{0, "x", ""})) ++ " " ++
-      U32.show(T.secs_of(T.ProcRefused{"x"})) ++
+    IO.print(U32.show(T.secs_of(Policy.ProcOk{0, " 1700000000\n", ""})) ++ " " ++
+      U32.show(T.secs_of(Policy.ProcOk{0, "x", ""})) ++ " " ++
+      U32.show(T.secs_of(Policy.ProcRefused{"x"})) ++
       " " ++ U32.show(T.rand_of(Done{5})) ++ " " ++ U32.show(T.rand_of(Fail{(1, "x")})))
     IO.print(T.domain_of("A <a@Example.com>") ++ " " ++ T.domain_of("bad"))
     check_drafts(T.stamp_of(1700000000, 1, 255), want(["A <a@x.com>"], ["b@z.com"], False{}))
@@ -855,9 +856,9 @@ def check_compose() -> IO(Unit):
       J.show(T.appenduid(["appenduid", "1", "x"])))
     IO.print(show_out(T.draft_saved(
       T.imap_code(0, I.frame("L OK\r\na1 OK [APPENDUID 7 42] done\r\n"), ""), "Drafts", "<m@x>")))
-    IO.print(show_out(T.sent_out(T.Ok{J.str("250 ok")}, "<m@x>", 2)) ++ " | " ++
-      show_out(T.sent_out(T.Err{"refused"}, "<m@x>", 2)) ++ " | " ++
-      show_out(T.sent_out(T.Partial{J.JNull{}}, "<m@x>", 2)))
+    IO.print(show_out(T.sent_out(Policy.Ok{J.str("250 ok")}, "<m@x>", 2)) ++ " | " ++
+      show_out(T.sent_out(Policy.Err{"refused"}, "<m@x>", 2)) ++ " | " ++
+      show_out(T.sent_out(Policy.Partial{J.JNull{}}, "<m@x>", 2)))
     IO.print(problem(T.check_want(want(["a@x.com"], [], False{}), "bad")) ++
       problem(T.check_want(want(["nope"], [], False{}), "me@my.org")) ++
       problem(T.check_want(T.Want{[], [], [], "", "", "", "", [], False{}, False{}, Jev.Fresh{},
@@ -901,9 +902,9 @@ def check_reply() -> IO(Unit):
     check_reply_headers(reply_headers())
     IO.print(T.cut_note(True{}) ++ "[" ++ T.cut_note(False{}) ++ "]")
     IO.print(
-      show_out(T.with_fields(T.Ok{J.obj([J.kv("a", J.num(1))])}, T.quote_fields(True{}, 10, 20))) ++
-      " | " ++ show_out(T.with_fields(T.Err{"x"}, [J.kv("b", J.num(2))])) ++ " | " ++
-      show_out(T.with_fields(T.Ok{J.str("s")}, [J.kv("b", J.num(2))])))
+      show_out(T.with_fields(Policy.Ok{J.obj([J.kv("a", J.num(1))])}, T.quote_fields(True{}, 10, 20))) ++
+      " | " ++ show_out(T.with_fields(Policy.Err{"x"}, [J.kv("b", J.num(2))])) ++ " | " ++
+      show_out(T.with_fields(Policy.Ok{J.str("s")}, [J.kv("b", J.num(2))])))
 
 # Dispatch and the tools offered
 # ------------------------------
@@ -913,7 +914,7 @@ def names_of(ts: List<&2, J.Json>) -> List<&2, String>:
     case Nil{}:
       []
     case t <> rest:
-      T.str_arg(t, "name", "") <> names_of(rest)
+      Policy.str_arg(t, "name", "") <> names_of(rest)
 
 def tool_names(ts: J.Json) -> String:
   match ts:
@@ -932,18 +933,18 @@ def listed(n: String, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
 def check_dispatch() -> IO(Unit):
   do IO<Unit>:
     IO.print(String.join([
-      show_bool(T.sends(Ops.OSend{}, json("{}"))),
-      show_bool(T.sends(Ops.OReply{}, json("{}"))),
-      show_bool(T.sends(Ops.OReply{}, json("{\"as_draft\":true}"))),
-      show_bool(T.sends(Ops.OForward{}, json("{\"as_draft\":false}"))),
-      show_bool(T.sends(Ops.OSaveDraft{}, json("{}")))], " "))
-    IO.print(problem(T.refusal(Ops.OGet{}, json("{}"), True{}, True{}, False{})) ++
-      problem(T.refusal(Ops.OTrash{}, json("{}"), True{}, False{}, True{})) ++
-      problem(T.refusal(Ops.OForward{}, json("{}"), False{}, True{}, True{})) ++
-      problem(T.refusal(Ops.OForward{}, json("{\"as_draft\":true}"), False{}, True{}, False{})) ++
-      problem(T.refusal(Ops.OSend{}, json("{}"), True{}, True{}, True{})))
-    IO.print(problem(T.refusal(Ops.OClassify{}, json("{}"), False{}, False{}, False{})) ++
-      problem(T.refusal(Ops.OClassify{}, json("{}"), True{}, True{}, True{})))
+      show_bool(Policy.sends(Ops.OSend{}, json("{}"))),
+      show_bool(Policy.sends(Ops.OReply{}, json("{}"))),
+      show_bool(Policy.sends(Ops.OReply{}, json("{\"as_draft\":true}"))),
+      show_bool(Policy.sends(Ops.OForward{}, json("{\"as_draft\":false}"))),
+      show_bool(Policy.sends(Ops.OSaveDraft{}, json("{}")))], " "))
+    IO.print(problem(Policy.refusal(Ops.OGet{}, json("{}"), True{}, True{}, False{})) ++
+      problem(Policy.refusal(Ops.OTrash{}, json("{}"), True{}, False{}, True{})) ++
+      problem(Policy.refusal(Ops.OForward{}, json("{}"), False{}, True{}, True{})) ++
+      problem(Policy.refusal(Ops.OForward{}, json("{\"as_draft\":true}"), False{}, True{}, False{})) ++
+      problem(Policy.refusal(Ops.OSend{}, json("{}"), True{}, True{}, True{})))
+    IO.print(problem(Policy.refusal(Ops.OClassify{}, json("{}"), False{}, False{}, False{})) ++
+      problem(Policy.refusal(Ops.OClassify{}, json("{}"), True{}, True{}, True{})))
     IO.print(show_bool(listed("mail_get", True{}, False{}, False{})) ++ " " ++
       show_bool(listed("mail_trash", True{}, False{}, False{})) ++ " " ++
       show_bool(listed("mail_send", False{}, True{}, False{})) ++ " " ++
@@ -952,14 +953,14 @@ def check_dispatch() -> IO(Unit):
       show_bool(listed("mail_classify", True{}, False{}, True{})) ++ " " ++
       show_bool(listed("mail_nope", False{}, False{}, True{})) ++ " " ++
       show_bool(C.is_in("b", ["a", "b"])) ++ " " ++ show_bool(C.is_in("b", [])))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, False{}, Jev.Off{}, Jev.ImagesOff{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.Off{}, Jev.ImagesOff{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{False{}, True{}, Jev.Off{}, Jev.ImagesOff{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.ConfigBad{"x"})))
-    IO.print(J.show(T.offered_for(J.str("x"), T.Config{True{}, True{}, Jev.Off{}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), Policy.Config{False{}, False{}, Jev.Off{}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), Policy.Config{True{}, False{}, Jev.Off{}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), Policy.Config{False{}, True{}, Jev.Off{}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), Policy.ConfigBad{"x"})))
+    IO.print(J.show(T.offered_for(J.str("x"), Policy.Config{True{}, True{}, Jev.Off{}, Jev.ImagesOff{}})))
     IO.print(tool_names(T.offered_for(tool_defs(),
-      T.Config{False{}, False{}, Jev.On{Jev.Headers{}}, Jev.ImagesOff{}})))
-    IO.print(tool_names(T.offered_for(tool_defs(), T.Config{True{}, False{}, Jev.On{Jev.Body{}}, Jev.ImagesOff{}})))
+      Policy.Config{False{}, False{}, Jev.On{Jev.Headers{}}, Jev.ImagesOff{}})))
+    IO.print(tool_names(T.offered_for(tool_defs(), Policy.Config{True{}, False{}, Jev.On{Jev.Body{}}, Jev.ImagesOff{}})))
 
 # Arguments checked against the schema
 # ------------------------------------
@@ -1046,11 +1047,11 @@ def check_sending() -> IO(Unit):
       sends("", "", "ten", "") ++ " | " ++ sends("", "", "99999999999", ""))
     IO.print(sends("", "", "", "state"))
     IO.print(sends("on", "bad", "0", "state"))
-    IO.print("[" ++ T.reservation(T.ProcOk{0, "ok 3\n", ""}, 5) ++ "]")
-    IO.print(T.reservation(T.ProcOk{0, "full 5\n", ""}, 5))
-    IO.print(T.reservation(T.ProcOk{0, "ok", ""}, 5))
-    IO.print(T.reservation(T.ProcOk{2, "", "mailbend-attach: cannot lock the send counter\n"}, 5))
-    IO.print(T.reservation(T.ProcFail{110, "timed out"}, 5))
+    IO.print("[" ++ T.reservation(Policy.ProcOk{0, "ok 3\n", ""}, 5) ++ "]")
+    IO.print(T.reservation(Policy.ProcOk{0, "full 5\n", ""}, 5))
+    IO.print(T.reservation(Policy.ProcOk{0, "ok", ""}, 5))
+    IO.print(T.reservation(Policy.ProcOk{2, "", "mailbend-attach: cannot lock the send counter\n"}, 5))
+    IO.print(T.reservation(Policy.ProcFail{110, "timed out"}, 5))
     IO.print(T.unlisted_msg(["a@x.com", "b%c@y.com"]))
     IO.print(String.join([
       show_bool(T.has_msg_id([header_msg("Message-ID:  <a@x>  \r\n\r\n")], "<a@x>")),
@@ -1097,8 +1098,8 @@ def show_wants(ws: List<&2, Ops.FolderUids>) -> String:
 def search_found(before: List<&2, T.Found>) -> Result<&2, &2, String, List<&2, T.Found>>:
   T.session_found(Done{I.frame(thread_search_transcript())}, thread_search_plan(), before)
 
-def thread_fs() -> T.Folders:
-  T.Folders{[], None{}, None{}, Some{"Sent"}, None{}, None{}}
+def thread_fs() -> Policy.Folders:
+  Policy.Folders{[], None{}, None{}, Some{"Sent"}, None{}, None{}}
 
 def check_thread() -> IO(Unit):
   do IO<Unit>:
@@ -1136,7 +1137,7 @@ def show_asked(a: T.Asked) -> String:
       "failed " ++ m
 
 def asked(code: U32, out: String, err: String) -> String:
-  show_asked(T.asked(T.ProcOk{code, out, err}))
+  show_asked(T.asked(Policy.ProcOk{code, out, err}))
 
 def answered_uids(xs: List<&2, Jev.Answered>) -> List<&2, U32>:
   match xs:
@@ -1221,7 +1222,7 @@ def check_classify() -> IO(Unit):
     IO.print(asked(9, "", "mailbend-typesafe: TypeSafe timed out, after retries"))
     IO.print(asked(6, "", "mailbend-typesafe: internal error"))
     IO.print(asked(137, "", ""))
-    IO.print(show_asked(T.asked(T.ProcRefused{"no such file"})))
+    IO.print(show_asked(T.asked(Policy.ProcRefused{"no such file"})))
     IO.print(J.show(T.request_json(2n, 100, None{})) ++ " " ++
       J.show(T.request_json(1n, 9, Some{7})))
     IO.print(show_tally(T.answered(T.AskAnswered{"not json"}, [], 10, keys(),
@@ -1234,20 +1235,20 @@ def check_classify() -> IO(Unit):
       [skipped(1), skipped(2)], [J.str("r1")]), [skipped(3)], [J.str("r2")])},
       Jev.Headers{}, [], "none", [J.kv("folder", J.str("INBOX"))], [9], [])))
     IO.print(show_out(T.classify_out(Fail{"stopped"}, Jev.Headers{}, [], "none", [], [], [])))
-    IO.print(T.jev_off("mail_classify"))
+    IO.print(Policy.jev_off("mail_classify"))
 
 # mail_triage
 # -----------
 
-def review_folders(trash: Maybe<&2, String>) -> T.Folders:
-  T.Folders{[I.Folder{"INBOX", "/", []}, I.Folder{"To Delete", "/", []}], None{}, trash, None{},
+def review_folders(trash: Maybe<&2, String>) -> Policy.Folders:
+  Policy.Folders{[I.Folder{"INBOX", "/", []}, I.Folder{"To Delete", "/", []}], None{}, trash, None{},
     None{}, None{}}
 
 def pending(uid: U32, sender: Maybe<&2, String>) -> T.Pending:
   T.Pending{Jev.Fetched{Jev.facts_of(classify_msg(uid)), Jev.Text{"", Jev.Complete{}}, 0}, [],
     sender}
 
-def review_problem_of(f: T.Folders) -> String:
+def review_problem_of(f: Policy.Folders) -> String:
   +g = f
   problem(T.review_problem(g, T.role_folders(g)))
 
@@ -1285,9 +1286,9 @@ def check_triage() -> IO(Unit):
       problem(T.invalid_override(folders(), "To Deleted", "MAILBEND_X")))
     IO.print(review_problem_of(review_folders(None{})) ++
       review_problem_of(review_folders(Some{"To Delete"})) ++
-      review_problem_of(T.Folders{[I.Folder{"INBOX", "/", []}, I.Folder{"to delete", "/",
+      review_problem_of(Policy.Folders{[I.Folder{"INBOX", "/", []}, I.Folder{"to delete", "/",
         ["\\Archive"]}, I.Folder{"To Delete", "/", []}], None{}, None{}, None{}, None{}, None{}}) ++
-      review_problem_of(T.Folders{[I.Folder{"INBOX", "/", []}], None{}, None{}, None{},
+      review_problem_of(Policy.Folders{[I.Folder{"INBOX", "/", []}], None{}, None{}, None{},
         None{}, None{}}))
     IO.print(String.join(T.fields_named(M.headers("From: a@x\r\nTo: c@z\r\nfrom: b@y\r\n"),
       "from"), ","))
@@ -1320,12 +1321,12 @@ def check_triage() -> IO(Unit):
     IO.print(show_out(T.triage_result(T.Moved{[], False{}})))
     IO.print(show_out(T.triage_result(T.Moved{[T.moved_error("To Delete", "lost"),
       J.str("first")], True{}})))
-    IO.print(show_out(T.with_fields_first(T.Ok{J.obj([J.kv("moves", J.arr([]))])},
+    IO.print(show_out(T.with_fields_first(Policy.Ok{J.obj([J.kv("moves", J.arr([]))])},
       [J.kv("folder", J.str("INBOX"))])))
-    IO.print(show_out(T.with_fields_first(T.Partial{J.obj([J.kv("ok", J.bool(False{}))])},
+    IO.print(show_out(T.with_fields_first(Policy.Partial{J.obj([J.kv("ok", J.bool(False{}))])},
       [J.kv("folder", J.str("INBOX"))])))
-    IO.print(show_out(T.with_fields_first(T.Err{"no"}, [J.kv("folder", J.str("INBOX"))])))
-    IO.print(T.jev_off("mail_triage"))
+    IO.print(show_out(T.with_fields_first(Policy.Err{"no"}, [J.kv("folder", J.str("INBOX"))])))
+    IO.print(Policy.jev_off("mail_triage"))
 
 # A checked thread cannot authorize later UID reads from absent/zero generation
 # evidence. The optional legacy path still keeps its exact original plan.
