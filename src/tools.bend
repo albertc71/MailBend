@@ -4992,6 +4992,107 @@ def specs(xs: List<&2, String>) -> List<&2, String>:
     case x <> t:
       M.addr_spec(x) <> specs(t)
 
+# Outgoing hidden Unicode
+# -----------------------
+
+def hidden_json(h: M.Hidden) -> J.Json:
+  M.Hidden{tag, bidi, zw} = h
+  J.obj([J.kv("tag", J.num(tag)), J.kv("bidi", J.num(bidi)),
+    J.kv("zero_width", J.num(zw))])
+
+def display_name(+a: String) -> String:
+  Bool.pick(String, String.contains(a, "<"), M.unquote(String.trim(M.display_part(a))), "")
+
+def hidden_names(xs: List<&2, String>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      hidden_json(M.hidden_count(display_name(x))) <> hidden_names(t)
+
+def hidden_attachments(xs: List<&2, M.Attach>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case M.Attach{name, typ, data} <> t:
+      hidden_json(M.hidden_count(name)) <> hidden_attachments(t)
+
+def hidden_fields(w: Want, from: String) -> List<&2, J.Json>:
+  Want{to, cc, bcc, subject, text, i, r, atts, d, y, o, j} = w
+  [J.kv("hidden_unicode", J.obj([
+    J.kv("subject", hidden_json(M.hidden_count(subject))),
+    J.kv("body", hidden_json(M.hidden_count(text))),
+    J.kv("from", hidden_json(M.hidden_count(display_name(from)))),
+    J.kv("to", J.arr(hidden_names(to))), J.kv("cc", J.arr(hidden_names(cc))),
+    J.kv("bcc", J.arr(hidden_names(bcc))),
+    J.kv("attachment_filenames", J.arr(hidden_attachments(atts)))
+  ]))]
+
+def tag_problem(field: String, text: String) -> String:
+  Bool.pick(String, U32.is_zero(M.refused_tags(text)), "",
+    "hidden Unicode tag characters in " ++ field ++ "; nothing was sent or saved")
+
+def hidden_names.check(xs: List<&2, String>, +field: String, +i: U32) ->
+  Result<&2, &2, String, Unit>:
+  match xs:
+    case Nil{}:
+      Done{Unit{}}
+    case x <> t:
+      do Result<&2, &2, String, Unit>:
+        ok : Unit <- checked(tag_problem(field ++ "[" ++ U32.show(i) ++ "]", display_name(x)))
+        hidden_names.check(t, field, (i + 1 : U32))
+
+def attachment_bidi_problem(field: String, h: M.Hidden) -> String:
+  M.Hidden{tag, bidi, zw} = h
+  Bool.pick(String, U32.is_zero(bidi), "",
+    "hidden Unicode bidi controls in " ++ field ++ "; nothing was sent or saved")
+
+def attachment_hidden.check(xs: List<&2, M.Attach>, +i: U32) ->
+  Result<&2, &2, String, Unit>:
+  match xs:
+    case Nil{}:
+      Done{Unit{}}
+    case M.Attach{+name, typ, data} <> t:
+      +field = "attachments[" ++ U32.show(i) ++ "].filename"
+      do Result<&2, &2, String, Unit>:
+        tags_ok : Unit <- checked(tag_problem(field, name))
+        bidi_ok : Unit <- checked(attachment_bidi_problem(field, M.hidden_count(name)))
+        attachment_hidden.check(t, (i + 1 : U32))
+
+def hidden_check(w: Want, from: String) -> Result<&2, &2, String, Unit>:
+  Want{to, cc, bcc, subject, text, i, r, atts, d, y, o, j} = w
+  do Result<&2, &2, String, Unit>:
+    subject_ok : Unit <- checked(tag_problem("subject", subject))
+    body_ok : Unit <- checked(tag_problem("body", text))
+    from_ok : Unit <- checked(tag_problem("from", display_name(from)))
+    to_ok : Unit <- hidden_names.check(to, "to", 0)
+    cc_ok : Unit <- hidden_names.check(cc, "cc", 0)
+    bcc_ok : Unit <- hidden_names.check(bcc, "bcc", 0)
+    attachment_hidden.check(atts, 0)
+
+def caller_attachments(xs: List<&2, J.Json>) -> List<&2, M.Attach>:
+  match xs:
+    case Nil{}:
+      []
+    case +x <> t:
+      name = str_arg(x, "filename", basename(str_arg(x, "path", "")))
+      M.Attach{name, "", ""} <> caller_attachments(t)
+
+def caller_hidden(+args: J.Json, +reply: Bool) -> Result<&2, &2, String, Unit>:
+  hidden_check(Want{
+    Bool.pick(List<&2, String>, reply, [], strs_arg(args, "to")),
+    Bool.pick(List<&2, String>, reply, [], strs_arg(args, "cc")),
+    strs_arg(args, "bcc"), str_arg(args, "subject", ""), str_arg(args, "body", ""),
+    "", "", caller_attachments(attachments_arg(args)), False{}, False{}, Jev.Fresh{}, Jev.Off{}
+  }, "")
+
+def hidden_problem(r: Result<&2, &2, String, Unit>) -> String:
+  match r:
+    case Done{u}:
+      ""
+    case Fail{m}:
+      m
+
 # Saving drafts
 # -------------
 
@@ -5473,7 +5574,7 @@ def deliver_as(draft: Bool, +w: Want, +from: String, +st: Stamp) -> IO(Out):
 def deliver(+w: Want, from: String, st: Stamp) -> IO(Out):
   deliver_as(is_draft(w), w, from, st)
 
-def check_want(+w: Want, from: String) -> String:
+def address_problem(+w: Want, from: String) -> String:
   +rcpts = all_rcpts(w)
   Bool.pick(String, Bool.not(M.addr_ok(from)), "MAILBEND_EMAIL is not a valid address",
     Bool.pick(String, Bool.not(M.all_addrs_ok(rcpts)),
@@ -5489,6 +5590,14 @@ def deliver_stamped(w: Want, from: String, st: Result<&2, &2, String, Stamp>) ->
     case Done{s}:
       deliver(w, from, s)
 
+def check_want.run(+w: Want, +from: String) -> Result<&2, &2, String, Unit>:
+  do Result<&2, &2, String, Unit>:
+    address_ok : Unit <- checked(address_problem(w, from))
+    hidden_check(w, from)
+
+def check_want(w: Want, from: String) -> String:
+  hidden_problem(check_want.run(w, from))
+
 def with_atts.if(problem: String, w: Want, from: String) -> IO(Out):
   match problem:
     case SCon{h, t}:
@@ -5499,7 +5608,9 @@ def with_atts.if(problem: String, w: Want, from: String) -> IO(Out):
         deliver_stamped(w, from, st)
 
 def with_atts.want(+w: Want, +from: String) -> IO(Out):
-  with_atts.if(check_want(w, from), w, from)
+  do IO<Out>:
+    o : Out <- with_atts.if(check_want(w, from), w, from)
+    return with_fields_first(o, hidden_fields(w, from))
 
 def with_atts(
   a: Attachments(),
@@ -5526,13 +5637,23 @@ def with_atts(
 
 # Composes from the common arguments: to, cc, bcc, subject, body,
 # in_reply_to, references and attachments ([{path, filename?, content_type?}]).
-def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
+def t_compose.run(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
   do IO<Out>:
     rs : List<&2, Attachment()> <- atts_read(attachments_arg(args))
     with_atts(atts_collect(rs), strs_arg(args, "to"), strs_arg(args, "cc"),
       strs_arg(args, "bcc"), str_arg(args, "subject", ""), str_arg(args, "body", ""),
       str_arg(args, "in_reply_to", ""), str_arg(args, "references", ""), draft, dry_arg(args),
       Jev.Fresh{}, jev)
+
+def t_compose.if(problem: String, args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
+  match problem:
+    case SNil{}:
+      t_compose.run(args, draft, jev)
+    case SCon{h, t}:
+      pure_out(Err{SCon{h, t}})
+
+def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
+  t_compose.if(hidden_problem(caller_hidden(args, False{})), args, draft, jev)
 
 # Reply and forward
 # -----------------
@@ -5659,15 +5780,49 @@ def reply_cc(all: Bool, +hs: List<&2, M.Hdr>, me: String, replied: List<&2, Stri
     case False{}:
       []
 
-# The reply's text above the quoted original.
-def reply_body(args: J.Json, +hs: List<&2, M.Hdr>, p: M.Parts, cut: Bool) -> String:
-  str_arg(args, "body", "") ++ "\n\nOn " ++ hdr_line(hs, "date") ++ ", " ++
-    hdr_line(hs, "from") ++ " wrote:\n" ++ quote_text(M.readable_text(p)) ++
-    cut_note(cut)
+def reply_original(+hs: List<&2, M.Hdr>, p: M.Parts, cut: Bool) -> String:
+  "\n\nOn " ++ hdr_line(hs, "date") ++ ", " ++ hdr_line(hs, "from") ++
+    " wrote:\n" ++ quote_text(M.readable_text(p)) ++ cut_note(cut)
+
+def reply_body(args: J.Json, hs: List<&2, M.Hdr>, p: M.Parts, cut: Bool) -> String:
+  str_arg(args, "body", "") ++ M.strip_tags(reply_original(hs, p, cut))
+
+def strip_name_tags.if(+a: String, named: Bool) -> String:
+  match named:
+    case True{}:
+      name = M.display_part(a)
+      C.quoted(M.strip_tags(display_name(a))) ++ " " ++ String.drop(a, String.length(name))
+    case False{}:
+      a
+
+def strip_name_tags(+a: String) -> String:
+  strip_name_tags.if(a, Bool.not(U32.is_zero(M.refused_tags(display_name(a)))))
+
+def strip_names(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      strip_name_tags(x) <> strip_names(t)
+
+def removed_names(xs: List<&2, String>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      J.num(M.refused_tags(display_name(x))) <> removed_names(t)
+
+def removed_fields(subject: String, text: String, to: List<&2, String>, cc: List<&2, String>) ->
+  List<&2, J.Json>:
+  [J.kv("removed_tags", J.obj([
+    J.kv("subject", J.num(M.refused_tags(subject))),
+    J.kv("body", J.num(M.refused_tags(text))),
+    J.kv("to", J.arr(removed_names(to))), J.kv("cc", J.arr(removed_names(cc)))
+  ]))]
 
 def reply_want(
   +hs: List<&2, M.Hdr>,
-  p: M.Parts,
+  +p: M.Parts,
   +cut: Bool,
   quoted: U32,
   size: U32,
@@ -5677,13 +5832,17 @@ def reply_want(
   jev: Jev.Switch
 ) -> IO(Out):
   +replied = reply_to(hs)
+  +to = fresh(replied, [])
+  +cc = reply_cc(bool_arg(args, "reply_all", False{}), hs, me, replied)
+  +subject = prefixed("Re:", hdr_line(hs, "subject"))
+  source = removed_fields(subject, reply_original(hs, p, cut), to, cc)
   do IO<Out>:
     rs : List<&2, Attachment()> <- atts_read(attachments_arg(args))
     o : Out <- with_atts(atts_collect(rs),
-      fresh(replied, []),
-      reply_cc(bool_arg(args, "reply_all", False{}), hs, me, replied),
+      strip_names(to),
+      strip_names(cc),
       strs_arg(args, "bcc"),
-      prefixed("Re:", hdr_line(hs, "subject")),
+      M.strip_tags(subject),
       reply_body(args, hs, p, cut),
       M.header(hs, "message-id"),
       String.trim(M.header(hs, "references") ++ " " ++ M.header(hs, "message-id")),
@@ -5691,7 +5850,7 @@ def reply_want(
       dry_arg(args),
       about,
       jev)
-    return with_fields(o, quote_fields(cut, quoted, size))
+    return with_fields_first(with_fields(o, quote_fields(cut, quoted, size)), source)
 
 def fwd_note(+hs: List<&2, M.Hdr>) -> String:
   "\n\n---------- Forwarded message ----------\nFrom: " ++ hdr_line(hs, "from") ++
@@ -5705,14 +5864,19 @@ def fwd_want(
   about: Jev.Context,
   jev: Jev.Switch
 ) -> IO(Out):
+  +subject = prefixed("Fwd:", hdr_line(hs, "subject"))
+  +note = fwd_note(hs)
+  source = removed_fields(subject, note, [], [])
   do IO<Out>:
     rs : List<&2, Attachment()> <-
       atts_read_within(attachments_arg(args), (max_attachment() - C.byte_len(raw) : U32))
-    with_atts(atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
+    o : Out <- with_atts(
+      atts_cons(M.Attach{"forwarded-message.eml", "message/rfc822", raw}, atts_collect(rs)),
       strs_arg(args, "to"), strs_arg(args, "cc"), strs_arg(args, "bcc"),
-      prefixed("Fwd:", hdr_line(hs, "subject")),
-      str_arg(args, "body", "") ++ fwd_note(hs),
+      M.strip_tags(subject),
+      str_arg(args, "body", "") ++ M.strip_tags(note),
       "", "", bool_arg(args, "as_draft", False{}), dry_arg(args), about, jev)
+    return with_fields_first(o, source)
 
 def respond_to(
   reply: Bool,
@@ -5819,8 +5983,13 @@ def t_respond.if(
         r : Run() <- imap_run(Ops.plan_get(folder_arg(args), u32_arg(args, "uid", 0), max))
         orig_found(r, args, mode, max, me, jev)
 
+def respond_check(+args: J.Json, reply: Bool) -> Result<&2, &2, String, Unit>:
+  do Result<&2, &2, String, Unit>:
+    request_ok : Unit <- checked(respond_request(args))
+    caller_hidden(args, reply)
+
 def t_respond(+args: J.Json, +mode: U32, jev: Jev.Switch) -> IO(Out):
-  t_respond.if(respond_request(args), args, mode,
+  t_respond.if(hidden_problem(respond_check(args, U32.is_eq(mode, 0))), args, mode,
     Bool.pick(U32, U32.is_eq(mode, 0), 262144, max_attachment()), jev)
 
 # Downloading attachments

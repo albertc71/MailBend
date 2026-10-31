@@ -240,6 +240,22 @@ Attachments and downloads stay off until `MAILBEND_ATTACH_DIR` and
 `MAILBEND_DOWNLOAD_DIR` name dedicated directories (see [Safety](#safety)).
 Jev's settings are in [docs/JEV.md](docs/JEV.md#settings).
 
+Outgoing sends and drafts refuse hidden Unicode tag characters outside valid
+emoji tag sequences, and bidi controls in attachment filenames, before stamping
+or delivery. Validity follows UTS #51 Annex C with pinned CLDR 49 identifiers,
+including valid non-RGI subdivision and numeric region flags. Ordinary RTL text,
+bidi controls outside filenames, and zero-width emoji joiners remain allowed.
+The `hidden_unicode` result reports `{tag, bidi, zero_width}` for the subject,
+body, sender display name, positional To/Cc/Bcc display names and attachment
+filenames. Encoded-word-looking filenames use literal RFC 2231 parameters and
+a neutral ASCII fallback so tolerant readers cannot decode hidden text from
+them. This ambiguous-input case changes MIME bytes, not the literal filename.
+LRM and RLM count in both `bidi` and `zero_width`. Allowed flags still
+have nonzero `tag` counts. Replies and forwards remove invalid tags only from
+copied source text and display names, and report those removals as `removed_tags`.
+The forwarded original `.eml` attachment remains unchanged. Dry runs report the
+same counts without sending or saving anything.
+
 Sending (`mail_send`, and replies and forwards that are not drafts) has its
 own optional settings. A malformed value refuses every send, never reads as
 off, and leaves drafts and reads alone:

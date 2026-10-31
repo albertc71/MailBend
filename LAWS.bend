@@ -1186,6 +1186,16 @@ law unpinned_reply_is_no_answer:
   ({Jev.reply_of(Jev.pinned(Some{j}), es, categories) == None{} : Maybe<&2, Jev.Reply>} &
    {Jev.outgoing_answers.put(Jev.pinned(Some{j}), asked) == None{} : Maybe<&2, J.Json>})
 
+# A refused outgoing check returns only an error. It never reaches the
+# stamp, SMTP envelope builder or Drafts APPEND, for either delivery mode.
+law hidden_tags_refuse_send_and_draft:
+  for first: Char
+  for rest: String
+  for w: Tools.Want
+  for from: String
+  {Tools.with_atts.if(SCon{first, rest}, w, from) ==
+    Tools.pure_out(Tools.Err{SCon{first, rest}}) : IO(Tools.Out)}
+
 # Gates
 # -----
 

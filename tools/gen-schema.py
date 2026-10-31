@@ -133,6 +133,11 @@ MOVE = record({**CHANGED, **MOVE_FIELDS})
 MOVE_PARTIAL = record({**MOVE_FIELDS, "ok": NO, "partial": YES, "message": S})
 FLAG_STOPPED = record({"ok": NO, "partial": YES, "folder": S,
                        "acknowledged": STRINGS, "unconfirmed": STRINGS, "message": S})
+HIDDEN_COUNT = record({"tag": N, "bidi": N, "zero_width": N})
+HIDDEN_UNICODE = record({"subject": HIDDEN_COUNT, "body": HIDDEN_COUNT,
+    "from": HIDDEN_COUNT, "to": array(HIDDEN_COUNT), "cc": array(HIDDEN_COUNT),
+    "bcc": array(HIDDEN_COUNT), "attachment_filenames": array(HIDDEN_COUNT)})
+REMOVED_TAGS = record({"subject": N, "body": N, "to": NUMBERS, "cc": NUMBERS})
 DRAFT = record({"ok": YES, "saved_to": S, "uid": NN, "message_id": S})
 SENT = record({"ok": YES, "sent": YES, "message_id": S, "recipients": N,
                "server_reply": S}, {**GATE, "sent_copy": S})
@@ -301,6 +306,14 @@ def output_schema(name):
         # Error and Partial results bypass response projection.
         variants += [projected(v, mode) for v in variants[1:]
                      for mode in ("full", "text", "html", "metadata")]
+    if name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
+        fields = {"hidden_unicode": HIDDEN_UNICODE}
+        if name in ("mail_reply", "mail_forward"):
+            fields["removed_tags"] = REMOVED_TAGS
+        variants = [{**v, "properties": {**v["properties"], **fields},
+                     "required": [*v["required"], *(fields if
+                         v["properties"].get("ok") == YES or "dry_run" in v["properties"] else {})]}
+                    for v in variants]
     return {"type": "object", "anyOf": variants}
 
 
@@ -448,6 +461,17 @@ FLAG_PARTIAL = (
     "unanswered; a retry is idempotent but may fail again on a server that "
     "refuses the colour keywords. A change that stopped before any store "
     "could run, or whose UIDs none exist, is a plain error.")
+HIDDEN_RULES = (
+    " Outgoing subject, body, display names and attachment filenames report "
+    "hidden_unicode counts (tag, bidi, zero_width). Caller tag characters "
+    "outside valid emoji tag sequences and bidi controls in filenames refuse "
+    "both sends and drafts before composition. Emoji tag validity uses pinned "
+    "CLDR 49 identifiers, not only RGI flags. Other bidi and zero-width text "
+    "remains allowed; LRM and RLM count in both categories. Encoded-word-looking "
+    "filenames are serialized literally with RFC 2231 and a safe ASCII fallback. "
+    "Replies and "
+    "forwards remove invalid inherited tags from copied text and display names "
+    "and report removed_tags separately; the attached original .eml is unchanged.")
 SEND_RULES = (
     " A send is refused, and nothing is sent, when a recipient is not in "
     "MAILBEND_ALLOWED_RECIPIENTS or the MAILBEND_MAX_SENDS_PER_DAY limit is "
@@ -460,7 +484,7 @@ SEND_RULES = (
     "the message is first scanned locally "
     "for secrets, then checked by Jev; a secret, unreadable text, a Jev "
     "block or a TypeSafe failure stops the send (the result has secret_scan "
-    "and jev). Saving a draft (mail_save_draft) is never checked.")
+    "and jev). Saving a draft (mail_save_draft) is never checked by Jev." + HIDDEN_RULES)
 JEV_NOTES = (
     " With MAILBEND_TYPESAFE on, each message also has a jev object with "
     "Jev's notes (reply_needed, action_required, priority, "
@@ -754,7 +778,7 @@ TOOLS = [
          "Compose a message and save it to the resolved drafts folder "
          "(configured override, advertised special use, or unique "
          "conventional name) without sending. Preserves Bcc recipients in the "
-         "draft.",
+         "draft." + HIDDEN_RULES,
          CHANGES, COMPOSE),
     tool("mail_send",
          "Compose and send a message over SMTP (verified TLS). From is "

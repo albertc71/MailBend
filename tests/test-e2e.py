@@ -336,6 +336,7 @@ def run_all(work):
     reply_quoting(work)
     reply_unicode_quoting(work)
     latin1_quotes(work)
+    outgoing_hidden_unicode(work)
     fallback(work)
     generic_folders(work)
     folder_tools(work)
@@ -5193,6 +5194,198 @@ def latin1_quotes(work):
               code == 0 and lines[3:] == ["> a", "> b"], (result, lines))
         check("Latin-1 quoting leaves original messages and flags unchanged",
               srv.st()["mailboxes"]["INBOX"] == original)
+    finally:
+        srv.stop()
+
+
+
+def outgoing_hidden_unicode(work):
+    """Outgoing hidden text is refused before delivery; inherited tags are removed."""
+    tag = "\U000e0061"
+    flags = ["\U0001f3f4" + "".join(chr(0xe0000 + ord(c)) for c in code) + "\U000e007f"
+             for code in ("gbeng", "gbsct", "gbwls", "usca", "gbukm", "001")]
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "From: =?UTF-8?B?" + base64.b64encode(("Alice" + tag).encode()).decode() +
+        "?= <alice@example.com>\r\nTo: " + FIX["user"] + "\r\n"
+        "Subject: =?UTF-8?B?" + base64.b64encode(("Original" + tag).encode()).decode() +
+        "?=\r\nDate: Monday\r\n"
+        "Message-ID: <hidden@example.com>\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: base64\r\n\r\n" +
+        base64.b64encode(("Original" + tag + " text").encode()).decode())
+    srv = Server(work, fixture=fixture)
+    attachment_dir = pathlib.Path(work) / "unicode-attachments"
+    attachment_dir.mkdir(exist_ok=True)
+    (attachment_dir / "data.txt").write_text("synthetic attachment")
+    try:
+        for name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
+            for dry in (False, True):
+                args = {"body": "caller" + tag, "dry_run": dry}
+                if name in ("mail_reply", "mail_forward"):
+                    args.update(uid=1, uidvalidity=INBOX_VALIDITY)
+                if name != "mail_reply":
+                    args["to"] = ["friend@example.com"]
+                before = srv.st()
+                start = len(srv.log_records())
+                code, result = tool(srv, name, args)
+                lines = [r["line"] for r in srv.log_records()[start:]]
+                check(f"hidden Unicode: {name} dry={dry} refuses caller tags without delivery",
+                      code != 0 and "body" in result.get("error", "")
+                      and tag not in json.dumps(result, ensure_ascii=False)
+                      and srv.st() == before
+                      and not lines,
+                      result)
+        called = pathlib.Path(work) / "hidden-helper-called"
+        helper = pathlib.Path(work) / "hidden-helper"
+        helper.write_text(f'#!/bin/sh\necho called >> "{called}"\nexit 1\n')
+        helper.chmod(0o755)
+        for name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
+            args = {"body": "caller" + tag, "attachments": [{"path": "missing.txt"}]}
+            if name in ("mail_reply", "mail_forward"):
+                args.update(uid=1, uidvalidity=INBOX_VALIDITY)
+            if name != "mail_reply":
+                args["to"] = ["friend@example.com"]
+            start = len(srv.log_records())
+            code, result = tool(srv, name, args, MAILBEND_ATTACH_DIR=str(attachment_dir),
+                MAILBEND_ATTACH_HELPER=str(helper), MAILBEND_TYPESAFE="1",
+                MAILBEND_TYPESAFE_KEY_FILE=str(pathlib.Path(work) / "not-read"),
+                MAILBEND_TYPESAFE_HELPER=str(helper))
+            check(f"hidden Unicode: {name} refuses before attachment, IMAP and Jev IO",
+                  code != 0 and "body" in result.get("error", "") and not called.exists()
+                  and len(srv.log_records()) == start, result)
+        for body, allowed in ((tag * 65536, False), ("\U0001f3f4visible" * 8192, True)):
+            replies, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "mail_send", "arguments": {
+                    "to": ["a@example.com"], "body": body, "dry_run": True}}}])
+            response = replies[0]["result"]
+            result = response["structuredContent"]
+            check(f"hidden Unicode: large MCP input remains bounded allowed={allowed}",
+                  response["isError"] is (not allowed)
+                  and (result.get("hidden_unicode", {}).get("body") ==
+                       {"tag": 0, "bidi": 0, "zero_width": 0} if allowed else
+                       "body" in result.get("error", "")), result)
+        for field, value in (("subject", "topic" + tag),
+                             *((key, ["Alice" + tag + " <a@example.com>"])
+                               for key in ("to", "cc", "bcc"))):
+            code, result = tool(srv, "mail_send", {"to": ["a@example.com"], "body": "visible",
+                                                     field: value})
+            check(f"hidden Unicode: caller {field} tags are refused without echo",
+                  code != 0 and field in result.get("error", "")
+                  and tag not in json.dumps(result, ensure_ascii=False), result)
+        encoded_tag = "=?UTF-8?B?" + base64.b64encode(("payload" + tag + ".txt").encode()).decode() + "?="
+        encoded_bidi = "=?UTF-8?B?" + base64.b64encode("invoice\u202efdp.exe".encode()).decode() + "?="
+        for filename in ("invoice\u202efdp.exe", "payload" + tag + ".txt"):
+            before = srv.st()
+            code, result = tool(srv, "mail_save_draft", {"body": "visible", "attachments": [
+                {"path": "data.txt", "filename": filename}]}, MAILBEND_ATTACH_DIR=str(attachment_dir))
+            check("hidden Unicode: attachment filename refusal names only the field",
+                  code != 0 and "attachment" in result.get("error", "")
+                  and filename not in json.dumps(result, ensure_ascii=False) and srv.st() == before, result)
+        for args, env, field in [
+            ({"to": ["a@example.com"], "body": "visible"},
+             {"MAILBEND_EMAIL": "Sender" + tag + " <sender@example.com>"}, "from"),
+            ({"attachments": [{"path": "missing/hidden" + tag + ".txt"}]}, {}, "attachments")]:
+            start = len(srv.log_records())
+            code, result = tool(srv, "mail_save_draft", args, **env)
+            check(f"hidden Unicode: final sender or filename basename refuses {field}",
+                  code != 0 and field in result.get("error", "")
+                  and len(srv.log_records()) == start, result)
+        encoded_names = [encoded_tag, encoded_bidi, encoded_bidi + ".txt",
+                         "=?UTF-8?B?YQ==?=" + encoded_bidi, encoded_bidi + "é.txt",
+                         encoded_bidi + "a" * 210]
+        for charset in ("utf-16-be", "utf-32-be"):
+            for content in ("invoice\u202efdp.exe", "payload" + tag + ".txt"):
+                encoded_names.append("=?" + charset + "?B?" +
+                    base64.b64encode(content.encode(charset)).decode() + "?=")
+        for name in ("mail_send", "mail_save_draft"):
+            for filename in encoded_names:
+                code, result = tool(srv, name, {"to": ["friend@example.com"], "body": "visible",
+                    "attachments": [{"path": "data.txt", "filename": filename}]},
+                    MAILBEND_ATTACH_DIR=str(attachment_dir))
+                state = srv.st()
+                raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                             if m["uid"] == result.get("uid")), "") if name == "mail_save_draft" else
+                       state.get("sent", [{}])[-1].get("data", ""))
+                message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+                attachment = next(message.iter_attachments(), None)
+                check(f"hidden Unicode: {name} encoded-word-looking filename stays literal",
+                      code == 0 and attachment is not None and attachment.get_filename() == filename
+                      and result.get("hidden_unicode", {}).get("attachment_filenames") ==
+                          [{"tag": 0, "bidi": 0, "zero_width": 0}],
+                      (result, attachment.get_filename() if attachment else None))
+                check("hidden Unicode: encoded-looking filename has safe name and filename parameters",
+                      attachment is not None and attachment.get_param("name") == filename
+                      and re.search(r'(?:^|;\r\n )filename="attachment"', raw)
+                      and re.search(r'(?:^|;\r\n )name="attachment"', raw))
+        literal = "=?UTF-8?B?" + base64.b64encode(("topic" + tag).encode()).decode() + "?="
+        for name in ("mail_send", "mail_save_draft"):
+            code, result = tool(srv, name, {"to": [literal + " <a@example.com>"],
+                                          "subject": literal, "body": "visible"})
+            state = srv.st()
+            raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                         if m["uid"] == result.get("uid")), "") if name == "mail_save_draft" else
+                   state.get("sent", [{}])[-1].get("data", ""))
+            message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+            check(f"hidden Unicode: {name} encoded-word-looking headers remain visible literal text",
+                  code == 0 and str(message.get("Subject", "")) == literal
+                  and message["To"].addresses[0].display_name == literal
+                  and result.get("hidden_unicode", {}).get("subject", {}).get("tag") == 0,
+                  (result, str(message.get("Subject", "")), str(message.get("To", ""))))
+        visible = "العربية 日本語 café 👩\u200d💻 " + " ".join(flags) + "\u202aRTL\u202c"
+        for name in ("mail_send", "mail_save_draft"):
+            for dry in (False, True):
+                code, result = tool(srv, name, {"to": ["Zoë\u200b <a@example.com>"],
+                    "cc": ["عربي\u200f <c@example.com>"], "bcc": ["blind\u200c <b@example.com>"],
+                    "subject": "日本語",
+                    "body": visible, "dry_run": dry, "attachments": [
+                        {"path": "data.txt", "filename": "تقرير.txt"}]},
+                    MAILBEND_ATTACH_DIR=str(attachment_dir))
+                hidden = result.get("hidden_unicode", {})
+                check(f"hidden Unicode: {name} dry={dry} preserves visible text and counts flags",
+                      code == 0 and hidden.get("body") == {"tag": 33, "bidi": 2, "zero_width": 1}
+                      and hidden.get("subject") == {"tag": 0, "bidi": 0, "zero_width": 0}
+                      and hidden.get("to") == [{"tag": 0, "bidi": 0, "zero_width": 1}]
+                      and hidden.get("cc") == [{"tag": 0, "bidi": 1, "zero_width": 1}]
+                      and hidden.get("bcc") == [{"tag": 0, "bidi": 0, "zero_width": 1}]
+                      and hidden.get("attachment_filenames") == [{"tag": 0, "bidi": 0, "zero_width": 0}], result)
+        for name in ("mail_reply", "mail_forward"):
+            for draft in (False, True):
+                args = {"uid": 1, "uidvalidity": INBOX_VALIDITY,
+                        "body": "My visible answer", "as_draft": draft}
+                if name == "mail_forward":
+                    args["to"] = ["friend@example.com"]
+                code, result = tool(srv, name, args)
+                state = srv.st()
+                raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                             if m["uid"] == result.get("uid")), "") if draft else
+                       state.get("sent", [{}])[-1].get("data", ""))
+                message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+                body = message.get_body(preferencelist=("plain",))
+                text = body.get_content() if body else ""
+                removed = result.get("removed_tags", {})
+                check(f"hidden Unicode: {name} draft={draft} strips inherited tags and reports removal",
+                      code == 0 and tag not in text and tag not in str(message.get("Subject", ""))
+                      and "My visible answer" in text and removed.get("subject") == 1
+                      and removed.get("body") == 2
+                      and result.get("hidden_unicode", {}).get("body", {}).get("tag") == 0, result)
+                if name == "mail_forward":
+                    boundary = message.get_boundary()
+                    part = next((p for p in raw.split("--" + boundary)
+                                 if "filename=\"forwarded-message.eml\"" in p), "")
+                    attached = part.split("\r\n\r\n", 1)[1][:-2] if "\r\n\r\n" in part else ""
+                    check(f"hidden Unicode: forwarded original remains byte-identical draft={draft}",
+                          attached == fixture["mailboxes"]["INBOX"]["messages"][0]["raw"])
+        for name in ("mail_send", "mail_forward"):
+            args = {"to": ["lost-reply@example.com"], "body": "visible\u200b"}
+            if name == "mail_forward":
+                args.update(uid=1, uidvalidity=INBOX_VALIDITY)
+            code, result = tool(srv, name, args)
+            check(f"hidden Unicode: {name} keeps counts on uncertain SMTP outcome",
+                  code != 0 and result.get("smtp_outcome") == "unknown"
+                  and result.get("hidden_unicode", {}).get("body") ==
+                      {"tag": 0, "bidi": 0, "zero_width": 1}
+                  and (name == "mail_send" or result.get("removed_tags", {}).get("body") == 2), result)
     finally:
         srv.stop()
 
