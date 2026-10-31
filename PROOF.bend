@@ -1561,6 +1561,9 @@ def Laws.unpinned_reply_is_no_answer(j, es, categories, asked, unpinned):
   +u = unpinned
   (unpinned_reply(j, es, categories, u), unpinned_outgoing(j, asked, u))
 
+def Laws.hidden_tags_refuse_send_and_draft(first, rest, w, from):
+  {==}
+
 # Gates
 # -----
 
