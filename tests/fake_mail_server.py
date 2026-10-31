@@ -275,7 +275,10 @@ class State:
 
 
 class Logger:
-    def __init__(self, path: str):
+    def __init__(self, path: str, composed: str | None = None):
+        self.composed = composed
+        if composed:
+            open(composed, 'w', encoding='utf-8').close()
         self.lock = threading.Lock()
         self.path = path
         open(path, 'w', encoding='utf-8').close()
@@ -284,6 +287,12 @@ class Logger:
         with self.lock:
             with open(self.path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps({'proto': proto, 'line': line}, ensure_ascii=False) + '\n')
+
+
+    def composition(self, protocol: str, raw: str):
+        if self.composed:
+            with self.lock, open(self.composed, 'a', encoding='utf-8') as stream:
+                stream.write(json.dumps({'protocol': protocol, 'raw': raw}) + '\n')
 
 
 # --------------------------------------------------------------------------
@@ -743,6 +752,8 @@ class IMAPSession:
     def run_command(self, tokens):
         """Runs one command, applying the --reject and --drop-* faults."""
         verb = self.verb_of(tokens)
+        if verb == 'APPEND' and len(tokens) >= 4 and isinstance(tokens[-1], bytes):
+            self.logger.composition('append', tokens[-1].decode('latin-1'))
         self.state.seen[verb] = self.state.seen.get(verb, 0) + 1
         names = {verb, f'{verb}#{self.state.seen[verb]}'}
         if names & self.state.reject and tokens and isinstance(tokens[0], bytes):
@@ -1586,6 +1597,7 @@ class SMTPSession:
             lines.append(text)
         data = ('\r\n'.join(lines) + '\r\n') if lines else ''
         self.logger.log('smtp', f'<message {len(data)} bytes>')
+        self.logger.composition('smtp', data)
         if 'final-reject@example.com' in self.rcpt_to:
             self.send('554 5.7.1 message refused\r\n')
             return
@@ -1646,6 +1658,7 @@ def main():
                     help='close the IMAP connection after answering these comma-separated commands')
     ap.add_argument('--drop-unanswered', type=parse_upper_names, default=set(),
                     help='run these comma-separated commands, then close the connection without answering')
+    ap.add_argument('--composed', help='write complete received SMTP DATA and APPEND wires as JSONL')
     ap.add_argument('--reject', type=parse_upper_names, default=set(),
                     help='answer these comma-separated commands NO without running them')
     ap.add_argument('--permanent-flags', type=lambda v: sorted(parse_names(v)), default=DEFAULT_PERMANENT_FLAGS,
@@ -1699,7 +1712,7 @@ def main():
     state.cut_goodbye = args.cut_goodbye
     state.file_sent = args.file_sent
     state.bodystructure = args.bodystructure
-    logger = Logger(args.log)
+    logger = Logger(args.log, args.composed)
     caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)
     if args.require_sni:

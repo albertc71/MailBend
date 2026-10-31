@@ -1,0 +1,36 @@
+{
+  "status": "recovery",
+  "wire": "malformed",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Whole-message base64 recovery is permissive. The selected-part path must still reject noncanonical transfer data."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/147"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "base64-invalid-suffix",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<base64-invalid-suffix@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "hi",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "selected": [
+    {
+      "section": "1",
+      "error": "incomplete or malformed base64 part"
+    }
+  ]
+}

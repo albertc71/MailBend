@@ -1,0 +1,37 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture. The quoted-printable soft break has its own CRLF, separate from the encapsulation boundary CRLF. No personal mail or third-party sample."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/147"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "qp-final-soft-break-complete",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<qp-final-soft-break-complete@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "last",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "selected": [
+    {
+      "section": "1",
+      "content": "last"
+    }
+  ]
+}

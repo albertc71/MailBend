@@ -8,6 +8,7 @@ import ../../src/codec.bend as C
 import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/mime.bend as M
+import ../composition-cases.bend as V
 import ../../src/ops.bend as Ops
 import ../../src/schema.bend as Schema
 import ../../src/tools.bend as T
@@ -805,15 +806,20 @@ def want(to: List<&2, String>, bcc: List<&2, String>, draft: Bool) -> T.Want:
   T.Want{to, ["c@y.com"], bcc, "Subject", "Body", "<irt@x>", "<r@x>", [], draft, False{},
     Jev.Fresh{}, Jev.Off{}}
 
-def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
+def show_stamp_fields(st: T.Stamp) -> String:
   T.Stamp{date, token} = st
+  date ++ " " ++ token
+
+def check_drafts() -> IO(Unit):
+  +st = T.stamp_of(1700000000, 1, 255)
+  +w = want(["A <a@x.com>"], ["b@z.com"], False{})
   do IO<Unit>:
-    IO.print(date ++ " " ++ token ++ " " ++ T.boundary_of(st))
+    IO.print(show_stamp_fields(st) ++ " " ++ T.boundary_of(st))
     IO.print(T.msgid_of(T.draft_of(w, "me@my.org", st, True{})) ++ " " ++
       String.join(T.all_rcpts(w), ",") ++ " " ++ show_bool(T.is_draft(w)) ++ " " ++
       String.join(T.specs(T.all_rcpts(w)), ","))
-    IO.print(show_line_endings(M.compose(T.draft_of(w, "me@my.org", st, True{}), "B")))
-    IO.print(show_line_endings(M.compose(T.draft_of(w, "me@my.org", st, False{}), "B")))
+    IO.print(show_line_endings(V.wire(V.KeptBcc{})))
+    IO.print(show_line_endings(V.wire(V.HiddenBcc{})))
 
 def show_random(r: Result<&2, &2, String, U32>) -> String:
   match r:
@@ -873,7 +879,7 @@ def check_compose() -> IO(Unit):
       U32.show(T.secs_of(T.ProcRefused{"x"})) ++
       " " ++ show_random(T.rand_of(Done{5})) ++ " " ++ show_random(T.rand_of(Fail{(1, "x")})))
     IO.print(T.domain_of("A <a@Example.com>") ++ " " ++ T.domain_of("bad"))
-    check_drafts(T.stamp_of(1700000000, 1, 255), want(["A <a@x.com>"], ["b@z.com"], False{}))
+    check_drafts()
     IO.print(
       J.show(T.appended_uid(I.frame("L OK\r\na1 OK [APPENDUID 7 42] done\r\n"))) ++ " " ++
       J.show(T.appended_uid(I.frame("L OK\r\na1 OK done\r\n"))) ++ " " ++

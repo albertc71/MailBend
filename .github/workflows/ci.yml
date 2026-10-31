@@ -33,7 +33,15 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang openssl python3-jsonschema
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl
+
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+
+      - name: Install result-schema test dependency
+        run: python3 -m pip install jsonschema==4.26.0
 
       - name: Install Rust 1.99 (native/rust-toolchain.toml)
         run: rustup toolchain install 1.99 --profile minimal
@@ -141,6 +149,9 @@ jobs:
 
       - name: Build
         run: scripts/install.sh
+
+      - name: MIME and internationalisation corpus
+        run: python3 tests/test-mime-corpus.py
 
       - name: Installer staging, locking, signals and fallback warnings
         run: python3 tests/test-install.py

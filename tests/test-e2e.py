@@ -28,6 +28,8 @@ import time
 
 from jsonschema import Draft202012Validator
 
+import mime_oracle
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
 FIXTURE = ROOT / "tests" / "fixtures" / "mailbox.json"
@@ -68,6 +70,7 @@ def validate_output(name, value):
 
 
 results = []
+composed_messages = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
 
 
@@ -82,6 +85,7 @@ class Server:
         self.smtp_mode = "implicit" if "--smtp-implicit" in extra else "starttls"
         self.state = os.path.join(work, "state.json")
         self.log = os.path.join(work, "log.jsonl")
+        self.composed = os.path.join(work, "composed.jsonl")
         for f in (self.state, self.log):
             if os.path.exists(f):
                 os.remove(f)
@@ -90,7 +94,8 @@ class Server:
             fixture_path = pathlib.Path(work) / "scenario-fixture.json"
             fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
         cmd = [sys.executable, str(ROOT / "tests" / "fake_mail_server.py"), "--certdir", os.path.join(work, "certs"),
-               "--fixture", str(fixture_path), "--state", self.state, "--log", self.log, *extra]
+               "--fixture", str(fixture_path), "--state", self.state, "--log", self.log,
+               "--composed", self.composed, *extra]
         if caps is not None:
             cmd += ["--caps", caps]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
@@ -145,6 +150,7 @@ class Server:
             self.proc.kill()
             self.proc.wait()
         self.proc.stdout.close()
+        composed_messages.extend(json.loads(line) for line in pathlib.Path(self.composed).read_text().splitlines())
 
 
 def tool(srv, name, args=None, **env):
@@ -309,7 +315,13 @@ def main():
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
-        run_all(work)
+        try:
+            run_all(work)
+        finally:
+            try:
+                mime_oracle.check_captured(composed_messages, check)
+            except Exception as error:
+                check("received composition audit completed", False, repr(error))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
