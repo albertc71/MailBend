@@ -356,6 +356,7 @@ def run_all(work):
     selected_parts(work)
     selected_parts_errors(work)
 
+    search_flags(work)
     search_pagination(work)
     refresh_known(work)
     import importlib.util
@@ -514,6 +515,50 @@ def sign_in_html(work):
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
                 srv.stop()
+
+
+def search_flags(work):
+    srv = Server(work)
+    try:
+        before = srv.st()
+        for args, key, expected in (
+            ({"flagged": False}, "UNFLAGGED", [6, 4, 3, 2, 1]),
+            ({"seen": False}, "UNSEEN", [6, 4, 3, 2, 1]),
+            ({"unseen": False}, "SEEN", [5]),
+            ({"seen": True, "unseen": False}, "SEEN", [5]),
+            ({"seen": False, "unseen": True}, "UNSEEN", [6, 4, 3, 2, 1]),
+        ):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", args)
+            searches = [line.split(" UID SEARCH ", 1)[1].split()
+                        for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+            check(f"search flags {args}: exact matching messages", c == 0
+                  and [m["uid"] for m in r.get("messages", [])] == expected, r)
+            check(f"search flags {args}: exactly one {key} key", searches == [[key]], searches)
+        for value in (True, False):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", {"seen": value, "unseen": value})
+            check(f"search flags: contradictory {value} pair refused before login", c != 0
+                  and "seen" in r.get("error", "") and "unseen" in r.get("error", "")
+                  and len(srv.log_lines()) == start, r)
+        c, first = tool(srv, "mail_search", {"flagged": False, "limit": 1})
+        cursor = first.get("next_cursor")
+        check("search flags: negative criterion yields a continuation", c == 0
+              and isinstance(cursor, str), first)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"cursor": cursor, "limit": 1})
+        check("search flags: omitted negative criterion refuses cursor before login", c != 0
+              and "cursor" in r.get("error", "") and len(srv.log_lines()) == start, r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search")
+        check("search flags: omitted flags keep every message", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == [6, 5, 4, 3, 2, 1], r)
+        searches = [line for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+        check("search flags: omitted flags still send ALL", len(searches) == 1
+              and searches[0].endswith(" UID SEARCH ALL"), searches)
+        check("search flags: message flags unchanged", srv.st() == before)
+    finally:
+        srv.stop()
 
 
 def search_pagination(work):

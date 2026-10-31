@@ -502,9 +502,12 @@ TOOLS = [
           "text": param("string", "Text anywhere in headers or body."),
           "since": param("string", "On or after this date, YYYY-MM-DD."),
           "before": param("string", "Before this date, YYYY-MM-DD."),
-          "unseen": param("boolean"),
-          "seen": param("boolean"),
-          "flagged": param("boolean"),
+          "unseen": param("boolean", "True selects unread; false selects read. Omit for either. "
+                          "If seen is also given, the values must be opposite."),
+          "seen": param("boolean", "True selects read; false selects unread. Omit for either. "
+                        "If unseen is also given, the values must be opposite."),
+          "flagged": param("boolean", "True selects flagged; false selects unflagged. "
+                           "Omit for either."),
           "cursor": param("string", "Opaque continuation from next_cursor; at most 4096 characters.",
                           maxLength=4096),
           "limit": param("integer", "Default 20.", minimum=1, maximum=200)}),
