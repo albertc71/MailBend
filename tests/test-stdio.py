@@ -19,7 +19,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHERS = [ROOT / "scripts/mailbend", ROOT / "scripts/mailbend-cloud"]
 STDIO_BINARY = ROOT / "bin/mailbend-stdio"
-ENV = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+ENV = {k: v for k, v in os.environ.items()
+       if not k.startswith("MAILBEND_") and k not in {"SSL_CERT_FILE", "SSL_CERT_DIR"}}
 ENV["MAILBEND_READ_ONLY"] = "1"
 ENV["MAILBEND_TYPESAFE"] = "0"
 ENV["BEND_NO_TELEMETRY"] = "1"

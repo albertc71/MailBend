@@ -42,7 +42,7 @@ pub fn run(protocol: Protocol) -> Result<Outcome, Exit> {
     let credentials = creds::load()?;
     let input = read_input()?;
     let plan = Plan::parse(protocol, &input)?;
-    let tls = tls::client_config(settings.ca_file.as_deref())?;
+    let (tls, _) = tls::client_config(settings.ca_file.as_deref())?;
     let mut conn = Connection::new(route::connect(&settings, &tls)?);
     let host = &settings.host;
     let outcome = match &plan {

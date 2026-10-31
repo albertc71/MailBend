@@ -85,7 +85,7 @@ pub fn ask(
     images: bool,
 ) -> Result<Vec<u8>, (Exit, Vec<u8>)> {
     let no_body = |exit| (exit, Vec::new());
-    let config = tls::client_config(settings.ca_file.as_deref())
+    let (config, _) = tls::client_config(settings.ca_file.as_deref())
         .map_err(|e| no_body(Exit::new(Failure::Connect, e.to_string())))?;
     let mut waits = attempts.waits().iter();
     loop {

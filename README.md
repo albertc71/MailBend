@@ -591,9 +591,16 @@ synthetic cost measurements and experiment decision are in
   directory in `PATH`). A saved file is still untrusted content. Mechanics:
   [native/README.md](native/README.md#contract).
 - **Jev sees only what you allow.** See [Jev](#jev-optional).
-- **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
-  test server; whoever sets it decides which servers are trusted, so never
-  set it in production. `scripts/mailbend` prints a warning when it is set.
+- **Trust overrides replace the system trust store.** Both network helpers
+  honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, combining their certificates when
+  both are configured. No usable roots means failure, not platform fallback.
+  Empty directory entries are ignored, but an empty file value fails to load.
+  A nonempty `MAILBEND_CA_FILE` takes precedence and exists for local test
+  servers. Never set it in production. Whoever sets an override chooses
+  which servers are trusted. Certificate and hostname verification remain
+  mandatory. `scripts/mailbend` warns when an override is set.
+  `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
+  without the path. See the [native trust rule](native/README.md#contract).
 - **Commands run in lock-step.** They run one at a time and stop at the
   first rejection; message contents are framed as IMAP literals, so a
   message cannot spoof a server reply.
