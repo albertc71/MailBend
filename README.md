@@ -323,6 +323,20 @@ scripts/mailbend tools        # the tool list with JSON schemas
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
 
+Stopping the server PID with INT, TERM, HUP or QUIT stops the core but allows
+an already-started helper plan to continue, with either pipe or socket stdin.
+The helper's per-operation timeouts still apply, but there is no total-plan
+deadline after the core exits. A plan can still stop on a server rejection or
+I/O failure. SMTP sends no message bytes if the core has exited before the
+helper writes its pre-body progress marker. Once that marker succeeds, the
+send may continue. SIGKILL remains the hard stop for the adapter and core,
+not a guarantee that every helper has stopped. Clients that terminate a
+broader process tree can also kill helpers.
+
+After the core exits there is no completion or partial result, and MailBend
+does not retry the plan. Check the mailbox or delivery outcome before retrying
+a change. See the [adapter lifecycle](native/README.md#mcp-stdin-adapter).
+
 Register the MCP server (stdio) with your agent, using the absolute path:
 
 ```json
@@ -557,7 +571,7 @@ synthetic cost measurements and experiment decision are in
   `To Delete` or a category folder passed in, never into INBOX, a role
   folder or the folder it reads, and creates no folder (proven for every
   input).
-- **An interrupted move says so.** A move (`mail_move`, `mail_trash`,
+- **The running core reports interrupted changes.** A move (`mail_move`, `mail_trash`,
   `mail_label`) cut off when its COPY may have run fails with `partial: true`
   (the messages may be in both folders; `isError` over MCP, exit 1 on the
   CLI), never as an error that implies nothing changed. A refused or earlier
@@ -571,7 +585,8 @@ synthetic cost measurements and experiment decision are in
   A helper that never started (a relative `MAILBEND_TLS_HELPER`, or one that
   cannot be spawned) changed nothing, so it is an ordinary error; one that
   failed after starting or was killed by a signal may have, so these changes
-  count it as cut off.
+  count it as cut off. These results require the core to remain alive. Stopping
+  the core can leave a completed or partial change with no result to the client.
 - **Attachments stay inside one directory.** Attachments are read only from
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   the credential-free `mailbend-attach`, which refuses symlinks, `..`, hard
