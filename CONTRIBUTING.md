@@ -41,6 +41,8 @@ sh scripts/install-lean.sh                        # once: the Lean that bend --v
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
+python3 tests/test-writing-laws.py                # malformed guide fences fail closed
+python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 sh tests/run-unit.sh
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
@@ -96,7 +98,8 @@ After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 4. State what it must never do as laws in `LAWS.bend`, prove them in
    `PROOF.bend`, and update the tool-list laws, which name every tool.
    Laws are the owner's: explain each new or changed law in the pull
-   request.
+   request. Follow [Writing laws](docs/WRITING-LAWS.md) for proof patterns,
+   vacuity checks, and an executable example.
 5. Decide what Jev does in it. Most tools never ask Jev. A tool that sends
    or deletes must reach SMTP or the delete plan only through
    `Jev.outbound_checked` or `Jev.delete_checked`, which the CI source
