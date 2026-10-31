@@ -8,8 +8,11 @@
 # only appear in the goal are erased.
 
 import Base
+import ./tests/formal/budget-observers.bend as Budget
+import ./tests/formal/budget-proofs.bend as BudgetProof
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
+import ./src/codec.bend as C
 import ./src/imap.bend as I
 import ./src/sections.bend as Part
 
@@ -1643,3 +1646,88 @@ def Laws.response_preserves_nonbody(key, value, left, nonbody):
       {==}
     case J.JKv{k, v}:
       {==}
+
+def prefix_is_prefix.put(enough: Bool, p: Response.Prefix, c: Char, left: U32,
+  tail: String, e: &suffix: String -> {Budget.prefix_text(p) ++ suffix == tail : String})
+  -> &suffix: String ->
+    {Budget.prefix_text(Response.prefix.put(p, enough, c, left)) ++ suffix ==
+      SCon{c, tail} : String}:
+  match enough p:
+    case False{} Response.Prefix{part, remain}:
+      (SCon{c, tail}, {==})
+    case True{} Response.Prefix{part, remain}:
+      (suffix, eq) = e
+      (suffix, Equal.cong(String, String, s => SCon{c, s},
+        Budget.prefix_text(p) ++ suffix, tail, eq))
+
+def prefix_is_prefix.go(s: String, +left: U32, run: Bool)
+  -> &suffix: String ->
+    {Budget.prefix_text(Response.prefix.go(s, left, run)) ++ suffix == s : String}:
+  match s run:
+    case _ False{}:
+      (s, {==})
+    case SNil{} True{}:
+      ("", {==})
+    case SCon{+c, +t} True{}:
+      +n = C.utf8_len(J.esc_char(c))
+      +enough = U32.is_ge(left, n)
+      +next = Bool.pick(U32, enough, (left - n : U32), 0)
+      prefix_is_prefix.put(enough, Response.prefix.go(t, next, enough), c, left, t,
+        prefix_is_prefix.go(t, next, enough))
+
+def Laws.prefix_is_prefix(s, left):
+  prefix_is_prefix.go(s, left, True{})
+
+def Laws.prefix_conserves_scalar_allowance(s, left):
+  BudgetProof.prefix_conserves(s, left)
+
+def Laws.prefix_whole_when_scalar_room(s, left, extra, enough):
+  BudgetProof.prefix_whole(s, left, extra, enough)
+
+# Image admission budgets
+# -----------------------
+
+def image_used_only_with_clear_ref.if(ok: Bool, -token: String, -left: Nat,
+  -corpus: String, -still: Image.Still, -room: Image.Room,
+  -rest: List<&2, Image.Verdict>, -acc: List<&2, Image.Fate>)
+  -> {Image.bind_use.clear(ok, token, left, corpus, still, room, rest, acc) ==
+    Bool.pick(Image.Bind, ok,
+      Image.BWalk{rest, corpus ++ "\n" ++ token, room,
+        Image.Used{Image.Sent{still, Image.Ref{token}}} <> acc},
+      Image.BMint{left, corpus, still, room, rest, acc}) : Image.Bind}:
+  match ok:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.image_used_only_with_clear_ref(token, left, corpus, still, room, rest, acc):
+  image_used_only_with_clear_ref.if(Image.ref_clear(token, corpus), token, left, corpus,
+    still, room, rest, acc)
+
+def image_admission_count_cap.put(-before: Image.Room, +a: Budget.Admission,
+  proof: BudgetProof.all_conserved(before, a))
+  -> {Nat.is_le(List.length(&2, Image.Still, Budget.stills(a)),
+    U32.to_nat(Budget.count(before))) == True{} : Bool}:
+  (count, bytes) = proof
+  BudgetProof.conserved_bound(U32.to_nat(Budget.count(before)),
+    List.length(&2, Image.Still, Budget.stills(a)),
+    U32.to_nat(Budget.count(Budget.remaining(a))), count)
+
+def Laws.image_admission_count_cap(vs):
+  +items = vs
+  image_admission_count_cap.put(Image.room_new(), Budget.admit_all(items, Image.room_new()),
+    BudgetProof.admit_all_conserves(items, Image.room_new()))
+
+def image_admission_byte_cap.put(-before: Image.Room, +a: Budget.Admission,
+  exact: Budget.lengths_exact(Budget.stills(a)),
+  proof: BudgetProof.all_conserved(before, a))
+  -> Budget.Within<Budget.exact_bytes(Budget.stills(a)), Budget.bytes(before)>:
+  (count, bytes) = proof
+  %BudgetProof.measured_exact(Budget.stills(a), exact) : Budget.Within<_, Budget.bytes(before)>
+  Budget.Within{U32.to_nat(Budget.bytes(Budget.remaining(a))), bytes}
+
+def Laws.image_admission_byte_cap(vs, exact):
+  +items = vs
+  image_admission_byte_cap.put(Image.room_new(), Budget.admit_all(items, Image.room_new()), exact,
+    BudgetProof.admit_all_conserves(items, Image.room_new()))

@@ -121,6 +121,9 @@ jobs:
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
 
+      - name: Response and image budget proof mutation checks
+        run: python3 tests/formal/check-response-image-budgets.py
+
       - name: Unit tests
         run: sh tests/run-unit.sh
 

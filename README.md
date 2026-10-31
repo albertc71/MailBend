@@ -638,9 +638,29 @@ maps each rule to the code and checks that enforce it.
 
 Response projection laws also prove that the per-field selection predicate
 keeps non-body fields, and fitting one non-body field preserves its value and
-byte allowance. A separate law fixes the body classifier to exactly `text`, `html` and selected-part `content`, so safety fields cannot silently become shorten-able. Full result/list assembly, whole-response
-byte bounds, cursor paging and unchanged Jev inputs are tested; those are not
-claimed as universally quantified budget or IO proofs.
+byte allowance. A separate law fixes the body classifier to exactly `text`,
+`html` and selected-part `content`, so safety fields cannot silently become
+shorten-able. The prefix laws prove that every cut is a prefix of its input,
+that its scalar escape costs plus unused allowance equal the original
+allowance as natural numbers, and that sufficient room preserves the whole
+string and the exact remainder. The arithmetic proof follows the actual U32
+subtraction, not a separate Nat-only implementation.
+
+Image admission laws prove that a pure fold of the real admission step takes
+at most four images. Their byte theorem bounds the natural-number sum of
+accepted byte-string lengths by 1,572,864, with an explicit premise that each
+length is represented exactly by the U32 byte counter. Arbitrary mathematical
+strings could otherwise wrap that counter. The reference law proves that a
+new `Used` fate requires a token absent from the request corpus and adds that
+token to the corpus.
+
+The correspondence between these scalar costs and `C.utf8_len(J.esc(s))`
+remains unproven. Complete JSON serialization correspondence, full
+result/list assembly, whole-response byte bounds, cursor paging, unchanged
+Jev inputs, bounded native fetches and image request assembly remain tested.
+They are not claimed as universally quantified serialization or IO proofs. The budget mutation
+check rejects a cut that retains an over-budget scalar and admission that
+ignores the image count.
 
 ## How it works
 
