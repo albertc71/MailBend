@@ -5,6 +5,7 @@
 # MCP uses the stdio helper to adapt inherited sockets before starting the core.
 # Usage: scripts/mailbend mcp | tools | call <tool> [json]
 set -eu
+ulimit -c 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${MAILBEND_TLS_HELPER:=$root/bin/mailbend-tls}"
 : "${MAILBEND_ATTACH_HELPER:=$root/bin/mailbend-attach}"

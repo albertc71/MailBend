@@ -47,12 +47,13 @@ pub fn run(
     tls: &Arc<ClientConfig>,
     host: &str,
     mode: SmtpTlsMode,
-    creds: &Credentials,
+    creds: Credentials,
     steps: &[Step<'_>],
 ) -> Result<Outcome, Exit> {
     let ehlo = negotiate_tls(conn, tls, host, mode)?;
     conn.enter_stage("authentication");
-    authenticate(conn, &ehlo, creds)?;
+    authenticate(conn, &ehlo, &creds)?;
+    drop(creds);
     conn.enter_stage("commands");
     let rejected_with = send_envelope(conn, steps)?;
     // After 421 the server has already closed the connection.

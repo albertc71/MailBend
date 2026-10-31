@@ -37,7 +37,7 @@ pub fn run(
     conn: &mut Connection,
     tls: &Arc<ClientConfig>,
     host: &str,
-    creds: &Credentials,
+    creds: Credentials,
     commands: &[Command<'_>],
 ) -> Result<Outcome, Exit> {
     conn.enter_stage("tls");
@@ -50,11 +50,12 @@ pub fn run(
     match greeting(&first) {
         Some(Greeting::Ok) => {
             conn.enter_stage("authentication");
-            login(conn, creds)?;
+            login(conn, &creds)?;
         }
         Some(Greeting::Preauth) => conn.enter_stage("authentication"),
         None => return Err(Exit::protocol("server refused the connection")),
     }
+    drop(creds);
     conn.enter_stage("commands");
     let outcome = run_commands(conn, commands)?;
     logout(conn);
@@ -233,6 +234,7 @@ mod tests {
         let creds = Credentials {
             user: Zeroizing::new(b"user@example.com".to_vec()),
             pass: Zeroizing::new(b"fixture-password".to_vec()),
+            _drop_witness: None,
         };
         let mut conn = Connection::new(TcpStream::connect(addr).expect("connect"));
         let result = login(&mut conn, &creds);

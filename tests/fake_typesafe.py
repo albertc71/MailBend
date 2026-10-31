@@ -68,6 +68,7 @@ import base64
 import binascii
 import json
 import os
+from pathlib import Path
 import socket
 import ssl
 import struct
@@ -296,22 +297,40 @@ def outgoing_answer(outgoing):
     return {"type": "noul", "noul": 0.95 if "[veto]" in seen else 0.05}
 
 
-def environ_names():
-    """The names of the environment variables of each running helper."""
+def protected_environment(pid, proc=Path("/proc")):
+    """A denied read counts only when proc ownership differs from the helper UID."""
+    base = proc / str(pid)
+    status = (base / "status").read_text()
+    uid = next(line.split()[1:] for line in status.splitlines() if line.startswith("Uid:"))
+    limits = (base / "limits").read_text()
+    core = next(line.split()[4:6] for line in limits.splitlines() if line.startswith("Max core file size"))
+    return (os.geteuid() != 0 and all(int(value) == os.geteuid() for value in uid)
+            and (base / "environ").stat().st_uid != os.geteuid() and core == ["0", "0"])
+
+
+def environ_names(proc=Path("/proc")):
+    """Names from readable helpers, or verified non-dumpable markers."""
     found = []
-    for pid in os.listdir("/proc"):
-        if not pid.isdigit():
+    for base in proc.iterdir():
+        if not base.name.isdigit():
             continue
         try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                program = f.read().split(b"\0")[0]
-            if not program.endswith(b"mailbend-typesafe"):
-                continue
-            with open(f"/proc/{pid}/environ", "rb") as f:
-                entries = f.read().split(b"\0")
-        except OSError:
+            program = (base / "cmdline").read_bytes().split(b"\0")[0]
+        except (PermissionError, FileNotFoundError, ProcessLookupError):
             continue
-        found.append(sorted(e.split(b"=", 1)[0].decode("latin-1") for e in entries if e))
+        if not program.endswith(b"mailbend-typesafe"):
+            continue
+        try:
+            try:
+                entries = (base / "environ").read_bytes().split(b"\0")
+            except PermissionError:
+                if not protected_environment(base.name, proc):
+                    raise
+                found.append({"non_dumpable": True})
+            else:
+                found.append({"names": sorted(e.split(b"=", 1)[0].decode("latin-1") for e in entries if e)})
+        except (FileNotFoundError, ProcessLookupError):
+            continue
     return found
 
 
