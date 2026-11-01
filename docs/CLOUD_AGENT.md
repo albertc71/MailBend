@@ -308,11 +308,20 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
   alternatively use a numeric HTTPS URL only if its certificate covers that
   IP. The fixed bootstrap applies only to `cloudflare-dns.com:443`.
 - **Privacy and trust:** the resolver learns queried hostnames, not passwords
-  or mail. Both resolver HTTPS and mail TLS verify peers and names. Normal
-  system CA trust applies, including any administrator-installed CA. There
-  is no certificate/fingerprint pinning and no verification bypass.
-  `MAILBEND_CA_FILE` replaces trust for both paths and is intended for local
-  tests; do not use it to work around an unexpected certificate failure.
+  or mail. Resolver HTTPS, mail TLS and TypeSafe HTTPS verify peers and names.
+  Both helpers honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, including after
+  TypeSafe's environment confinement. These replace platform roots rather
+  than adding to them. File and directory certificates are combined when
+  both variables are configured. If no usable roots load, connection fails
+  without fallback. Empty directory entries are ignored. An empty file
+  value fails to load. Without either effective override, system CA trust
+  applies, including administrator-installed CAs.
+  A nonempty `MAILBEND_CA_FILE` takes precedence over both variables and is
+  intended for local tests. Do not use any trust override to work around an
+  unexpected certificate failure. The launcher warns about trust overrides.
+  `mailbend diagnose` reports the source as `system`, `ssl_cert_env` or
+  `mailbend_ca_file`, never the path. There is no certificate pinning or
+  verification bypass.
 - **IPv6:** mail resolution includes A/AAAA and connection fallback. The
   default resolver bootstrap requires IPv4 connectivity; an IPv6-only
   environment needs a reachable approved resolver URL/bootstrap. Bad IPv6
