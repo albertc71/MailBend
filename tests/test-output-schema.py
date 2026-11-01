@@ -113,4 +113,15 @@ for key in ('list_id', 'auto_submitted'):
 for key in ('mailto', 'https'):
     assert 'Untrusted sender-supplied' in schema.METADATA['unsubscribe']['properties'][key]['description']
     checks += 1
+
+image = dict(section='2', name='photo.jpg', fate='used', format='jpeg', bytes=120,
+             width=280, height=280, metadata_removed_bytes=40)
+image_contract = Draft202012Validator(schema.IMAGE_USED)
+assert image_contract.is_valid(image)
+assert image_contract.is_valid({**image, 'metadata_removed_bytes': 0})
+assert not image_contract.is_valid({k: v for k, v in image.items()
+                                    if k != 'metadata_removed_bytes'})
+assert not image_contract.is_valid({**image, 'metadata_removed_bytes': -1})
+assert not image_contract.is_valid({**image, 'metadata_removed_bytes': '40'})
+checks += 5
 print(f'output schemas: {checks} checks passed')
