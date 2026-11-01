@@ -718,7 +718,14 @@ before relying on a complete link.
   UIDs. The caller owns scheduling and state (see [polling](#polling-known-messages)).
 - Each character of a fetched message is a separate value in memory, so
   very large messages (the 16 MiB `mail_get` / 25 MiB forward caps) use a
-  lot of RAM.
+  lot of RAM. The [synthetic scale suite](tests/SCALE.md) measures those exact
+  inputs with per-call wall time and maximum-process RSS. Its committed
+  baseline states whether a complete measurement exists; an unmeasured or
+  different-runner baseline fails comparison. It does not establish a minimum
+  RAM requirement for small boards. In the recorded local observation, the
+  16 MiB read failed with a Bend memory fault at about 2.76 GiB maximum
+  process RSS; the 25 MiB forward was stopped above the 3 GiB sampled
+  process-group threshold. Neither is a successful capacity measurement.
 - Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
