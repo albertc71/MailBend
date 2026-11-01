@@ -986,7 +986,8 @@ def role_attrs() -> List<&2, RoleAttr>:
     RoleAttr{"\\Junk", "junk"},
     RoleAttr{"\\Archive", "archive"},
     RoleAttr{"\\All", "all"},
-    RoleAttr{"\\Flagged", "flagged"}
+    RoleAttr{"\\Flagged", "flagged"},
+    RoleAttr{"\\Important", "important"}
   ]
 
 # The first of `roles` that `attrs` advertises.
@@ -1534,12 +1535,35 @@ def text_keys(+args: J.Json) -> List<&2, I.Key>:
     text_key(args, "text", v => I.KText{v})
   ])
 
-def flag_keys(+args: J.Json) -> List<&2, I.Key>:
-  List.concat(&2, I.Key, [
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "unseen", False{}), [I.KUnseen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "seen", False{}), [I.KSeen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])
-  ])
+def flag_key(value: Maybe<&2, Bool>, yes: I.Key, no: I.Key) -> List<&2, I.Key>:
+  match value:
+    case None{}:
+      []
+    case Some{b}:
+      [Bool.pick(I.Key, b, yes, no)]
+
+def seen_with_unseen(seen: Maybe<&2, Bool>, +unseen: Bool) -> Keys():
+  match seen:
+    case None{}:
+      Done{[Bool.pick(I.Key, unseen, I.KUnseen{}, I.KSeen{})]}
+    case Some{s}:
+      Bool.pick(Keys(), Bool.not(Bool.xor(s, unseen)),
+        Fail{"\"seen\" and \"unseen\" contradict each other; use opposite values or omit one"},
+        Done{[Bool.pick(I.Key, unseen, I.KUnseen{}, I.KSeen{})]})
+
+def seen_keys(seen: Maybe<&2, Bool>, unseen: Maybe<&2, Bool>) -> Keys():
+  match unseen:
+    case None{}:
+      Done{flag_key(seen, I.KSeen{}, I.KUnseen{})}
+    case Some{u}:
+      seen_with_unseen(seen, u)
+
+def flag_keys(+args: J.Json) -> Keys():
+  do Result<&2, &2, String, List<&2, I.Key>>:
+    seen : List<&2, I.Key> <- seen_keys(J.as_bool(J.get(args, "seen")),
+      J.as_bool(J.get(args, "unseen")))
+    return List.concat(&2, I.Key, [seen,
+      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{})])
 
 def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
   match m:
@@ -1565,7 +1589,8 @@ def keys_of(+args: J.Json) -> Keys():
   do Result<&2, &2, String, List<&2, I.Key>>:
     since : List<&2, I.Key> <- date_key(args, "since")
     before : List<&2, I.Key> <- date_key(args, "before")
-    return List.concat(&2, I.Key, [text_keys(args), flag_keys(args), since, before])
+    flags : List<&2, I.Key> <- flag_keys(args)
+    return List.concat(&2, I.Key, [text_keys(args), flags, since, before])
 
 def list_out(folder: String, uidv: Maybe<&2, U32>, total: U32, ms: List<&2, J.Json>) -> Out:
   ok_obj([
@@ -2074,6 +2099,40 @@ def new_out(
     J.kv("messages", J.arr(ms))
   ])
 
+def new_now.code.number(n: Maybe<&2, U32>, raw: String) -> Maybe<&2, U32>:
+  match n:
+    case Some{+v}:
+      Bool.pick(Maybe<&2, U32>, U32.is_gt(v, 0) && String.eq(raw, U32.show(v)), Some{v},
+        None{})
+    case None{}:
+      None{}
+
+def new_now.code.value(+line: String) -> Maybe<&2, U32>:
+  +raw = I.ok_code.value(line)
+  Bool.pick(Maybe<&2, U32>, String.contains(line, "]"),
+    new_now.code.number(U32.read(raw), raw), None{})
+
+def new_now.code(lines: List<&2, I.RLine>, name: String) -> Maybe<&2, U32>:
+  Maybe.bind(&2, String, U32,
+    I.first_line(~I.upper_starts, lines, "* OK [" ++ name ++ " "),
+    line => new_now.code.value(line))
+
+def new_now.codes(next: Maybe<&2, U32>, uidv: Maybe<&2, U32>, folder: String) -> Out:
+  match next uidv:
+    case None{} _:
+      Err{"EXAMINE did not report a valid UIDNEXT; no checkpoint was created"}
+    case Some{n} None{}:
+      Err{"EXAMINE did not report a valid UIDVALIDITY; no checkpoint was created"}
+    case Some{n} Some{v}:
+      new_out(folder, v, False{}, (n - 1 : U32), False{}, [])
+
+def new_now(r: Run(), folder: String) -> Out:
+  match r:
+    case Fail{m}:
+      Err{m}
+    case Done{+lines}:
+      new_now.codes(new_now.code(lines, "UIDNEXT"), new_now.code(lines, "UIDVALIDITY"), folder)
+
 def new_headers.if(
   same: Bool,
   lines: List<&2, I.RLine>,
@@ -2178,8 +2237,31 @@ def t_get_new.if(problem: String, +args: J.Json) -> IO(Shown):
         r : Run() <- imap_run(Ops.plan_new(folder, since))
         new_found(r, folder, since, uidv_arg(args), clamp(u32_arg(args, "limit", 50), 1, 500))
 
+def new_start_request(+args: J.Json) -> Result<&2, &2, String, Unit>:
+  do Result<&2, &2, String, Unit>:
+    value : Unit <- checked(Bool.pick(String, String.eq(str_arg(args, "start", ""), "now"),
+      "", "\"start\" must be \"now\""))
+    checked(Bool.pick(String, Maybe.is_some(&2, J.Json, J.get(args, "since_uid")),
+      "\"start\" cannot be combined with \"since_uid\"", ""))
+
+def t_get_new.now(request: Result<&2, &2, String, Unit>, +folder: String) -> IO(Shown):
+  match request:
+    case Fail{m}:
+      pure_shown(Err{m})
+    case Done{u}:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_new_now(folder))
+        return Listed{new_now(r, folder), []}
+
+def t_get_new.start(start: Maybe<&2, J.Json>, +args: J.Json) -> IO(Shown):
+  match start:
+    case None{}:
+      t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
+    case Some{v}:
+      t_get_new.now(new_start_request(args), folder_arg(args))
+
 def t_get_new(+args: J.Json) -> IO(Shown):
-  t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
+  t_get_new.start(J.get(args, "start"), args)
 
 # mail_get_thread
 # ---------------
@@ -4913,15 +4995,25 @@ def secs_of(p: Proc) -> U32:
     case _:
       0
 
-def rand_of(r: Result<&1, &1, U32 & String, U32>) -> U32:
+def rand_of(r: Result<&1, &1, U32 & String, U32>) -> Result<&2, &2, String, U32>:
   match r:
     case Done{n}:
-      n
+      Done{n}
     case Fail{e}:
-      0
+      Fail{"cannot compose message: random identifier generation failed"}
 
 def stamp_of(+secs: U32, a: U32, b: U32) -> Stamp:
   Stamp{M.rfc5322_date(secs), C.hex8(secs) ++ "." ++ C.hex8(a) ++ C.hex8(b)}
+
+def stamp_checked(
+  secs: U32,
+  a: Result<&1, &1, U32 & String, U32>,
+  b: Result<&1, &1, U32 & String, U32>
+) -> Result<&2, &2, String, Stamp>:
+  do Result<&2, &2, String, Stamp>:
+    x : U32 <- rand_of(a)
+    y : U32 <- rand_of(b)
+    return stamp_of(secs, x, y)
 
 # The time in seconds since the epoch; 0 when it cannot be read.
 def now_seconds() -> IO(U32):
@@ -4930,12 +5022,12 @@ def now_seconds() -> IO(U32):
       Process.run("/bin/date", ["+%s"], "", 64, 5000)
     return secs_of(proc_of(r))
 
-def stamp() -> IO(Stamp):
-  do IO<Stamp>:
+def stamp() -> IO(Result<&2, &2, String, Stamp>):
+  do IO<Result<&2, &2, String, Stamp>>:
     secs : U32 <- now_seconds()
     a : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
     b : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
-    return stamp_of(secs, rand_of(a), rand_of(b))
+    return stamp_checked(secs, a, b)
 
 def domain_of(addr: String) -> String:
   Maybe.default(&2, String, List.last(&2, String, String.split(M.addr_spec(addr), '@')),
@@ -5472,14 +5564,21 @@ def check_want(+w: Want, from: String) -> String:
       Bool.pick(String, List.is_empty(&2, String, rcpts) && Bool.not(is_draft(w)),
         "at least one recipient (to, cc or bcc) is needed", "")))
 
+def deliver_stamped(w: Want, from: String, st: Result<&2, &2, String, Stamp>) -> IO(Out):
+  match st:
+    case Fail{m}:
+      pure_out(Err{m})
+    case Done{s}:
+      deliver(w, from, s)
+
 def with_atts.if(problem: String, w: Want, from: String) -> IO(Out):
   match problem:
     case SCon{h, t}:
       pure_out(Err{SCon{h, t}})
     case SNil{}:
       do IO<Out>:
-        st : Stamp <- stamp()
-        deliver(w, from, st)
+        st : Result<&2, &2, String, Stamp> <- stamp()
+        deliver_stamped(w, from, st)
 
 def with_atts.want(+w: Want, +from: String) -> IO(Out):
   with_atts.if(check_want(w, from), w, from)
@@ -5520,9 +5619,103 @@ def t_compose(+args: J.Json, draft: Bool, jev: Jev.Switch) -> IO(Out):
 # Reply and forward
 # -----------------
 
-def prefixed(+p: String, +subject: String) -> String:
-  Bool.pick(String, String.starts_with(String.to_lower(String.trim(subject)), String.to_lower(p)),
-    subject, p ++ " " ++ subject)
+type SubjectHead is Data:
+  SubjectPrefix{rest: String}
+  SubjectTag{tag: String, rest: String}
+  SubjectText{text: String}
+
+def prefixed.known(token: String) -> Bool:
+  C.is_in(token, ["re", "fwd", "fw", "aw", "wg", "sv", "vb", "vs", "vl", "ref", "tr",
+    "r", "rif", "i", "rv", "res", "enc", "odp", "pd", "ynt", "ilt", "回复", "转发"])
+
+def prefixed.colon(ok: Bool, s: String, original: String) -> SubjectHead:
+  match ok s:
+    case True{} SCon{':', t}:
+      SubjectPrefix{t}
+    case True{} SCon{'：', t}:
+      SubjectPrefix{t}
+    case _ _:
+      SubjectText{original}
+
+def prefixed.counter(s: String, close: Char, valid: Bool, original: String) -> SubjectHead:
+  match s valid:
+    case SCon{']', t} True{}:
+      prefixed.colon(Char.is_eq(close, ']'), t, original)
+    case SCon{')', t} True{}:
+      prefixed.colon(Char.is_eq(close, ')'), t, original)
+    case SCon{c, t} True{}:
+      prefixed.counter(t, close, Char.is_digit(c), original)
+    case _ _:
+      SubjectText{original}
+
+def prefixed.counted(ok: Bool, s: String, close: Char, original: String) -> SubjectHead:
+  match ok s:
+    case True{} SCon{c, t}:
+      prefixed.counter(t, close, Char.is_digit(c), original)
+    case _ _:
+      SubjectText{original}
+
+def prefixed.lower(+c: Char) -> Char:
+  Bool.pick(Char, Char.is_eq(c, 'İ'), 'i', Char.to_lower(c))
+
+def prefixed.token(s: String, left: Nat, token: String, original: String) -> SubjectHead:
+  match s left:
+    case SCon{':', t} _:
+      prefixed.colon(prefixed.known(String.reverse(token)), SCon{':', t}, original)
+    case SCon{'：', t} _:
+      prefixed.colon(prefixed.known(String.reverse(token)), SCon{'：', t}, original)
+    case SCon{'[', t} _:
+      prefixed.counted(prefixed.known(String.reverse(token)), t, ']', original)
+    case SCon{'(', t} _:
+      prefixed.counted(prefixed.known(String.reverse(token)), t, ')', original)
+    case SCon{c, t} 1n+n:
+      prefixed.token(t, n, SCon{prefixed.lower(c), token}, original)
+    case _ _:
+      SubjectText{original}
+
+def prefixed.tag(s: String, rev: String, original: String) -> SubjectHead:
+  match s:
+    case SCon{']', t}:
+      SubjectTag{String.reverse(SCon{']', rev}), t}
+    case SCon{'[', t}:
+      SubjectText{original}
+    case SCon{c, t}:
+      prefixed.tag(t, SCon{c, rev}, original)
+    case SNil{}:
+      SubjectText{original}
+
+def prefixed.head(+s: String) -> SubjectHead:
+  match s:
+    case SCon{'[', t}:
+      prefixed.tag(t, "[", s)
+    case _:
+      prefixed.token(s, 3n, "", s)
+
+def prefixed.go(left: Nat, head: SubjectHead, +tags: List<&2, String>, count: U32) ->
+  String & U32:
+  match left head:
+    case 1n+n SubjectPrefix{rest}:
+      prefixed.go(n, prefixed.head(String.trim_start(rest)), tags, (count + 1 : U32))
+    case 1n+n SubjectTag{tag, rest}:
+      prefixed.go(n, prefixed.head(String.trim_start(rest)), tag <> tags, count)
+    case _ SubjectText{+s}:
+      gap = Bool.pick(String, List.is_empty(&2, String, tags) || String.is_empty(s), "", " ")
+      (String.join(List.reverse(&2, String, tags), " ") ++ gap ++ s, count)
+    case 0n _:
+      ("", 0)
+
+def prefixed.fin(+p: String, +original: String, result: String & U32) -> String:
+  match result:
+    case (s, 0):
+      p ++ " " ++ original
+    case (s, 1):
+      Bool.pick(String, String.starts_with(original, p ++ " "), original, p ++ " " ++ s)
+    case (s, n):
+      p ++ " " ++ s
+
+def prefixed(p: String, +subject: String) -> String:
+  prefixed.fin(p, subject,
+    prefixed.go(String.length(subject), prefixed.head(String.trim_start(subject)), [], 0))
 
 def quote_lines(ls: List<&2, String>) -> String:
   match ls:

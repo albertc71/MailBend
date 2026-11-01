@@ -31,6 +31,7 @@ plus `cargo deny check`, a fuzz smoke run and the source checks in
 need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
 schema checks need Python `jsonschema` (`sudo apt-get install python3-jsonschema`
 on Ubuntu).
+The scheduled recipe test also needs `jq` and `flock` from util-linux.
 
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
@@ -43,6 +44,7 @@ python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
 python3 tests/test-writing-laws.py                # malformed guide fences fail closed
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
+python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
@@ -54,6 +56,7 @@ python3 tests/formal/check-install-swap.py
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
+python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
