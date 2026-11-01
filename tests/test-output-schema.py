@@ -93,6 +93,27 @@ refresh = dict(folder='INBOX', uidvalidity=7, reset_required=False, complete=Fal
                present=[dict(uid=1, flags=[])], absent=[], unknown=[2], reason='incomplete')
 check('mail_refresh', refresh)
 check('mail_refresh', {**refresh, 'present': [dict(uid=1)]}, False)
+
+metadata = dict(list_id=None, auto_submitted=None, bulk=None,
+                unsubscribe=dict(mailto=None, https=None, one_click=False),
+                answered=False, forwarded=False)
+message = dict(date='', **{'from': ''}, to='', cc='', subject='', message_id='',
+               internal_date='', uid=1, size=0, flags=[], seen=False, flagged=False,
+               **metadata)
+check('mail_search', {**search, 'messages': [message]})
+for key in metadata:
+    check('mail_search', {**search, 'messages': [{k: v for k, v in message.items()
+                                                if k != key}]}, False)
+check('mail_search', {**search, 'messages': [{**message, 'bulk': 'guessed'}]}, False)
+check('mail_search', {**search, 'messages': [{**message, 'unsubscribe': {
+    'mailto': None, 'https': None, 'one_click': 'yes'}}]}, False)
+for key in ('list_id', 'auto_submitted'):
+    assert 'Untrusted sender-supplied' in schema.METADATA[key]['description']
+    checks += 1
+for key in ('mailto', 'https'):
+    assert 'Untrusted sender-supplied' in schema.METADATA['unsubscribe']['properties'][key]['description']
+    checks += 1
+
 image = dict(section='2', name='photo.jpg', fate='used', format='jpeg', bytes=120,
              width=280, height=280, metadata_removed_bytes=40)
 image_contract = Draft202012Validator(schema.IMAGE_USED)

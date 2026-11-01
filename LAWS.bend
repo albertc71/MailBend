@@ -207,7 +207,7 @@ law get_checked_pins_identity:
   for uidv: U32
   {Ops.plan_get_checked(mbox, uid, max, Some{uidv}) ==
     [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
-      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IFull{max}]}]
     : List<&2, I.Cmd>}
 
 law get_checked_without_identity_unchanged:
@@ -388,7 +388,8 @@ law fetch_items_never_set_seen:
 law search_headers_render_exactly:
   {I.item_str(I.IHeaders{}) ==
     "BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO " ++
-      "REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)]" : String}
+      "REFERENCES LIST-ID LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST " ++
+      "AUTO-SUBMITTED PRECEDENCE)]" : String}
 
 # LAW: a full-message read renders exactly its caller's byte bound, with no suffix command.
 law full_fetch_renders_exactly:
