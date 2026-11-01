@@ -114,7 +114,7 @@ def main() -> IO(Unit):
 #|mail_list_folders | readOnlyHint,idempotentHint | required - | -
 #|mail_search | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string from:string to:string cc:string subject:string body:string text:string since:string before:string unseen:boolean seen:boolean flagged:boolean cursor:string limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string max_bytes:integer projection:string[full|text|html|metadata] max_response_bytes:integer
-#|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
+#|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string start:string[now] since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_refresh | readOnlyHint,idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
 #|mail_get_thread | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_classify | readOnlyHint,openWorldHint | required uids | folder:string uids:array uidvalidity:integer candidates:array
@@ -134,5 +134,5 @@ def main() -> IO(Unit):
 #|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
-#|415081 characters
-#|hash 402373344
+#|415791 characters
+#|hash 3205701506

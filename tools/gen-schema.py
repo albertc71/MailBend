@@ -526,9 +526,12 @@ TOOLS = [
           "text": param("string", "Text anywhere in headers or body."),
           "since": param("string", "On or after this date, YYYY-MM-DD."),
           "before": param("string", "Before this date, YYYY-MM-DD."),
-          "unseen": param("boolean"),
-          "seen": param("boolean"),
-          "flagged": param("boolean"),
+          "unseen": param("boolean", "True selects unread; false selects read. Omit for either. "
+                          "If seen is also given, the values must be opposite."),
+          "seen": param("boolean", "True selects read; false selects unread. Omit for either. "
+                        "If unseen is also given, the values must be opposite."),
+          "flagged": param("boolean", "True selects flagged; false selects unflagged. "
+                           "Omit for either."),
           "cursor": param("string", "Opaque continuation from next_cursor; at most 4096 characters.",
                           maxLength=4096),
           "limit": param("integer", "Default 20.", minimum=1, maximum=200)}),
@@ -557,12 +560,18 @@ TOOLS = [
          ["uid"]),
     tool("mail_get_new",
          "List messages that arrived after a checkpoint (UIDVALIDITY + UID), "
-         "oldest first. Pass back next_since_uid and uidvalidity on the next "
-         "call. Does not use or change read/unread state." + JEV_NOTES,
+         "oldest first. With since_uid 0 or no checkpoint, lists the oldest mail. "
+         "Use start=\"now\" to take a checkpoint at the current end without "
+         "returning messages. Pass back next_since_uid and uidvalidity on the "
+         "next call. Does not use or change read/unread state." + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
+          "start": param("string", "Set to now to take a current-end checkpoint. "
+                         "Cannot be combined with since_uid. Fails if the server "
+                         "does not report valid UIDNEXT and UIDVALIDITY.", enum=["now"]),
           "since_uid": param(
-              "integer", "Last UID already processed. Default 0.", minimum=0),
+              "integer", "Last UID already processed. Default 0 lists the oldest mail first.",
+              minimum=0),
           "uidvalidity": param(
               "integer",
               "UIDVALIDITY from the previous call; required when since_uid is "

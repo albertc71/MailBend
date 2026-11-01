@@ -130,6 +130,9 @@ def get_new_writes_nothing.if(at_end: Bool, -mbox: String, -since: U32)
 def Laws.get_new_writes_nothing(mbox, since):
   get_new_writes_nothing.if(U32.is_eq(since, Ops.max_uid()), mbox, since)
 
+def Laws.get_new_now_examines_only(mbox):
+  {==}
+
 def Laws.refresh_plan(mbox, uids, uidv):
   ({==}, {==})
 

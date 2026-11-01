@@ -230,6 +230,12 @@ law get_new_writes_nothing:
   for since: U32
   {I.any_writes(Ops.plan_new(mbox, since)) == False{} : Bool}
 
+# LAW: taking a current-end checkpoint only examines the folder, without
+# searching, fetching messages, selecting for writes, or changing mail.
+law get_new_now_examines_only:
+  for mbox: String
+  {Ops.plan_new_now(mbox) == [I.CExamine{mbox}] : List<&2, I.Cmd>}
+
 # LAW: refresh is read-only, pins identity before reading UIDs, and uses
 # only metadata FETCH followed by a caller-bounded UID SEARCH.
 law refresh_plan:

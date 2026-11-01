@@ -986,7 +986,8 @@ def role_attrs() -> List<&2, RoleAttr>:
     RoleAttr{"\\Junk", "junk"},
     RoleAttr{"\\Archive", "archive"},
     RoleAttr{"\\All", "all"},
-    RoleAttr{"\\Flagged", "flagged"}
+    RoleAttr{"\\Flagged", "flagged"},
+    RoleAttr{"\\Important", "important"}
   ]
 
 # The first of `roles` that `attrs` advertises.
@@ -1534,12 +1535,35 @@ def text_keys(+args: J.Json) -> List<&2, I.Key>:
     text_key(args, "text", v => I.KText{v})
   ])
 
-def flag_keys(+args: J.Json) -> List<&2, I.Key>:
-  List.concat(&2, I.Key, [
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "unseen", False{}), [I.KUnseen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "seen", False{}), [I.KSeen{}], []),
-    Bool.pick(List<&2, I.Key>, bool_arg(args, "flagged", False{}), [I.KFlagged{}], [])
-  ])
+def flag_key(value: Maybe<&2, Bool>, yes: I.Key, no: I.Key) -> List<&2, I.Key>:
+  match value:
+    case None{}:
+      []
+    case Some{b}:
+      [Bool.pick(I.Key, b, yes, no)]
+
+def seen_with_unseen(seen: Maybe<&2, Bool>, +unseen: Bool) -> Keys():
+  match seen:
+    case None{}:
+      Done{[Bool.pick(I.Key, unseen, I.KUnseen{}, I.KSeen{})]}
+    case Some{s}:
+      Bool.pick(Keys(), Bool.not(Bool.xor(s, unseen)),
+        Fail{"\"seen\" and \"unseen\" contradict each other; use opposite values or omit one"},
+        Done{[Bool.pick(I.Key, unseen, I.KUnseen{}, I.KSeen{})]})
+
+def seen_keys(seen: Maybe<&2, Bool>, unseen: Maybe<&2, Bool>) -> Keys():
+  match unseen:
+    case None{}:
+      Done{flag_key(seen, I.KSeen{}, I.KUnseen{})}
+    case Some{u}:
+      seen_with_unseen(seen, u)
+
+def flag_keys(+args: J.Json) -> Keys():
+  do Result<&2, &2, String, List<&2, I.Key>>:
+    seen : List<&2, I.Key> <- seen_keys(J.as_bool(J.get(args, "seen")),
+      J.as_bool(J.get(args, "unseen")))
+    return List.concat(&2, I.Key, [seen,
+      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{})])
 
 def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
   match m:
@@ -1565,7 +1589,8 @@ def keys_of(+args: J.Json) -> Keys():
   do Result<&2, &2, String, List<&2, I.Key>>:
     since : List<&2, I.Key> <- date_key(args, "since")
     before : List<&2, I.Key> <- date_key(args, "before")
-    return List.concat(&2, I.Key, [text_keys(args), flag_keys(args), since, before])
+    flags : List<&2, I.Key> <- flag_keys(args)
+    return List.concat(&2, I.Key, [text_keys(args), flags, since, before])
 
 def list_out(folder: String, uidv: Maybe<&2, U32>, total: U32, ms: List<&2, J.Json>) -> Out:
   ok_obj([
@@ -2074,6 +2099,40 @@ def new_out(
     J.kv("messages", J.arr(ms))
   ])
 
+def new_now.code.number(n: Maybe<&2, U32>, raw: String) -> Maybe<&2, U32>:
+  match n:
+    case Some{+v}:
+      Bool.pick(Maybe<&2, U32>, U32.is_gt(v, 0) && String.eq(raw, U32.show(v)), Some{v},
+        None{})
+    case None{}:
+      None{}
+
+def new_now.code.value(+line: String) -> Maybe<&2, U32>:
+  +raw = I.ok_code.value(line)
+  Bool.pick(Maybe<&2, U32>, String.contains(line, "]"),
+    new_now.code.number(U32.read(raw), raw), None{})
+
+def new_now.code(lines: List<&2, I.RLine>, name: String) -> Maybe<&2, U32>:
+  Maybe.bind(&2, String, U32,
+    I.first_line(~I.upper_starts, lines, "* OK [" ++ name ++ " "),
+    line => new_now.code.value(line))
+
+def new_now.codes(next: Maybe<&2, U32>, uidv: Maybe<&2, U32>, folder: String) -> Out:
+  match next uidv:
+    case None{} _:
+      Err{"EXAMINE did not report a valid UIDNEXT; no checkpoint was created"}
+    case Some{n} None{}:
+      Err{"EXAMINE did not report a valid UIDVALIDITY; no checkpoint was created"}
+    case Some{n} Some{v}:
+      new_out(folder, v, False{}, (n - 1 : U32), False{}, [])
+
+def new_now(r: Run(), folder: String) -> Out:
+  match r:
+    case Fail{m}:
+      Err{m}
+    case Done{+lines}:
+      new_now.codes(new_now.code(lines, "UIDNEXT"), new_now.code(lines, "UIDVALIDITY"), folder)
+
 def new_headers.if(
   same: Bool,
   lines: List<&2, I.RLine>,
@@ -2178,8 +2237,31 @@ def t_get_new.if(problem: String, +args: J.Json) -> IO(Shown):
         r : Run() <- imap_run(Ops.plan_new(folder, since))
         new_found(r, folder, since, uidv_arg(args), clamp(u32_arg(args, "limit", 50), 1, 500))
 
+def new_start_request(+args: J.Json) -> Result<&2, &2, String, Unit>:
+  do Result<&2, &2, String, Unit>:
+    value : Unit <- checked(Bool.pick(String, String.eq(str_arg(args, "start", ""), "now"),
+      "", "\"start\" must be \"now\""))
+    checked(Bool.pick(String, Maybe.is_some(&2, J.Json, J.get(args, "since_uid")),
+      "\"start\" cannot be combined with \"since_uid\"", ""))
+
+def t_get_new.now(request: Result<&2, &2, String, Unit>, +folder: String) -> IO(Shown):
+  match request:
+    case Fail{m}:
+      pure_shown(Err{m})
+    case Done{u}:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_new_now(folder))
+        return Listed{new_now(r, folder), []}
+
+def t_get_new.start(start: Maybe<&2, J.Json>, +args: J.Json) -> IO(Shown):
+  match start:
+    case None{}:
+      t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
+    case Some{v}:
+      t_get_new.now(new_start_request(args), folder_arg(args))
+
 def t_get_new(+args: J.Json) -> IO(Shown):
-  t_get_new.if(new_request(u32_arg(args, "since_uid", 0), uidv_arg(args)), args)
+  t_get_new.start(J.get(args, "start"), args)
 
 # mail_get_thread
 # ---------------
