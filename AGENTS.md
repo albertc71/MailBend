@@ -88,7 +88,9 @@ Run every check in [CONTRIBUTING.md](CONTRIBUTING.md#checks).
 CI (`.github/workflows/ci.yml`) runs these checks on the Bend release pinned
 in `scripts/install-bend.sh`; bump `BEND_VERSION` and `BEND_SHA256` there
 together, and set `LEAN_TOOLCHAIN` in `scripts/install-lean.sh` to the Lean
-release that Bend's `--verdict` asks for.
+release that Bend's `--verdict` asks for. Follow the
+[Bend upgrade runbook](CONTRIBUTING.md#upgrade-bend), including the separate
+non-required canary, before proposing a pin change.
 
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in
