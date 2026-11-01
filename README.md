@@ -646,13 +646,21 @@ allowance as natural numbers, and that sufficient room preserves the whole
 string and the exact remainder. The arithmetic proof follows the actual U32
 subtraction, not a separate Nat-only implementation.
 
-Image admission laws prove that a pure fold of the real admission step takes
-at most four images. Their byte theorem bounds the natural-number sum of
-accepted byte-string lengths by 1,572,864, with an explicit premise that each
-length is represented exactly by the U32 byte counter. Arbitrary mathematical
-strings could otherwise wrap that counter. The reference law proves that a
-new `Used` fate requires a token absent from the request corpus and adds that
-token to the corpus.
+Image admission laws prove that `Budget.admit_all`, the observer fold in
+`tests/formal/budget-observers.bend` calling the production `Image.admit`
+step, takes at most four images when started at `Image.room_new()`. For that
+initial room, their byte theorem bounds the natural-number sum of accepted
+byte-string lengths by 1,572,864, with an explicit premise
+that each length is represented exactly by the U32 byte counter. Arbitrary
+mathematical strings could otherwise wrap that counter. These cap laws do
+not quantify over the production `bind_run`/`bind_io` walk or `quota_admit`.
+A proof connecting that walk's room threading and accumulated `Used` fates
+to the observer fold remains open.
+
+The reference law pins the pure `Image.bind_use` transition for a supplied
+token: when `ref_clear(token, corpus)` is true it adds a `Used` fate and the
+token to the corpus; otherwise it returns the retry state. It does not prove
+this property for every `Used` fate returned by the complete `bind_run` walk.
 
 The correspondence between these scalar costs and `C.utf8_len(J.esc(s))`
 remains unproven. Complete JSON serialization correspondence, full
@@ -660,7 +668,7 @@ result/list assembly, whole-response byte bounds, cursor paging, unchanged
 Jev inputs, bounded native fetches and image request assembly remain tested.
 They are not claimed as universally quantified serialization or IO proofs. The budget mutation
 check rejects a cut that retains an over-budget scalar and admission that
-ignores the image count.
+ignores the image count. It does not mutate production `Bind` room threading.
 
 ## How it works
 

@@ -10,6 +10,13 @@ discuss larger changes before writing them.
   plain `EXPUNGE`, UID commands, discovered role folders, the
   native-helper boundaries and what Jev may do).
 - Keep safety rules in `LAWS.bend`. Do not weaken a law to make code pass.
+  `tests/formal/budget-observers.bend`, imported by `LAWS.bend`, is also part
+  of that law contract: review changes to `admit_all`, `lengths_exact`,
+  `Within` and the other observers as changes to the laws, and explain them
+  in the pull request. Do not weaken an observer or premise to make a proof
+  pass. The budget mutation check fingerprints `tests/formal/budget-*.bend`,
+  including this observer module, to check that its run leaves the checkout
+  unchanged; this is not an approval gate for later contract changes.
 - Never put real credentials, account addresses or mail in code, tests,
   fixtures, issues or pull requests. Tests run against the local fake server
   (`tests/fake_mail_server.py`) with a synthetic password, and CI scans the
