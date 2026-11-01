@@ -152,6 +152,7 @@ def stage(root, count_path, log_path, fail_at, how, bend_down, proof_down, broke
     for command in ("cp", "mv", "bend"):
         (tools / command).symlink_to(tool)
     executable(tools / "cc", "exit 0\n")
+    executable(tools / "getconf", "echo 'glibc 2.34'\n")
     executable(tools / "clang", "exit 0\n")
     executable(tools / "rustc", "echo 'rustc 1.99.0'\n")
     executable(tools / "cargo", """if [ "$1" = --version ]; then

@@ -738,6 +738,10 @@ before relying on a complete link.
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
+- The compiled Bend core needs glibc 2.34 or newer. The installer checks this
+  before compilation. Downloads need `O_TMPFILE` support on the download
+  directory's file system, which WSL's `/mnt/c` can lack. `mailbend diagnose`
+  reports local platform prerequisites without paths or OS error text.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on
