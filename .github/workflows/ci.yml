@@ -121,6 +121,9 @@ jobs:
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
 
+      - name: Change-plan and UID wire mutation checks
+        run: python3 tests/formal/check-plan-wire-mutations.py
+
       - name: Unit tests
         run: sh tests/run-unit.sh
 
