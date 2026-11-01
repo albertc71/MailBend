@@ -97,7 +97,7 @@ fn session(certs: &Certificates, authentication: Authentication, reject: bool) {
     let preauth = authentication == Authentication::ImapPreauth;
     let login_auth = authentication == Authentication::SmtpLogin;
     let server_config = certs.server();
-    let client_config =
+    let (client_config, _) =
         mailbend_net::tls::client_config(Some(&certs.0.join("ca.pem"))).expect("client trust");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = listener.local_addr().expect("address");
