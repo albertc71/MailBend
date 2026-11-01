@@ -1,0 +1,32 @@
+{
+  "version": "49",
+  "commit": "96e54b273d2da4ec6fbad350ba19ff23fa24a588",
+  "files": {
+    "common/validity/subdivision.xml": {
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr/96e54b273d2da4ec6fbad350ba19ff23fa24a588/common/validity/subdivision.xml",
+      "bytes": 22807,
+      "sha256": "93b12c9d55938266c96d44a7ccbb66800afeef4f9dd48b0dc16edfab89833d95",
+      "git_blob_sha": "c8d3f706f51e73c48878120e426e3c4344030402"
+    },
+    "common/validity/region.xml": {
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr/96e54b273d2da4ec6fbad350ba19ff23fa24a588/common/validity/region.xml",
+      "bytes": 1905,
+      "sha256": "e751e0eedd46b52c38f3cdb72b0fab61ac8b48e052e8b28ba74b6ac26c4c8cb1",
+      "git_blob_sha": "ecb4a5bfdcf6232ad67c152ae51bc84bd5df1953"
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/unicode-org/cldr/96e54b273d2da4ec6fbad350ba19ff23fa24a588/LICENSE",
+      "bytes": 3193,
+      "sha256": "65eb33419e22a297550a811b5b535f5e532f9a7e0114b516c0ea18afd53c3804",
+      "git_blob_sha": "b4132054a5d2b95b6f1a4c8b511a211086023e55"
+    }
+  },
+  "count": 5684,
+  "selected_statuses": [
+    "regular",
+    "deprecated",
+    "macroregion"
+  ],
+  "region_filter": "3 ASCII digits",
+  "validity_spec": "https://unicode.org/reports/tr51/#Valid_Emoji_Tag_Sequences"
+}

@@ -8,6 +8,7 @@
 
 import Base
 import ./codec.bend as C
+import ./unicode_tags.bend as Tag
 
 # Types
 # =====
@@ -823,18 +824,32 @@ def last_component(s: String, acc: String) -> String:
     case SCon{c, t}:
       last_component(t, SCon{c, acc})
 
+# Hidden Unicode classes are shared by incoming file-name sanitization and
+# outgoing checks. Counts include allowed characters, including emoji tags.
+type Hidden is Data:
+  Hidden{tag: U32, bidi: U32, zero_width: U32}
+
+def tag_ranges() -> List<&2, Range>:
+  [Range{917505, 917505}, Range{917536, 917631}]
+
+def bidi_ranges() -> List<&2, Range>:
+  [Range{1564, 1564}, Range{8206, 8207}, Range{8234, 8238}, Range{8294, 8303}]
+
+def zero_width_ranges() -> List<&2, Range>:
+  [Range{8203, 8207}, Range{8288, 8288}, Range{65279, 65279}]
+
 # The Unicode format characters (general category Cf), as ranges of code
 # points: invisible, and some, such as U+202E, reorder the text around
 # them, so a name can show an extension it does not have.
 def format_ranges() -> List<&2, Range>:
-  [
+  List.concat(&2, Range, [[
     Range{173, 173}, Range{1536, 1541}, Range{1564, 1564}, Range{1757, 1757},
     Range{1807, 1807}, Range{2192, 2193}, Range{2274, 2274}, Range{6158, 6158},
-    Range{8203, 8207}, Range{8234, 8238}, Range{8288, 8292}, Range{8294, 8303},
+    Range{8203, 8207}, Range{8288, 8292},
     Range{65279, 65279}, Range{65529, 65531}, Range{69821, 69821},
     Range{69837, 69837}, Range{78896, 78911}, Range{113824, 113827},
-    Range{119155, 119162}, Range{917505, 917505}, Range{917536, 917631}
-  ]
+    Range{119155, 119162}
+  ], bidi_ranges(), tag_ranges()])
 
 def in_ranges(rs: List<&2, Range>, +n: U32) -> Bool:
   match rs:
@@ -842,6 +857,71 @@ def in_ranges(rs: List<&2, Range>, +n: U32) -> Bool:
       False{}
     case Range{lo, hi} <> t:
       C.between(n, lo, hi) || in_ranges(t, n)
+
+def hidden_count.go(s: String, tag: U32, bidi: U32, zw: U32) -> Hidden:
+  match s:
+    case SNil{}:
+      Hidden{tag, bidi, zw}
+    case SCon{c, t}:
+      +u = C.u(c)
+      hidden_count.go(t,
+        (tag + Bool.pick(U32, in_ranges(tag_ranges(), u), 1, 0) : U32),
+        (bidi + Bool.pick(U32, in_ranges(bidi_ranges(), u), 1, 0) : U32),
+        (zw + Bool.pick(U32, in_ranges(zero_width_ranges(), u), 1, 0) : U32))
+
+def hidden_count(s: String) -> Hidden:
+  hidden_count.go(s, 0, 0, 0)
+
+# UTS #51 Annex C bounds the whole sequence to 32 code points. The
+# pinned CLDR table accepts valid subdivisions and numeric macroregions.
+def emoji_tag.go(fuel: Nat, s: String, code: String, valid: Bool, size: U32) -> U32:
+  match fuel s:
+    case 0n _:
+      0
+    case 1n+f SCon{'\u{E007F}', t}:
+      Bool.pick(U32, valid && Tag.valid(String.reverse(code)), (size + 1 : U32), 0)
+    case 1n+f SCon{c, t}:
+      +u = C.u(c)
+      +ok = C.between(u, 917552, 917561) || C.between(u, 917601, 917626)
+      emoji_tag.go(f, t, SCon{C.chr(Bool.pick(U32, ok, (u - 917504 : U32), 0)), code}, valid && ok,
+        (size + 1 : U32))
+    case _ _:
+      0
+
+def emoji_tag(s: String) -> U32:
+  emoji_tag.go(31n, s, "", True{}, 0)
+
+# A valid flag preserves its entire sequence. Every other tag is removed
+# only from inherited text, without changing visible characters.
+def strip_tags.go(s: String, +allowed: U32, +out: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(out)
+    case SCon{'\u{1F3F4}', +t}:
+      strip_tags.go(t, emoji_tag(t), SCon{'\u{1F3F4}', out})
+    case SCon{+c, t}:
+      +keep = Bool.not(U32.is_zero(allowed))
+      strip_tags.go(t, Bool.pick(U32, keep, (allowed - 1 : U32), 0),
+        Bool.pick(String, keep || Bool.not(in_ranges(tag_ranges(), C.u(c))),
+          SCon{c, out}, out))
+
+def strip_tags(s: String) -> String:
+  strip_tags.go(s, 0, "")
+
+def refused_tags.go(s: String, +allowed: U32, n: U32) -> U32:
+  match s:
+    case SNil{}:
+      n
+    case SCon{'\u{1F3F4}', +t}:
+      refused_tags.go(t, emoji_tag(t), n)
+    case SCon{c, t}:
+      +keep = Bool.not(U32.is_zero(allowed))
+      refused = Bool.not(keep) && in_ranges(tag_ranges(), C.u(c))
+      refused_tags.go(t, Bool.pick(U32, keep, (allowed - 1 : U32), 0),
+        (n + Bool.pick(U32, refused, 1, 0) : U32))
+
+def refused_tags(s: String) -> U32:
+  refused_tags.go(s, 0, 0)
 
 # Whether a character is a control character (Cc, NUL included) or a
 # Unicode format character (Cf).
@@ -1472,11 +1552,22 @@ def cont_params(+key: String, pieces: List<&2, String>, +i: U32) -> String:
       ";\r\n " ++ key ++ "*" ++ U32.show(i) ++ "*=" ++ charset ++ p
         ++ cont_params(key, t, (i + 1 : U32))
 
-def name_param.if(+key: String, +name: String, plain: Bool) -> String:
-  match plain:
-    case True{}:
+def name_param.literal(+key: String, pieces: List<&2, String>) -> String:
+  match pieces:
+    case Nil{}:
+      key ++ "=\"attachment\""
+    case first <> rest:
+      key ++ "*0*=utf-8''" ++ first ++ cont_params(key, rest, 1)
+        ++ ";\r\n " ++ key ++ "=\"attachment\""
+
+def name_param.if(+key: String, +name: String, plain: Bool, literal: Bool) -> String:
+  match plain literal:
+    case True{} False{}:
       key ++ "=" ++ C.quoted(name)
-    case False{}:
+    case _ True{}:
+      pieces = pct_pieces(pct_tokens(C.utf8_encode(name)), "", 0)
+      name_param.literal(key, pieces)
+    case _ False{}:
       fallback = ascii_name(String.take(name, 60n))
       pieces = pct_pieces(pct_tokens(C.utf8_encode(name)), "", 0)
       key ++ "=\"" ++ fallback ++ "\"" ++ cont_params(key, pieces, 0)
@@ -1484,8 +1575,10 @@ def name_param.if(+key: String, +name: String, plain: Bool) -> String:
 # A file name parameter: quoted when it is short plain ASCII, else an ASCII
 # fallback plus RFC 2231 continuations of the UTF-8 name, percent-encoded,
 # one short line each (encoded words are not allowed inside parameters).
+# Encoded-word-looking names use literal RFC 2231 first and a neutral fallback
+# so tolerant readers cannot interpret the fallback as hidden text.
 def name_param(key: String, +name: String) -> String:
-  name_param.if(key, name, is_short_plain(name, 200n))
+  name_param.if(key, name, is_short_plain(name, 200n), has_encoded_word(name))
 
 def text_charset.go(
   s: String, +need: U32, lo: U32, hi: U32, +ascii: Bool, ok: Bool
