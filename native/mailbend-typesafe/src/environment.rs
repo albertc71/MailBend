@@ -62,3 +62,48 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod confinement_tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn ask_path_removes_mail_credentials_from_its_runtime_environment() {
+        let result = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "environment::confinement_tests::inspect_confined_environment",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env(KEY_FILE, "/synthetic/key")
+            .env("MAILBEND_TIMEOUT_MS", "100")
+            .env("MAILBEND_APP_PASSWORD", "synthetic-password")
+            .env("MAILBEND_EMAIL", "user@example.com")
+            .env("UNRELATED_SETTING", "discard")
+            .output()
+            .expect("run confined child");
+        assert!(result.status.success(), "{result:?}");
+        assert!(String::from_utf8_lossy(&result.stdout).contains("confined environment checked"));
+    }
+
+    #[test]
+    #[ignore = "runs only in the isolated confinement child"]
+    fn inspect_confined_environment() {
+        let args: Vec<_> = std::env::args_os().collect();
+        let result = crate::ask_confined(&args, crate::api::Attempts::Once, false);
+        assert!(result.is_err(), "the synthetic key path must not exist");
+        let mut entries: Vec<_> = std::env::vars_os().collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            [
+                (OsString::from("MAILBEND_TIMEOUT_MS"), OsString::from("100")),
+                (OsString::from(KEY_FILE), OsString::from("/synthetic/key")),
+            ]
+        );
+        println!("confined environment checked");
+    }
+}

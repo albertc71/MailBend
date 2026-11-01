@@ -78,6 +78,7 @@ fn ask_confined(args: &[OsString], attempts: api::Attempts, images: bool) -> Res
     // Refused before the environment is dropped, which would hide it.
     refuse_typesafe_api_key().map_err(Exit::input)?;
     environment::confine(args).map_err(Exit::input)?;
+    mailbend_io::process::no_dumps().map_err(Exit::input)?;
     ask(attempts, images)
 }
 
