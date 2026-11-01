@@ -1,0 +1,9 @@
+[Unit]
+Description=Write the next MailBend arrival batch each morning
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 UTC
+Persistent=false
+
+[Install]
+WantedBy=timers.target

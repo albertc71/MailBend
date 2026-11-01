@@ -52,7 +52,9 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   do not. A part outside those rules is skipped and reported; it is not
   resized or re-encoded. MailBend removes JPEG APP1 through APP13, APP15,
   and COM segments locally before sending, including EXIF, XMP, and ICC
-  profiles. APP0 and APP14 remain. It copies the scan bytes unchanged and
+  profiles. APP0 and APP14 remain. APP0 is retained in full, including
+  JFIF/JFXX thumbnails, which can contain an uncropped version of the image.
+  It copies the scan bytes unchanged and
   drops bytes after EOI. JPEGs with metadata between scans or unsupported
   frame changes are skipped as `unreadable`.
   For PNG, it removes `tEXt`, `zTXt`, `iTXt`, `eXIf`, and `tIME` chunks

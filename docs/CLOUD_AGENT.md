@@ -46,7 +46,8 @@ environment owner install the packages listed in
 
 Setup reuses Bend when it is already installed; otherwise it installs the
 release tested in CI, pinned with its sha256 in
-[install-bend.sh](../scripts/install-bend.sh) (Linux x64 only). For a
+[install-bend.sh](../scripts/install-bend.sh). That installer pins only the
+Linux x64 archive. For a
 compiler-related rebuild failure, compare an existing Bend with that pinned
 version. Setup does not downgrade an installed Bend.
 
@@ -85,9 +86,21 @@ scripts/mailbend-cloud diagnose --imap --smtp   # both; either flag order is acc
 ```
 
 The local check validates safety switches, mail settings, credentials and trust
-store through the TLS helper. Only that helper reads the mail password. It does
-not contact TypeSafe or read its key, test attachments, reserve the send counter,
-or fix configuration. Missing or unusable TLS helper paths are reported separately.
+store through the TLS helper. Only that helper reads the mail password.
+Platform facts are omitted when switches or policy are invalid; the failed
+configuration fact and skipped transport stages explain that no probes ran.
+The credential-free attachment helper reports `platform` facts for `openat2`,
+the attachment directory, `O_TMPFILE` in the download directory, and architecture.
+Architecture is informational, including the fixed `other` category.
+Unset optional directories are skipped. Unsupported or refused prerequisites
+fail with fixed guidance. `openat2 unsupported` means that the process cannot use
+the syscall, whether the kernel lacks it or a sandbox blocks it.
+The temporary file probe creates no named file and closes its unnamed inode.
+It uses the existing dedicated-directory, overlap and startup checks, but does
+not check the caller's PATH or establish permission to save a particular file.
+No attachment content is read. Diagnose does not contact TypeSafe or read its
+key, reserve the send counter, or fix configuration. Missing or unusable helper
+paths are reported separately.
 Use `setup-cloud.sh --check` for credential-free installation readiness.
 
 Each JSON check has bounded `protocol`, `stage`, `status`, `reason` and `guidance`
@@ -111,9 +124,10 @@ IMAP discovery uses only authenticated CAPABILITY/LIST queries and logout.
 Both are permitted with read-only/drafts-only enabled; malformed switches stop
 all network work. This grants no sending permission or exception to send gates.
 
-Every helper invocation has a 30-second total limit and a 1 MiB captured-output
-cap, in addition to transport timeouts. Both network flags can use up to four
-sequential helper invocations (two transport checks and two folder queries).
+Every helper invocation has a 30-second total limit. The platform check has a
+4 KiB captured-output cap; transport checks have a 1 MiB cap in addition to
+transport timeouts. Both network flags can use up to five sequential helper
+invocations, one platform check, two transport checks and two folder queries.
 Timeouts or broken helpers fail without exposing captured process output.
 Exit status is 1 for failed or uncertain checks, 0 otherwise; always inspect
 skipped checks. Success does not establish mailbox-write permission, recipient
@@ -296,6 +310,9 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
 
 ## Resolver and network catches
 
+For failed calls, send outcomes, provider limits, and MailBend upgrades or
+rollback, use the [operator runbook](OPERATIONS.md).
+
 - **Policy and blocked DoH:** opt in only where alternate DNS/direct mail
   egress is permitted. DoH cannot open blocked TCP ports: IMAP needs 993 and
   SMTP needs its configured port and TLS mode (587 with STARTTLS by default).
@@ -308,11 +325,20 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
   alternatively use a numeric HTTPS URL only if its certificate covers that
   IP. The fixed bootstrap applies only to `cloudflare-dns.com:443`.
 - **Privacy and trust:** the resolver learns queried hostnames, not passwords
-  or mail. Both resolver HTTPS and mail TLS verify peers and names. Normal
-  system CA trust applies, including any administrator-installed CA. There
-  is no certificate/fingerprint pinning and no verification bypass.
-  `MAILBEND_CA_FILE` replaces trust for both paths and is intended for local
-  tests; do not use it to work around an unexpected certificate failure.
+  or mail. Resolver HTTPS, mail TLS and TypeSafe HTTPS verify peers and names.
+  Both helpers honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, including after
+  TypeSafe's environment confinement. These replace platform roots rather
+  than adding to them. File and directory certificates are combined when
+  both variables are configured. If no usable roots load, connection fails
+  without fallback. Empty directory entries are ignored. An empty file
+  value fails to load. Without either effective override, system CA trust
+  applies, including administrator-installed CAs.
+  A nonempty `MAILBEND_CA_FILE` takes precedence over both variables and is
+  intended for local tests. Do not use any trust override to work around an
+  unexpected certificate failure. The launcher warns about trust overrides.
+  `mailbend diagnose` reports the source as `system`, `ssl_cert_env` or
+  `mailbend_ca_file`, never the path. There is no certificate pinning or
+  verification bypass.
 - **IPv6:** mail resolution includes A/AAAA and connection fallback. The
   default resolver bootstrap requires IPv4 connectivity; an IPv6-only
   environment needs a reachable approved resolver URL/bootstrap. Bad IPv6

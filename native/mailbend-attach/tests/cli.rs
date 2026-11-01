@@ -107,6 +107,76 @@ fn count(state: &Path, limit: &str, day: &str) -> Output {
     attach(&std::env::temp_dir(), &["count", state, limit, day])
 }
 
+fn platform_lines(out: &Output) -> Vec<String> {
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(out));
+    assert!(out.stderr.is_empty(), "{}", stderr(out));
+    let lines: Vec<String> = stdout(out).lines().map(str::to_string).collect();
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[0], "openat2 ok");
+    assert!(["arch x86_64", "arch aarch64", "arch other"].contains(&lines[3].as_str()));
+    lines
+}
+
+#[test]
+fn platform_check_has_fixed_tokens_and_leaves_no_named_file() {
+    let work = scratch();
+    fs::create_dir(work.join("private-attachments")).expect("mkdir");
+    fs::create_dir(work.join("private-downloads")).expect("mkdir");
+    fs::write(work.join("private-downloads/existing.txt"), b"unchanged").expect("write");
+    let before = names(&work.join("private-downloads"));
+    let out = attach(
+        &work,
+        &["check", "private-attachments", "private-downloads"],
+    );
+    let lines = platform_lines(&out);
+    assert_eq!(lines[1], "attach_dir ok");
+    assert_eq!(lines[2], "download_tmpfile ok");
+    assert_eq!(names(&work.join("private-downloads")), before);
+    assert_eq!(
+        fs::read(work.join("private-downloads/existing.txt")).expect("read"),
+        b"unchanged"
+    );
+    assert_eq!(
+        names(&work.join("private-attachments")),
+        Vec::<String>::new()
+    );
+    assert!(!stdout(&out).contains("private"));
+    assert!(!stdout(&out).contains("must-not-leak"));
+}
+
+#[test]
+fn platform_check_unset_and_refused_directories_are_redacted() {
+    let work = scratch();
+    let unset = platform_lines(&attach(&work, &["check", "", ""]));
+    assert_eq!(unset[1], "attach_dir unset");
+    assert_eq!(unset[2], "download_tmpfile unset");
+    for dir in ["private-missing", "/"] {
+        let refused = platform_lines(&attach(&work, &["check", dir, dir]));
+        assert_eq!(refused[1], "attach_dir refused");
+        assert_eq!(refused[2], "download_tmpfile refused");
+    }
+    fs::create_dir(work.join("dedicated")).expect("mkdir");
+    fs::create_dir(work.join("dedicated/.ssh")).expect("mkdir");
+    let sensitive = platform_lines(&attach(&work, &["check", "dedicated", "dedicated"]));
+    assert_eq!(sensitive[1], "attach_dir refused");
+    assert_eq!(sensitive[2], "download_tmpfile refused");
+}
+
+#[test]
+fn platform_check_preserves_download_overlap_and_startup_refusals() {
+    let work = scratch();
+    for name in ["attachments", "attachments/nested", "autostart"] {
+        fs::create_dir(work.join(name)).expect("mkdir");
+    }
+    for download in ["attachments", "attachments/nested", "autostart"] {
+        let before = names(&work.join(download));
+        let lines = platform_lines(&attach(&work, &["check", "attachments", download]));
+        assert_eq!(lines[1], "attach_dir ok");
+        assert_eq!(lines[2], "download_tmpfile refused");
+        assert_eq!(names(&work.join(download)), before);
+    }
+}
+
 #[test]
 fn a_relative_directory_is_resolved_from_the_working_directory() {
     let work = scratch();

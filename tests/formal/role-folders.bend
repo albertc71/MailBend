@@ -265,12 +265,13 @@ law selectable_is_neither_noselect_nor_nonexistent:
     Bool.not(I.has_attr(at, "\\Noselect") || I.has_attr(at, "\\NonExistent")) : Bool}
 
 # LAW: a folder has a role of its own exactly when it advertises one of
-# \Drafts, \Sent, \Trash, \Junk, \Archive, \All or \Flagged
+# \Drafts, \Sent, \Trash, \Junk, \Archive, \All, \Flagged or \Important
 law recognized_roles_are_the_special_use_attributes:
   for at: List<&2, String>
   {Tools.recognized_role(at) ==
     advertises_any(
-      ["\\Drafts", "\\Sent", "\\Trash", "\\Junk", "\\Archive", "\\All", "\\Flagged"], at)
+      ["\\Drafts", "\\Sent", "\\Trash", "\\Junk", "\\Archive", "\\All", "\\Flagged",
+        "\\Important"], at)
     : Bool}
 
 # Examples
@@ -341,6 +342,11 @@ def other_role_example()
 
 def all_mail_folder_example()
   -> {trash_role([I.Folder{"Trash", "/", ["\\All"]}], "") == None{} : Maybe<&2, String>}:
+  {==}
+
+def important_folder_example()
+  -> {trash_role([I.Folder{"Trash", "/", ["\\iMpOrTaNt"]}], "") == None{}
+      : Maybe<&2, String>}:
   {==}
 
 def each_role_example()
@@ -1132,6 +1138,7 @@ def recognized_roles_are_the_special_use_attributes(at):
     Tools.recognized_role(t),
     role_attrs_any(Tools.role_attrs(), t),
     advertises_any(
-      ["\\Drafts", "\\Sent", "\\Trash", "\\Junk", "\\Archive", "\\All", "\\Flagged"], t),
+      ["\\Drafts", "\\Sent", "\\Trash", "\\Junk", "\\Archive", "\\All", "\\Flagged",
+        "\\Important"], t),
     role_in_finds_any(Tools.role_attrs(), t),
     {==})
