@@ -76,16 +76,26 @@ Polling observes input, backpressure, child exit and signals without a reader
 thread. EOF drains pending bytes and closes the pipe, then waits for the core's
 existing work; it introduces no new request timeout.
 
-INT, TERM, HUP and QUIT are forwarded to the child's process group. Numeric
-exit codes are preserved and the direct child is reaped. The adapter re-raises
-termination signals where possible; an ignored signal uses shell-equivalent
-`128 + signal` (including Rust's ignored SIGPIPE, reported as 141).
+INT, TERM, HUP and QUIT are forwarded to the core's PID, not its process
+group. As with pipe stdin, a helper plan already started can continue after
+the core exits. The helper still stops on rejection, protocol failure or a
+per-operation I/O timeout. There is no total-plan deadline after the core
+exits. SMTP requires a successful progress write before message bytes, so a
+closed core progress pipe stops a send that has not crossed that boundary.
+No result can be reported after the core exits, and shutdown does not retry
+the plan. Numeric exit codes are preserved and the direct child is reaped.
+The adapter re-raises termination signals where possible; an ignored signal
+uses shell-equivalent `128 + signal` (including Rust's ignored SIGPIPE,
+reported as 141).
 Before exec, a guarded child mode
 sets Linux's parent-death signal and checks its expected parent, so killing the
-adapter also kills the direct core. This does not promise to kill descendants
-already spawned by the core after an uncatchable parent kill. Bend retains all
-framing, UTF-8 validation, request limits and mail policy. The raw compiled
-core still cannot reopen socket stdin; clients must use the public launcher.
+adapter with SIGKILL also kills the direct core. This does not promise to kill
+descendants already spawned by the core after an uncatchable parent kill.
+An adapter failure still kills the core's entire process group with SIGKILL.
+Clients that terminate a broader process tree can also kill helpers; these
+PID-signal semantics do not establish compatibility with a particular client.
+Bend retains all framing, UTF-8 validation, request limits and mail policy.
+The raw compiled core still cannot reopen socket stdin; clients must use the public launcher.
 
 `python3 tests/test-stdio.py` exercises the real compiled core, including a
 raw-core negative control that reproduces the original `ENXIO` failure.

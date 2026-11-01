@@ -9,12 +9,15 @@ import select
 import shutil
 import signal
 import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+
+import fake_mail_server as fake
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHERS = [ROOT / "scripts/mailbend", ROOT / "scripts/mailbend-cloud"]
@@ -59,16 +62,46 @@ def live(pid):
         return False
 
 
+def child_pid(pid):
+    def children():
+        main = pathlib.Path(f"/proc/{pid}/task/{pid}/children")
+        found = main.read_text().split()
+        for path in pathlib.Path(f"/proc/{pid}/task").glob("*/children"):
+            if path == main:
+                continue
+            try:
+                found.extend(path.read_text().split())
+            except FileNotFoundError:
+                pass
+        return found
+    return int(wait_until(children)[0])
+
+
 class Session:
-    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV):
-        self.peer, child = socket.socketpair()
-        child.setblocking(not nonblocking)
-        self.proc = subprocess.Popen([str(launcher), "mcp"], stdin=child,
+    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False):
+        self.peer, child = (None, None) if pipe else socket.socketpair()
+        if child is not None:
+            child.setblocking(not nonblocking)
+        self.proc = subprocess.Popen([str(launcher), "mcp"], stdin=child or subprocess.PIPE,
                                      stdout=child if duplex else subprocess.PIPE,
                                      stderr=subprocess.PIPE, env=env, cwd="/", start_new_session=True)
-        child.close()
+        if child is not None:
+            child.close()
         self.output = self.peer if duplex else self.proc.stdout
         self.pending = b""
+
+    def send(self, data):
+        if self.peer is not None:
+            self.peer.sendall(data)
+        else:
+            self.proc.stdin.write(data)
+            self.proc.stdin.flush()
+
+    def close_input(self):
+        if self.peer is not None:
+            self.peer.shutdown(socket.SHUT_WR)
+        else:
+            self.proc.stdin.close()
 
     def line(self):
         deadline = time.monotonic() + 30
@@ -83,20 +116,307 @@ class Session:
         return json.loads(line)
 
     def core_pid(self):
-        path = pathlib.Path(f"/proc/{self.proc.pid}/task/{self.proc.pid}/children")
-        return int(wait_until(lambda: path.read_text().strip()).split()[0])
+        return child_pid(self.proc.pid) if self.peer is not None else self.proc.pid
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_):
-        self.peer.close()
+        if self.peer is not None:
+            self.peer.close()
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait(timeout=10)
-        for stream in (self.proc.stdout, self.proc.stderr):
+        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream is not None:
                 stream.close()
+
+
+class PausedMailServer:
+    def __init__(self, directory, certs, protocol):
+        self.paused = threading.Event()
+        self.resume = threading.Event()
+        self.finished = threading.Event()
+        self.data_bytes = 0
+        self.errors = []
+        self.fixture = json.loads((ROOT / "tests/fixtures/mailbox.json").read_text())
+        self.state = fake.State(self.fixture, str(directory / "state.json"))
+        self.log = directory / "commands.jsonl"
+        logger = fake.Logger(str(self.log))
+        tls = fake.make_ssl_context(str(certs), "server")
+        owner = self
+
+        def pause_reply(session):
+            session.paused_for_stop = True
+            owner.paused.set()
+            if not owner.resume.wait(10):
+                raise AssertionError("test did not release the paused mail reply")
+
+        class IMAP(fake.IMAPSession):
+            def send(self, text):
+                if text.endswith(" COPY completed\r\n"):
+                    pause_reply(self)
+                super().send(text)
+
+        class SMTP(fake.SMTPSession):
+            def send(self, text):
+                if text.startswith("354 "):
+                    pause_reply(self)
+                super().send(text)
+
+            def cmd_data(self):
+                fill = self.conn._fill
+                owner.data_bytes += len(self.conn.buf)
+
+                def count_body_bytes():
+                    before = len(self.conn.buf)
+                    fill()
+                    owner.data_bytes += len(self.conn.buf) - before
+
+                self.conn._fill = count_body_bytes
+                try:
+                    super().cmd_data()
+                finally:
+                    self.conn._fill = fill
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self):
+                session = None
+                conn = self.request
+                conn.settimeout(10)
+                try:
+                    if protocol == "imap":
+                        conn = tls.wrap_socket(conn, server_side=True)
+                        session = IMAP(conn, owner.state, logger, {"UIDPLUS", "SPECIAL-USE"})
+                    else:
+                        session = SMTP(conn, owner.state, logger, tls, True)
+                    session.run()
+                except (fake.ConnectionClosed, fake.ProtocolError, OSError):
+                    pass
+                except Exception as error:
+                    owner.errors.append(error)
+                finally:
+                    (session.conn.sock if session is not None else conn).close()
+                    if getattr(session, "paused_for_stop", False):
+                        owner.finished.set()
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever)
+        self.thread.start()
+        self.env = {k: v for k, v in ENV.items() if not k.startswith("MAILBEND_")}
+        self.env.update(MAILBEND_EMAIL=self.fixture["user"],
+                        MAILBEND_APP_PASSWORD=self.fixture["password"],
+                        MAILBEND_IMAP_HOST="localhost", MAILBEND_SMTP_HOST="localhost",
+                        MAILBEND_IMAP_PORT=str(self.server.server_address[1]),
+                        MAILBEND_SMTP_PORT=str(self.server.server_address[1]),
+                        MAILBEND_CA_FILE=str(certs / "ca.pem"), MAILBEND_TIMEOUT_MS="2000",
+                        MAILBEND_TYPESAFE="0", MAILBEND_SAVE_SENT="0")
+
+    def commands(self):
+        return [json.loads(line)["line"] for line in self.log.read_text().splitlines()]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.resume.set()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=10)
+
+
+class StartedPlanTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.directory.cleanup)
+        cls.certs = pathlib.Path(cls.directory.name) / "certs"
+        subprocess.run(["sh", str(ROOT / "tests/gen-test-certs.sh"), str(cls.certs)],
+                       check=True, capture_output=True)
+
+    @contextlib.contextmanager
+    def paused_plan(self, pipe, protocol, name, arguments):
+        with tempfile.TemporaryDirectory() as directory:
+            with PausedMailServer(pathlib.Path(directory), self.certs, protocol) as server:
+                with Session(LAUNCHERS[0], env=server.env, pipe=pipe) as session:
+                    helper = None
+                    try:
+                        session.send(discovery())
+                        session.line()
+                        session.send(request("tools/call", 2, {"name": name, "arguments": arguments}))
+                        self.assertTrue(server.paused.wait(10), "helper never reached the paused reply")
+                        core = session.core_pid()
+                        helper = child_pid(core)
+                        yield session, server, core, helper
+                    finally:
+                        server.resume.set()
+                        if helper is not None and live(helper):
+                            os.kill(helper, signal.SIGKILL)
+                            wait_until(lambda: not live(helper))
+
+    def stop_core(self, session, core):
+        session.proc.terminate()
+        self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
+        wait_until(lambda: not live(core))
+
+    def finish_helper(self, server, helper):
+        server.resume.set()
+        self.assertTrue(server.finished.wait(10), "mail session did not finish")
+        wait_until(lambda: not live(helper))
+        self.assertEqual(server.errors, [])
+
+    def test_started_move_finishes_after_stop(self):
+        for pipe in (False, True):
+            with self.subTest(pipe=pipe), self.paused_plan(
+                    pipe, "imap", "mail_move",
+                    {"uids": [1], "destination": "Archive", "uidvalidity": 1700000001}) as plan:
+                session, server, core, helper = plan
+                self.stop_core(session, core)
+                self.finish_helper(server, helper)
+                mailboxes = server.state.data["mailboxes"]
+                self.assertNotIn(1, [m["uid"] for m in mailboxes["INBOX"]["messages"]])
+                self.assertEqual([m["raw"] for m in mailboxes["Archive"]["messages"]],
+                                 [server.fixture["mailboxes"]["INBOX"]["messages"][0]["raw"]])
+                mutations = [line.split(" ", 1)[1] for line in server.commands()
+                             if any(verb in line for verb in (" COPY ", " STORE ", " EXPUNGE"))]
+                self.assertEqual(mutations, ['UID COPY 1 "Archive"',
+                                            'UID STORE 1 +FLAGS.SILENT (\\Deleted)', 'UID EXPUNGE 1'])
+                self.assertEqual(session.proc.stdout.read(), b"")
+
+    def test_stop_before_smtp_body_sends_no_bytes(self):
+        for pipe in (False, True):
+            for stop in (False, True):
+                with self.subTest(pipe=pipe, stop=stop), self.paused_plan(
+                        pipe, "smtp", "mail_send",
+                        {"to": "recipient@example.com", "subject": "test", "body": "test body"}) as plan:
+                    session, server, core, helper = plan
+                    if stop:
+                        self.stop_core(session, core)
+                    self.finish_helper(server, helper)
+                    if stop:
+                        self.assertEqual(server.data_bytes, 0)
+                        self.assertEqual(server.state.data["sent"], [])
+                        self.assertEqual(session.proc.stdout.read(), b"")
+                    else:
+                        self.assertGreater(server.data_bytes, 0)
+                        self.assertEqual(len(server.state.data["sent"]), 1)
+                        self.assertFalse(session.line()["result"]["isError"])
+                        session.close_input()
+                        self.assertEqual(session.proc.wait(timeout=10), 0)
+
+    def test_stopped_core_does_not_remove_helper_io_timeout(self):
+        for pipe in (False, True):
+            with self.subTest(pipe=pipe), self.paused_plan(
+                    pipe, "imap", "mail_move",
+                    {"uids": [1], "destination": "Archive", "uidvalidity": 1700000001}) as plan:
+                session, server, core, helper = plan
+                self.stop_core(session, core)
+                self.assertTrue(live(helper), "ordinary shutdown killed the helper")
+                wait_until(lambda: not live(helper), timeout=5)
+                self.finish_helper(server, helper)
+                mailboxes = server.state.data["mailboxes"]
+                self.assertIn(1, [m["uid"] for m in mailboxes["INBOX"]["messages"]])
+                self.assertEqual(len(mailboxes["Archive"]["messages"]), 1)
+                self.assertEqual(sum(" UID COPY " in line for line in server.commands()), 1)
+                self.assertFalse(any(" UID STORE " in line for line in server.commands()))
+                self.assertEqual(session.proc.stdout.read(), b"")
+
+
+class SignalTargetTests(unittest.TestCase):
+    def make_core(self, directory):
+        root = pathlib.Path(directory)
+        adapter = root / "mailbend-stdio"
+        shutil.copy2(STDIO_BINARY, adapter)
+        core = root / "mailbend-core"
+        core.write_text(f"#!{sys.executable}\n" + '''import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(__file__).parent
+if sys.argv[1:] == ["--plan"]:
+    (root / "ready").touch()
+    deadline = time.monotonic() + 10
+    while not (root / "resume").exists():
+        if time.monotonic() >= deadline:
+            sys.exit(1)
+        time.sleep(0.01)
+    (root / "finished").touch()
+else:
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+        signal.signal(sig, lambda number, _: os._exit(70 + number))
+    child = subprocess.Popen([sys.executable, __file__, "--plan"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    while not (root / "ready").exists():
+        time.sleep(0.01)
+    print(json.dumps({"core": os.getpid(), "helper": child.pid}), flush=True)
+    while True:
+        signal.pause()
+''')
+        core.chmod(0o755)
+        return adapter
+
+    def stop_helper(self, pid):
+        if live(pid):
+            os.kill(pid, signal.SIGKILL)
+            wait_until(lambda: not live(pid))
+
+    def test_ordinary_signals_allow_started_descendant_to_finish(self):
+        for pipe in (False, True):
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+                with self.subTest(pipe=pipe, signal=sig), tempfile.TemporaryDirectory() as directory:
+                    adapter = self.make_core(directory)
+                    with Session(adapter, pipe=pipe) as session:
+                        pids = session.line()
+                        try:
+                            self.assertEqual(os.getpgid(pids["core"]), os.getpgid(pids["helper"]))
+                            session.proc.send_signal(sig)
+                            self.assertEqual(session.proc.wait(timeout=10), 70 + sig)
+                            self.assertFalse(live(pids["core"]))
+                            (pathlib.Path(directory) / "resume").touch()
+                            wait_until(lambda: not live(pids["helper"]))
+                            self.assertTrue((pathlib.Path(directory) / "finished").exists(),
+                                            "ordinary shutdown killed the started descendant")
+                        finally:
+                            self.stop_helper(pids["helper"])
+
+    def test_kill_still_stops_adapter_and_core(self):
+        for pipe in (False, True):
+            with self.subTest(pipe=pipe), tempfile.TemporaryDirectory() as directory:
+                adapter = self.make_core(directory)
+                with Session(adapter, pipe=pipe) as session:
+                    pids = session.line()
+                    try:
+                        session.proc.kill()
+                        self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
+                        wait_until(lambda: not live(pids["core"]))
+                    finally:
+                        self.stop_helper(pids["helper"])
+
+    def test_adapter_failure_still_kills_core_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = self.make_core(directory)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen()
+                proc = subprocess.Popen([str(adapter), "mcp"], stdin=listener,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        env=ENV, start_new_session=True)
+                pids = None
+                try:
+                    self.assertTrue(select.select([proc.stdout], [], [], 10)[0])
+                    pids = json.loads(proc.stdout.readline())
+                    with socket.create_connection(listener.getsockname()) as peer:
+                        self.assertEqual(proc.wait(timeout=10), 2)
+                    self.assertIn(b"cannot read stdin", proc.stderr.read())
+                    wait_until(lambda: not live(pids["core"]))
+                    wait_until(lambda: not live(pids["helper"]))
+                    self.assertFalse((pathlib.Path(directory) / "finished").exists())
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.wait(timeout=10)
+                    if pids is not None:
+                        self.stop_helper(pids["helper"])
+                    proc.stdout.close()
+                    proc.stderr.close()
 
 
 class StdioTests(unittest.TestCase):
