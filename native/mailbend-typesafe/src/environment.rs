@@ -11,11 +11,13 @@ use crate::settings::KEY_FILE;
 
 /// The only variables kept: the key file, the time budget, and the routing
 /// and trust settings shared with `mailbend-tls`.
-pub const ALLOWED: [&str; 10] = [
+pub const ALLOWED: [&str; 12] = [
     KEY_FILE,
     "MAILBEND_TIMEOUT_MS",
     "MAILBEND_DOH_URL",
     "MAILBEND_CA_FILE",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
     "https_proxy",
     "HTTPS_PROXY",
     "all_proxy",
@@ -44,6 +46,10 @@ mod tests {
         assert!(is_allowed_entry(b"NO_PROXY="));
         assert!(is_allowed_entry(b"all_proxy=http://p:3128"));
         assert!(is_allowed_entry(b"ALL_PROXY=http://p:3128"));
+        assert!(is_allowed_entry(b"SSL_CERT_FILE=/ca.pem"));
+        assert!(is_allowed_entry(b"SSL_CERT_DIR=/certs:/other-certs"));
+        assert!(is_allowed_entry(b"SSL_CERT_FILE="));
+        assert!(is_allowed_entry(b"SSL_CERT_DIR="));
         for refused in [
             &b"MAILBEND_APP_PASSWORD=secret"[..],
             b"MAILBEND_EMAIL=a@b",
@@ -52,6 +58,8 @@ mod tests {
             b"http_proxy=http://p",
             b"MAILBEND_TIMEOUT_MS",
             b"MAILBEND_CA_FILEX=/x",
+            b"SSL_CERT_FILEX=/x",
+            b"SSL_CERT_DIRX=/x",
             b"=MAILBEND_CA_FILE",
         ] {
             assert!(

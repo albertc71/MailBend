@@ -14,7 +14,8 @@ def guidance(stage: String) -> String:
     case "credentials":
       "Configure one password source and account; OAuth is unsupported. Never share secrets."
     case "trust_store":
-      "Check system CA certificates or the configured test CA file; verification is mandatory."
+      "Check system CAs, SSL_CERT_FILE, SSL_CERT_DIR or MAILBEND_CA_FILE; " ++
+      "verification is mandatory."
     case "helper":
       "Rebuild with scripts/install.sh; use an absolute executable MAILBEND_TLS_HELPER path."
     case "dns":
@@ -40,8 +41,18 @@ def stages() -> List<&2, String>:
     "greeting", "ehlo", "ehlo_tls", "authentication"]
 
 # Tokens from the native helper are allow-listed, never echoed.
+def trust_source(+lines: List<&2, String>) -> String:
+  system = List.contains(~String, ~String.eq, lines, "trust_store ok system")
+  env = List.contains(~String, ~String.eq, lines, "trust_store ok ssl_cert_env")
+  file = List.contains(~String, ~String.eq, lines, "trust_store ok mailbend_ca_file")
+  Bool.pick(String, system, "system",
+    Bool.pick(String, env, "ssl_cert_env", Bool.pick(String, file, "mailbend_ca_file", "")))
+
 def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.Json:
-  +ok = List.contains(~String, ~String.eq, lines, stage ++ " ok")
+  +source = trust_source(lines)
+  +trust = String.eq(stage, "trust_store")
+  +ok = Bool.pick(Bool, trust, Bool.not(String.eq(source, "")),
+    List.contains(~String, ~String.eq, lines, stage ++ " ok"))
   +bad = List.contains(~String, ~String.eq, lines, stage ++ " failed")
   skipped = List.contains(~String, ~String.eq, lines, stage ++ " skipped")
   +invalid = List.contains(~String, ~String.eq, lines, stage ++ " invalid")
@@ -49,7 +60,7 @@ def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.
   +auth = List.contains(~String, ~String.eq, lines, stage ++ " unsupported_auth")
   status = Bool.pick(String, ok, "ok",
     Bool.pick(String, bad || invalid || tls || auth, "failed", "skipped"))
-  reason = Bool.pick(String, ok, "verified",
+  reason = Bool.pick(String, ok, Bool.pick(String, trust, source, "verified"),
     Bool.pick(String, invalid, "invalid_configuration",
     Bool.pick(String, tls, "unsupported_tls",
     Bool.pick(String, auth, "unsupported_auth",
@@ -103,7 +114,7 @@ def transport_facts(+protocol: String, out: String, network: Bool) -> List<&2, J
   +checks = stage_facts(stages(), protocol, lines)
   complete = List.contains(~String, ~String.eq, lines, "configuration ok") &&
     List.contains(~String, ~String.eq, lines, "credentials ok") &&
-    List.contains(~String, ~String.eq, lines, "trust_store ok") &&
+    Bool.not(String.eq(trust_source(lines), "")) &&
     (Bool.not(network) || List.contains(~String, ~String.eq, lines, "authentication ok"))
   transport_facts.if(protocol, checks, failed(checks) || complete)
 
