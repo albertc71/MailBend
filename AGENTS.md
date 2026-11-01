@@ -68,6 +68,8 @@ rendering, response interpretation, MIME behaviour, and agent-visible results.
 ## When using Bend
 - run `bend guide` to learn it (Bend 2 differs from the old Bend/HVM language)
 - use `LAWS.bend` to keep important rules; do not weaken a law to make code pass
+- follow [Writing laws](docs/WRITING-LAWS.md) for proof patterns and checks
+  against vacuous promises
 - run `bend PROOF.bend --verdict` before committing: it must print
   "ALL PROOFS CHECK". `--verdict` also rechecks every def with Bend's proven
   kernel, which it builds with the Lean that `scripts/install-lean.sh`

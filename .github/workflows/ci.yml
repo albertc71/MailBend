@@ -126,6 +126,11 @@ jobs:
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
 
+      - name: Writing-laws guide snippets and rejected production mutation
+        run: |
+          python3 tests/test-writing-laws.py
+          python3 tests/formal/check-writing-laws.py
+
       - name: Change-plan and UID wire mutation checks
         run: python3 tests/formal/check-plan-wire-mutations.py
 
