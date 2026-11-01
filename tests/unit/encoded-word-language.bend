@@ -16,6 +16,11 @@ def main() -> IO(Unit):
     IO.print(M.decode_header("=?iso-8859-1*?Q?Alice=85?="))
     IO.print(M.decode_header("=?iso-8859-1*en!?Q?Alice=85?="))
     IO.print(M.decode_header("=?iso-8859-1*en?Q?Alice=85"))
+    IO.print(M.decode_header("=?latin1*es-419?Q?caf=E9?="))
+    IO.print(M.decode_header("=?latin1*-en?Q?caf=E9?="))
+    IO.print(M.decode_header("=?latin1*en-?Q?caf=E9?="))
+    IO.print(M.decode_header("=?latin1*en--US?Q?caf=E9?="))
+    IO.print(M.decode_header("=?latin1*9en?Q?caf=E9?="))
     IO.print(C.charset_decode("iso-8859-1*en", "\u{85}"))
 
 #|Alice…
@@ -28,4 +33,9 @@ def main() -> IO(Unit):
 #|Alice�
 #|Alice�
 #|=?iso-8859-1*en?Q?Alice=85
+#|café
+#|caf�
+#|caf�
+#|caf�
+#|caf�
 #|�
