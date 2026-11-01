@@ -31,14 +31,18 @@ plus `cargo deny check`, a fuzz smoke run and the source checks in
 need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
 schema checks need Python `jsonschema` (`sudo apt-get install python3-jsonschema`
 on Ubuntu).
+The scheduled recipe test also needs `jq` and `flock` from util-linux.
 
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
+python3 scripts/check-docs.py                     # documented names resolve in source
+python3 tests/test-docs.py                        # drift mutations and client snippets
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
+python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
@@ -50,6 +54,7 @@ python3 tests/formal/check-install-swap.py
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
+python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
@@ -57,6 +62,21 @@ The [bounded SMTP model](.agents/skills/smtp-tls-proofs/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
 The transport suite exercises the actual helper.
+
+The documentation check runs offline with Python 3.11 or later. It checks law
+references, environment-variable names, CLI verbs in both usage texts, and every
+`src/*.bend` path in the architecture's Layers section. Cite laws with Markdown
+links whose labels are the exact law names and whose targets are `LAWS.bend`.
+The check also recognizes `law` or `laws` followed by backtick names, a backtick
+name followed by `law`, and `Laws.`-qualified references. It checks names, not whether
+prose claims follow from the laws.
+
+Environment coverage uses exact `MAILBEND_*` string literals in `main.bend`,
+`src/*.bend`, and native Rust source, excluding comments and `cfg(test)` modules.
+This includes names passed through helper functions and constants, not just
+direct environment reads. List each name in `.env.example`, including forbidden
+variables in explanatory comments. Update the checker if a source syntax change
+moves configuration names out of string literals.
 
 When the checkout is on a filesystem without Linux `O_TMPFILE` support
 (for example WSL's `/mnt/c`), run the end-to-end fixtures on a native Linux

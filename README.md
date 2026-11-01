@@ -194,8 +194,8 @@ failed build, check, proof or compile leaves the installation as it was. A
 running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
-the pinned Bend to `~/.bend` after checking the archive's sha256; that
-release is Linux x64 only, so elsewhere install the same version yourself.
+the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
+pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -311,6 +311,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 ## Use
 
+For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
+They keep passwords in private files and use the public launcher.
+
 Check the connection first:
 
 ```sh
@@ -322,6 +325,20 @@ scripts/mailbend tools        # the tool list with JSON schemas
 
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
+
+Stopping the server PID with INT, TERM, HUP or QUIT stops the core but allows
+an already-started helper plan to continue, with either pipe or socket stdin.
+The helper's per-operation timeouts still apply, but there is no total-plan
+deadline after the core exits. A plan can still stop on a server rejection or
+I/O failure. SMTP sends no message bytes if the core has exited before the
+helper writes its pre-body progress marker. Once that marker succeeds, the
+send may continue. SIGKILL remains the hard stop for the adapter and core,
+not a guarantee that every helper has stopped. Clients that terminate a
+broader process tree can also kill helpers.
+
+After the core exits there is no completion or partial result, and MailBend
+does not retry the plan. Check the mailbox or delivery outcome before retrying
+a change. See the [adapter lifecycle](native/README.md#mcp-stdin-adapter).
 
 Register the MCP server (stdio) with your agent, using the absolute path:
 
@@ -414,6 +431,10 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages
 
+For caller-owned systemd user timers, see the
+[read-only brief, notifier, and queued draft recipes](docs/RECIPES.md).
+MailBend itself remains daemon-free.
+
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
@@ -503,9 +524,11 @@ synthetic cost measurements and experiment decision are in
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as
-  `UID EXPUNGE` (proven).
+  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID
+  commands. Commands that take a UID list preserve its order. STORE preserves
+  the requested flag and add or remove operation (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
-  caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
+  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
@@ -557,7 +580,7 @@ synthetic cost measurements and experiment decision are in
   `To Delete` or a category folder passed in, never into INBOX, a role
   folder or the folder it reads, and creates no folder (proven for every
   input).
-- **An interrupted move says so.** A move (`mail_move`, `mail_trash`,
+- **The running core reports interrupted changes.** A move (`mail_move`, `mail_trash`,
   `mail_label`) cut off when its COPY may have run fails with `partial: true`
   (the messages may be in both folders; `isError` over MCP, exit 1 on the
   CLI), never as an error that implies nothing changed. A refused or earlier
@@ -571,7 +594,8 @@ synthetic cost measurements and experiment decision are in
   A helper that never started (a relative `MAILBEND_TLS_HELPER`, or one that
   cannot be spawned) changed nothing, so it is an ordinary error; one that
   failed after starting or was killed by a signal may have, so these changes
-  count it as cut off.
+  count it as cut off. These results require the core to remain alive. Stopping
+  the core can leave a completed or partial change with no result to the client.
 - **Attachments stay inside one directory.** Attachments are read only from
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   the credential-free `mailbend-attach`, which refuses symlinks, `..`, hard
@@ -591,9 +615,16 @@ synthetic cost measurements and experiment decision are in
   directory in `PATH`). A saved file is still untrusted content. Mechanics:
   [native/README.md](native/README.md#contract).
 - **Jev sees only what you allow.** See [Jev](#jev-optional).
-- **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
-  test server; whoever sets it decides which servers are trusted, so never
-  set it in production. `scripts/mailbend` prints a warning when it is set.
+- **Trust overrides replace the system trust store.** Both network helpers
+  honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, combining their certificates when
+  both are configured. No usable roots means failure, not platform fallback.
+  Empty directory entries are ignored, but an empty file value fails to load.
+  A nonempty `MAILBEND_CA_FILE` takes precedence and exists for local test
+  servers. Never set it in production. Whoever sets an override chooses
+  which servers are trusted. Certificate and hostname verification remain
+  mandatory. `scripts/mailbend` warns when an override is set.
+  `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
+  without the path. See the [native trust rule](native/README.md#contract).
 - **Commands run in lock-step.** They run one at a time and stop at the
   first rejection; message contents are framed as IMAP literals, so a
   message cannot spoof a server reply.

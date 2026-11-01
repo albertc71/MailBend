@@ -46,7 +46,8 @@ environment owner install the packages listed in
 
 Setup reuses Bend when it is already installed; otherwise it installs the
 release tested in CI, pinned with its sha256 in
-[install-bend.sh](../scripts/install-bend.sh) (Linux x64 only). For a
+[install-bend.sh](../scripts/install-bend.sh). That installer pins only the
+Linux x64 archive. For a
 compiler-related rebuild failure, compare an existing Bend with that pinned
 version. Setup does not downgrade an installed Bend.
 
@@ -86,6 +87,8 @@ scripts/mailbend-cloud diagnose --imap --smtp   # both; either flag order is acc
 
 The local check validates safety switches, mail settings, credentials and trust
 store through the TLS helper. Only that helper reads the mail password.
+Platform facts are omitted when switches or policy are invalid; the failed
+configuration fact and skipped transport stages explain that no probes ran.
 The credential-free attachment helper reports `platform` facts for `openat2`,
 the attachment directory, `O_TMPFILE` in the download directory, and architecture.
 Architecture is informational, including the fixed `other` category.
@@ -319,11 +322,20 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
   alternatively use a numeric HTTPS URL only if its certificate covers that
   IP. The fixed bootstrap applies only to `cloudflare-dns.com:443`.
 - **Privacy and trust:** the resolver learns queried hostnames, not passwords
-  or mail. Both resolver HTTPS and mail TLS verify peers and names. Normal
-  system CA trust applies, including any administrator-installed CA. There
-  is no certificate/fingerprint pinning and no verification bypass.
-  `MAILBEND_CA_FILE` replaces trust for both paths and is intended for local
-  tests; do not use it to work around an unexpected certificate failure.
+  or mail. Resolver HTTPS, mail TLS and TypeSafe HTTPS verify peers and names.
+  Both helpers honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, including after
+  TypeSafe's environment confinement. These replace platform roots rather
+  than adding to them. File and directory certificates are combined when
+  both variables are configured. If no usable roots load, connection fails
+  without fallback. Empty directory entries are ignored. An empty file
+  value fails to load. Without either effective override, system CA trust
+  applies, including administrator-installed CAs.
+  A nonempty `MAILBEND_CA_FILE` takes precedence over both variables and is
+  intended for local tests. Do not use any trust override to work around an
+  unexpected certificate failure. The launcher warns about trust overrides.
+  `mailbend diagnose` reports the source as `system`, `ssl_cert_env` or
+  `mailbend_ca_file`, never the path. There is no certificate pinning or
+  verification bypass.
 - **IPv6:** mail resolution includes A/AAAA and connection fallback. The
   default resolver bootstrap requires IPv4 connectivity; an IPv6-only
   environment needs a reachable approved resolver URL/bootstrap. Bad IPv6

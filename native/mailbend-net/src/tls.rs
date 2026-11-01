@@ -1,7 +1,6 @@
 //! The one place a TLS client configuration is built. Certificate chain and
 //! host name verification are always on: there is no setting that turns
-//! them off. A CA file only replaces the trust store (for the local test
-//! servers).
+//! them off. Trust overrides only replace the trusted certificates.
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, TcpStream};
@@ -17,12 +16,29 @@ use crate::NetError;
 /// A verified TLS stream, by default over a mail socket.
 pub type TlsStream<S = TcpStream> = StreamOwned<ClientConnection, S>;
 
-/// TLS 1.3 and 1.2 with the ring provider, trusting the certificates in
-/// `ca_file` when given, else the system trust store.
-pub fn client_config(ca_file: Option<&Path>) -> Result<Arc<ClientConfig>, NetError> {
-    let roots = match ca_file {
-        Some(path) => roots_from_file(path)?,
-        None => system_roots(),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrustSource {
+    System,
+    SslCertEnv,
+    MailbendCaFile,
+}
+
+impl TrustSource {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::SslCertEnv => "ssl_cert_env",
+            Self::MailbendCaFile => "mailbend_ca_file",
+        }
+    }
+}
+
+/// TLS 1.3 and 1.2 with the ring provider and the effective trust source.
+/// `ca_file` takes precedence over native certificate environment settings.
+pub fn client_config(ca_file: Option<&Path>) -> Result<(Arc<ClientConfig>, TrustSource), NetError> {
+    let (roots, source) = match ca_file {
+        Some(path) => (roots_from_file(path)?, TrustSource::MailbendCaFile),
+        None => (system_roots(), native_trust_source()),
     };
     if roots.is_empty() {
         return Err(trust_store_error());
@@ -33,7 +49,7 @@ pub fn client_config(ca_file: Option<&Path>) -> Result<Arc<ClientConfig>, NetErr
         .map_err(|_| NetError::Tls("cannot create a TLS context".to_string()))?
         .with_root_certificates(roots)
         .with_no_client_auth();
-    Ok(Arc::new(config))
+    Ok((Arc::new(config), source))
 }
 
 /// MAILBEND_CA_FILE, if set and nonempty: the only certificates to trust
@@ -58,8 +74,19 @@ fn roots_from_file(path: &Path) -> Result<RootCertStore, NetError> {
     Ok(roots)
 }
 
-/// The system trust store. As system TLS libraries do with their default
-/// paths, unusable entries are skipped.
+fn native_trust_source() -> TrustSource {
+    // rustls-native-certs ignores empty directory entries, but not an empty file value.
+    let has_dirs = std::env::var_os("SSL_CERT_DIR")
+        .is_some_and(|dirs| std::env::split_paths(&dirs).any(|path| !path.as_os_str().is_empty()));
+    if std::env::var_os("SSL_CERT_FILE").is_some() || has_dirs {
+        TrustSource::SslCertEnv
+    } else {
+        TrustSource::System
+    }
+}
+
+/// Native trust honors SSL_CERT_FILE and SSL_CERT_DIR instead of platform
+/// roots when configured. Unusable certificate entries are skipped.
 fn system_roots() -> RootCertStore {
     let mut roots = RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().certs {
