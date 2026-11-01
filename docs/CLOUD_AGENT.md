@@ -296,6 +296,9 @@ entries. Stale pins still affect other programs and MailBend's system-DNS mode.
 
 ## Resolver and network catches
 
+For failed calls, send outcomes, provider limits, and MailBend upgrades or
+rollback, use the [operator runbook](OPERATIONS.md).
+
 - **Policy and blocked DoH:** opt in only where alternate DNS/direct mail
   egress is permitted. DoH cannot open blocked TCP ports: IMAP needs 993 and
   SMTP needs its configured port and TLS mode (587 with STARTTLS by default).
