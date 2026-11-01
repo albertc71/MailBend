@@ -13,8 +13,8 @@ Measured local modern MCP replies, not an LLM evaluation. Tokens are an estimate
 | read-calendar-invite | 1 | 1 | 1376 | 344 | #66 |
 | read-sent-thread | 1 | 6 | 2689 | 673 | #66 |
 | read-stale-identity | 1 | 1 | 402 | 101 | #70 |
-| reply-meeting | 2 | 2 | 2183 | 546 | #70 |
-| reply-receipt | 2 | 2 | 2197 | 550 | #70 |
+| reply-meeting | 2 | 2 | 2801 | 701 | #70 |
+| reply-receipt | 2 | 2 | 2815 | 704 | #70 |
 | organise-newsletter | 2 | 3 | 1609 | 403 | #61 |
 | organise-receipt | 2 | 3 | 1589 | 398 | #61 |
 | organise-flight | 2 | 3 | 1623 | 406 | #61 |

@@ -1369,13 +1369,40 @@
         },
         "content": [
           {
-            "text": "{\"message_id\":\"<generated@example.com>\",\"next_action\":\"Do not resend. SMTP acceptance is not recipient delivery.\",\"ok\":true,\"original_bytes\":302,\"quoted_bytes\":302,\"quoted_original_truncated\":false,\"recipients\":1,\"sent\":true,\"server_reply\":\"250 2.0.0 OK queued as FAKE1\",\"smtp_outcome\":\"accepted\",\"smtp_phase\":\"data_reply\",\"smtp_reason\":\"accepted_by_server\"}",
+            "text": "{\"hidden_unicode\":{\"attachment_filenames\":[],\"bcc\":[],\"body\":{\"bidi\":0,\"tag\":0,\"zero_width\":0},\"cc\":[],\"from\":{\"bidi\":0,\"tag\":0,\"zero_width\":0},\"subject\":{\"bidi\":0,\"tag\":0,\"zero_width\":0},\"to\":[{\"bidi\":0,\"tag\":0,\"zero_width\":0}]},\"message_id\":\"<generated@example.com>\",\"next_action\":\"Do not resend. SMTP acceptance is not recipient delivery.\",\"ok\":true,\"original_bytes\":302,\"quoted_bytes\":302,\"quoted_original_truncated\":false,\"recipients\":1,\"removed_tags\":{\"body\":0,\"cc\":[],\"subject\":0,\"to\":[0]},\"sent\":true,\"server_reply\":\"250 2.0.0 OK queued as FAKE1\",\"smtp_outcome\":\"accepted\",\"smtp_phase\":\"data_reply\",\"smtp_reason\":\"accepted_by_server\"}",
             "type": "text"
           }
         ],
         "isError": false,
         "resultType": "complete",
         "structuredContent": {
+          "hidden_unicode": {
+            "attachment_filenames": [],
+            "bcc": [],
+            "body": {
+              "bidi": 0,
+              "tag": 0,
+              "zero_width": 0
+            },
+            "cc": [],
+            "from": {
+              "bidi": 0,
+              "tag": 0,
+              "zero_width": 0
+            },
+            "subject": {
+              "bidi": 0,
+              "tag": 0,
+              "zero_width": 0
+            },
+            "to": [
+              {
+                "bidi": 0,
+                "tag": 0,
+                "zero_width": 0
+              }
+            ]
+          },
           "message_id": "<generated@example.com>",
           "next_action": "Do not resend. SMTP acceptance is not recipient delivery.",
           "ok": true,
@@ -1383,6 +1410,14 @@
           "quoted_bytes": 302,
           "quoted_original_truncated": false,
           "recipients": 1,
+          "removed_tags": {
+            "body": 0,
+            "cc": [],
+            "subject": 0,
+            "to": [
+              0
+            ]
+          },
           "sent": true,
           "server_reply": "250 2.0.0 OK queued as FAKE1",
           "smtp_outcome": "accepted",
@@ -1448,13 +1483,40 @@
         },
         "content": [
           {
-            "text": "{\"message_id\":\"<generated@example.com>\",\"next_action\":\"Do not resend. SMTP acceptance is not recipient delivery.\",\"ok\":true,\"original_bytes\":309,\"quoted_bytes\":309,\"quoted_original_truncated\":false,\"recipients\":1,\"sent\":true,\"server_reply\":\"250 2.0.0 OK queued as FAKE1\",\"smtp_outcome\":\"accepted\",\"smtp_phase\":\"data_reply\",\"smtp_reason\":\"accepted_by_server\"}",
+            "text": "{\"hidden_unicode\":{\"attachment_filenames\":[],\"bcc\":[],\"body\":{\"bidi\":0,\"tag\":0,\"zero_width\":0},\"cc\":[],\"from\":{\"bidi\":0,\"tag\":0,\"zero_width\":0},\"subject\":{\"bidi\":0,\"tag\":0,\"zero_width\":0},\"to\":[{\"bidi\":0,\"tag\":0,\"zero_width\":0}]},\"message_id\":\"<generated@example.com>\",\"next_action\":\"Do not resend. SMTP acceptance is not recipient delivery.\",\"ok\":true,\"original_bytes\":309,\"quoted_bytes\":309,\"quoted_original_truncated\":false,\"recipients\":1,\"removed_tags\":{\"body\":0,\"cc\":[],\"subject\":0,\"to\":[0]},\"sent\":true,\"server_reply\":\"250 2.0.0 OK queued as FAKE1\",\"smtp_outcome\":\"accepted\",\"smtp_phase\":\"data_reply\",\"smtp_reason\":\"accepted_by_server\"}",
             "type": "text"
           }
         ],
         "isError": false,
         "resultType": "complete",
         "structuredContent": {
+          "hidden_unicode": {
+            "attachment_filenames": [],
+            "bcc": [],
+            "body": {
+              "bidi": 0,
+              "tag": 0,
+              "zero_width": 0
+            },
+            "cc": [],
+            "from": {
+              "bidi": 0,
+              "tag": 0,
+              "zero_width": 0
+            },
+            "subject": {
+              "bidi": 0,
+              "tag": 0,
+              "zero_width": 0
+            },
+            "to": [
+              {
+                "bidi": 0,
+                "tag": 0,
+                "zero_width": 0
+              }
+            ]
+          },
           "message_id": "<generated@example.com>",
           "next_action": "Do not resend. SMTP acceptance is not recipient delivery.",
           "ok": true,
@@ -1462,6 +1524,14 @@
           "quoted_bytes": 309,
           "quoted_original_truncated": false,
           "recipients": 1,
+          "removed_tags": {
+            "body": 0,
+            "cc": [],
+            "subject": 0,
+            "to": [
+              0
+            ]
+          },
           "sent": true,
           "server_reply": "250 2.0.0 OK queued as FAKE1",
           "smtp_outcome": "accepted",

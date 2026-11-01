@@ -21,11 +21,17 @@ def check(name, value, valid=True):
     checks += 1
 
 
+hidden_count = dict(tag=0, bidi=0, zero_width=0)
+hidden = dict(subject=hidden_count, body=hidden_count, **{"from": hidden_count},
+              to=[hidden_count], cc=[], bcc=[], attachment_filenames=[])
 sent = dict(ok=True, sent=True, message_id='<fixture@example.test>', recipients=1,
             server_reply='250 accepted', smtp_outcome='accepted', smtp_phase='data_reply',
             smtp_reason='accepted_by_server', next_action='Do not resend.',
-            sent_copy='failed or unconfirmed')
+            sent_copy='failed or unconfirmed', hidden_unicode=hidden)
 check('mail_send', sent)
+check('mail_send', {k: v for k, v in sent.items() if k != 'hidden_unicode'}, False)
+check('mail_send', {**sent, 'hidden_unicode': {**hidden, 'body': {'tag': 0}}}, False)
+check('mail_send', {**sent, 'hidden_unicode': {**hidden, 'body': {**hidden_count, 'tag': -1}}}, False)
 check('mail_send', {**sent, 'smtp_outcome': 'unknown'}, False)
 for outcome, phase, reason in [('not_sent', 'before_smtp', 'local_refusal'),
                                ('not_sent', 'before_data', 'stopped_before_data'),
@@ -37,6 +43,18 @@ for outcome, phase, reason in [('not_sent', 'before_smtp', 'local_refusal'),
     for name in ('mail_send', 'mail_reply', 'mail_forward'):
         check(name, value)
         check(name, {**value, 'smtp_phase': 'accepted'}, False)
+removed = dict(subject=1, body=2, to=[1], cc=[])
+for name in ('mail_reply', 'mail_forward'):
+    failure = dict(error='fixture', smtp_outcome='unknown', smtp_phase='data_reply',
+                   smtp_reason='acceptance_unconfirmed', next_action='Inspect evidence.',
+                   hidden_unicode=hidden, removed_tags=removed)
+    check(name, failure)
+    check(name, {**failure, 'removed_tags': {**removed, 'subject': -1}}, False)
+    check(name, dict(error='early refusal'))
+check('mail_save_draft', dict(dry_run=True, imap=['APPEND redacted'], hidden_unicode=hidden))
+check('mail_send', dict(dry_run=True,
+      smtp={'from': 'sender@example.test', 'rcpt': ['a@example.test'], 'data': '<1 bytes>',
+            'sent_copy': False}, hidden_unicode=hidden))
 selected = dict(folder='INBOX', uid=1, uidvalidity=7, section='1',
                 content_type='text/plain', complete=True, scope='selected_part',
                 message_complete=False, content='fixture', content_encoding='text')

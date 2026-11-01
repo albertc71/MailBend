@@ -55,6 +55,7 @@ python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
 python3 tests/test-posture.py                     # offline capability report and redaction
+python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
