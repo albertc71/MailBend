@@ -89,9 +89,14 @@ jobs:
       - name: Install Lean (scripts/install-lean.sh, for --verdict)
         run: sh scripts/install-lean.sh
       - name: Safety proofs, rechecked by the proven kernel
-        run: bend PROOF.bend --verdict
+        run: |
+          bend PROOF.bend --verdict
+          bend src/tools.bend --verdict
+          bend tests/formal/tool-laws.bend --verdict
       - name: Bounded SMTP model mutation checks
         run: python3 tests/formal/check-smtp-tls.py
+      - name: Policy proof boundaries and mutation checks
+        run: python3 tests/formal/check-policy.py
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
       - name: Writing-laws guide snippets and rejected production mutation

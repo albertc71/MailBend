@@ -4,14 +4,15 @@ import Base
 import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/tools.bend as T
+import ../../src/policy.bend as Policy
 
-def show(o: T.Out) -> String:
+def show(o: Policy.Out) -> String:
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       J.show(j)
-    case T.Err{m}:
+    case Policy.Err{m}:
       "error " ++ m
-    case T.Partial{j}:
+    case Policy.Partial{j}:
       "partial " ++ J.show(j)
 
 def base() -> String:
@@ -21,7 +22,7 @@ def fetch() -> String:
   "* 1 FETCH (UID 1 FLAGS (\\Seen))\r\na2 OK fetched\r\n"
 
 def result(out: String, code: U32) -> String:
-  show(T.refresh_proc(T.ProcOk{code, out, "failure"}, [1, 2], "INBOX", 7))
+  show(T.refresh_proc(Policy.ProcOk{code, out, "failure"}, [1, 2], "INBOX", 7))
 
 def request.put(r: T.Uids()) -> String:
   match r:
