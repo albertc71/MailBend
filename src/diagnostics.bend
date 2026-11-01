@@ -6,6 +6,7 @@ import ./json.bend as J
 import ./tools.bend as T
 import ./imap.bend as I
 import ./ops.bend as Ops
+import ./jev.bend as Jev
 
 def guidance(stage: String) -> String:
   match stage:
@@ -204,3 +205,288 @@ def run(imap: Bool, smtp: Bool) -> IO(T.Out):
     c : T.Config <- T.config()
     save : T.Flag <- T.flag("MAILBEND_SAVE_SENT")
     run.save_sent(c, save, imap, smtp)
+
+# The offline inventory deliberately has no helper, file or network capability.
+def posture_char(+c: Char) -> Bool:
+  Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '.') ||
+    Char.is_eq(c, '-') || Char.is_eq(c, ':')
+
+def posture_host_chars(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      posture_char(c) && posture_host_chars(t)
+
+def posture_host(+s: String) -> Bool:
+  Bool.not(String.is_empty(s)) && posture_host_chars(s)
+
+def posture_port.put(v: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  match v:
+    case Some{+p}:
+      Bool.pick(Maybe<&2, U32>, U32.is_zero(p) || U32.is_gt(p, 65535), None{}, Some{p})
+    case None{}:
+      None{}
+
+def posture_port(v: String) -> Maybe<&2, U32>:
+  posture_port.put(U32.read(v))
+
+def posture_endpoint.put(name: String, host: String, p: Maybe<&2, U32>, valid: Bool) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match p valid:
+    case Some{port} True{}:
+      Done{T.PostureEndpoint{host, port}}
+    case _ _:
+      Fail{name ++ " must name a host and a port from 1 to 65535; value omitted"}
+
+def posture_endpoint(name: String, +host: String, port: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  posture_endpoint.put(name, host, posture_port(port), posture_host(host))
+
+def posture_authority.parts(name: String, ps: List<&2, String>, fallback: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match ps:
+    case h <> Nil{}:
+      posture_endpoint(name, h, fallback)
+    case h <> p <> Nil{}:
+      posture_endpoint(name, h, p)
+    case _:
+      Fail{name ++ " has an invalid endpoint; value omitted"}
+
+def posture_authority.bracket(name: String, ps: List<&2, String>, fallback: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match ps:
+    case h <> "" <> Nil{}:
+      posture_endpoint(name, h, fallback)
+    case h <> SCon{':', p} <> Nil{}:
+      posture_endpoint(name, h, p)
+    case _:
+      Fail{name ++ " has an invalid endpoint; value omitted"}
+
+def posture_authority(name: String, s: String, fallback: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match s:
+    case SCon{'[', t}:
+      posture_authority.bracket(name, String.split(t, ']'), fallback)
+    case _:
+      posture_authority.parts(name, String.split(s, ':'), fallback)
+
+def posture_url_authority(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{c, t}:
+      match c:
+        case '/':
+          ""
+        case '?':
+          ""
+        case '#':
+          ""
+        case _:
+          SCon{c, posture_url_authority(t)}
+
+def posture_doh(s: String) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match s:
+    case "":
+      Done{None{}}
+    case SCon{'h', SCon{'t', SCon{'t', SCon{'p', SCon{'s', SCon{':', SCon{'/', SCon{'/', t}}}}}}}}:
+      do Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+        e : T.PostureEndpoint <-
+          posture_authority("MAILBEND_DOH_URL", posture_url_authority(t), "443")
+        return Some{e}
+    case _:
+      Fail{"MAILBEND_DOH_URL must be an HTTPS URL; value omitted"}
+
+def posture_last(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case h <> Nil{}:
+      h
+    case h <> t:
+      posture_last(t)
+
+def posture_proxy.rest(s: String) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  do Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+    e : T.PostureEndpoint <- posture_authority("HTTPS proxy",
+      posture_url_authority(posture_last(String.split(s, '@'))), "1080")
+    return Some{e}
+
+def posture_proxy.if(s: String, http: Bool, scheme: Bool) ->
+  Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match http scheme:
+    case True{} _:
+      posture_proxy.rest(String.drop(s, 7n))
+    case False{} True{}:
+      Fail{"the HTTPS proxy setting is not a supported http:// proxy URL"}
+    case False{} False{}:
+      posture_proxy.rest(s)
+
+def posture_proxy(+s: String) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match s:
+    case "":
+      Done{None{}}
+    case _:
+      posture_proxy.if(s, String.starts_with(String.to_lower(s), "http://"),
+        String.contains(s, "://"))
+
+def posture_trim_dot(s: String) -> String:
+  match s:
+    case SCon{'.', t}:
+      posture_trim_dot(t)
+    case _:
+      s
+
+def posture_trim_end_dot(s: String) -> String:
+  String.reverse(posture_trim_dot(String.reverse(s)))
+
+def posture_bypass(entries: List<&2, String>, +host: String) -> Bool:
+  match entries:
+    case Nil{}:
+      False{}
+    case h <> t:
+      +entry = String.trim(h)
+      +domain = posture_trim_dot(posture_trim_end_dot(String.to_lower(entry)))
+      String.eq(entry, "*") || String.eq(host, domain) ||
+        (Bool.not(String.is_empty(domain)) && String.ends_with(host, "." ++ domain)) ||
+        posture_bypass(t, host)
+
+def posture_proxied(proxy: Maybe<&2, T.PostureEndpoint>, host: String, bypass: String) -> Bool:
+  match proxy:
+    case None{}:
+      False{}
+    case Some{p}:
+      Bool.not(posture_bypass(String.split(bypass, ','),
+        posture_trim_end_dot(String.to_lower(host))))
+
+def posture_doh_proxied(doh: Maybe<&2, T.PostureEndpoint>, proxy: Maybe<&2, T.PostureEndpoint>,
+  bypass: String) -> Bool:
+  match doh:
+    case None{}:
+      False{}
+    case Some{T.PostureEndpoint{host, port}}:
+      posture_proxied(proxy, host, bypass)
+
+def posture_smtp_mode(r: Result<&1, &1, U32 & String, String>) ->
+  Result<&2, &2, String, String>:
+  match r:
+    case Fail{e}:
+      Done{"starttls_verified_tls"}
+    case Done{"starttls"}:
+      Done{"starttls_verified_tls"}
+    case Done{"implicit"}:
+      Done{"implicit_verified_tls"}
+    case _:
+      Fail{"MAILBEND_SMTP_TLS_MODE must be starttls or implicit"}
+
+def posture_first(a: String, b: String) -> String:
+  match a:
+    case SNil{}:
+      b
+    case _:
+      a
+
+def posture_ip_chars(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      +n = Char.to_u32(c)
+      ((U32.is_ge(n, 48) && U32.is_le(n, 57)) ||
+        (U32.is_ge(n, 65) && U32.is_le(n, 70)) ||
+        (U32.is_ge(n, 97) && U32.is_le(n, 102)) ||
+        U32.is_eq(n, 46) || U32.is_eq(n, 58)) && posture_ip_chars(t)
+
+def posture_ip.if(name: String, value: String, valid: Bool) ->
+  Result<&2, &2, String, Maybe<&2, String>>:
+  match valid:
+    case True{}:
+      Done{Some{value}}
+    case False{}:
+      Fail{name ++ " must be one numeric IPv4 or IPv6 address"}
+
+def posture_ip(name: String, +value: String) -> Result<&2, &2, String, Maybe<&2, String>>:
+  match value:
+    case SNil{}:
+      Done{None{}}
+    case _:
+      posture_ip.if(name, value, posture_ip_chars(value) &&
+        (String.contains(value, ".") || String.contains(value, ":")))
+
+def posture_proxy_required(c: T.Config, doh: Maybe<&2, T.PostureEndpoint>, +bypass: String) -> Bool:
+  match c:
+    case T.ConfigBad{msg}:
+      False{}
+    case T.Config{ro, drafts, jev, images}:
+      (Jev.is_on(jev) && Bool.not(posture_bypass(String.split(bypass, ','), "api.typesafe.ai"))) ||
+        posture_doh_proxied(doh, Some{T.PostureEndpoint{"", 0}}, bypass)
+
+def posture_proxy_checked(r: Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>,
+  needed: Bool) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match r needed:
+    case Fail{msg} False{}:
+      Done{None{}}
+    case _ _:
+      r
+
+def posture_endpoints(c: T.Config) -> IO(Result<&2, &2, String, T.PostureEndpoints>):
+  do IO<Result<&2, &2, String, T.PostureEndpoints>>:
+    ih : String <- T.env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com")
+    ip : String <- T.env_or("MAILBEND_IMAP_PORT", "993")
+    sh : String <- T.env_or("MAILBEND_SMTP_HOST", "smtp.mail.me.com")
+    sp : String <- T.env_or("MAILBEND_SMTP_PORT", "587")
+    mode : Result<&1, &1, U32 & String, String> <- IO.get_env("MAILBEND_SMTP_TLS_MODE")
+    doh : String <- T.env_or("MAILBEND_DOH_URL", "")
+    p1 : String <- T.env_or("https_proxy", "")
+    p2 : String <- T.env_or("HTTPS_PROXY", "")
+    p3 : String <- T.env_or("all_proxy", "")
+    p4 : String <- T.env_or("ALL_PROXY", "")
+    n1 : String <- T.env_or("no_proxy", "")
+    n2 : String <- T.env_or("NO_PROXY", "")
+    ii : String <- T.env_or("MAILBEND_IMAP_CONNECT_IP", "")
+    si : String <- T.env_or("MAILBEND_SMTP_CONNECT_IP", "")
+    a : String <- T.env_or("MAILBEND_ATTACH_DIR", "")
+    d : String <- T.env_or("MAILBEND_DOWNLOAD_DIR", "")
+    ca : String <- T.env_or("MAILBEND_CA_FILE", "")
+    return do Result<&2, &2, String, T.PostureEndpoints>:
+      imap : T.PostureEndpoint <- posture_endpoint("MAILBEND_IMAP_HOST/PORT", ih, ip)
+      smtp : T.PostureEndpoint <- posture_endpoint("MAILBEND_SMTP_HOST/PORT", sh, sp)
+      tls : String <- posture_smtp_mode(mode)
+      +resolver : Maybe<&2, T.PostureEndpoint> <- posture_doh(doh)
+      imap_ip : Maybe<&2, String> <- posture_ip("MAILBEND_IMAP_CONNECT_IP", ii)
+      smtp_ip : Maybe<&2, String> <- posture_ip("MAILBEND_SMTP_CONNECT_IP", si)
+      +bypass : String = posture_first(n1, n2)
+      +proxy_value : String = posture_first(p1, posture_first(p2, posture_first(p3, p4)))
+      +proxy : Maybe<&2, T.PostureEndpoint> <- posture_proxy_checked(posture_proxy(proxy_value),
+        posture_proxy_required(c, resolver, bypass))
+      return T.PostureEndpoints{imap, smtp, tls, resolver, proxy,
+        Bool.not(String.is_empty(proxy_value)),
+        posture_doh_proxied(resolver, proxy, bypass),
+        posture_proxied(proxy, "api.typesafe.ai", bypass),
+        imap_ip, smtp_ip,
+        Bool.not(String.is_empty(a)), Bool.not(String.is_empty(d)), Bool.not(String.is_empty(ca))}
+
+def posture_result(c: T.Config, s: T.Sends(), endpoints:
+  Result<&2, &2, String, T.PostureEndpoints>) -> T.Out:
+  match c:
+    case T.ConfigBad{msg}:
+      T.Err{"configuration error: " ++ msg}
+    case T.Config{ro, drafts, jev, images}:
+      match s:
+        case Fail{+msg}:
+          T.Err{Bool.pick(String, String.starts_with(msg, "MAILBEND_ALLOWED_RECIPIENTS:"),
+            "MAILBEND_ALLOWED_RECIPIENTS contains an invalid entry; value omitted", msg)}
+        case Done{sending}:
+          match endpoints:
+            case Fail{msg}:
+              T.Err{msg}
+            case Done{e}:
+              T.posture(T.Config{ro, drafts, jev, images}, sending, e)
+
+def posture() -> IO(T.Out):
+  do IO<T.Out>:
+    +c : T.Config <- T.config()
+    s : T.Sends() <- T.sending()
+    e : Result<&2, &2, String, T.PostureEndpoints> <- posture_endpoints(c)
+    return posture_result(c, s, e)

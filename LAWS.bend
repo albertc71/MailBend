@@ -1324,3 +1324,41 @@ law response_preserves_nonbody:
   for nonbody: {Response.body_key(key) == False{} : Bool}
   {Response.fit_field(J.kv(key, value), left) ==
     Response.Field{J.kv(key, value), left, False{}} : Response.Field}
+
+# Offline posture uses the same refusal gate; it cannot grant sending.
+law posture_send_matches_gate:
+  for ro: Bool
+  for drafts: Bool
+  for jev: Bool
+  {Tools.posture_send_allowed(ro, drafts, jev) ==
+    String.is_empty(Tools.refusal(Ops.OSend{}, J.obj([]), ro, drafts, jev)) : Bool}
+
+law posture_body_matches_switch:
+  for content: Jev.Content
+  ({Tools.posture_body(Jev.On{content}) == Jev.is_body(content) : Bool} &
+   {Tools.posture_body(Jev.Off{}) == False{} : Bool})
+
+law posture_images_match_permission:
+  ({Tools.posture_images(Jev.ImagesOn{}) == True{} : Bool} &
+   {Tools.posture_images(Jev.ImagesOff{}) == False{} : Bool})
+
+law posture_read_only_changes_nothing:
+  {Tools.posture_state_change(True{}) == False{} : Bool}
+
+law posture_send_label_matches_gate:
+  for ro: Bool
+  for drafts: Bool
+  for jev: Bool
+  for restricted: Bool
+  {String.eq(Tools.posture_send_kind(Tools.posture_send_allowed(ro, drafts, jev), restricted),
+    "none") == Bool.not(String.is_empty(
+      Tools.refusal(Ops.OSend{}, J.obj([]), ro, drafts, jev))) : Bool}
+
+law posture_text_list_matches_switch:
+  for s: Jev.Switch
+  {List.is_empty(&2, String, Tools.posture_text_tools(s)) == Bool.not(Tools.posture_body(s)) : Bool}
+
+law posture_image_list_matches_permission:
+  for m: Jev.ImageMode
+  {List.is_empty(&2, String, Tools.posture_image_tools(m)) ==
+    Bool.not(Tools.posture_images(m)) : Bool}

@@ -1643,3 +1643,53 @@ def Laws.response_preserves_nonbody(key, value, left, nonbody):
       {==}
     case J.JKv{k, v}:
       {==}
+
+# Offline posture
+# ---------------
+
+def Laws.posture_send_matches_gate(ro, drafts, jev):
+  {==}
+
+def Laws.posture_body_matches_switch(content):
+  match content:
+    case Jev.Headers{}:
+      ({==}, {==})
+    case Jev.Body{}:
+      ({==}, {==})
+
+def Laws.posture_images_match_permission():
+  ({==}, {==})
+
+def Laws.posture_read_only_changes_nothing():
+  {==}
+
+def Laws.posture_send_label_matches_gate(ro, drafts, jev, restricted):
+  match ro drafts jev restricted:
+    case True{} _ _ _:
+      {==}
+    case False{} True{} _ _:
+      {==}
+    case False{} False{} True{} True{}:
+      {==}
+    case False{} False{} True{} False{}:
+      {==}
+    case False{} False{} False{} True{}:
+      {==}
+    case False{} False{} False{} False{}:
+      {==}
+
+def Laws.posture_text_list_matches_switch(s):
+  match s:
+    case Jev.Off{}:
+      {==}
+    case Jev.On{Jev.Headers{}}:
+      {==}
+    case Jev.On{Jev.Body{}}:
+      {==}
+
+def Laws.posture_image_list_matches_permission(m):
+  match m:
+    case Jev.ImagesOn{}:
+      {==}
+    case Jev.ImagesOff{}:
+      {==}

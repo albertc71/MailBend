@@ -38,6 +38,13 @@ reaches a process that holds the mail password. On a cloud computer, see
 
 ## What leaves the machine
 
+Run `scripts/mailbend diagnose --posture` for the current configuration's
+redacted capability and destination inventory. No TypeSafe key file or network
+access is needed. The command distinguishes an image permission from active
+TypeSafe egress when Jev is off. Folder names and category options can accompany
+requests; headers mode is still data sharing. The protocol details below explain
+those reported categories.
+
 Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
 `mailbend-typesafe`, over verified TLS.
 

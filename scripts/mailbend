@@ -25,10 +25,10 @@ if [ -x "$root/bin/mailbend-core" ]; then
   exec "$root/bin/mailbend-core" "$@"
 fi
 if command -v bend >/dev/null 2>&1; then
-  exec bend "$root/main.bend" "$@"
+  exec bend "$root/main.bend" -- "$@"
 fi
 if [ -x "$HOME/.bend/bin/bend" ]; then
-  exec "$HOME/.bend/bin/bend" "$root/main.bend" "$@"
+  exec "$HOME/.bend/bin/bend" "$root/main.bend" -- "$@"
 fi
 echo "mailbend: not built; run scripts/install.sh" >&2
 exit 2
