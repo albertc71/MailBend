@@ -181,34 +181,90 @@ def batches.go(fuel: Nat, ids: List<&2, String>) -> List<&2, I.Key>:
 def batches(ids: List<&2, String>) -> List<&2, I.Key>:
   batches.go(5n, ids)
 
-def search_numbers(ws: List<&2, String>) -> Maybe<&2, List<&2, U32>>:
-  match ws:
+def prepend(xs: List<&2, U32>, acc: List<&2, U32>) -> List<&2, U32>:
+  match xs:
     case Nil{}:
-      Some{[]}
-    case +w <> t:
-      do Maybe<&2, List<&2, U32>>:
-        +u : U32 <- U32.read(w)
-        valid : Unit <- Bool.pick(Maybe<&2, Unit>,
-          String.eq(U32.show(u), w) && Bool.not(U32.is_zero(u)), Some{Unit{}}, None{})
-        rest : List<&2, U32> <- search_numbers(t)
-        return u <> rest
+      acc
+    case u <> t:
+      prepend(t, u <> acc)
 
-def search_line(text: String) -> Maybe<&2, List<&2, U32>>:
-  match text:
-    case "* SEARCH":
+def append(xs: List<&2, U32>, ys: List<&2, U32>) -> List<&2, U32>:
+  prepend(List.reverse(&2, U32, xs), ys)
+
+def smallest.insert(+u: U32, xs: List<&2, U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      [u]
+    case +h <> +t:
+      rest = smallest.insert(u, t)
+      Bool.pick(List<&2, U32>, U32.is_eq(u, h), h <> t,
+        Bool.pick(List<&2, U32>, U32.is_lt(u, h), u <> h <> t, h <> rest))
+
+def smallest.go(xs: List<&2, U32>, acc: List<&2, U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      acc
+    case u <> t:
+      smallest.go(t, List.take(&2, U32, smallest.insert(u, acc), 101n))
+
+def smallest(xs: List<&2, U32>) -> List<&2, U32>:
+  smallest.go(xs, [])
+
+def search_numbers.reject(acc: List<&2, U32>) -> Maybe<&2, List<&2, U32>>:
+  match acc:
+    case Nil{}:
+      None{}
+    case u <> t:
+      search_numbers.reject(t)
+
+def search_numbers.finish(valid: Bool, u: U32, acc: List<&2, U32>)
+  -> Maybe<&2, List<&2, U32>>:
+  match valid:
+    case False{}:
+      search_numbers.reject(acc)
+    case True{}:
+      Some{List.reverse(&2, U32, u <> acc)}
+
+def search_numbers.go(text: String, left: Nat, valid: Bool, +word: String,
+  acc: List<&2, U32>) -> Maybe<&2, List<&2, U32>>:
+  match text left valid:
+    case _ _ False{}:
+      search_numbers.reject(acc)
+    case _ 0n True{}:
+      search_numbers.reject(acc)
+    case SNil{} _ True{}:
+      +u = Maybe.default(&2, U32, U32.read(word), 0)
+      search_numbers.finish(String.eq(U32.show(u), word) && Bool.not(U32.is_zero(u)), u, acc)
+    case SCon{' ', t} 1n+rest True{}:
+      +u = Maybe.default(&2, U32, U32.read(word), 0)
+      search_numbers.go(t, rest, String.eq(U32.show(u), word) && Bool.not(U32.is_zero(u)),
+        "", u <> acc)
+    case SCon{+c, t} _ True{}:
+      search_numbers.go(t, left, Char.is_digit(c) && Nat.is_lt(String.length(word), 10n),
+        word ++ SCon{c, SNil{}}, acc)
+
+def search_numbers(text: String) -> Maybe<&2, List<&2, U32>>:
+  search_numbers.go(text, 10000n, True{}, "", [])
+
+def search_line.empty(empty: Bool, text: String) -> Maybe<&2, List<&2, U32>>:
+  match empty:
+    case True{}:
       Some{[]}
-    case _:
-      search_numbers(String.split(String.drop(text, 9n), ' '))
+    case False{}:
+      search_numbers(String.drop(text, 9n))
+
+def search_line(+text: String) -> Maybe<&2, List<&2, U32>>:
+  search_line.empty(String.eq(String.to_upper(String.take(text, 9n)), "* SEARCH"), text)
 
 def search.only(lines: List<&2, I.RLine>) -> Maybe<&2, List<&2, U32>>:
   match lines:
     case I.RLine{+text, Nil{}} <> Nil{}:
       do Maybe<&2, List<&2, U32>>:
         prefix : Unit <- Bool.pick(Maybe<&2, Unit>,
-          String.eq(String.to_upper(text), "* SEARCH") ||
-            String.starts_with(String.to_upper(text), "* SEARCH "),
+          String.eq(String.to_upper(String.take(text, 9n)), "* SEARCH") ||
+            String.starts_with(String.to_upper(String.take(text, 9n)), "* SEARCH "),
           Some{Unit{}}, None{})
-        found : List<&2, U32> <- search_line(String.to_upper(text))
+        found : List<&2, U32> <- search_line(text)
         return found
     case _:
       None{}
@@ -220,7 +276,7 @@ def search.lines(lines: List<&2, I.RLine>) -> List<&2, I.RLine>:
     case +r <> t:
       I.RLine{text, literals} = r
       List.filter.put(I.RLine, r, search.lines(t),
-        String.starts_with(String.to_upper(text), "* SEARCH"))
+        String.starts_with(String.to_upper(String.take(text, 9n)), "* SEARCH"))
 
 def search(lines: List<&2, I.RLine>) -> Maybe<&2, List<&2, U32>>:
   search.only(search.lines(lines))
