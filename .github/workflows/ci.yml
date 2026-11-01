@@ -1,73 +1,52 @@
 name: CI
-
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 env:
-  BEND_NO_TELEMETRY: "1"
-
+  BEND_NO_TELEMETRY: '1'
 jobs:
-  checks:
+  source-checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          # Full history, for the secret scan.
           fetch-depth: 0
-
       - name: Secret scan (gitleaks, redacted; tree and history)
         run: sh scripts/scan-secrets.sh
-
       - name: Documentation source names and drift mutations
         run: |
           python3 scripts/check-docs.py
           python3 tests/test-docs.py
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential clang openssl python3-jsonschema jq
-
-      - name: Install Rust 1.99 (native/rust-toolchain.toml)
-        run: rustup toolchain install 1.99 --profile minimal
-
       - name: Install Bend
         run: |
           sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
-
       - name: Generated schema is up to date
         run: |
           python3 tools/gen-unicode-tags.py --check
           python3 tests/test-output-schema.py
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
-
-      # The allowlist law is about S.outbound, so no other code may make an
-      # SMTP envelope.
       - name: The SMTP envelope comes only from the allowlist
         run: |
           if grep -rnE '[A-Za-z_]\.envelope\(' --include='*.bend' src main.bend; then
             echo "envelope is called outside src/smtp.bend" >&2
             exit 1
           fi
-
-      # The gate laws are about Jev.outbound_checked and Jev.delete_checked,
-      # so the tools reach an SMTP envelope, the SMTP session and a delete
-      # plan only through them. Code is flattened to one line first, so a
-      # call split across lines is still seen.
       - name: Sends and deletes pass Jev's gates
         run: |
           flat() { cat "$@" | tr -s ' \t\n' ' '; }
@@ -93,11 +72,6 @@ jobs:
             echo "an expunge is made outside src/ops.bend and src/imap.bend" >&2
             exit 1
           fi
-
-      # Only mail_classify sends images. Law entry_at_sends_no_images says
-      # every entry the requests are built from has no stills; only
-      # Jev.entry_images gives one stills, and only classify's image path
-      # calls it. The send gate's request is a plain cargo.
       - name: Only mail_classify sends images
         run: |
           flat() { cat "$@" | tr -s ' \t\n' ' '; }
@@ -112,74 +86,86 @@ jobs:
             echo "the send gate's request is not a plain cargo" >&2
             exit 1
           fi
-
       - name: Install Lean (scripts/install-lean.sh, for --verdict)
         run: sh scripts/install-lean.sh
-
-      # --verdict checks the proofs, then rechecks every def with Bend's
-      # proven BendTT kernel (built with Lean on first use).
       - name: Safety proofs, rechecked by the proven kernel
         run: bend PROOF.bend --verdict
-
       - name: Bounded SMTP model mutation checks
         run: python3 tests/formal/check-smtp-tls.py
-
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
-
       - name: Writing-laws guide snippets and rejected production mutation
         run: |
           python3 tests/test-writing-laws.py
           python3 tests/formal/check-writing-laws.py
-
       - name: Change-plan and UID wire mutation checks
         run: python3 tests/formal/check-plan-wire-mutations.py
-
       - name: Unit tests
         run: sh tests/run-unit.sh
-
-      # The helper's MAX_REQUEST must equal the cap Bend computes, and the
-      # fake TypeSafe must enforce the image rules the e2e tests rely on.
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
           python3 tests/test-image-budget.py
           python3 tests/test-image-assets.py
-
       - name: Bounded exhaustive search-pagination model
         run: |
           python3 tests/formal/search-pagination-model.py
           python3 tests/formal/check-search-contract-mutations.py
-
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        suite:
+          - cli
+          - mcp
+          - support
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl python3-jsonschema jq
+      - name: Install Rust 1.99 (native/rust-toolchain.toml)
+        run: rustup toolchain install 1.99 --profile minimal
+      - name: Install Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Transport tests
         run: bash tests/test-transport.sh
-
+        if: matrix.suite == 'support'
       - name: Build
         run: scripts/install.sh
-
       - name: Compromised-agent incident matrix
         run: python3 tests/test-incidents.py
-
+        if: matrix.suite == 'support'
       - name: Installer staging, locking, signals and fallback warnings
         run: python3 tests/test-install.py
-
+        if: matrix.suite == 'support'
       - name: Installer swap fault injection
         run: python3 tests/formal/check-install-swap.py
-
+        if: matrix.suite == 'support'
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
-
+        if: matrix.suite == 'support'
       - name: MCP inherited-descriptor and lifecycle tests
         run: python3 tests/test-stdio.py
-
-      - name: End-to-end tests (CLI and structured MCP)
-        run: |
-          python3 tests/test-e2e.py
-          # The complete run owns fixed CLI/MCP front-end and diagnostic checks.
-          # Repeat every tool scenario through structured MCP, not those fixed routes.
-          MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
+        if: matrix.suite == 'support'
+      - name: CLI end-to-end tests
+        if: matrix.suite == 'cli'
+        run: python3 tests/test-e2e.py
+      - name: Structured MCP tool scenarios
+        if: matrix.suite == 'mcp'
+        run: MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
+      - name: Integrated results and scheduled recipes
+        if: matrix.suite == 'support'
+        run: |-
           python3 tests/test-integrated-results.py
           python3 tests/test-scheduled-recipes.py
-
   rust:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -187,29 +173,23 @@ jobs:
       run:
         working-directory: native
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-
       - name: Install Rust 1.99 (the MSRV, native/rust-toolchain.toml)
         run: rustup toolchain install 1.99 --profile minimal --component clippy,rustfmt
-
       - name: Format
         run: cargo fmt --all --check
-
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
-
       - name: Tests
         run: cargo test --locked
-
       - name: No way around TLS verification
         run: |
           if grep -rnE 'dangerous\(|client::danger|ServerCertVerifier' --include='*.rs' .; then
             echo "TLS verification must not be configurable" >&2
             exit 1
           fi
-
       - name: Attachment and stdio helpers have no network or TLS crate
         run: |
           cargo tree --locked -p mailbend-attach -e normal --prefix none > "$RUNNER_TEMP/attach-tree.txt"
@@ -230,15 +210,10 @@ jobs:
             echo "mailbend-stdio must only use inherited descriptors" >&2
             exit 1
           fi
-
-      # Built with the Rust installed above (cargo-deny-action runs its own
-      # Rust 1.85 container); the repository allows only GitHub's own actions.
       - name: Install cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
-
       - name: Dependency policy (cargo-deny)
         run: cargo deny --log-level warn --all-features check
-
   fuzz:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -246,18 +221,37 @@ jobs:
       run:
         working-directory: native/fuzz
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-
       - name: Install the pinned nightly (fuzzing only)
         run: rustup toolchain install nightly-2026-10-06 --profile minimal
-
       - name: Install cargo-fuzz
         run: cargo +nightly-2026-10-06 install cargo-fuzz --version 0.13.2 --locked
-
       - name: Fuzz each parser for 60 seconds
         run: |
           for target in imap_script imap_response smtp_envelope smtp_reply dns_answer http_response url_and_proxy; do
             cargo +nightly-2026-10-06 fuzz run "$target" -O -- -max_total_time=60
           done
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+      - source-checks
+      - runtime
+      - rust
+      - fuzz
+    if: ${{ always() }}
+    steps:
+      - name: Every required lane passed
+        env:
+          SOURCE_RESULT: ${{ needs.source-checks.result }}
+          RUNTIME_RESULT: ${{ needs.runtime.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          FUZZ_RESULT: ${{ needs.fuzz.result }}
+        run: |
+          set -eu
+          test "$SOURCE_RESULT" = success
+          test "$RUNTIME_RESULT" = success
+          test "$RUST_RESULT" = success
+          test "$FUZZ_RESULT" = success

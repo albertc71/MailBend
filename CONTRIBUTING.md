@@ -66,6 +66,16 @@ checks. The second repeats the tool scenarios through structured MCP without
 repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
 complete run, including when `MAILBEND_TEST_MCP=1` is set.
 
+CI runs source and proof checks, CLI, structured MCP and support suites on
+isolated standard Ubuntu runners. Each runtime runner builds its own binaries
+from the checked-out revision. This repeats build work to avoid shared-state
+races and artifact storage. Rust and fuzz checks remain separate. The final
+`checks` job requires every lane to succeed, including Rust and fuzz; skipped
+or cancelled lanes do not count as a pass.
+
+The goal is at most ten minutes of CI execution. This is a measurement target,
+not a timeout or permission to omit tests. Record queue time separately.
+
 The [bounded SMTP model](.agents/skills/smtp-tls-proofs/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
