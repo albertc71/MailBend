@@ -40,8 +40,8 @@ TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEN
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 22
-READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread"]
+TOOL_COUNT = 23
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply"]
 THREAD_MOVED = ("a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name "
                 "other messages: read the thread again")
 
@@ -412,6 +412,7 @@ def run_all(work):
     whole_read_identity(work)
     thread_classify_identity(work)
     threads(work)
+    awaiting_replies(work)
     flags_first_reads(work)
     dry_runs(work)
     jev(work)
@@ -3307,6 +3308,95 @@ def fetched_uids(line):
     return line.split(" UID FETCH ")[1].split(" ")[0].split(",")
 
 
+def awaiting_replies(work):
+    from email.utils import formatdate
+    now = time.time()
+    def message(uid, days, mid, extra=""):
+        at = now - days * 86400
+        raw = (f"Date: {formatdate(at, usegmt=True)}\r\nMessage-ID: <{mid}@example.test>\r\n"
+               f"From: sender@example.test\r\nTo: receiver@example.test\r\nSubject: same\r\n"
+               f"{extra}\r\nSynthetic body")
+        return {"uid": uid, "flags": [], "internaldate": time.strftime(
+            "%d-%b-%Y %H:%M:%S +0000", time.gmtime(at)), "raw": raw}
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Sent Messages"]["messages"] = [
+        message(1, 10, "first"), message(2, 8, "second"), message(3, 6, "third")]
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        message(1, 1, "answer", "In-Reply-To: <second@example.test>\r\n"),
+        message(2, 1, "substring", "References: <first@example.test.extra>\r\n")]
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        c, r = tool(srv, "mail_awaiting_reply", {"window_days": 30, "min_age_days": 3},
+                    MAILBEND_READ_ONLY="1")
+        check("awaiting: exact reply, no subject or substring inference", c == 0 and
+              r.get("complete") is True and [m["status"] for m in r.get("messages", [])]
+              == ["awaiting", "replied", "awaiting"], r)
+        check("awaiting: read leaves synthetic mailbox unchanged", srv.st() == before)
+        lines = srv.log_lines()
+        check("awaiting: bounded read-only wire", any("SENTSINCE" in l for l in lines) and
+              any("OR HEADER" in l for l in lines) and not any(
+                  v in l for l in lines for v in (" SELECT ", " STORE ", " APPEND ", " EXPUNGE")), lines)
+        c, r = tool(srv, "mail_awaiting_reply", {"limit": 1})
+        check("awaiting: candidate cap cannot confirm absence", c == 0 and
+              r.get("complete") is False and r.get("messages", [{}])[0].get("status") == "unknown", r)
+    finally:
+        srv.stop()
+
+    for mode in ("missing", "malformed", "duplicate"):
+        srv = Server(work, fixture=fixture, extra=("--search-response", mode))
+        try:
+            c, r = tool(srv, "mail_awaiting_reply")
+            check(f"awaiting: {mode} SEARCH cannot confirm absence", c == 0 and
+                  r.get("complete") is False and not any(
+                      m["status"] == "awaiting" for m in r.get("messages", [])), r)
+        finally:
+            srv.stop()
+    changed = copy.deepcopy(fixture)
+    changed["examine_changes"] = [{"at": 2, "uidvalidity": 99}]
+    srv = Server(work, fixture=changed)
+    try:
+        c, r = tool(srv, "mail_awaiting_reply")
+        check("awaiting: changed Sent identity cannot confirm absence", c == 0 and
+              r.get("complete") is False and not any(
+                  m["status"] == "awaiting" for m in r.get("messages", [])), r)
+    finally:
+        srv.stop()
+
+    for scenario in ("archive", "no_archive", "missing_fetch", "reply_cap", "invalid_age"):
+        changed = copy.deepcopy(fixture)
+        if scenario == "archive":
+            changed["mailboxes"]["Archive"]["messages"] = [
+                message(1, 1, "archive-answer", "References: <first@example.test>\r\n")]
+        elif scenario == "no_archive":
+            del changed["mailboxes"]["Archive"]
+        elif scenario == "missing_fetch":
+            changed["mailboxes"]["INBOX"]["messages"][0]["omit_fetch_data"] = True
+        elif scenario == "reply_cap":
+            changed["mailboxes"]["INBOX"]["messages"] = [
+                message(uid, 1, f"answer-{uid}", "References: <second@example.test>\r\n")
+                for uid in range(1, 102)]
+        else:
+            changed["mailboxes"]["Sent Messages"]["messages"][0]["internaldate"] = (
+                "31-Feb-2026 09:00:00 +0000")
+        srv = Server(work, fixture=changed)
+        try:
+            c, r = tool(srv, "mail_awaiting_reply")
+            messages = r.get("messages", [])
+            by_uid = {m["anchor"]["uid"]: m for m in messages}
+            if scenario == "archive":
+                valid = r.get("complete") is True and by_uid[1]["status"] == "replied"
+            elif scenario == "no_archive":
+                valid = r.get("complete") is True and r.get("archive_resolved") is False
+            else:
+                valid = r.get("complete") is False and not any(m["status"] == "awaiting" for m in messages)
+                if scenario == "invalid_age":
+                    valid = valid and by_uid[1]["age_days"] is None
+            check(f"awaiting: {scenario} evidence", c == 0 and valid, r)
+        finally:
+            srv.stop()
+
+
 def threads(work):
     first = ("INBOX", 7, None)
     reply = ("Sent Messages", 1, "<trip1@example.com>")
@@ -3713,7 +3803,7 @@ def jev_switches(srv, work, key_file):
         names = listed_tools(srv, **jev_env(ts, key_file))
         check("jev on: every tool is listed, mail_classify and mail_triage after mail_get_thread",
               len(names) == TOOL_COUNT + 2
-              and names[names.index("mail_get_thread") + 1:names.index("mail_get_thread") + 3]
+              and names[names.index("mail_awaiting_reply") + 1:names.index("mail_awaiting_reply") + 3]
               == ["mail_classify", "mail_triage"], names)
         check("jev on, read-only: the read tools and mail_classify are listed, mail_triage is not",
               listed_tools(srv, MAILBEND_READ_ONLY="1", **jev_env(ts, key_file)) == READ_TOOLS + ["mail_classify"])

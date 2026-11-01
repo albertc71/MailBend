@@ -44,6 +44,8 @@ type Key is Data:
   KBody{s: String}
   KText{s: String}
   KSince{d: String}
+  KSentSince{d: String}
+  KOr{a: Key, b: Key}
   KBefore{d: String}
   KSeen{}
   KUnseen{}
@@ -541,6 +543,10 @@ def key_str(k: Key) -> String:
       "TEXT " ++ astring(s)
     case KSince{d}:
       "SINCE " ++ d
+    case KSentSince{d}:
+      "SENTSINCE " ++ d
+    case KOr{a, b}:
+      "OR " ++ key_str(a) ++ " " ++ key_str(b)
     case KBefore{d}:
       "BEFORE " ++ d
     case KSeen{}:
@@ -563,6 +569,8 @@ def key_str(k: Key) -> String:
 # Whether a key's strings are all printable ASCII.
 def key_plain(k: Key) -> Bool:
   match k:
+    case KOr{a, b}:
+      key_plain(a) && key_plain(b)
     case KFrom{s}:
       C.is_plain(s)
     case KTo{s}:

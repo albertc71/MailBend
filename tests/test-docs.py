@@ -57,7 +57,7 @@ class DriftChecks(unittest.TestCase):
         self.check()
 
     def test_stale_law_in_existing_architecture_table(self):
-        self.replace("docs/ARCHITECTURE.md", "read_only_tools_are_exactly_eight",
+        self.replace("docs/ARCHITECTURE.md", "read_only_tools_are_exactly_nine",
                      "read_only_tools_are_exactly_seven")
         self.check("unknown law read_only_tools_are_exactly_seven")
 
