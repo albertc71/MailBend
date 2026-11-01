@@ -59,10 +59,15 @@ python3 tests/formal/check-install-swap.py
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
-MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
+MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
+checks. The second repeats the tool scenarios through structured MCP without
+repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
+complete run, including when `MAILBEND_TEST_MCP=1` is set.
 
 The [bounded SMTP model](.agents/skills/smtp-tls-proofs/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
