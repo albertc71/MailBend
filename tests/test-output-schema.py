@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check output contract variants at feature integration boundaries."""
 import copy
+from functools import cache
 import importlib.util
 from pathlib import Path
 from jsonschema import Draft202012Validator
@@ -12,11 +13,16 @@ spec.loader.exec_module(schema)
 checks = 0
 
 
-def check(name, value, valid=True):
-    global checks
+@cache
+def validator(name):
     contract = schema.output_schema(name)
     Draft202012Validator.check_schema(contract)
-    errors = list(Draft202012Validator(contract).iter_errors(value))
+    return Draft202012Validator(contract)
+
+
+def check(name, value, valid=True):
+    global checks
+    errors = list(validator(name).iter_errors(value))
     assert (not errors) == valid, (name, value, [e.message for e in errors])
     checks += 1
 

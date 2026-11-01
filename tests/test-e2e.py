@@ -6,7 +6,9 @@ Checks tool results and the server's recorded state and command log: reads
 never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
+Use --tool-scenarios-only for the second transport run after a complete run.
 """
+import argparse
 import base64
 import copy
 from email import policy
@@ -366,12 +368,16 @@ def setup_diagnostics(work):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tool-scenarios-only", action="store_true",
+                        help="skip transport-fixed front-end checks already covered by a complete run")
+    args = parser.parse_args()
     work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
                             (str(ROOT / "build") if (ROOT / "build").exists() else None))
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
-        run_all(work)
+        run_all(work, tool_scenarios_only=args.tool_scenarios_only)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
@@ -381,16 +387,18 @@ def main():
     sys.exit(1 if failed else 0)
 
 
-def run_all(work):
-    mcp_headless()
-    setup_diagnostics(work)
+def run_all(work, *, tool_scenarios_only=False):
+    if not tool_scenarios_only:
+        mcp_headless()
+        setup_diagnostics(work)
     srv = Server(work)
     try:
         reads(srv)
         mutations(srv)
         compose(srv)
-        mcp(srv)
-        cli_front_end(srv)
+        if not tool_scenarios_only:
+            mcp(srv)
+            cli_front_end(srv)
         read_only(srv)
         failures(srv, work)
     finally:

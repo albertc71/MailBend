@@ -174,7 +174,9 @@ jobs:
       - name: End-to-end tests (CLI and structured MCP)
         run: |
           python3 tests/test-e2e.py
-          MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py
+          # The complete run owns fixed CLI/MCP front-end and diagnostic checks.
+          # Repeat every tool scenario through structured MCP, not those fixed routes.
+          MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
           python3 tests/test-integrated-results.py
           python3 tests/test-scheduled-recipes.py
 
