@@ -522,7 +522,8 @@ def helper_cause(code: U32) -> String:
     case 3:
       "connection or TLS verification failed: "
     case 4:
-      "authentication failed (check MAILBEND_EMAIL and the app-specific password): "
+      "authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) " ++
+      "and the app-specific password): "
     case _:
       Bool.pick(String, signalled(code), "the TLS helper was killed by a signal: ",
         "mail server error: ")

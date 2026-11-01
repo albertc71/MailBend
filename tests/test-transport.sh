@@ -107,7 +107,7 @@ call_helper() {
   shift 2
   printf '%s' "$script" >"$WORK/in.txt"
   OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
-  env -u MAILBEND_SMTP_TLS_MODE MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
+  env -u MAILBEND_SMTP_TLS_MODE -u MAILBEND_LOGIN MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
       MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
       "$@" "$HELPER" "$protocol" <"$WORK/in.txt" >"$OUT" 2>"$ERR"
   CODE=$?

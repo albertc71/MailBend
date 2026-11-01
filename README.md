@@ -268,6 +268,13 @@ modes. Ports never select a mode, and failures never fall back to another mode
 or plaintext. Empty or unknown mode values are configuration errors.
 OAuth is unsupported.
 
+If the provider requires a login name different from your email address, set
+`MAILBEND_LOGIN`. A nonempty value is used only for IMAP LOGIN and SMTP AUTH
+PLAIN/LOGIN. Unset or empty uses `MAILBEND_EMAIL`, which remains required and
+continues to supply the From address and reply identity. The login name must
+be printable ASCII without spaces. This option does not change recipient
+allowlists or establish compatibility with an untested provider.
+
 | Profile | Transport | Validation |
 | --- | --- | --- |
 | iCloud Mail, existing default profile | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |

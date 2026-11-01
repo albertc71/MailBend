@@ -111,6 +111,7 @@ class Server:
         e.pop("MAILBEND_READ_ONLY", None)
         e.pop("MAILBEND_DRAFTS_ONLY", None)
         e.pop("MAILBEND_PASSWORD_FILE", None)
+        e.pop("MAILBEND_LOGIN", None)
         e["MAILBEND_SMTP_TLS_MODE"] = self.smtp_mode
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_DOWNLOAD_DIR", None)
@@ -339,6 +340,7 @@ def run_all(work):
         srv.stop()
     reply_quoting(work)
     reply_unicode_quoting(work)
+    authentication_login(work)
     latin1_quotes(work)
     fallback(work)
     generic_folders(work)
@@ -3697,7 +3699,8 @@ def jev_headers(srv, work, key_file):
     try:
         before, log_start = srv.st(), len(srv.log_lines())
         c, r = classify(srv, ts, key_file, {"uids": [9, 7, 8, 7, 99, 1, 2, 3, 4, 5, 6, 10, 12]},
-                        MAILBEND_APP_PASSWORD=PASSWORD, MAILBEND_EMAIL=FIX["user"], UNRELATED_SETTING="x")
+                        MAILBEND_APP_PASSWORD=PASSWORD, MAILBEND_EMAIL=FIX["user"],
+                        MAILBEND_LOGIN=FIX["user"], UNRELATED_SETTING="x")
         got = {m["uid"]: m for m in r.get("messages", [])}
         check("jev headers: a result per message found, in UID order, and the missing UID",
               c == 0 and list(got) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12] and r.get("not_found") == [99], r)
@@ -3735,7 +3738,7 @@ def jev_headers(srv, work, key_file):
               sent and all(q["env_names"] for q in sent) and all(
                   entry == {"non_dumpable": True}
                   or ("MAILBEND_TYPESAFE_KEY_FILE" in entry.get("names", [])
-                      and not {"MAILBEND_APP_PASSWORD", "MAILBEND_EMAIL", "UNRELATED_SETTING"}
+                      and not {"MAILBEND_APP_PASSWORD", "MAILBEND_EMAIL", "MAILBEND_LOGIN", "UNRELATED_SETTING"}
                       .intersection(entry["names"])) for entry in envs), envs)
         reported = r.get("requests", [])
         check("jev headers: requests report the UTF-8 bytes sent and TypeSafe's token count",
@@ -5286,6 +5289,71 @@ def selected_parts_errors(work):
               c == 0 and saved.read_text() == attached, r)
     finally:
         srv.stop()
+
+
+def authentication_login(work):
+    login = "private-login-marker"
+    for mechanism in ("PLAIN", "LOGIN"):
+        for setting in (None, "", login):
+            fixture = copy.deepcopy(FIX)
+            fixture["user"] = setting or FIX["user"]
+            fixture["smtp_auth"] = mechanism
+            srv = Server(work, fixture=fixture, extra=("--echo-login",))
+            start = len(outputs)
+            try:
+                env = {"MAILBEND_LOGIN": setting}
+                label = f"login {mechanism} {('unset' if setting is None else 'empty' if setting == '' else 'override')}"
+                code, result = tool(srv, "mail_probe", {}, **env)
+                check(label + ": IMAP authentication preserves probe identity",
+                      code == 0 and result.get("account") == FIX["user"], result)
+                code, result = tool(srv, "mail_send", {
+                    "to": "friend@example.com", "subject": "Login identity", "body": "Synthetic message"}, **env)
+                sent = srv.st().get("sent", [])
+                message = BytesParser(policy=policy.default).parsebytes(
+                    sent[-1]["data"].encode("ascii")) if sent else None
+                check(label + ": SMTP authentication preserves envelope and From",
+                      code == 0 and sent and sent[-1]["mail_from"] == FIX["user"]
+                      and message["From"].addresses[0].addr_spec == FIX["user"], result)
+                if setting:
+                    code, result = tool(srv, "mail_reply", {
+                        "uid": 2, "uidvalidity": INBOX_VALIDITY, "body": "Synthetic reply", "reply_all": True}, **env)
+                    sent = srv.st().get("sent", [])
+                    check(label + ": reply excludes the email identity, not the login",
+                          code == 0 and sent[-1]["mail_from"] == FIX["user"]
+                          and sent[-1]["rcpt_to"] == ["jose@example.com"], result)
+                    count = len(sent)
+                    code, result = tool(srv, "mail_send", {
+                        "to": "outside@other.org", "subject": "Blocked", "body": "Synthetic"},
+                        MAILBEND_ALLOWED_RECIPIENTS="friend@example.com", **env)
+                    check(label + ": recipient allowlist still blocks unlisted recipients",
+                          code != 0 and "MAILBEND_ALLOWED_RECIPIENTS" in result.get("error", "")
+                          and len(srv.st().get("sent", [])) == count, result)
+                    code, checks = diagnose(srv, "--imap", "--smtp", **env)
+                    check(label + ": diagnostics authenticate both protocols",
+                          code == 0 and all(diagnosed(checks, protocol, "authentication", "ok")
+                                            for protocol in ("imap", "smtp")), checks)
+                    native = subprocess.run([str(ROOT / "bin" / "mailbend-tls"), "diagnose-smtp"],
+                                            env=srv.env(**env), capture_output=True, text=True, timeout=35)
+                    outputs.extend([native.stdout, native.stderr])
+                    check(label + ": native diagnostic facts report successful authentication",
+                          native.returncode == 0 and "authentication ok" in native.stdout
+                          and not native.stderr)
+                    code, result = tool(srv, "mail_search", {}, MAILBEND_LOGIN="wrong-private-login")
+                    check(label + ": failed authentication has useful fixed guidance",
+                          code != 0 and "MAILBEND_EMAIL (or MAILBEND_LOGIN)" in result.get("error", ""), result)
+                    for invalid in ("private login marker", "privaté-login"):
+                        code, result = tool(srv, "mail_probe", {}, MAILBEND_LOGIN=invalid)
+                        check(label + ": invalid login is a nondisclosing configuration error",
+                              code != 0 and "configuration error" in result.get("error", "")
+                              and "MAILBEND_LOGIN" in result.get("error", "")
+                              and invalid not in json.dumps(result, ensure_ascii=False), result)
+                        code, checks = diagnose(srv, MAILBEND_LOGIN=invalid)
+                        check(label + ": diagnostics refuse invalid login", code != 0, checks)
+                check(label + ": login never appears in output or diagnostics",
+                      not any(marker in output for output in outputs[start:]
+                              for marker in (login, "wrong-private-login", "private login marker", "privaté-login")))
+            finally:
+                srv.stop()
 
 
 def latin1_quotes(work):
