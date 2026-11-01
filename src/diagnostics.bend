@@ -4,6 +4,7 @@
 import Base
 import ./json.bend as J
 import ./tools.bend as T
+import ./policy.bend as Policy
 import ./imap.bend as I
 import ./ops.bend as Ops
 
@@ -31,10 +32,119 @@ def guidance(stage: String) -> String:
     case _:
       "Check provider availability and protocol support; retry within the diagnostic deadline."
 
-def fact(protocol: String, +stage: String, status: String, reason: String) -> J.Json:
+def fact_guided(
+  protocol: String, stage: String, status: String, reason: String, help: String
+) -> J.Json:
   J.obj([J.kv("protocol", J.str(protocol)), J.kv("stage", J.str(stage)),
     J.kv("status", J.str(status)), J.kv("reason", J.str(reason)),
-    J.kv("guidance", J.str(guidance(stage)))])
+    J.kv("guidance", J.str(help))])
+
+def fact(protocol: String, +stage: String, status: String, reason: String) -> J.Json:
+  fact_guided(protocol, stage, status, reason, guidance(stage))
+
+def platform_guidance(check: String) -> String:
+  match check:
+    case "openat2":
+      "Linux 5.6+ and sandbox access to openat2 are required; no bypass is supported."
+    case "attach_dir":
+      "Set MAILBEND_ATTACH_DIR to a dedicated attachment directory when attachments are needed."
+    case "download_tmpfile":
+      "Use a separate dedicated download directory on a file system with O_TMPFILE support; " ++
+        "a successful probe does not establish download permission."
+    case "arch":
+      "Use a matching Bend binary; the installer pins Linux x86_64, other builds are manual."
+    case _:
+      "Rebuild with scripts/install.sh; use an absolute executable MAILBEND_ATTACH_HELPER path."
+
+def platform_fact(+check: String, status: String, detail: String) -> J.Json:
+  fact_guided("local", "platform", status, check ++ "_" ++ detail, platform_guidance(check))
+
+def platform_error(reason: String) -> J.Json:
+  fact_guided("local", "platform", "failed", reason, platform_guidance("helper"))
+
+def platform_line(line: String) -> J.Json:
+  match line:
+    case "openat2 ok":
+      platform_fact("openat2", "ok", "ok")
+    case "openat2 unsupported":
+      platform_fact("openat2", "failed", "unsupported")
+    case "attach_dir ok":
+      platform_fact("attach_dir", "ok", "ok")
+    case "attach_dir refused":
+      platform_fact("attach_dir", "failed", "refused")
+    case "attach_dir unset":
+      platform_fact("attach_dir", "skipped", "unset")
+    case "download_tmpfile ok":
+      platform_fact("download_tmpfile", "ok", "ok")
+    case "download_tmpfile unsupported":
+      platform_fact("download_tmpfile", "failed", "unsupported")
+    case "download_tmpfile refused":
+      platform_fact("download_tmpfile", "failed", "refused")
+    case "download_tmpfile unset":
+      platform_fact("download_tmpfile", "skipped", "unset")
+    case "arch x86_64":
+      platform_fact("arch", "ok", "x86_64")
+    case "arch aarch64":
+      platform_fact("arch", "ok", "aarch64")
+    case "arch other":
+      platform_fact("arch", "ok", "other")
+    case _:
+      platform_error("invalid_diagnostic_response")
+
+def platform_facts.if(
+  open: String, attach: String, download: String, arch: String, valid: Bool
+) -> List<&2, J.Json>:
+  match valid:
+    case True{}:
+      [platform_line(open), platform_line(attach), platform_line(download), platform_line(arch)]
+    case False{}:
+      [platform_line("")]
+
+def platform_facts.check(
+  +open: String, +attach: String, +download: String, +arch: String
+) -> List<&2, J.Json>:
+  valid = List.contains(~String, ~String.eq, ["openat2 ok", "openat2 unsupported"], open) &&
+    List.contains(~String, ~String.eq, ["attach_dir ok", "attach_dir refused",
+      "attach_dir unset"], attach) &&
+    List.contains(~String, ~String.eq, ["download_tmpfile ok", "download_tmpfile unsupported",
+      "download_tmpfile refused", "download_tmpfile unset"], download) &&
+    List.contains(~String, ~String.eq, ["arch x86_64", "arch aarch64", "arch other"], arch)
+  platform_facts.if(open, attach, download, arch, valid)
+
+def platform_facts(lines: List<&2, String>) -> List<&2, J.Json>:
+  match lines:
+    case open <> attach <> download <> arch <> Nil{}:
+      platform_facts.check(open, attach, download, arch)
+    case open <> attach <> download <> arch <> "" <> Nil{}:
+      platform_facts.check(open, attach, download, arch)
+    case _:
+      [platform_line("")]
+
+def platform_result(p: Policy.Proc) -> List<&2, J.Json>:
+  match p:
+    case Policy.ProcOk{0, out, err}:
+      platform_facts(String.lines(out))
+    case Policy.ProcRefused{msg}:
+      [platform_error("unavailable")]
+    case _:
+      [platform_error("timeout_or_helper_failure")]
+
+def platform_at(path: String, attach: String, download: String) -> IO(List<&2, J.Json>):
+  match path:
+    case SCon{'/', t}:
+      do IO<List<&2, J.Json>>:
+        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+          Process.run(SCon{'/', t}, ["check", attach, download], "", 4096, 30000)
+        return platform_result(Policy.proc_of(r))
+    case _:
+      IO.pure(List<&2, J.Json>, platform_result(Policy.ProcRefused{""}))
+
+def platform() -> IO(List<&2, J.Json>):
+  do IO<List<&2, J.Json>>:
+    path : String <- T.env_or("MAILBEND_ATTACH_HELPER", "")
+    attach : String <- T.env_or("MAILBEND_ATTACH_DIR", "")
+    download : String <- T.env_or("MAILBEND_DOWNLOAD_DIR", "")
+    platform_at(path, attach, download)
 
 def stages() -> List<&2, String>:
   ["configuration", "credentials", "trust_store", "dns", "connect", "tls",
@@ -77,18 +187,18 @@ def stage_facts(
     case s <> t:
       stage_fact(protocol, s, lines) <> stage_facts(t, protocol, lines)
 
-def helper_at(path: String, mode: String, input: String) -> IO(T.Proc):
+def helper_at(path: String, mode: String, input: String) -> IO(Policy.Proc):
   match path:
     case SCon{'/', t}:
-      do IO<T.Proc>:
+      do IO<Policy.Proc>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
           Process.run(SCon{'/', t}, [mode], input, 1048576, 30000)
-        return T.proc_of(r)
+        return Policy.proc_of(r)
     case _:
-      IO.pure(T.Proc, T.ProcRefused{""})
+      IO.pure(Policy.Proc, Policy.ProcRefused{""})
 
-def helper(mode: String, input: String) -> IO(T.Proc):
-  do IO<T.Proc>:
+def helper(mode: String, input: String) -> IO(Policy.Proc):
+  do IO<Policy.Proc>:
     path : String <- T.env_or("MAILBEND_TLS_HELPER", "")
     helper_at(path, mode, input)
 
@@ -97,7 +207,7 @@ def failed(xs: List<&2, J.Json>) -> Bool:
     case Nil{}:
       False{}
     case h <> t:
-      +status = T.str_arg(h, "status", "")
+      +status = Policy.str_arg(h, "status", "")
       String.eq(status, "failed") || String.eq(status, "uncertain") || failed(t)
 
 def transport_facts.if(
@@ -118,11 +228,11 @@ def transport_facts(+protocol: String, out: String, network: Bool) -> List<&2, J
     (Bool.not(network) || List.contains(~String, ~String.eq, lines, "authentication ok"))
   transport_facts.if(protocol, checks, failed(checks) || complete)
 
-def transport_result(protocol: String, network: Bool, p: T.Proc) -> List<&2, J.Json>:
+def transport_result(protocol: String, network: Bool, p: Policy.Proc) -> List<&2, J.Json>:
   match p:
-    case T.ProcOk{0, out, err}:
+    case Policy.ProcOk{0, out, err}:
       transport_facts(protocol, out, network)
-    case T.ProcRefused{msg}:
+    case Policy.ProcRefused{msg}:
       [fact(protocol, "helper", "failed", "unavailable")]
     case _:
       [fact(protocol, "helper", "failed", "timeout_or_helper_failure")]
@@ -130,7 +240,7 @@ def transport_result(protocol: String, network: Bool, p: T.Proc) -> List<&2, J.J
 def transport(+protocol: String, +network: Bool) -> IO(List<&2, J.Json>):
   do IO<List<&2, J.Json>>:
     mode : String = Bool.pick(String, network, "diagnose-", "diagnose-config-") ++ protocol
-    p : T.Proc <- helper(mode, "")
+    p : Policy.Proc <- helper(mode, "")
     return transport_result(protocol, network, p)
 
 def role(name: String, value: Maybe<&2, String>) -> J.Json:
@@ -142,8 +252,8 @@ def folder_result(f: T.Fs()) -> List<&2, J.Json>:
   match f:
     case Fail{msg}:
       [fact("imap", "folders", "failed", "discovery_or_override_failed")]
-    case Done{T.Folders{fs, drafts, trash, sent, junk, archive}}:
-      [role("inbox", T.named_folder(fs, "INBOX")), role("drafts", drafts),
+    case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
+      [role("inbox", Policy.named_folder(fs, "INBOX")), role("drafts", drafts),
         role("trash", trash), role("sent", sent), role("junk", junk), role("archive", archive)]
 
 def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(List<&2, J.Json>):
@@ -154,7 +264,7 @@ def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(List<&2, J.Jso
         return folder_result(f)
     case True{}:
       do IO<List<&2, J.Json>>:
-        p : T.Proc <- helper("imap", I.script(Ops.plan_roles()))
+        p : Policy.Proc <- helper("imap", I.script(Ops.plan_roles()))
         f : T.Fs() <- T.roles_of(T.imap_result(p), fs)
         return folder_result(f)
 
@@ -171,7 +281,7 @@ def folders(checked: Bool) -> IO(List<&2, J.Json>):
       IO.pure(List<&2, J.Json>, [fact("imap", "folders", "skipped", "not_checked")])
     case True{}:
       do IO<List<&2, J.Json>>:
-        p : T.Proc <- helper("imap", I.script(Ops.plan_probe()))
+        p : Policy.Proc <- helper("imap", I.script(Ops.plan_probe()))
         folders.result(T.imap_result(p))
 
 def auth_ok(xs: List<&2, J.Json>) -> Bool:
@@ -179,39 +289,41 @@ def auth_ok(xs: List<&2, J.Json>) -> Bool:
     case Nil{}:
       False{}
     case +h <> t:
-      (String.eq(T.str_arg(h, "stage", ""), "authentication") &&
-        String.eq(T.str_arg(h, "status", ""), "ok")) || auth_ok(t)
+      (String.eq(Policy.str_arg(h, "stage", ""), "authentication") &&
+        String.eq(Policy.str_arg(h, "status", ""), "ok")) || auth_ok(t)
 
-def result(+checks: List<&2, J.Json>) -> T.Out:
+def result(+checks: List<&2, J.Json>) -> Policy.Out:
   +json = J.obj([J.kv("checks", J.arr(checks)), J.kv("redacted", J.bool(True{})),
     J.kv("scope", J.str("Setup checks only: no mailbox-write, recipient, send-quota or " ++
       "delivery guarantee; no sending permission is granted."))])
-  Bool.pick(T.Out, failed(checks), T.Partial{json}, T.Ok{json})
+  Bool.pick(Policy.Out, failed(checks), Policy.Partial{json}, Policy.Ok{json})
 
-def run.config(c: T.Config, imap: Bool, smtp: Bool) -> IO(T.Out):
+def run.config(c: Policy.Config, imap: Bool, smtp: Bool) -> IO(Policy.Out):
   match c:
-    case T.ConfigBad{msg}:
+    case Policy.ConfigBad{msg}:
       skipped = List.append(&2, J.Json, stage_facts(stages(), "imap", []),
         stage_facts(stages(), "smtp", []))
       T.pure_out(result(fact("local", "configuration", "failed",
         "invalid_switches_or_policy") <> skipped))
-    case T.Config{ro, drafts, jev, images}:
-      do IO<T.Out>:
+    case Policy.Config{ro, drafts, jev, images}:
+      do IO<Policy.Out>:
+        p : List<&2, J.Json> <- platform()
         +i : List<&2, J.Json> <- transport("imap", imap)
         s : List<&2, J.Json> <- transport("smtp", smtp)
         f : List<&2, J.Json> <- folders(auth_ok(i))
-        return result(List.append(&2, J.Json, i, List.append(&2, J.Json, s, f)))
+        return result(List.append(&2, J.Json, p,
+          List.append(&2, J.Json, i, List.append(&2, J.Json, s, f))))
 
 # Validate the send-copy switch without invoking sending or reserving quota.
-def run.save_sent(c: T.Config, save: T.Flag, imap: Bool, smtp: Bool) -> IO(T.Out):
+def run.save_sent(c: Policy.Config, save: Policy.Flag, imap: Bool, smtp: Bool) -> IO(Policy.Out):
   match save:
-    case T.FlagBad{msg}:
-      run.config(T.ConfigBad{msg}, imap, smtp)
+    case Policy.FlagBad{msg}:
+      run.config(Policy.ConfigBad{msg}, imap, smtp)
     case _:
       run.config(c, imap, smtp)
 
-def run(imap: Bool, smtp: Bool) -> IO(T.Out):
-  do IO<T.Out>:
-    c : T.Config <- T.config()
-    save : T.Flag <- T.flag("MAILBEND_SAVE_SENT")
+def run(imap: Bool, smtp: Bool) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    c : Policy.Config <- T.config()
+    save : Policy.Flag <- T.flag("MAILBEND_SAVE_SENT")
     run.save_sent(c, save, imap, smtp)

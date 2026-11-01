@@ -45,6 +45,9 @@ server](#use). Details of the install are [below](#install-linux).
 Limits: Linux only, password login only (no OAuth); see
 [Known limits](#known-limits).
 
+For a dated comparison with other email connectors, see
+[the connector comparison](docs/COMPARISON.md).
+
 For shareable setup checks, run `scripts/mailbend diagnose` (local only), or
 explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp`.
 SMTP diagnostics authenticate without sending mail, including in read-only or
@@ -240,6 +243,22 @@ Attachments and downloads stay off until `MAILBEND_ATTACH_DIR` and
 `MAILBEND_DOWNLOAD_DIR` name dedicated directories (see [Safety](#safety)).
 Jev's settings are in [docs/JEV.md](docs/JEV.md#settings).
 
+Outgoing sends and drafts refuse hidden Unicode tag characters outside valid
+emoji tag sequences, and bidi controls in attachment filenames, before stamping
+or delivery. Validity follows UTS #51 Annex C with pinned CLDR 49 identifiers,
+including valid non-RGI subdivision and numeric region flags. Ordinary RTL text,
+bidi controls outside filenames, and zero-width emoji joiners remain allowed.
+The `hidden_unicode` result reports `{tag, bidi, zero_width}` for the subject,
+body, sender display name, positional To/Cc/Bcc display names and attachment
+filenames. Encoded-word-looking filenames use literal RFC 2231 parameters and
+a neutral ASCII fallback so tolerant readers cannot decode hidden text from
+them. This ambiguous-input case changes MIME bytes, not the literal filename.
+LRM and RLM count in both `bidi` and `zero_width`. Allowed flags still
+have nonzero `tag` counts. Replies and forwards remove invalid tags only from
+copied source text and display names, and report those removals as `removed_tags`.
+The forwarded original `.eml` attachment remains unchanged. Dry runs report the
+same counts without sending or saving anything.
+
 Sending (`mail_send`, and replies and forwards that are not drafts) has its
 own optional settings. A malformed value refuses every send, never reads as
 off, and leaves drafts and reads alone:
@@ -267,6 +286,13 @@ explicitly (commonly 465 for implicit TLS); the default remains 587 in both
 modes. Ports never select a mode, and failures never fall back to another mode
 or plaintext. Empty or unknown mode values are configuration errors.
 OAuth is unsupported.
+
+If the provider requires a login name different from your email address, set
+`MAILBEND_LOGIN`. A nonempty value is used only for IMAP LOGIN and SMTP AUTH
+PLAIN/LOGIN. Unset or empty uses `MAILBEND_EMAIL`, which remains required and
+continues to supply the From address and reply identity. The login name must
+be printable ASCII without spaces. This option does not change recipient
+allowlists or establish compatibility with an untested provider.
 
 | Profile | Transport | Validation |
 | --- | --- | --- |
@@ -631,6 +657,11 @@ synthetic cost measurements and experiment decision are in
 
 ### What the proofs cover
 
+`PROOF.bend` imports the pure policy module rather than tool orchestration or the
+generated schema. CI separately kernel-checks `src/tools.bend` and the
+tool-layer laws in [`tests/formal/tool-laws.bend`](tests/formal/tool-laws.bend),
+so this separation does not reduce the previous tool-layer coverage.
+
 The bounded [SMTP TLS-ordering model](.agents/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
 It does not prove the Rust transport or cryptography.
@@ -647,6 +678,19 @@ from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Fold
 discovery, override validation and how each tool uses the resolved folder are
 covered by the end-to-end tests.
 
+The switch laws cover every operation and JSON argument value. Read-only calls
+that can write, drafts-only calls that send, and Jev-dependent calls with Jev off
+all return a non-empty refusal. The send classifier is fixed independently to the
+operation and `as_draft` field. Unrecognized Boolean switch strings produce a bad
+flag, and a bad flag in any of the five configuration positions rejects the whole
+configuration. Environment reads and tool dispatch remain end-to-end tested.
+
+Each mutating IMAP constructor has a law for its exact effect and write status,
+for every argument. A draft plan is exactly one APPEND with Draft and Seen flags.
+Every resolved role has a structural witness of its exact name and selectability
+in the original listing, with no bound on the list length. The policy mutation
+check rejects changed gates, classifiers, draft plans and invented role names.
+
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
@@ -660,8 +704,8 @@ makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome la
 for every exit code and transcript, and that confirmed acceptance survives a
 later process failure. Native progress production itself remains a tested IO
 boundary. The native
-helpers, TLS, MIME parsing, the agent's choices and the runtime
-configuration are covered by tests and review, not by proofs, and nothing
+helpers, TLS, MIME parsing, the agent's choices and environment
+loading are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
@@ -735,9 +779,16 @@ before relying on a complete link.
 
 ## Known limits
 
+For failed calls, provider limits, concurrency, upgrades, and rollback, use
+the [operator runbook](docs/OPERATIONS.md).
+
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
+- The compiled Bend core needs glibc 2.34 or newer. The installer checks this
+  before compilation. Downloads need `O_TMPFILE` support on the download
+  directory's file system, which WSL's `/mnt/c` can lack. `mailbend diagnose`
+  reports local platform prerequisites without paths or OS error text.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on

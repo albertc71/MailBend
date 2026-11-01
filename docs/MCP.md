@@ -124,10 +124,12 @@ parser ignores bracket-internal whitespace and stops after malformed items.
 It does not open links, send mail, or unsubscribe.
 
 `one_click` is an unverified advertised signal. It requires exactly one HTTPS scheme item with a nonempty host,
-no HTTP item or malformed list suffix, one List-Unsubscribe header, and one
+no userinfo in its authority, no HTTP item or malformed list suffix,
+one List-Unsubscribe header, and one
 List-Unsubscribe-Post header whose value
 is `List-Unsubscribe=One-Click`. It is not a complete URI validator, does not verify DKIM, and does not grant
-permission to use the endpoint. These fields cannot establish that a sender or link is safe.
+permission to use the endpoint. A URI with userinfo remains visible in `https`,
+but cannot set `one_click`. These fields cannot establish that a sender or link is safe.
 See [RFC 2369](https://www.rfc-editor.org/rfc/rfc2369.html) and
 [RFC 8058](https://www.rfc-editor.org/rfc/rfc8058.html).
 

@@ -56,6 +56,8 @@ def main() -> IO(Unit):
     unsubscribe("List-Unsubscribe: <https://example.test/u>, <bad!scheme:item>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
     unsubscribe("List-Unsubscribe: <https://[::1]/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
     unsubscribe("List-Unsubscribe: <https://user@host.test:443/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
+    unsubscribe("List-Unsubscribe: <https://bank.example@evil.test/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
+    unsubscribe("List-Unsubscribe: <https://example.test/u@path>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
     unsubscribe("List-Unsubscribe: <https://>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
     unsubscribe("List-Unsubscribe: <https://example.test/u>, <https://>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n")
     IO.print(J.show(J.obj(Meta.fields(M.headers(""), ["\\aNsWeReD", "$FORWARDED"]))))
@@ -104,7 +106,9 @@ def main() -> IO(Unit):
 #|{"mailto":null,"https":"https://example.test/u","one_click":false}
 #|{"mailto":null,"https":"https://example.test/u","one_click":false}
 #|{"mailto":null,"https":"https://[::1]/u","one_click":true}
-#|{"mailto":null,"https":"https://user@host.test:443/u","one_click":true}
+#|{"mailto":null,"https":"https://user@host.test:443/u","one_click":false}
+#|{"mailto":null,"https":"https://bank.example@evil.test/u","one_click":false}
+#|{"mailto":null,"https":"https://example.test/u@path","one_click":true}
 #|{"mailto":null,"https":null,"one_click":false}
 #|{"mailto":null,"https":"https://example.test/u","one_click":false}
 #|{"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":true,"forwarded":true}

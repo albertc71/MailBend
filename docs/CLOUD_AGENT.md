@@ -86,9 +86,21 @@ scripts/mailbend-cloud diagnose --imap --smtp   # both; either flag order is acc
 ```
 
 The local check validates safety switches, mail settings, credentials and trust
-store through the TLS helper. Only that helper reads the mail password. It does
-not contact TypeSafe or read its key, test attachments, reserve the send counter,
-or fix configuration. Missing or unusable TLS helper paths are reported separately.
+store through the TLS helper. Only that helper reads the mail password.
+Platform facts are omitted when switches or policy are invalid; the failed
+configuration fact and skipped transport stages explain that no probes ran.
+The credential-free attachment helper reports `platform` facts for `openat2`,
+the attachment directory, `O_TMPFILE` in the download directory, and architecture.
+Architecture is informational, including the fixed `other` category.
+Unset optional directories are skipped. Unsupported or refused prerequisites
+fail with fixed guidance. `openat2 unsupported` means that the process cannot use
+the syscall, whether the kernel lacks it or a sandbox blocks it.
+The temporary file probe creates no named file and closes its unnamed inode.
+It uses the existing dedicated-directory, overlap and startup checks, but does
+not check the caller's PATH or establish permission to save a particular file.
+No attachment content is read. Diagnose does not contact TypeSafe or read its
+key, reserve the send counter, or fix configuration. Missing or unusable helper
+paths are reported separately.
 Use `setup-cloud.sh --check` for credential-free installation readiness.
 
 Each JSON check has bounded `protocol`, `stage`, `status`, `reason` and `guidance`
@@ -112,9 +124,10 @@ IMAP discovery uses only authenticated CAPABILITY/LIST queries and logout.
 Both are permitted with read-only/drafts-only enabled; malformed switches stop
 all network work. This grants no sending permission or exception to send gates.
 
-Every helper invocation has a 30-second total limit and a 1 MiB captured-output
-cap, in addition to transport timeouts. Both network flags can use up to four
-sequential helper invocations (two transport checks and two folder queries).
+Every helper invocation has a 30-second total limit. The platform check has a
+4 KiB captured-output cap; transport checks have a 1 MiB cap in addition to
+transport timeouts. Both network flags can use up to five sequential helper
+invocations, one platform check, two transport checks and two folder queries.
 Timeouts or broken helpers fail without exposing captured process output.
 Exit status is 1 for failed or uncertain checks, 0 otherwise; always inspect
 skipped checks. Success does not establish mailbox-write permission, recipient
@@ -296,6 +309,9 @@ review and remove only its tagged lines yourself; preserve all unrelated
 entries. Stale pins still affect other programs and MailBend's system-DNS mode.
 
 ## Resolver and network catches
+
+For failed calls, send outcomes, provider limits, and MailBend upgrades or
+rollback, use the [operator runbook](OPERATIONS.md).
 
 - **Policy and blocked DoH:** opt in only where alternate DNS/direct mail
   egress is permitted. DoH cannot open blocked TCP ports: IMAP needs 993 and

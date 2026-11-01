@@ -267,6 +267,7 @@ def unsubscribe(+hs: List<&2, M.Hdr>) -> J.Json:
     U32.is_eq(header_count(hs, "list-unsubscribe"), 1) &&
     U32.is_eq(header_count(hs, "list-unsubscribe-post"), 1) &&
     U32.is_eq(uri_count(urls, "https"), 1) &&
+    Bool.not(String.contains(authority(String.drop(first_uri(urls, "https://"), 8n)), "@")) &&
     String.eq(String.to_lower(M.header(hs, "list-unsubscribe-post")), "list-unsubscribe=one-click")
   J.obj([J.kv("mailto", nullable(first_uri(urls, "mailto:"))),
     J.kv("https", nullable(first_uri(urls, "https://"))), J.kv("one_click", J.bool(one))])
