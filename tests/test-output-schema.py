@@ -69,4 +69,18 @@ refresh = dict(folder='INBOX', uidvalidity=7, reset_required=False, complete=Fal
                present=[dict(uid=1, flags=[])], absent=[], unknown=[2], reason='incomplete')
 check('mail_refresh', refresh)
 check('mail_refresh', {**refresh, 'present': [dict(uid=1)]}, False)
+
+metadata = dict(list_id=None, auto_submitted=None, bulk=None,
+                unsubscribe=dict(mailto=None, https=None, one_click=False),
+                answered=False, forwarded=False)
+message = dict(date='', **{'from': ''}, to='', cc='', subject='', message_id='',
+               internal_date='', uid=1, size=0, flags=[], seen=False, flagged=False,
+               **metadata)
+check('mail_search', {**search, 'messages': [message]})
+for key in metadata:
+    check('mail_search', {**search, 'messages': [{k: v for k, v in message.items()
+                                                if k != key}]}, False)
+check('mail_search', {**search, 'messages': [{**message, 'bulk': 'guessed'}]}, False)
+check('mail_search', {**search, 'messages': [{**message, 'unsubscribe': {
+    'mailto': None, 'https': None, 'one_click': 'yes'}}]}, False)
 print(f'output schemas: {checks} checks passed')

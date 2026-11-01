@@ -371,6 +371,10 @@ def run_all(work):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("metadata_cases", ROOT / "tests/metadata-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
 
 
 def get_new_start_now(work):

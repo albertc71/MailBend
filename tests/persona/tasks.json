@@ -75,8 +75,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 2231,
-        "estimated_tokens": 558
+        "result_bytes": 2847,
+        "estimated_tokens": 712
       }
     },
     {
@@ -153,8 +153,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 2229,
-        "estimated_tokens": 558
+        "result_bytes": 2845,
+        "estimated_tokens": 712
       }
     },
     {
@@ -231,8 +231,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 2165,
-        "estimated_tokens": 542
+        "result_bytes": 2781,
+        "estimated_tokens": 696
       }
     },
     {
@@ -309,8 +309,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 2303,
-        "estimated_tokens": 576
+        "result_bytes": 2919,
+        "estimated_tokens": 730
       }
     },
     {
@@ -363,8 +363,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1230,
-        "estimated_tokens": 308
+        "result_bytes": 1538,
+        "estimated_tokens": 385
       }
     },
     {
@@ -486,8 +486,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1376,
-        "estimated_tokens": 344
+        "result_bytes": 1684,
+        "estimated_tokens": 421
       }
     },
     {
@@ -566,8 +566,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 6,
-        "result_bytes": 2689,
-        "estimated_tokens": 673
+        "result_bytes": 3613,
+        "estimated_tokens": 904
       }
     },
     {
@@ -694,8 +694,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 2,
-        "result_bytes": 2183,
-        "estimated_tokens": 546
+        "result_bytes": 2491,
+        "estimated_tokens": 623
       }
     },
     {
@@ -788,8 +788,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 2,
-        "result_bytes": 2197,
-        "estimated_tokens": 550
+        "result_bytes": 2505,
+        "estimated_tokens": 627
       }
     },
     {
@@ -868,8 +868,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 1609,
-        "estimated_tokens": 403
+        "result_bytes": 1995,
+        "estimated_tokens": 499
       }
     },
     {
@@ -948,8 +948,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 1589,
-        "estimated_tokens": 398
+        "result_bytes": 1897,
+        "estimated_tokens": 475
       }
     },
     {
@@ -1028,8 +1028,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 3,
-        "result_bytes": 1623,
-        "estimated_tokens": 406
+        "result_bytes": 1931,
+        "estimated_tokens": 483
       }
     },
     {
@@ -1286,8 +1286,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 2,
-        "result_bytes": 1001,
-        "estimated_tokens": 251
+        "result_bytes": 1309,
+        "estimated_tokens": 328
       }
     },
     {
@@ -1349,8 +1349,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 2,
-        "result_bytes": 2307,
-        "estimated_tokens": 577
+        "result_bytes": 3231,
+        "estimated_tokens": 808
       }
     },
     {
@@ -1489,8 +1489,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1504,
-        "estimated_tokens": 376
+        "result_bytes": 1812,
+        "estimated_tokens": 453
       }
     },
     {
@@ -1543,8 +1543,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1462,
-        "estimated_tokens": 366
+        "result_bytes": 1770,
+        "estimated_tokens": 443
       }
     },
     {
@@ -1597,8 +1597,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1444,
-        "estimated_tokens": 361
+        "result_bytes": 1752,
+        "estimated_tokens": 438
       }
     },
     {
@@ -1651,8 +1651,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1490,
-        "estimated_tokens": 373
+        "result_bytes": 1798,
+        "estimated_tokens": 450
       }
     },
     {
@@ -1705,8 +1705,8 @@
       "budget": {
         "calls": 1,
         "imap_logins": 1,
-        "result_bytes": 1444,
-        "estimated_tokens": 361
+        "result_bytes": 1752,
+        "estimated_tokens": 438
       }
     }
   ]
