@@ -1,6 +1,6 @@
 //! Runs the built helper: the checks before any network access, and the
 //! route through an HTTPS proxy, where a local proxy records the tunnel
-//! request and the helper's environment. The TLS exchange itself is covered
+//! request and denied access to the helper's environment. The TLS exchange itself is covered
 //! by tests/test-e2e.py against a local fake TypeSafe service.
 
 // Test helpers outside #[test] functions fail loudly too.
@@ -190,7 +190,7 @@ fn a_proxy_gets_a_tunnel_request_for_the_fixed_host_from_a_confined_process() {
         head.push(byte[0]);
     }
     // Still connected, so the helper (same pid after re-executing) is alive.
-    let environ = std::fs::read(format!("/proc/{pid}/environ")).expect("environ");
+    let environ = std::fs::read(format!("/proc/{pid}/environ"));
     peer.write_all(b"HTTP/1.1 403 Forbidden\r\n\r\n")
         .expect("reply");
     let out = child.wait_with_output().expect("wait");
@@ -201,19 +201,9 @@ fn a_proxy_gets_a_tunnel_request_for_the_fixed_host_from_a_confined_process() {
         "{head}"
     );
     assert!(!head.contains(KEY));
-    let names: Vec<&[u8]> = environ
-        .split(|&b| b == 0)
-        .filter(|entry| !entry.is_empty())
-        .map(|entry| entry.split(|&b| b == b'=').next().unwrap_or(entry))
-        .collect();
-    assert!(names.contains(&&b"MAILBEND_TYPESAFE_KEY_FILE"[..]));
-    for dropped in [
-        "MAILBEND_APP_PASSWORD",
-        "MAILBEND_EMAIL",
-        "UNRELATED_SETTING",
-    ] {
-        assert!(!names.contains(&dropped.as_bytes()), "{dropped} was kept");
-    }
-    assert!(!String::from_utf8_lossy(&environ).contains(PASSWORD));
+    assert_eq!(
+        environ.expect_err("environment must be protected").kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
     assert_exit(&out, 3, "proxy refused the tunnel to api.typesafe.ai:443");
 }

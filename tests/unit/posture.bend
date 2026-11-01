@@ -43,6 +43,11 @@ def main() -> IO(Unit):
       "api.typesafe.ai.", "typesafe.ai.")))
     IO.print(Bool.show(D.posture_proxied(Some{T.PostureEndpoint{"proxy.test", 1080}},
       "nottypesafe.ai", "typesafe.ai")))
+    IO.print(T.posture_trust_token(T.posture_trust_source(True{}, True{}, True{})))
+    IO.print(T.posture_trust_token(T.posture_trust_source(False{}, True{}, False{})))
+    IO.print(T.posture_trust_token(T.posture_trust_source(False{}, False{}, False{})))
+    IO.print(Bool.show(D.posture_trust_dirs(String.split(":::" , ':'))))
+    IO.print(Bool.show(D.posture_trust_dirs(String.split(": :" , ':'))))
 
 #|True
 #|False
@@ -60,5 +65,11 @@ def main() -> IO(Unit):
 #|{"host":"proxy.test","port":3128}
 #|rejected
 #|False
+#|False
+#|True
+
+#|mailbend_ca_file
+#|ssl_cert_env
+#|system
 #|False
 #|True

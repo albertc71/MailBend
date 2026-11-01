@@ -173,13 +173,15 @@ def qp_ok.go(s: String, ok: Bool) -> Bool:
     case SCon{'=', SCon{a, SCon{b, t}}} True{}:
       qp_ok.go(t, M.char_in(a, "0123456789abcdefABCDEF") &&
         M.char_in(b, "0123456789abcdefABCDEF"))
+    case SCon{'=', SNil{}} True{}:
+      True{}
     case SCon{'=', t} True{}:
       False{}
     case SCon{c, t} True{}:
       qp_ok.go(t, True{})
 
 def qp_ok(s: String) -> Bool:
-  qp_ok.go(s, True{})
+  qp_ok.go(C.qp_unpad(s), True{})
 
 # String.eq rebuilds both strings on its way back, so it is not a loop.
 def same.go(a: String, b: String, ok: Bool) -> Bool:

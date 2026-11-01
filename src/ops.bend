@@ -272,6 +272,9 @@ def plan_new.if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
 def plan_new(mbox: String, +since: U32) -> List<&2, I.Cmd>:
   plan_new.if(U32.is_eq(since, max_uid()), mbox, since)
 
+def plan_new_now(mbox: String) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}]
+
 # The summaries (flags, date, size, header fields) of `uids`.
 def plan_headers(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
   [

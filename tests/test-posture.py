@@ -105,6 +105,8 @@ class PostureTests(unittest.TestCase):
                 c, e = d['capabilities'], d['egress']
                 self.assertEqual(not ro, c['state_change'])
                 self.assertEqual('none' if ro or drafts else 'allowlist', c['send'])
+                self.assertEqual(not (ro or drafts), e['smtp_send_permitted'])
+                self.assertIn('conservatively', d['scope'])
                 self.assertEqual(2, c['allowlist_entries'])
                 self.assertEqual(12, c['daily_cap'])
                 self.assertEqual(mode == 'body', c['body_permission'])
@@ -117,6 +119,29 @@ class PostureTests(unittest.TestCase):
                                       'mail_send', 'mail_reply', 'mail_forward'] if mode == 'body' else [],
                                      e['typesafe']['message_text'])
                     self.assertEqual(['mail_classify'] if mode == 'body' else [], e['typesafe']['images'])
+
+    def test_configured_trust_source_without_opening_paths(self):
+        fifo = str(self.password)
+        cases = [
+            ({}, 'system'),
+            ({'SSL_CERT_FILE': ''}, 'ssl_cert_env'),
+            ({'SSL_CERT_FILE': fifo}, 'ssl_cert_env'),
+            ({'SSL_CERT_DIR': ''}, 'system'),
+            ({'SSL_CERT_DIR': ':::'}, 'system'),
+            ({'SSL_CERT_DIR': ':' + fifo + '::'}, 'ssl_cert_env'),
+            ({'SSL_CERT_DIR': ' '}, 'ssl_cert_env'),
+            ({'SSL_CERT_FILE': '', 'SSL_CERT_DIR': fifo}, 'ssl_cert_env'),
+            ({'MAILBEND_CA_FILE': '', 'SSL_CERT_FILE': fifo}, 'ssl_cert_env'),
+            ({'MAILBEND_CA_FILE': '', 'SSL_CERT_DIR': '::'}, 'system'),
+            ({'MAILBEND_CA_FILE': fifo}, 'mailbend_ca_file'),
+            ({'MAILBEND_CA_FILE': fifo, 'SSL_CERT_FILE': '', 'SSL_CERT_DIR': fifo},
+             'mailbend_ca_file'),
+        ]
+        for settings, source in cases:
+            with self.subTest(settings=settings):
+                d = self.run_posture(settings)
+                self.assertEqual(source, d['egress']['trust_source'])
+                self.assertIn('not opened or validated', d['egress']['trust_source_scope'])
 
     def test_jev_off_image_permission_is_not_active_egress(self):
         d = self.run_posture({'MAILBEND_TYPESAFE_CONTENT': 'body',

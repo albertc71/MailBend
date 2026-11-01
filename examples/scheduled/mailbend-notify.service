@@ -1,0 +1,15 @@
+[Unit]
+Description=Notify about a read-only MailBend arrival batch
+
+[Service]
+Type=oneshot
+TimeoutStartSec=120
+KillMode=control-group
+UMask=0077
+EnvironmentFile=%h/.config/mailbend-recipes/account.env
+Environment=MAILBEND_PASSWORD_FILE=%h/.config/mailbend-recipes/password
+Environment=MAILBEND_READ_ONLY=1
+Environment=MAILBEND_TYPESAFE=0
+Environment=MAILBEND_RECIPE_STATE=%h/.local/state/mailbend-recipes/notify
+UnsetEnvironment=MAILBEND_APP_PASSWORD
+ExecStart=/bin/bash %h/src/MailBend/examples/scheduled/poll.sh notify

@@ -977,7 +977,7 @@ def readable_text(p: Parts) -> String:
 # Header text
 # -----------
 
-# Splits text into chunks of at most 45 UTF-8 bytes (60 base64 chars), at
+# Splits text into chunks of at most 39 UTF-8 bytes (52 base64 chars), at
 # character boundaries, for encoded words.
 def ew_chunks(s: String, +cur: String, +n: U32) -> List<&2, String>:
   match s:
@@ -985,7 +985,7 @@ def ew_chunks(s: String, +cur: String, +n: U32) -> List<&2, String>:
       push_rev(cur, [], Bool.not(String.is_empty(cur)))
     case SCon{+c, t}:
       +w = C.utf8_width(C.u(c))
-      +full = U32.is_gt((n + w : U32), 45)
+      +full = U32.is_gt((n + w : U32), 39)
       next = Bool.pick(String, full, SCon{c, SNil{}}, SCon{c, cur})
       rest = ew_chunks(t, next, Bool.pick(U32, full, w, (n + w : U32)))
       push_rev(cur, rest, full)
@@ -1006,17 +1006,59 @@ def ew_encode(chunks: List<&2, String>) -> String:
 def encoded_words(s: String) -> String:
   ew_encode(ew_chunks(s, "", 0))
 
+def has_encoded_word(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      False{}
+    case SCon{'=', SCon{'?', t}}:
+      String.contains(t, "?=")
+    case SCon{c, t}:
+      has_encoded_word(t)
+
+def header_plain(+s: String, max: Nat) -> Bool:
+  is_short_plain(s, max) && Bool.not(has_encoded_word(s))
+
+def fold_plain.width(s: String) -> U32:
+  match s:
+    case SNil{}:
+      0
+    case SCon{' ', t}:
+      0
+    case SCon{'\t', t}:
+      0
+    case SCon{c, t}:
+      (1 + fold_plain.width(t) : U32)
+
+def fold_plain.cut(blank: Bool, t: String, col: U32) -> Bool:
+  match blank:
+    case False{}:
+      False{}
+    case True{}:
+      U32.is_gt((col + 1 + fold_plain.width(t) : U32), 78)
+
+# Folding inserts only CRLF, preserving the original whitespace and text.
+def fold_plain(s: String, +col: U32) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{+c, +t}:
+      +cut = fold_plain.cut(is_blank(c), t, col)
+      Bool.pick(String, cut, "\r\n", "") ++ SCon{c,
+        fold_plain(t, Bool.pick(U32, cut, 1, (col + 1 : U32)))}
+
 def encode_header.if(s: String, plain: Bool) -> String:
   match plain:
     case True{}:
-      s
+      fold_plain(s, 9)
     case False{}:
       encoded_words(s)
 
 # Header text as-is when it is short plain ASCII, else as encoded words
 # (a header line may not pass 998 characters).
 def encode_header(+s: String) -> String:
-  encode_header.if(s, is_short_plain(s, 900n))
+  +first = fold_plain.width(s)
+  fits = U32.is_le(first, 69) || U32.is_gt(first, 78)
+  encode_header.if(s, header_plain(s, 900n) && fits)
 
 # Addresses
 # ---------
@@ -1160,7 +1202,7 @@ def encode_display.if(name: String, plain: Bool) -> String:
 
 # A display name: quoted when it is short plain ASCII, else encoded words.
 def encode_display(+name: String) -> String:
-  encode_display.if(name, is_short_plain(name, 200n))
+  encode_display.if(name, header_plain(name, 200n))
 
 # The text before the last "<" outside a quoted string: the display name
 # that goes with the address addr_spec takes (so "Sales < Europe" stays
@@ -1181,10 +1223,13 @@ def display_part.go(
 def display_part(a: String) -> String:
   display_part.go(a, "", "", False{}, False{})
 
-def encode_addr.if(name: String, address: String, named: Bool) -> String:
+def encode_addr.if(name: String, +address: String, named: Bool) -> String:
   match named:
     case True{}:
-      encode_display(unquote(name)) ++ " <" ++ address ++ ">"
+      +display = encode_display(unquote(name))
+      fold = String.starts_with(display, "=?") ||
+        Nat.is_gt((String.length(display) + String.length(address) + 10n : Nat), 78n)
+      display ++ Bool.pick(String, fold, "\r\n <", " <") ++ address ++ ">"
     case False{}:
       address
 
@@ -1220,31 +1265,143 @@ def crlf_lines(s: String) -> String:
     case SCon{c, t}:
       SCon{c, crlf_lines(t)}
 
-# Anything but printable ASCII (CR, LF, controls, 8-bit) becomes a space, so
-# a value can never start a new header line or break 7-bit transport.
-def one_line(s: String) -> String:
+def msg_id.atom.go(s: String, need: Bool, ok: Bool) -> Bool:
+  match s ok:
+    case _ False{}:
+      False{}
+    case SNil{} True{}:
+      Bool.not(need)
+    case SCon{'.', t} True{}:
+      msg_id.atom.go(t, True{}, Bool.not(need))
+    case SCon{+c, t} True{}:
+      +n = C.u(c)
+      valid = C.between(n, 48, 57) || C.between(n, 65, 90) || C.between(n, 97, 122)
+        || char_in(c, "!#$%&'*+-/=?^_`{|}~")
+      msg_id.atom.go(t, False{}, valid)
+
+def msg_id.atom(s: String) -> Bool:
+  msg_id.atom.go(s, True{}, True{})
+
+def msg_id.literal(s: String, ok: Bool) -> Bool:
+  match s ok:
+    case _ False{}:
+      False{}
+    case SCon{']', SNil{}} True{}:
+      True{}
+    case SCon{c, t} True{}:
+      +n = C.u(c)
+      msg_id.literal(t, C.between(n, 33, 90) || C.between(n, 94, 126))
+    case SNil{} True{}:
+      False{}
+
+def msg_id.right(s: String) -> Bool:
   match s:
-    case SNil{}:
-      ""
-    case SCon{+c, t}:
-      SCon{Bool.pick(Char, C.between(C.u(c), 32, 126), c, ' '), one_line(t)}
+    case SCon{'[', t}:
+      msg_id.literal(t, True{})
+    case _:
+      msg_id.atom(s)
 
-# A one-line header value that fits a header line, or "" (dropped).
-def short_line(+s: String) -> String:
-  Bool.pick(String, Nat.is_le(String.length(s), 900n), s, "")
+def msg_id.parts(xs: List<&2, String>) -> Bool:
+  match xs:
+    case left <> right <> rest:
+      msg_id.atom(left) && msg_id.right(String.join(right <> rest, "@"))
+    case _:
+      False{}
 
-# Message IDs folded one per line, so References never passes 998 chars.
-def fold_ids(ids: List<&2, String>) -> String:
+def msg_ids.put(rev: String, +acc: List<&2, String>) -> List<&2, String>:
+  +id = String.reverse(rev)
+  Bool.pick(List<&2, String>, msg_id.parts(String.split(id, '@')),
+    ("<" ++ id ++ ">") <> acc, acc)
+
+type IdMode is Data:
+  IdText{}
+  IdQuoted{escaped: Bool}
+  IdComment{depth: U32, escaped: Bool}
+  IdToken{reversed: String}
+
+def msg_ids.go(s: String, mode: IdMode, acc: List<&2, String>) -> List<&2, String>:
+  match s mode:
+    case SNil{} _:
+      List.reverse(&2, String, acc)
+    case SCon{'<', t} IdText{}:
+      msg_ids.go(t, IdToken{""}, acc)
+    case SCon{'(', t} IdText{}:
+      msg_ids.go(t, IdComment{1, False{}}, acc)
+    case SCon{'"', t} IdText{}:
+      msg_ids.go(t, IdQuoted{False{}}, acc)
+    case SCon{c, t} IdText{}:
+      msg_ids.go(t, IdText{}, acc)
+    case SCon{+c, t} IdQuoted{+esc}:
+      close = Bool.not(esc) && Char.is_eq(c, '"')
+      next : IdMode = IdQuoted{Bool.not(esc) && Char.is_eq(c, '\\')}
+      msg_ids.go(t, Bool.pick(IdMode, close, IdText{}, next), acc)
+    case SCon{+c, t} IdComment{+depth, +esc}:
+      open = Bool.not(esc) && Char.is_eq(c, '(')
+      +close = Bool.not(esc) && Char.is_eq(c, ')')
+      next : IdMode = IdComment{Bool.pick(U32, open, (depth + 1 : U32),
+        Bool.pick(U32, close, (depth - 1 : U32), depth)),
+        Bool.not(esc) && Char.is_eq(c, '\\')}
+      msg_ids.go(t, Bool.pick(IdMode, close && U32.is_eq(depth, 1), IdText{}, next), acc)
+    case SCon{'>', t} IdToken{rev}:
+      msg_ids.go(t, IdText{}, msg_ids.put(rev, acc))
+    case SCon{c, t} IdToken{rev}:
+      msg_ids.go(t, IdToken{SCon{c, rev}}, acc)
+
+# Only complete modern msg-id tokens outside comments and quoted text survive.
+def msg_ids(s: String) -> List<&2, String>:
+  msg_ids.go(s, IdText{}, [])
+
+def ids_size.go(xs: List<&2, String>, size: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      Nat.sub(size, 1n)
+    case x <> t:
+      ids_size.go(t, (size + String.length(x) + 1n : Nat))
+
+def ids_size(xs: List<&2, String>) -> Nat:
+  ids_size.go(xs, 0n)
+
+# Remove the oldest middle ID until the unfolded field fits 998 characters.
+# If its mandatory IDs alone cannot fit, omit the optional field.
+def bounded_ids.go(
+  root: String, rest: List<&2, String>, +room: Nat, size: Nat, over: Bool
+) -> List<&2, String>:
+  match rest over:
+    case a <> b <> c <> t True{}:
+      +left = Nat.sub(size, (String.length(a) + 1n : Nat))
+      bounded_ids.go(root, b <> c <> t, room, left, Nat.is_gt(left, room))
+    case _ False{}:
+      root <> rest
+    case _ True{}:
+      []
+
+def bounded_ids(ids: List<&2, String>, +room: Nat) -> List<&2, String>:
   match ids:
     case Nil{}:
-      ""
-    case +i <> t:
-      +rest = fold_ids(t)
-      sep = Bool.pick(String, String.is_empty(rest), "", "\r\n ")
-      Bool.pick(String, String.is_empty(i), "", short_line(i) ++ sep) ++ rest
+      []
+    case +root <> +rest:
+      +size = ids_size(root <> rest)
+      bounded_ids.go(root, rest, room, size, Nat.is_gt(size, room))
+
+# One ID per physical line. A single long ID remains an indivisible token.
+def fold_ids(ids: List<&2, String>) -> String:
+  String.join(ids, "\r\n ")
+
+def field_line.width(s: String) -> Nat:
+  match s:
+    case SNil{}:
+      0n
+    case SCon{'\r', SCon{'\n', t}}:
+      0n
+    case SCon{c, t}:
+      1n+field_line.width(t)
+
+def field_line(+name: String, +v: String) -> String:
+  fold = Nat.is_gt((String.length(name) + 2n + field_line.width(v) : Nat), 78n)
+  name ++ ":" ++ Bool.pick(String, fold, "\r\n ", " ") ++ v ++ "\r\n"
 
 def opt_header(name: String, +v: String) -> String:
-  Bool.pick(String, String.is_empty(v), "", name ++ ": " ++ v ++ "\r\n")
+  Bool.pick(String, String.is_empty(v), "", field_line(name, v))
 
 # Attachments
 # -----------
@@ -1330,19 +1487,52 @@ def name_param.if(+key: String, +name: String, plain: Bool) -> String:
 def name_param(key: String, +name: String) -> String:
   name_param.if(key, name, is_short_plain(name, 200n))
 
+def text_charset.go(
+  s: String, +need: U32, lo: U32, hi: U32, +ascii: Bool, ok: Bool
+) -> String:
+  match s ok:
+    case _ False{}:
+      ""
+    case SNil{} True{}:
+      Bool.pick(String, U32.is_zero(need),
+        Bool.pick(String, ascii, "; charset=us-ascii", "; charset=utf-8"), "")
+    case SCon{c, t} True{}:
+      +n = C.u(c)
+      +lead = U32.is_zero(need)
+      +more = C.utf8_decode.need(n)
+      +plain = U32.is_lt(n, 128)
+      valid = Bool.pick(Bool, lead, U32.is_lt(more, 4), C.between(n, lo, hi))
+      low = Bool.pick(U32, U32.is_eq(n, 224), 160,
+        Bool.pick(U32, U32.is_eq(n, 240), 144, 128))
+      high = Bool.pick(U32, U32.is_eq(n, 237), 159,
+        Bool.pick(U32, U32.is_eq(n, 244), 143, 191))
+      text_charset.go(t, Bool.pick(U32, lead, more, (need - 1 : U32)),
+        Bool.pick(U32, lead, low, 128), Bool.pick(U32, lead, high, 191),
+        ascii && plain, valid)
+
+def att_ctype.if(ctype: String, data: String, text: Bool) -> String:
+  match text:
+    case True{}:
+      ctype ++ text_charset.go(data, 0, 128, 191, True{}, True{})
+    case False{}:
+      ctype
+
+def att_ctype(+ctype: String, data: String) -> String:
+  att_ctype.if(ctype, data, String.starts_with(ctype, "text/"))
+
 def att_head(b: String, ctype: String, +name: String, cte: String) -> String:
   "--" ++ b ++ "\r\n"
-    ++ "Content-Type: " ++ ctype ++ "; " ++ name_param("name", name) ++ "\r\n"
-    ++ "Content-Disposition: attachment; " ++ name_param("filename", name)
+    ++ "Content-Type: " ++ ctype ++ ";\r\n " ++ name_param("name", name) ++ "\r\n"
+    ++ "Content-Disposition: attachment;\r\n " ++ name_param("filename", name)
     ++ "\r\n"
     ++ "Content-Transfer-Encoding: " ++ cte ++ "\r\n\r\n"
 
-# RFC 2046 allows only 7bit/8bit/binary for message/rfc822: a 7-bit clean
-# message is included as is; anything else goes as an opaque base64 file.
+# RFC 2046 allows only 7bit/8bit/binary for message/rfc822. A clean message
+# without a boundary collision stays raw; otherwise it is an opaque base64 file.
 # The CRLF after a raw message always belongs to the next boundary, so the
 # message's own final CRLF survives decoding. `ctype` is already safe.
 def att_body(
-  raw: Bool, b: String, +ctype: String, name: String, data: String
+  raw: Bool, b: String, +ctype: String, name: String, +data: String
 ) -> String:
   match raw:
     case True{}:
@@ -1350,22 +1540,22 @@ def att_body(
     case False{}:
       rfc822 = String.eq(ctype, "message/rfc822")
       opaque = Bool.pick(String, rfc822, "application/octet-stream", ctype)
-      att_head(b, opaque, name, "base64")
+      att_head(b, att_ctype(opaque, data), name, "base64")
         ++ C.wrap76(C.b64_encode(data, False{}), 0)
 
-# Whether a message/rfc822 attachment can travel raw (it is 7-bit clean).
-# Other types never do, and their data is not scanned.
-def att_part.raw(data: String, rfc822: Bool) -> Bool:
+# RFC 2046 forbids the boundary delimiter even as a prefix of a part line.
+def att_part.raw(+data: String, +b: String, rfc822: Bool) -> Bool:
   match rfc822:
     case True{}:
-      seven_bit(data, 0)
+      seven_bit(data, 0) && Bool.not(String.starts_with(data, "--" ++ b))
+        && Bool.not(String.contains(data, "\r\n--" ++ b))
     case False{}:
       False{}
 
-def att_part(b: String, +a: Attach) -> String:
+def att_part(+b: String, +a: Attach) -> String:
   Attach{name, ctype, data} = a
   +safe = safe_ctype(ctype)
-  raw = att_part.raw(data, String.eq(safe, "message/rfc822"))
+  raw = att_part.raw(data, b, String.eq(safe, "message/rfc822"))
   att_body(raw, b, safe, name, data)
 
 def att_parts(+b: String, xs: List<&2, Attach>) -> String:
@@ -1398,9 +1588,9 @@ def body_section(+b: String, text: String, atts: List<&2, Attach>) -> String:
 # multipart boundary to use when there are attachments.
 def compose(d: Draft, b: String) -> String:
   Draft{from, to, cc, bcc, subject, text, date, msgid, irt, refs, atts} = d
-  in_reply_to = short_line(String.trim(one_line(irt)))
-  ids = String.split(String.trim(one_line(refs)), ' ')
-  "From: " ++ encode_addr(from) ++ "\r\n"
+  in_reply_to = fold_ids(bounded_ids(msg_ids(irt), 985n))
+  ids = bounded_ids(msg_ids(refs), 986n)
+  field_line("From", encode_addr(from))
     ++ opt_header("To", encode_addrs(to))
     ++ opt_header("Cc", encode_addrs(cc))
     ++ opt_header("Bcc", encode_addrs(bcc))

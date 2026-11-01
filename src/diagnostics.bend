@@ -15,7 +15,8 @@ def guidance(stage: String) -> String:
     case "credentials":
       "Configure one password source and account; OAuth is unsupported. Never share secrets."
     case "trust_store":
-      "Check system CA certificates or the configured test CA file; verification is mandatory."
+      "Check system CAs, SSL_CERT_FILE, SSL_CERT_DIR or MAILBEND_CA_FILE; " ++
+      "verification is mandatory."
     case "helper":
       "Rebuild with scripts/install.sh; use an absolute executable MAILBEND_TLS_HELPER path."
     case "dns":
@@ -31,18 +32,137 @@ def guidance(stage: String) -> String:
     case _:
       "Check provider availability and protocol support; retry within the diagnostic deadline."
 
-def fact(protocol: String, +stage: String, status: String, reason: String) -> J.Json:
+def fact_guided(
+  protocol: String, stage: String, status: String, reason: String, help: String
+) -> J.Json:
   J.obj([J.kv("protocol", J.str(protocol)), J.kv("stage", J.str(stage)),
     J.kv("status", J.str(status)), J.kv("reason", J.str(reason)),
-    J.kv("guidance", J.str(guidance(stage)))])
+    J.kv("guidance", J.str(help))])
+
+def fact(protocol: String, +stage: String, status: String, reason: String) -> J.Json:
+  fact_guided(protocol, stage, status, reason, guidance(stage))
+
+def platform_guidance(check: String) -> String:
+  match check:
+    case "openat2":
+      "Linux 5.6+ and sandbox access to openat2 are required; no bypass is supported."
+    case "attach_dir":
+      "Set MAILBEND_ATTACH_DIR to a dedicated attachment directory when attachments are needed."
+    case "download_tmpfile":
+      "Use a separate dedicated download directory on a file system with O_TMPFILE support; " ++
+        "a successful probe does not establish download permission."
+    case "arch":
+      "Use a matching Bend binary; the installer pins Linux x86_64, other builds are manual."
+    case _:
+      "Rebuild with scripts/install.sh; use an absolute executable MAILBEND_ATTACH_HELPER path."
+
+def platform_fact(+check: String, status: String, detail: String) -> J.Json:
+  fact_guided("local", "platform", status, check ++ "_" ++ detail, platform_guidance(check))
+
+def platform_error(reason: String) -> J.Json:
+  fact_guided("local", "platform", "failed", reason, platform_guidance("helper"))
+
+def platform_line(line: String) -> J.Json:
+  match line:
+    case "openat2 ok":
+      platform_fact("openat2", "ok", "ok")
+    case "openat2 unsupported":
+      platform_fact("openat2", "failed", "unsupported")
+    case "attach_dir ok":
+      platform_fact("attach_dir", "ok", "ok")
+    case "attach_dir refused":
+      platform_fact("attach_dir", "failed", "refused")
+    case "attach_dir unset":
+      platform_fact("attach_dir", "skipped", "unset")
+    case "download_tmpfile ok":
+      platform_fact("download_tmpfile", "ok", "ok")
+    case "download_tmpfile unsupported":
+      platform_fact("download_tmpfile", "failed", "unsupported")
+    case "download_tmpfile refused":
+      platform_fact("download_tmpfile", "failed", "refused")
+    case "download_tmpfile unset":
+      platform_fact("download_tmpfile", "skipped", "unset")
+    case "arch x86_64":
+      platform_fact("arch", "ok", "x86_64")
+    case "arch aarch64":
+      platform_fact("arch", "ok", "aarch64")
+    case "arch other":
+      platform_fact("arch", "ok", "other")
+    case _:
+      platform_error("invalid_diagnostic_response")
+
+def platform_facts.if(
+  open: String, attach: String, download: String, arch: String, valid: Bool
+) -> List<&2, J.Json>:
+  match valid:
+    case True{}:
+      [platform_line(open), platform_line(attach), platform_line(download), platform_line(arch)]
+    case False{}:
+      [platform_line("")]
+
+def platform_facts.check(
+  +open: String, +attach: String, +download: String, +arch: String
+) -> List<&2, J.Json>:
+  valid = List.contains(~String, ~String.eq, ["openat2 ok", "openat2 unsupported"], open) &&
+    List.contains(~String, ~String.eq, ["attach_dir ok", "attach_dir refused",
+      "attach_dir unset"], attach) &&
+    List.contains(~String, ~String.eq, ["download_tmpfile ok", "download_tmpfile unsupported",
+      "download_tmpfile refused", "download_tmpfile unset"], download) &&
+    List.contains(~String, ~String.eq, ["arch x86_64", "arch aarch64", "arch other"], arch)
+  platform_facts.if(open, attach, download, arch, valid)
+
+def platform_facts(lines: List<&2, String>) -> List<&2, J.Json>:
+  match lines:
+    case open <> attach <> download <> arch <> Nil{}:
+      platform_facts.check(open, attach, download, arch)
+    case open <> attach <> download <> arch <> "" <> Nil{}:
+      platform_facts.check(open, attach, download, arch)
+    case _:
+      [platform_line("")]
+
+def platform_result(p: T.Proc) -> List<&2, J.Json>:
+  match p:
+    case T.ProcOk{0, out, err}:
+      platform_facts(String.lines(out))
+    case T.ProcRefused{msg}:
+      [platform_error("unavailable")]
+    case _:
+      [platform_error("timeout_or_helper_failure")]
+
+def platform_at(path: String, attach: String, download: String) -> IO(List<&2, J.Json>):
+  match path:
+    case SCon{'/', t}:
+      do IO<List<&2, J.Json>>:
+        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+          Process.run(SCon{'/', t}, ["check", attach, download], "", 4096, 30000)
+        return platform_result(T.proc_of(r))
+    case _:
+      IO.pure(List<&2, J.Json>, platform_result(T.ProcRefused{""}))
+
+def platform() -> IO(List<&2, J.Json>):
+  do IO<List<&2, J.Json>>:
+    path : String <- T.env_or("MAILBEND_ATTACH_HELPER", "")
+    attach : String <- T.env_or("MAILBEND_ATTACH_DIR", "")
+    download : String <- T.env_or("MAILBEND_DOWNLOAD_DIR", "")
+    platform_at(path, attach, download)
 
 def stages() -> List<&2, String>:
   ["configuration", "credentials", "trust_store", "dns", "connect", "tls",
     "greeting", "ehlo", "ehlo_tls", "authentication"]
 
 # Tokens from the native helper are allow-listed, never echoed.
+def trust_source(+lines: List<&2, String>) -> String:
+  system = List.contains(~String, ~String.eq, lines, "trust_store ok system")
+  env = List.contains(~String, ~String.eq, lines, "trust_store ok ssl_cert_env")
+  file = List.contains(~String, ~String.eq, lines, "trust_store ok mailbend_ca_file")
+  Bool.pick(String, system, "system",
+    Bool.pick(String, env, "ssl_cert_env", Bool.pick(String, file, "mailbend_ca_file", "")))
+
 def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.Json:
-  +ok = List.contains(~String, ~String.eq, lines, stage ++ " ok")
+  +source = trust_source(lines)
+  +trust = String.eq(stage, "trust_store")
+  +ok = Bool.pick(Bool, trust, Bool.not(String.eq(source, "")),
+    List.contains(~String, ~String.eq, lines, stage ++ " ok"))
   +bad = List.contains(~String, ~String.eq, lines, stage ++ " failed")
   skipped = List.contains(~String, ~String.eq, lines, stage ++ " skipped")
   +invalid = List.contains(~String, ~String.eq, lines, stage ++ " invalid")
@@ -50,7 +170,7 @@ def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.
   +auth = List.contains(~String, ~String.eq, lines, stage ++ " unsupported_auth")
   status = Bool.pick(String, ok, "ok",
     Bool.pick(String, bad || invalid || tls || auth, "failed", "skipped"))
-  reason = Bool.pick(String, ok, "verified",
+  reason = Bool.pick(String, ok, Bool.pick(String, trust, source, "verified"),
     Bool.pick(String, invalid, "invalid_configuration",
     Bool.pick(String, tls, "unsupported_tls",
     Bool.pick(String, auth, "unsupported_auth",
@@ -104,7 +224,7 @@ def transport_facts(+protocol: String, out: String, network: Bool) -> List<&2, J
   +checks = stage_facts(stages(), protocol, lines)
   complete = List.contains(~String, ~String.eq, lines, "configuration ok") &&
     List.contains(~String, ~String.eq, lines, "credentials ok") &&
-    List.contains(~String, ~String.eq, lines, "trust_store ok") &&
+    Bool.not(String.eq(trust_source(lines), "")) &&
     (Bool.not(network) || List.contains(~String, ~String.eq, lines, "authentication ok"))
   transport_facts.if(protocol, checks, failed(checks) || complete)
 
@@ -187,10 +307,12 @@ def run.config(c: T.Config, imap: Bool, smtp: Bool) -> IO(T.Out):
         "invalid_switches_or_policy") <> skipped))
     case T.Config{ro, drafts, jev, images}:
       do IO<T.Out>:
+        p : List<&2, J.Json> <- platform()
         +i : List<&2, J.Json> <- transport("imap", imap)
         s : List<&2, J.Json> <- transport("smtp", smtp)
         f : List<&2, J.Json> <- folders(auth_ok(i))
-        return result(List.append(&2, J.Json, i, List.append(&2, J.Json, s, f)))
+        return result(List.append(&2, J.Json, p,
+          List.append(&2, J.Json, i, List.append(&2, J.Json, s, f))))
 
 # Validate the send-copy switch without invoking sending or reserving quota.
 def run.save_sent(c: T.Config, save: T.Flag, imap: Bool, smtp: Bool) -> IO(T.Out):
@@ -430,6 +552,20 @@ def posture_proxy_checked(r: Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>
     case _ _:
       r
 
+def posture_env_present(r: Result<&1, &1, U32 & String, String>) -> Bool:
+  match r:
+    case Done{value}:
+      True{}
+    case Fail{error}:
+      False{}
+
+def posture_trust_dirs(entries: List<&2, String>) -> Bool:
+  match entries:
+    case Nil{}:
+      False{}
+    case h <> t:
+      Bool.not(String.is_empty(h)) || posture_trust_dirs(t)
+
 def posture_endpoints(c: T.Config) -> IO(Result<&2, &2, String, T.PostureEndpoints>):
   do IO<Result<&2, &2, String, T.PostureEndpoints>>:
     ih : String <- T.env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com")
@@ -449,6 +585,8 @@ def posture_endpoints(c: T.Config) -> IO(Result<&2, &2, String, T.PostureEndpoin
     a : String <- T.env_or("MAILBEND_ATTACH_DIR", "")
     d : String <- T.env_or("MAILBEND_DOWNLOAD_DIR", "")
     ca : String <- T.env_or("MAILBEND_CA_FILE", "")
+    cert_file : Result<&1, &1, U32 & String, String> <- IO.get_env("SSL_CERT_FILE")
+    cert_dirs : String <- T.env_or("SSL_CERT_DIR", "")
     return do Result<&2, &2, String, T.PostureEndpoints>:
       imap : T.PostureEndpoint <- posture_endpoint("MAILBEND_IMAP_HOST/PORT", ih, ip)
       smtp : T.PostureEndpoint <- posture_endpoint("MAILBEND_SMTP_HOST/PORT", sh, sp)
@@ -465,7 +603,9 @@ def posture_endpoints(c: T.Config) -> IO(Result<&2, &2, String, T.PostureEndpoin
         posture_doh_proxied(resolver, proxy, bypass),
         posture_proxied(proxy, "api.typesafe.ai", bypass),
         imap_ip, smtp_ip,
-        Bool.not(String.is_empty(a)), Bool.not(String.is_empty(d)), Bool.not(String.is_empty(ca))}
+        Bool.not(String.is_empty(a)), Bool.not(String.is_empty(d)),
+        T.posture_trust_source(Bool.not(String.is_empty(ca)), posture_env_present(cert_file),
+          posture_trust_dirs(String.split(cert_dirs, ':')))}
 
 def posture_result(c: T.Config, s: T.Sends(), endpoints:
   Result<&2, &2, String, T.PostureEndpoints>) -> T.Out:
