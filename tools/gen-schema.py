@@ -113,7 +113,10 @@ IMAGE_REASON = param("string", enum=[
 IMAGE_FORMAT = param("string", enum=["png", "jpeg"])
 IMAGE_USED = record({
     "section": S, "name": S, "fate": {"const": "used"}, "format": IMAGE_FORMAT,
-    "bytes": N, "width": N, "height": N})
+    "bytes": param("integer", "Decoded image bytes actually sent after metadata removal.", minimum=0),
+    "width": N, "height": N,
+    "metadata_removed_bytes": param(
+        "integer", "Bytes removed locally, including any JPEG data after EOI.", minimum=0)})
 IMAGE_SKIPPED = record({
     "section": S, "name": S, "fate": {"const": "skipped"}, "reason": IMAGE_REASON})
 CLASSIFY_MESSAGE = record(CLASSIFIED_FIELDS, {
