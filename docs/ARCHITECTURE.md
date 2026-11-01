@@ -234,15 +234,16 @@ notes; a TypeSafe failure leaves the read working, marked `unchecked`.
 | Only the helper reads the password; no output contains it | helper (login, login replies not forwarded) | transport cases 2 and 18, e2e output scan |
 | Mutating command constructors cannot disappear from the write classifiers | `src/imap.bend` `effect`, `writes`, `any_writes` | universal `*_classifies_as_writing` laws for STORE, COPY, MOVE, EXPUNGE, APPEND, CREATE, RENAME, SUBSCRIBE, UNSUBSCRIBE and SELECT; `tests/formal/check-policy.py` rejects each reclassification |
 | Reads never change mail (`EXAMINE`, `BODY.PEEK`) | `src/ops.bend` read plans | laws in `LAWS.bend`, e2e server log |
-| Move and trash never expunge before copying; the first `UID EXPUNGE` names the first `UID COPY`'s UIDs | `plan_move`, `plan_trash` | laws `move/trash_never_loses_mail`, `move/trash_expunges_only_copied` (labels: `label_is_move`) |
+| Move and trash never expunge before copying; the first `UID EXPUNGE` names the first `UID COPY`'s UIDs | `plan_move`, `plan_trash` | laws `move_never_loses_mail`, `trash_never_loses_mail`, `move_expunges_only_copied`, `trash_expunges_only_copied` (labels: `label_is_move`) |
 | Flagging changes exactly `\Flagged` and, for a colour, its three bits (a closed set, one pure colour-to-bits mapping), never `\Deleted` or an expunge; unflagging clears all of them; `colour_kept` is `true` only with every changed message's reported flags and PERMANENTFLAGS as evidence | `plan_flag`, `plan_unflag`, `colour_bits`, `colour_kvs` | laws `flag_never_deletes`, `flag_changes_only_flag_and_colour`, `flag_changes_exactly`, `unflag_clears_flag_and_colour`, unit test per colour, e2e kept / session-only / dropped / unverified cases |
-| A label is a move, and creating or renaming a folder touches no message; a rename moves each subscription, subscribing new names before unsubscribing old ones | `plan_label` is `plan_move`; `plan_create`, `plan_rename`, the read-only folder scan before them | laws `label_is_move`, `label_creates_no_folder`, `create/rename_changes_exactly`, `create/rename_changes_no_mail`, `rename_subscribes_each_moved_folder`, `rename_unsubscribes_each_moved_folder`, `rename_subscribes_before_unsubscribing`, `folder_plans_destroy_nothing`, `folder_scan_writes_nothing` |
+| A label is a move, and creating or renaming a folder touches no message; a rename moves each subscription, subscribing new names before unsubscribing old ones | `plan_label` is `plan_move`; `plan_create`, `plan_rename`, the read-only folder scan before them | laws `label_is_move`, `label_creates_no_folder`, `create_changes_exactly`, `rename_changes_exactly`, `create_changes_no_mail`, `rename_changes_no_mail`, `rename_subscribes_each_moved_folder`, `rename_unsubscribes_each_moved_folder`, `rename_subscribes_before_unsubscribing`, `folder_plans_destroy_nothing`, `folder_scan_writes_nothing` |
 | Folder tools never touch INBOX, role folders or `To Delete`, nest under no missing parent, and fail closed when the delimiter is unknown; `inbox/` is written as the listed INBOX; only `mail_triage` moves mail into `To Delete` or a folder inside it, `mail_move` and `mail_label` may move mail out of it but `mail_trash` may not, and no role override may name it or a folder inside it | `src/tools.bend` `*_problem`, `canonical_name`, `review_move_problem`, `review_trash_problem`, `invalid_override` | e2e `folder_*` cases (both delimiters) and `triage_protections` cases |
 | A move cut off after its COPY may have run is `partial`, never an error implying nothing changed | `src/tools.bend` `interrupted`, `Out.Partial` | e2e interrupted-label cases, MCP `isError` case |
 | A flag change stopped once a store was acknowledged or sent unanswered is `partial`, listing the acknowledged and possibly-run changes; one whose search found no UID, or that stopped before any store, is a plain error | `src/tools.bend` `flag_cut`, `store_changes` | e2e refused, cut-off, absent-UID, unflag-cleanup and read-back cases |
 | A helper that never started changed nothing; one that failed after starting, or was killed by a signal, may have (one classifier for flag changes, COPY-based moves and folder changes) | `src/policy.bend` `proc_of` (`ProcRefused` for the path refusal and spawn errnos), `helper_lost` | law `refused_helper_is_not_lost`; e2e relative, missing and killed helper cases. This does not forbid structured SMTP `Out.Partial` results with `not_sent` |
 | Delete needs `permanently-delete` and UIDPLUS; the first `UID EXPUNGE` names the first `\Deleted` store's UIDs | `plan_delete` | laws `delete_needs_confirmation`, `delete_checks_uidplus`, `delete_expunges_only_marked`, `delete_expunges_given_uids` |
-| Stale UIDs never touch other messages | `=EXPECT` of the caller's UIDVALIDITY after `SELECT` in every change plan | laws `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
+| Changes use the caller's folder and UIDVALIDITY, so stale UIDs never touch other messages | Exact `SELECT`, `=EXPECT` and `UID SEARCH` guard in every change plan, with no later mailbox switch | laws `*_opens_callers_folder`, `*_is_pinned`, `*_pins_callers_uidvalidity`, e2e stale-UIDVALIDITY cases |
+| UID commands preserve the supplied UIDs, flag and add or remove operation | `src/imap.bend` `cmd_str`, `uid_set`, `store_op`, `flag_name` | laws `uid_set_is_comma_joined`, `store_renders_exactly`, `copy_renders_exactly`, `move_renders_exactly`, `fetch_renders_exactly`, `search_renders_uid_search`, `guard_search_renders_exact_uids`, `select_renders_callers_folder`; mutation checks |
 | No plain `EXPUNGE` | plans use `UID EXPUNGE` only | law `expunge_renders_uid_expunge`, e2e server log |
 | Read-only mode refuses and hides every tool that changes mail; drafts-only mode refuses every send; `mail_classify` and `mail_triage` are refused and hidden unless `MAILBEND_TYPESAFE` is on; unclear switch values fail | `src/policy.bend` (`config_of`, `flag_value`, `refusal`, `sends`), `src/tools.bend` (`config`, `gated`, `offered_tools`), `Ops.listed` | laws `read_only_tools_are_exactly_eight`, `tools_listed_per_config`, `sending_calls_are_exact`, `read_only_refuses_writes`, `drafts_only_refuses_sends`, `jev_off_refuses_jev_calls`, `malformed_switch_is_bad`, all five `bad_*_rejects_config`; e2e (every mutating tool, `mail_triage` in read-only mode, switch values, tool lists with Jev off and on) |
 | The TypeSafe key never shares a process with the mail password: it is read only from `MAILBEND_TYPESAFE_KEY_FILE` by `mailbend-typesafe`, which re-executes with an allow-listed environment; `MAILBEND_TYPESAFE_API_KEY` set fails every tool; the key is redacted from answers | `native/mailbend-typesafe` (`environment`, `settings`, `api`), `mailbend-io` `secret`, `config` in `src/tools.bend`, `mailbend-tls` refusal | Rust tests (allow-list, redaction, exit codes), e2e (`/proc/<pid>/environ` of the helper, key in the environment, echoed key, output scan) |
@@ -268,7 +269,9 @@ notes; a TypeSafe failure leaves the read working, marked `unchecked`.
 ## Layers
 
 ```text
-main.bend            CLI (call/tools/mcp) and the MCP stdio server (JSON-RPC lines)
+main.bend            CLI and the MCP stdio server (JSON-RPC lines)
+src/diagnostics.bend redacted setup checks, with network checks only when requested
+src/mcp-protocol.bend MCP version metadata, envelopes and protocol limits
 src/tools.bend       the tools: arguments, sessions, results
 src/policy.bend      pure switches, helper outcomes and role resolution
 src/jev.bend         Jev (TypeSafe's model): message facts, questions, requests, typed
@@ -278,6 +281,10 @@ src/thread.bend      which messages form a thread, and their order and parents
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
 src/mime.bend        message parsing (headers, RFC 2047/2231, multipart) and composition
+src/unicode_tags.bend valid emoji tag sequences (generated by tools/gen-unicode-tags.py)
+src/sections.bend    selected MIME part validation and extraction
+src/image.bend       image metadata and TypeSafe image request bounds
+src/search-cursor.bend search pagination cursors and query binding
 src/smtp.bend        the SMTP envelope (dot-stuffing) and the recipient allowlist
 src/codec.bend       UTF-8, base64, quoted-printable, charsets
 src/json.bend        JSON values, parser and serialiser
@@ -302,15 +309,26 @@ run a short discovery session before the action session.
 
 ## Credentials
 
-The core never reads `MAILBEND_APP_PASSWORD`; only the helper does. The
-helper wipes its copies after login and does not forward the server's
-login replies, so no transcript, tool result or log can contain the
-password. An environment variable is still inherited by the core and
-readable by any process of the same user; with `MAILBEND_PASSWORD_FILE`
-(absolute, a regular file owned by the user, mode 600, no symlink in any
-path component) the
-helper reads the password from that file instead, and it is in no
-environment. Setting both is refused.
+The core never reads `MAILBEND_APP_PASSWORD`; only `mailbend-tls` does.
+The helper drops and wipes its credential buffers after authentication,
+before the first plan command. It does not forward the server's login
+replies. This does not erase copies in library buffers or server replies.
+`MAILBEND_APP_PASSWORD` stays in the helper's process environment and is
+also inherited by the core. With `MAILBEND_PASSWORD_FILE` (absolute, a
+regular file owned by the user, mode 600, no symlink in any path component),
+the helper reads the password from that file instead, keeping it out of
+every environment. Setting both is refused.
+
+Before reading secrets, `mailbend-tls` and `mailbend-typesafe` set both
+core limits to zero and disable Linux process dumpability. TypeSafe does
+this after its environment-only re-execution. If either control fails,
+the helper stops without reading a secret. These process-local controls
+prevent core dumps, including piped crash collectors, and deny ordinary
+same-user access to the helpers' `/proc/<pid>/environ`. They do not protect
+against a privileged debugger. The launcher also sets a zero core limit
+inherited by the core. That limit alone does not block every piped crash
+collector or same-user environment read. The credential-free attachment
+helper is unchanged.
 
 ### Authentication scope: retain password-only support
 

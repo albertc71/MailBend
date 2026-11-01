@@ -44,13 +44,17 @@ Use the pinned Bend and Lean installers from CONTRIBUTING.md, then run:
 ```sh
 bend PROOF.bend --verdict
 bend src/tools.bend --verdict
+bend tests/formal/tool-laws.bend --verdict
 python3 tests/formal/check-policy.py
 python3 tests/formal/check-role-folders.py
 ```
 
-Both verdict commands must print `ALL PROOFS CHECK`. The second retains the tool
-layer's kernel coverage after the policy proof entry stops importing tools and
-schema. It does not add behavioral laws to tool orchestration.
+All three verdict commands must print `ALL PROOFS CHECK`. The second retains the
+tool layer's kernel coverage after the policy proof entry stops importing tools
+and schema. The third checks the laws about tool orchestration, such as
+`hidden_tags_refuse_send_and_draft`, which live in `tests/formal/tool-laws.bend`
+because they need `src/tools.bend`; add any new law of that kind there, never to
+`LAWS.bend`.
 
 The policy checker follows local proof imports, forbids tools and schema in
 that closure, and checks that policy has no direct IO. It copies production
@@ -69,7 +73,7 @@ Read a failed theorem's expected and observed values before changing its proof.
 Run the full contributor checks after changes to policy or its callers.
 
 The runtime definitions were last compared with
-`bbe96fe33e7660b980606ad470a02d25669ea284`, where the 68 moved definitions lived
+`8b2de98aff077194a06a4918f79401a2942c5b17`, where the 68 moved definitions lived
 in `src/tools.bend`. Their code is unchanged apart from namespace qualification.
 Advance this reference only after confirming correspondence and rerunning the
 checks above. Keep new policy laws inside the section markers that the mutation

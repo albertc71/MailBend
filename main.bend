@@ -577,7 +577,7 @@ def mcp() -> IO(Unit):
 
 def usage() -> String:
   "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments] | " ++
-    "mailbend diagnose [--imap] [--smtp]"
+    "mailbend diagnose [--imap] [--smtp] | mailbend version"
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
