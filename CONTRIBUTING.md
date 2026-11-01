@@ -40,6 +40,9 @@ python3 scripts/check-docs.py                     # documented names resolve in 
 python3 tests/test-docs.py                        # drift mutations and client snippets
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
+bend src/tools.bend --verdict                     # retain tool-layer kernel coverage
+bend tests/formal/tool-laws.bend --verdict        # tool-layer laws kept out of PROOF.bend
+python3 tests/formal/check-policy.py              # pure policy boundary and rejected mutations
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
 python3 tests/test-writing-laws.py                # malformed guide fences fail closed
@@ -169,7 +172,8 @@ checkout credential.
    for every release between the current pin and the candidate. In the upgrade
    PR, list each relevant entry and the test that checks it. Check these uses
    even when the changelog does not name a break:
-   - `Process.run` and helper exit or signal status in `src/tools.bend`.
+   - `Process.run` in `src/tools.bend`, and helper exit or signal status in
+     `src/policy.bend`.
    - `IO.args`, `IO.exit`, and compiled runtime options in `main.bend` and
      `scripts/mailbend`. Keep application arguments separate from `+RTS` and
      `-RTS` runtime options.
