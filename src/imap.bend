@@ -611,7 +611,7 @@ def search_args(+ks: List<&2, Key>) -> String:
 # auto-reply fields Jev may see.
 def header_fields() -> String:
   "FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID " ++
-    "LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE"
+    "LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED PRECEDENCE"
 
 # Numeric components cannot inject IMAP syntax.
 def section_str(xs: List<&2, U32>) -> String:

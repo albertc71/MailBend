@@ -307,7 +307,7 @@ def plan_classify(mbox: String, uids: List<&2, U32>, body: Bool, max: U32) -> Li
 def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
   [
     I.CExamine{mbox},
-    I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
+    I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IFull{max}]}
   ]
 
 # An optional mailbox identity is checked in the very session that fetches
@@ -319,7 +319,7 @@ def plan_get_checked(mbox: String, uid: U32, max: U32, uidv: Maybe<&2, U32>)
       plan_get(mbox, uid, max)
     case Some{v}:
       [I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
-        I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
+        I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IFull{max}]}]
 
 # Identities discovered for read-only multi-folder sessions. A generation
 # belongs only to its own folder, never to every folder in a thread.

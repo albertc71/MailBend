@@ -19,6 +19,7 @@ import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 import ./response.bend as Response
 import ./policy.bend as Policy
+import ./message-metadata.bend as Metadata
 
 # The steps of a tool answer Base's Result: a value, or the message of the
 # tool's error.
@@ -762,7 +763,7 @@ def hdr_text(hs: List<&2, M.Hdr>, name: String) -> String:
 def summary_kvs(m: I.Msg) -> List<&2, J.Json>:
   I.Msg{uid, +flags, date, size, headers, body, _} = m
   +hs = M.headers(headers)
-  [
+  List.append(&2, J.Json, [
     J.kv("uid", J.num(uid)),
     J.kv("date", J.str(hdr_text(hs, "date"))),
     J.kv("from", J.str(hdr_text(hs, "from"))),
@@ -775,7 +776,7 @@ def summary_kvs(m: I.Msg) -> List<&2, J.Json>:
     J.kv("flags", J.strs(flags)),
     J.kv("seen", J.bool(I.has_attr(flags, "\\Seen"))),
     J.kv("flagged", J.bool(I.has_attr(flags, "\\Flagged")))
-  ]
+  ], Metadata.fields(hs, flags))
 
 def summary(m: I.Msg) -> J.Json:
   J.obj(summary_kvs(m))
@@ -825,8 +826,8 @@ def has_data(m: I.Msg, whole: Bool) -> Bool:
   I.Msg{uid, flags, date, size, headers, body, _} = m
   Bool.not(String.is_empty(Bool.pick(String, whole, body, headers)))
 
-# Whether a FETCH response carries what a Jev tool fetched: the header
-# fields, and with `body` the message too.
+# Whether a FETCH response carries the selected headers and, with `body`,
+# the message too.
 def has_facts(+m: I.Msg, body: Bool) -> Bool:
   has_data(m, False{}) && (Bool.not(body) || has_data(m, True{}))
 
@@ -1193,7 +1194,7 @@ def get_json(
 ) -> Policy.Out:
   I.Msg{uid, +flags, date, +size, headers, body, _} = m
   M.Parts{_, +html, atts} = p
-  ok_obj([
+  ok_obj(List.append(&2, J.Json, [
     J.kv("folder", J.str(folder)),
     J.kv("uid", J.num(uid)),
     J.kv("uidvalidity", maybe_num(uidv)),
@@ -1215,7 +1216,7 @@ def get_json(
     J.kv("html", J.str(html)),
     J.kv("html_available", J.bool(Bool.not(String.is_empty(html)))),
     J.kv("attachments", J.arr(atts_json(atts)))
-  ])
+  ], Metadata.fields(M.headers(headers), flags)))
 
 def msg_body(m: I.Msg) -> String:
   I.Msg{uid, flags, date, size, headers, body, _} = m
@@ -1257,7 +1258,7 @@ def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Shown:
     case Fail{m}:
       Listed{Policy.Err{m}, []}
     case Done{+lines}:
-      get_msg(with_uid(I.fetched(lines), uid, True{}), folder, uid,
+      get_msg(fetched_msgs(lines, [uid], True{}), folder, uid,
         I.ok_code(lines, "UIDVALIDITY"), max)
 
 # The one UID a tool that reads a single message is given.
@@ -6372,7 +6373,7 @@ def any_used(ns: List<&2, Image.Note>) -> Bool:
   match ns:
     case Nil{}:
       False{}
-    case Image.NoteUsed{section, name, format, bytes, px} <> t:
+    case Image.NoteUsed{section, name, format, bytes, px, removed} <> t:
       True{}
     case Image.NoteSkipped{section, name, reason} <> t:
       any_used(t)
@@ -6426,22 +6427,22 @@ def see_ahead(m: Maybe<&2, Image.Reason>, rest: List<&2, Part.Part>,
       SeeFetch{rest, acc, Image.quota_fetched(quota), p, format, max}
 
 def see_screen(pre: Image.Pre, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  +quota: Image.Quota, +p: Part.Part, name: String, encoding: String, size: U32) -> ImgSee:
+  +quota: Image.Quota, +p: Part.Part, name: String) -> ImgSee:
   match pre:
     case Image.Omit{reason}:
       SeeParts{rest, Image.VDrop{Part.path(p), name, reason} <> acc, quota}
     case Image.Fetch{format, max}:
-      see_ahead(Image.ahead(quota, encoding, size), rest, acc, quota, p, name, format, max)
+      see_ahead(Image.ahead(quota), rest, acc, quota, p, name, format, max)
 
 def see_part.image(yes: Bool, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, +encoding: String, +size: U32) ->
+  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, encoding: String, size: U32) ->
   ImgSee:
   match yes:
     case False{}:
       SeeParts{rest, acc, quota}
     case True{}:
       see_screen(Image.screen(image_typ(ct, cd), encoding, size), rest, acc, quota, p,
-        image_name(ct, cd), encoding, size)
+        image_name(ct, cd))
 
 def see_part(rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, quota: Image.Quota,
   +p: Part.Part) -> ImgSee:
