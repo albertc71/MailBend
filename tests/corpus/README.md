@@ -13,12 +13,17 @@ record-or-update mode. Review every expected-value change with the fixture bytes
 
 ## Outcomes
 
-- `conformant` checks a valid message against the stated reading contract.
+- `conformant` checks a valid message against the stated reading contract,
+  which can include an explicit interoperability mapping rather than an RFC rule.
 - `recovery` checks deliberate behavior for malformed input. It does not certify
   that the input is valid or that other parsers must recover identically.
 - `known_unsupported` checks a current regression pin and retains the desired
   result separately. The runner prints an explicit diagnostic, never a conformance
   pass. A drift, including newly correct behavior, fails until the pin is reviewed.
+
+`latin1-windows1252` pins the WHATWG label mapping: `iso-8859-1` is read as
+windows-1252, so byte 0x92 becomes U+2019. Strict ISO-8859-1 instead maps it to
+U+0092. This expectation does not claim RFC charset conformance.
 
 The legacy charset diagnostics link to [#135](https://github.com/albertc71/MailBend/issues/135).
 They are test metadata. They do not claim that MailBend currently reports a charset
@@ -64,11 +69,16 @@ and attachment bytes are checked independently of MailBend's own readback. Exist
 unit cases with synthetic dates such as `D` test byte preservation, not date validity.
 Twelve deliberately broken observations verify that the comparator rejects disagreements.
 Fifteen independently corrupted wire messages verify that the Draft comparison rejects
-shared parser agreement on the wrong output.
+shared parser agreement on the wrong output. Three literal-filename mutations
+separately reject a wrong fallback, changed filename bytes, or quoted encoded-word-looking
+output instead of the extended form.
 
 MailBend emits RFC 2231 filename continuations before the unchanged ASCII fallback.
 This order lets Python `policy.default` retain the original Unicode or long ASCII
-filename. Short plain ASCII names keep their existing quoted output. Both
+filename. Short plain ASCII names keep their existing quoted output unless they
+look like encoded words. Encoded-word-looking names use literal RFC 2231 pieces
+and the neutral `attachment` fallback, so tolerant readers cannot decode hidden
+text from the fallback. The `LiteralFilename` registry case checks this branch. Both
 `Content-Type` names and `Content-Disposition` filenames must match the original
 Draft, as must the UTF-8 filename bytes, fallback, continuation order and bounds.
 The strict comparisons have no filename whitelist.

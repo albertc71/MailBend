@@ -928,7 +928,7 @@ def check_reply_headers(+hs: List<&2, M.Hdr>) -> IO(Unit):
 def check_reply() -> IO(Unit):
   do IO<Unit>:
     IO.print(T.prefixed("Re:", "hello") ++ "|" ++ T.prefixed("Re:", " RE: hello") ++ "|" ++
-      T.prefixed("Fwd:", "fwd: x") ++ "|" ++ T.prefixed("Re:", ""))
+      T.prefixed("Fwd:", "fwd: x") ++ "|[" ++ T.prefixed("Re:", "") ++ "]")
     IO.print(show_line_endings(T.quote_lines(["a", "", "b"])) ++ "|" ++ T.quote_lines([]))
     IO.print(T.spec_key("A <A@X.com>") ++ " " ++
       String.join(T.spec_keys(["B@y", "c <C@z>"]), ",") ++ " " ++
@@ -1453,7 +1453,7 @@ def main() -> IO(Unit):
 #|mail server error: e1
 #|configuration error: e2
 #|connection or TLS verification failed: e3
-#|authentication failed (check MAILBEND_EMAIL and the app-specific password): e4
+#|authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) and the app-specific password): e4
 #|mail server error: e5
 #|mail server error: e128
 #|the TLS helper was killed by a signal: e130
@@ -1464,7 +1464,7 @@ def main() -> IO(Unit):
 #|ok {"changed":[3],"missing":[4]}
 #|cannot run the TLS helper: no path
 #|cannot run the TLS helper: timed out
-#|authentication failed (check MAILBEND_EMAIL and the app-specific password): login refused
+#|authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) and the app-specific password): login refused
 #|5 0
 #|True False False
 #|ok "250 2.0.0 queued as X"
@@ -1630,7 +1630,7 @@ def main() -> IO(Unit):
 #|ok {"ok":true,"saved_to":"Drafts","uid":42,"message_id":"<m@x>"}
 #|ok {"ok":true,"sent":true,"message_id":"<m@x>","recipients":2,"server_reply":"250 ok","smtp_outcome":"accepted","smtp_phase":"data_reply","smtp_reason":"accepted_by_server","next_action":"Do not resend. SMTP acceptance is not recipient delivery."} | err refused | partial null
 #|[MAILBEND_EMAIL is not a valid address][every recipient must be an address like name@example.com or "Name <name@example.com>"][at least one recipient (to, cc or bcc) is needed][][]
-#|Re: hello| RE: hello|fwd: x|Re: 
+#|Re: hello|Re: hello|Fwd: x|[Re: ]
 #|> a\n> \n> b\n|
 #|a@x.com b@y,c@z True False
 #|A <a@x>|b@y

@@ -1758,6 +1758,8 @@ def main():
                 conn, _ = sock.accept()
             except OSError:
                 break
+            # Small TLS replies must not wait for Nagle/delayed-ACK timers.
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             conn.settimeout(60)
             threading.Thread(target=handler, args=(conn,), daemon=True).start()
 

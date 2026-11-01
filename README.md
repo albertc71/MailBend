@@ -45,6 +45,9 @@ server](#use). Details of the install are [below](#install-linux).
 Limits: Linux only, password login only (no OAuth); see
 [Known limits](#known-limits).
 
+For a dated comparison with other email connectors, see
+[the connector comparison](docs/COMPARISON.md).
+
 For shareable setup checks, run `scripts/mailbend diagnose` (local only), or
 explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp`.
 SMTP diagnostics authenticate without sending mail, including in read-only or
@@ -194,8 +197,8 @@ failed build, check, proof or compile leaves the installation as it was. A
 running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
-the pinned Bend to `~/.bend` after checking the archive's sha256; that
-release is Linux x64 only, so elsewhere install the same version yourself.
+the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
+pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -240,6 +243,22 @@ Attachments and downloads stay off until `MAILBEND_ATTACH_DIR` and
 `MAILBEND_DOWNLOAD_DIR` name dedicated directories (see [Safety](#safety)).
 Jev's settings are in [docs/JEV.md](docs/JEV.md#settings).
 
+Outgoing sends and drafts refuse hidden Unicode tag characters outside valid
+emoji tag sequences, and bidi controls in attachment filenames, before stamping
+or delivery. Validity follows UTS #51 Annex C with pinned CLDR 49 identifiers,
+including valid non-RGI subdivision and numeric region flags. Ordinary RTL text,
+bidi controls outside filenames, and zero-width emoji joiners remain allowed.
+The `hidden_unicode` result reports `{tag, bidi, zero_width}` for the subject,
+body, sender display name, positional To/Cc/Bcc display names and attachment
+filenames. Encoded-word-looking filenames use literal RFC 2231 parameters and
+a neutral ASCII fallback so tolerant readers cannot decode hidden text from
+them. This ambiguous-input case changes MIME bytes, not the literal filename.
+LRM and RLM count in both `bidi` and `zero_width`. Allowed flags still
+have nonzero `tag` counts. Replies and forwards remove invalid tags only from
+copied source text and display names, and report those removals as `removed_tags`.
+The forwarded original `.eml` attachment remains unchanged. Dry runs report the
+same counts without sending or saving anything.
+
 Sending (`mail_send`, and replies and forwards that are not drafts) has its
 own optional settings. A malformed value refuses every send, never reads as
 off, and leaves drafts and reads alone:
@@ -267,6 +286,13 @@ explicitly (commonly 465 for implicit TLS); the default remains 587 in both
 modes. Ports never select a mode, and failures never fall back to another mode
 or plaintext. Empty or unknown mode values are configuration errors.
 OAuth is unsupported.
+
+If the provider requires a login name different from your email address, set
+`MAILBEND_LOGIN`. A nonempty value is used only for IMAP LOGIN and SMTP AUTH
+PLAIN/LOGIN. Unset or empty uses `MAILBEND_EMAIL`, which remains required and
+continues to supply the From address and reply identity. The login name must
+be printable ASCII without spaces. This option does not change recipient
+allowlists or establish compatibility with an untested provider.
 
 | Profile | Transport | Validation |
 | --- | --- | --- |
@@ -310,6 +336,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 `special_use: null`.
 
 ## Use
+
+For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
+They keep passwords in private files and use the public launcher.
 
 Check the connection first:
 
@@ -428,6 +457,10 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages
 
+For caller-owned systemd user timers, see the
+[read-only brief, notifier, and queued draft recipes](docs/RECIPES.md).
+MailBend itself remains daemon-free.
+
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
@@ -517,9 +550,11 @@ synthetic cost measurements and experiment decision are in
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as
-  `UID EXPUNGE` (proven).
+  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID
+  commands. Commands that take a UID list preserve its order. STORE preserves
+  the requested flag and add or remove operation (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
-  caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
+  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
@@ -726,9 +761,16 @@ before relying on a complete link.
 
 ## Known limits
 
+For failed calls, provider limits, concurrency, upgrades, and rollback, use
+the [operator runbook](docs/OPERATIONS.md).
+
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
+- The compiled Bend core needs glibc 2.34 or newer. The installer checks this
+  before compilation. Downloads need `O_TMPFILE` support on the download
+  directory's file system, which WSL's `/mnt/c` can lack. `mailbend diagnose`
+  reports local platform prerequisites without paths or OS error text.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on

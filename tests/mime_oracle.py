@@ -114,7 +114,8 @@ TYPE_EXPECTATIONS = {
 
 
 def check_filename_parameters(part, filename):
-    plain = len(filename) <= 200 and all(c == '\t' or ' ' <= c <= '~' for c in filename)
+    literal = re.search(r'=\?.*?\?=', filename, re.S) is not None
+    plain = not literal and len(filename) <= 200 and all(c == '\t' or ' ' <= c <= '~' for c in filename)
     for header, key in [('content-type', 'name'), ('content-disposition', 'filename')]:
         require(part.get_param(key, header=header) == filename, header + ' filename differs from input Draft')
         value = next(value for name, value in part.raw_items() if name.lower() == header)
@@ -124,6 +125,8 @@ def check_filename_parameters(part, filename):
             require(parameters == [key + '="' + quoted + '"'], 'short ASCII filename wire changed')
             continue
         fallback = ''.join(c if ' ' <= c <= '~' and c not in '"\\' else '_' for c in filename[:60])
+        if literal:
+            fallback = 'attachment'
         require(parameters and parameters[-1] == key + '="' + fallback + '"', 'ASCII filename fallback changed')
         pieces = []
         for index, parameter in enumerate(parameters[:-1]):
@@ -222,7 +225,9 @@ def check_python_runtime(check):
     actual = parse(raw)['From'].addresses[0].display_name
     check('Python email oracle ignores adjacent encoded-word whitespace', actual == 'é' * 39,
           f'Python {sys.version.split()[0]} has CPython #128110; use Python 3.13.18 (CI pin) '
-          'or another runtime containing the fix; decoded display name=' + repr(actual))
+          'or another runtime containing the fix. For example, rerun with '
+          '`uv run --python 3.13.18 --with jsonschema==4.26.0 python` instead of `python3`; '
+          'decoded display name=' + repr(actual))
 
 
 def check_unit_compositions(check):
@@ -334,6 +339,25 @@ def input_self_test():
             continue
         raise AssertionError('input negative control was accepted: ' + repr(before))
     return len(changes)
+
+
+
+def filename_self_test():
+    filename = '=?UTF-8?B?SGk=?=.txt'
+    wire = (b"Content-Type: application/octet-stream;\r\n name*0*=utf-8''%3D%3FUTF-8%3FB%3FSGk%3D%3F%3D.txt;\r\n name=\"attachment\"\r\n"
+            b"Content-Disposition: attachment;\r\n filename*0*=utf-8''%3D%3FUTF-8%3FB%3FSGk%3D%3F%3D.txt;\r\n filename=\"attachment\"\r\n\r\nbody")
+    check_filename_parameters(parse(wire), filename)
+    mutations = [wire.replace(b'=\"attachment\"', b'=\"other\"'),
+                 wire.replace(b'SGk', b'SGo'),
+                 wire.replace(b"*0*=utf-8''%3D%3FUTF-8%3FB%3FSGk%3D%3F%3D.txt;\r\n name=\"attachment\"",
+                              b'=\"=?UTF-8?B?SGk=?=.txt\"')]
+    for broken in mutations:
+        try:
+            check_filename_parameters(parse(broken), filename)
+        except AssertionError:
+            continue
+        raise AssertionError('literal filename negative control was accepted')
+    return len(mutations)
 
 
 def attached_self_test():

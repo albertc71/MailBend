@@ -10,7 +10,7 @@ BEND_SHA256=63039d1a119f716767ac5a7d8fe0717cfacf219c6c253c35192148e0dade722f
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -s)-$(uname -m)" = "Linux-x86_64" ] \
-  || fail "the pinned Bend release is Linux x64 only; install Bend $BEND_VERSION yourself"
+  || fail "this installer pins only the Linux x64 archive; install Bend $BEND_VERSION yourself"
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is needed (coreutils)"
 
 name="bend-${BEND_VERSION}-linux-x64.tar.gz"

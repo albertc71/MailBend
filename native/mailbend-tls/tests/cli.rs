@@ -143,3 +143,32 @@ fn an_unreachable_server_is_a_connect_failure() {
         stderr(&out)
     );
 }
+
+#[test]
+fn login_override_still_requires_email_and_never_discloses_invalid_values() {
+    for mode in ["imap", "smtp"] {
+        let out = helper(
+            &[mode],
+            b"",
+            &[
+                ("MAILBEND_EMAIL", ""),
+                ("MAILBEND_LOGIN", "private-login-marker"),
+            ],
+        );
+        assert_refused(&out, "MAILBEND_EMAIL is not set");
+        assert!(!stderr(&out).contains("private-login-marker"));
+        for login in [
+            "private login marker",
+            "private\tlogin",
+            "privaté-login",
+            "private\nlogin",
+        ] {
+            let out = helper(&[mode], b"", &[("MAILBEND_LOGIN", login)]);
+            assert_refused(
+                &out,
+                "MAILBEND_LOGIN must be printable ASCII without spaces",
+            );
+            assert!(!stderr(&out).contains(login));
+        }
+    }
+}

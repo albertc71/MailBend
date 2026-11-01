@@ -4,7 +4,7 @@
   "source": {
     "kind": "synthetic",
     "license": "MIT",
-    "description": "Original synthetic fixture written for MailBend. No personal mail or third-party sample."
+    "description": "Synthetic fixture pinning the WHATWG windows-1252 mapping for the iso-8859-1 label: byte 0x92 becomes U+2019, not the ISO-8859-1 C1 control U+0092. This is not an RFC charset-conformance claim. No personal mail or third-party sample."
   },
   "references": [
     "https://www.rfc-editor.org/rfc/rfc2045",

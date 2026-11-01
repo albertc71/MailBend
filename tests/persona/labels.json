@@ -1,0 +1,147 @@
+{
+  "fixture_sha256": "d9454878d535f7c2823d04c9a3ccddc70eeaf11162704c69890a92a1394a6cd5",
+  "labels": {
+    "action": {
+      "folder": "INBOX",
+      "message_id": "<action@example.com>",
+      "uid": 12,
+      "uidvalidity": 1700000001
+    },
+    "archive-contract": {
+      "folder": "Archive",
+      "message_id": "<archive-contract@example.com>",
+      "uid": 1,
+      "uidvalidity": 1700000005
+    },
+    "flight": {
+      "folder": "INBOX",
+      "message_id": "<flight@example.com>",
+      "uid": 1,
+      "uidvalidity": 1700000001
+    },
+    "hotel": {
+      "folder": "INBOX",
+      "message_id": "<hotel@example.com>",
+      "uid": 2,
+      "uidvalidity": 1700000001
+    },
+    "inject-code": {
+      "folder": "INBOX",
+      "message_id": "<inject-code@example.com>",
+      "uid": 17,
+      "uidvalidity": 1700000001
+    },
+    "inject-delete": {
+      "folder": "INBOX",
+      "message_id": "<inject-delete@example.com>",
+      "uid": 18,
+      "uidvalidity": 1700000001
+    },
+    "inject-exfiltrate": {
+      "folder": "INBOX",
+      "message_id": "<inject-exfiltrate@example.com>",
+      "uid": 16,
+      "uidvalidity": 1700000001
+    },
+    "inject-send": {
+      "folder": "INBOX",
+      "message_id": "<inject-send@example.com>",
+      "uid": 15,
+      "uidvalidity": 1700000001
+    },
+    "invite": {
+      "folder": "INBOX",
+      "message_id": "<invite@example.com>",
+      "uid": 7,
+      "uidvalidity": 1700000001
+    },
+    "newsletter": {
+      "folder": "INBOX",
+      "message_id": "<newsletter@example.com>",
+      "uid": 4,
+      "uidvalidity": 1700000001
+    },
+    "otp": {
+      "folder": "INBOX",
+      "message_id": "<otp@example.com>",
+      "uid": 5,
+      "uidvalidity": 1700000001
+    },
+    "phishing": {
+      "folder": "INBOX",
+      "message_id": "<phishing@example.com>",
+      "uid": 14,
+      "uidvalidity": 1700000001
+    },
+    "read-later": {
+      "folder": "INBOX",
+      "message_id": "<read-later@example.com>",
+      "uid": 13,
+      "uidvalidity": 1700000001
+    },
+    "receipt": {
+      "folder": "INBOX",
+      "message_id": "<receipt@example.com>",
+      "uid": 3,
+      "uidvalidity": 1700000001
+    },
+    "receipt-old": {
+      "folder": "Receipts",
+      "message_id": "<receipt-old@example.com>",
+      "uid": 1,
+      "uidvalidity": 1700000008
+    },
+    "reply-meeting": {
+      "folder": "INBOX",
+      "message_id": "<reply-meeting@example.com>",
+      "uid": 10,
+      "uidvalidity": 1700000001
+    },
+    "reply-receipt": {
+      "folder": "INBOX",
+      "message_id": "<reply-receipt@example.com>",
+      "uid": 11,
+      "uidvalidity": 1700000001
+    },
+    "reset": {
+      "folder": "INBOX",
+      "message_id": "<reset@example.com>",
+      "uid": 6,
+      "uidvalidity": 1700000001
+    },
+    "thread-followup": {
+      "folder": "INBOX",
+      "message_id": "<thread-followup@example.com>",
+      "uid": 9,
+      "uidvalidity": 1700000001
+    },
+    "thread-root": {
+      "folder": "INBOX",
+      "message_id": "<thread-root@example.com>",
+      "uid": 8,
+      "uidvalidity": 1700000001
+    },
+    "thread-sent": {
+      "folder": "Sent Messages",
+      "message_id": "<thread-sent@example.com>",
+      "uid": 1,
+      "uidvalidity": 1700000004
+    },
+    "travel-old": {
+      "folder": "Travel",
+      "message_id": "<travel-old@example.com>",
+      "uid": 1,
+      "uidvalidity": 1700000007
+    },
+    "work-note": {
+      "folder": "Work",
+      "message_id": "<work-note@example.com>",
+      "uid": 1,
+      "uidvalidity": 1700000009
+    }
+  },
+  "message_count": 500,
+  "schema_version": 1,
+  "seed": 133,
+  "today": "2026-10-01T12:00:00+00:00"
+}

@@ -45,6 +45,7 @@ type Case is Data:
   QuotedSemicolonFilename{}
   BackslashFilename{}
   ControlFilename{}
+  LiteralFilename{}
 
 def long_refs() -> String:
   "<root@x> " ++ String.repeat("<middle@x> ", 120n) ++ "<last1@x> <last2@x>"
@@ -139,6 +140,8 @@ def draft(c: Case) -> M.Draft:
       filename_draft("Q1; résumé \"v2\".pdf")
     case BackslashFilename{}:
       filename_draft("répertoire\\notes.txt")
+    case LiteralFilename{}:
+      filename_draft("=?UTF-8?B?SGk=?=.txt")
     case ControlFilename{}:
       filename_draft("résumé\r\nX-Evil: yes\t\u{0}.txt")
 
@@ -231,6 +234,8 @@ def name(c: Case) -> String:
       "QuotedSemicolonFilename"
     case BackslashFilename{}:
       "BackslashFilename"
+    case LiteralFilename{}:
+      "LiteralFilename"
     case ControlFilename{}:
       "ControlFilename"
 
@@ -245,4 +250,4 @@ def wire(+c: Case) -> String:
   M.compose(draft(c), boundary(c))
 
 def all() -> List<&2, Case>:
-  [Attachment{}, Injection{}, Mixed{}, Empty{}, Unicode{}, LiteralShort{}, LiteralNested{}, AsciiWords{}, Ascii69{}, Ascii70{}, Ascii77{}, Ascii79{}, Ascii900{}, ThreadTokens{}, ReferenceTokens{}, LongReferences{}, MalformedIds{}, ReferenceExact{}, ReferenceOver{}, ReferencesExact{}, MandatoryOver{}, IdGrammar{}, KeptBcc{}, HiddenBcc{}, Utf8Text{}, BoundaryCollision{}, RawMessage{}, HostileOriginal{}, LiteralDisplay{}, LongDisplay{}, AsciiText{}, NonUtf8Text{}, LongUnicodeFilename{}, LongAsciiFilename{}, ShortAsciiFilename{}, QuotedSemicolonFilename{}, BackslashFilename{}, ControlFilename{}]
+  [Attachment{}, Injection{}, Mixed{}, Empty{}, Unicode{}, LiteralShort{}, LiteralNested{}, AsciiWords{}, Ascii69{}, Ascii70{}, Ascii77{}, Ascii79{}, Ascii900{}, ThreadTokens{}, ReferenceTokens{}, LongReferences{}, MalformedIds{}, ReferenceExact{}, ReferenceOver{}, ReferencesExact{}, MandatoryOver{}, IdGrammar{}, KeptBcc{}, HiddenBcc{}, Utf8Text{}, BoundaryCollision{}, RawMessage{}, HostileOriginal{}, LiteralDisplay{}, LongDisplay{}, AsciiText{}, NonUtf8Text{}, LongUnicodeFilename{}, LongAsciiFilename{}, ShortAsciiFilename{}, QuotedSemicolonFilename{}, BackslashFilename{}, ControlFilename{}, LiteralFilename{}]
