@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Fast controls for scale measurement, comparison and synthetic input shape."""
 import importlib.util
+import json
+import os
+import signal
+import subprocess
 import pathlib
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message
 
@@ -27,6 +32,171 @@ def report():
 
 
 class Contract(unittest.TestCase):
+    def test_cancellation_cleans_servers_and_measured_group(self):
+        harness = r"""
+import importlib.util, pathlib, sys, time
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
+spec = importlib.util.spec_from_file_location("scale", sys.argv[1])
+scale = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(scale)
+work = pathlib.Path(sys.argv[2])
+servers = []
+try:
+    with scale.RunControl(time.monotonic() + 10) as control:
+        try:
+            for index in range(2):
+                server = scale.Server([sys.executable, "-c", "import time;print('READY imap=1',flush=True);time.sleep(30)"],
+                                      scale.clean_env(work), work, str(index), 2, control)
+                servers.append(server)
+            (work / "servers").write_text(" ".join(str(s.proc.pid) for s in servers))
+            command = [sys.executable, "-c", "import os,pathlib,time;pathlib.Path('child').write_text(str(os.getpgrp()));time.sleep(30)"]
+            # The child gets an absolute readiness path, independent of cwd.
+            command[2] = command[2].replace("'child'", repr(str(work / "child")))
+            scale.measure(command, scale.clean_env(work), work, 10, control)
+        finally:
+            for server in reversed(servers):
+                server.stop()
+except scale.Cancelled:
+    sys.exit(23)
+sys.exit(24)
+"""
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig), tempfile.TemporaryDirectory() as directory:
+                work = pathlib.Path(directory)
+                proc = subprocess.Popen([sys.executable, "-c", harness,
+                                         str(pathlib.Path(scale.__file__)), str(work)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                groups = []
+                try:
+                    deadline = time.monotonic() + 8
+                    while not (work / "child").exists() or not (work / "child").read_text():
+                        if proc.poll() is not None or time.monotonic() >= deadline:
+                            self.fail("cancellation harness did not start its child")
+                        time.sleep(0.01)
+                    groups = list(map(int, (work / "servers").read_text().split()))
+                    groups.append(int((work / "child").read_text()))
+                    proc.send_signal(sig)
+                    _, errors = proc.communicate(timeout=5)
+                    self.assertEqual(proc.returncode, 23, errors.decode())
+                    for group in groups:
+                        self.assert_group_stopped(group)
+                finally:
+                    if proc.poll() is None:
+                        proc.terminate()
+                        try:
+                            proc.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                    proc.communicate(timeout=5)
+                    if (work / "servers").exists():
+                        groups.extend(map(int, (work / "servers").read_text().split()))
+                    if (work / "child").exists() and (work / "child").read_text():
+                        groups.append(int((work / "child").read_text()))
+                    for group in set(groups):
+                        try:
+                            os.killpg(group, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
+    def assert_group_stopped(self, group):
+        # Orphaned zombies can await init; no live process may remain in the group.
+        for entry in pathlib.Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                text = (entry / "stat").read_text()
+                fields = text[text.rindex(")") + 2:].split()
+            except (OSError, ValueError):
+                continue
+            self.assertFalse(int(fields[2]) == group and fields[0] != "Z",
+                             f"live process {entry.name} remains in group {group}")
+
+    def test_cancel_during_server_spawn_is_deferred_until_owned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            spawned = []
+            popen = subprocess.Popen
+            def spawn(*args, **kwargs):
+                proc = popen(*args, **kwargs)
+                spawned.append(proc)
+                signal.raise_signal(signal.SIGTERM)
+                return proc
+            try:
+                with scale.RunControl(time.monotonic() + 5) as control:
+                    with mock.patch.object(scale.subprocess, "Popen", side_effect=spawn):
+                        with self.assertRaises(scale.Cancelled):
+                            scale.Server([sys.executable, "-c", "import time;time.sleep(10)"],
+                                         scale.clean_env(work), work, "spawn", 2, control)
+                self.assertEqual(len(spawned), 1)
+                self.assertIsNotNone(spawned[0].returncode)
+                self.assert_group_stopped(spawned[0].pid)
+            finally:
+                for proc in spawned:
+                    scale.kill_group(proc)
+
+    def test_second_signal_does_not_interrupt_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            with scale.RunControl(time.monotonic() + 5) as control:
+                servers = []
+                try:
+                    for i in range(2):
+                        server = scale.Server([sys.executable, "-c", "import time;print('READY imap=1',flush=True);time.sleep(10)"],
+                                              scale.clean_env(work), work, str(i), 2, control)
+                        servers.append(server)
+                    signal.raise_signal(signal.SIGTERM)
+                    with self.assertRaises(scale.Cancelled):
+                        control.check()
+                finally:
+                    for server in servers:
+                        signal.raise_signal(signal.SIGHUP)
+                        server.stop()
+            for server in servers:
+                self.assertIsNotNone(server.proc.returncode)
+                self.assert_group_stopped(server.proc.pid)
+
+    def test_suite_deadline_cleans_partial_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            started = time.monotonic()
+            with scale.RunControl(started + 0.05) as control:
+                with self.assertRaisesRegex(TimeoutError, "suite deadline"):
+                    scale.Server([sys.executable, "-c", "import sys,time;sys.stdout.write('READY');sys.stdout.flush();time.sleep(10)"],
+                                 scale.clean_env(work), work, "partial-deadline", 5, control)
+            self.assertLess(time.monotonic() - started, 2)
+
+    def test_malformed_result_records_failure_and_runs_next_scenario(self):
+        for failure in (KeyError("total"), TypeError("wrong result shape"),
+                        AttributeError("wrong nested result shape")):
+            with self.subTest(failure=type(failure)), tempfile.TemporaryDirectory() as directory:
+                work = pathlib.Path(directory)
+                seen = []
+                def run(scenario, sample_work, certs, control):
+                    seen.append(scenario.name)
+                    self.assertEqual(sample_work.parent.parent, work)
+                    if len(seen) == 1:
+                        raise failure
+                    return sample(scenario.count)
+                with mock.patch.multiple(scale, SCENARIOS=SCENARIOS[:2], REPEATS=1,
+                                         profile=lambda: {}, digest=lambda _: "synthetic",
+                                         certificates=lambda root, env, control: root,
+                                         run_sample=run), \
+                     mock.patch.object(scale.os, "access", return_value=True), \
+                     mock.patch.object(scale.subprocess, "check_output", return_value="synthetic"), \
+                     mock.patch.dict(os.environ, {"MAILBEND_TEST_TMPDIR": str(work)}), \
+                     mock.patch.object(sys, "argv", ["test-scale.py", "--record", "--output", str(work / "result.json")]):
+                    self.assertEqual(scale.main(), 1)
+                result = json.loads((work / "result.json").read_text())
+                self.assertEqual(seen, [s.name for s in SCENARIOS[:2]])
+                self.assertEqual(result["scenarios"][seen[0]]["samples"][0]["reason"], type(failure).__name__)
+                self.assertEqual(result["scenarios"][seen[1]]["status"], "passed")
+                self.assertEqual(result["status"], "incomplete")
+
+    def test_non_object_tool_result_is_rejected(self):
+        for result in (None, [], "bad", 5, True):
+            with self.subTest(result=result), self.assertRaisesRegex(ValueError, "not an object"):
+                scale.verify(SCENARIOS[0], {}, result, [], {}, [])
+
     def test_equal_baseline(self):
         self.assertEqual(scale.compare(report(), report()), [])
 

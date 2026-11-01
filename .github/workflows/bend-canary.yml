@@ -1,0 +1,254 @@
+name: Bend upgrade canary
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Official stable Bend version, or latest'
+        required: true
+        default: latest
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bend-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BEND_NO_TELEMETRY: '1'
+
+jobs:
+  canary:
+    name: Latest Bend observation (not a required check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: checkout
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+
+      - name: Isolate the candidate toolchain
+        id: isolate
+        timeout-minutes: 1
+        run: |
+          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+          home="$RUNNER_TEMP/bend-canary-home"
+          mkdir -p "$home/.bend" "$RUNNER_TEMP/bend-canary"
+          echo "HOME=$home" >> "$GITHUB_ENV"
+          echo "ELAN_HOME=$home/.elan" >> "$GITHUB_ENV"
+          echo "BENDTT=" >> "$GITHUB_ENV"
+          echo "$home/.bend/bin" >> "$GITHUB_PATH"
+          echo "$home/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Install build dependencies
+        id: dependencies
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl python3-jsonschema
+          rustup toolchain install 1.99 --profile minimal
+
+      - name: Resolve and install the official Bend release
+        id: bend
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          REQUESTED_VERSION: ${{ inputs.version || 'latest' }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, tarfile, urllib.request
+          requested = os.environ['REQUESTED_VERSION']
+          if requested != 'latest' and not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', requested):
+              raise SystemExit('Use latest or an official stable N.N.N version')
+          route = 'latest' if requested == 'latest' else 'tags/v' + requested
+          api = 'https://api.github.com/repos/bendlang/bend/releases/' + route
+          with urllib.request.urlopen(api, timeout=60) as response:
+              release = json.load(response)
+          tag = release['tag_name']
+          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag) or release['draft'] or release['prerelease']:
+              raise SystemExit('The release is not a stable Bend release')
+          version = tag[1:]
+          if requested != 'latest' and version != requested:
+              raise SystemExit('The release does not match the requested version')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          name = f'bend-{version}-linux-x64.tar.gz'
+          url = f'https://github.com/bendlang/bend/releases/download/{tag}/{name}'
+          assets = [a for a in release['assets'] if a['name'] == name]
+          if len(assets) != 1 or assets[0]['browser_download_url'] != url:
+              raise SystemExit('The official linux-x64 asset is missing or ambiguous')
+          digest = assets[0].get('digest', '')
+          if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+              raise SystemExit('The release API has no SHA256 for this asset')
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary'
+          archive = work / name
+          (work / 'version').write_text(version)
+          with urllib.request.urlopen(url, timeout=180) as response, archive.open('wb') as target:
+              while chunk := response.read(1024 * 1024):
+                  target.write(chunk)
+          with archive.open('rb') as source:
+              sha = hashlib.file_digest(source, 'sha256').hexdigest()
+          print(f'Bend {version}\nArchive SHA256 {sha}\nSource {url}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'sha256={sha}\n')
+          if sha != digest.removeprefix('sha256:'):
+              raise SystemExit('Archive SHA256 differs from the official release API')
+          staging = work / 'unpack'
+          staging.mkdir()
+          with tarfile.open(archive, 'r:gz') as package:
+              if any(not (m.name == 'bend' or m.name.startswith('bend/')) for m in package):
+                  raise SystemExit('Unexpected archive root')
+              package.extractall(staging, filter='data')
+          destination = pathlib.Path(os.environ['HOME']) / '.bend'
+          for child in (staging / 'bend').iterdir():
+              child.rename(destination / child.name)
+          PY
+          unset BEND_HOME BENDTT
+          test -x "$HOME/.bend/bin/bend"
+          test "$(command -v bend)" = "$HOME/.bend/bin/bend"
+          bend version
+          test "$(bend version)" = "bend $(cat "$RUNNER_TEMP/bend-canary/version")"
+
+      - name: Discover the Lean version requested by verdict
+        id: requirement
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          work="$RUNNER_TEMP/bend-canary"
+          mkdir "$work/no-lean"
+          printf '#!/bin/sh\nexit 127\n' > "$work/no-lean/lean"
+          chmod +x "$work/no-lean/lean"
+          printf 'import Base\n\ndef main() -> U32:\n  0\n' > "$work/probe.bend"
+          unset BEND_HOME BENDTT
+          set +e
+          PATH="$work/no-lean:$HOME/.bend/bin:/usr/bin:/bin" \
+            bend "$work/probe.bend" --verdict > "$work/lean-request.log" 2>&1
+          status=$?
+          set -e
+          cat "$work/lean-request.log"
+          test "$status" -ne 0
+          python3 - <<'PY'
+          import os, pathlib, re
+          log = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary/lean-request.log').read_text()
+          versions = set(re.findall(r'elan toolchain (leanprover/lean4:v[0-9]+\.[0-9]+\.[0-9]+)', log))
+          if len(versions) != 1:
+              raise SystemExit('Cannot determine the Lean version requested by verdict')
+          toolchain = versions.pop()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'toolchain={toolchain}\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'ELAN_TOOLCHAIN={toolchain}\n')
+          PY
+
+      - name: Install the requested Lean with the pinned elan bootstrap
+        id: lean
+        timeout-minutes: 10
+        if: ${{ !cancelled() && steps.requirement.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          REQUESTED_LEAN: ${{ steps.requirement.outputs.toolchain }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          source = pathlib.Path('scripts/install-lean.sh').read_text()
+          value = os.environ['REQUESTED_LEAN']
+          if not re.fullmatch(r'leanprover/lean4:v[0-9]+\.[0-9]+\.[0-9]+', value):
+              raise SystemExit('Invalid Lean toolchain')
+          updated, count = re.subn(r'^LEAN_TOOLCHAIN=.*$', 'LEAN_TOOLCHAIN=' + value, source, flags=re.M)
+          if count != 1:
+              raise SystemExit('The pinned elan installer changed; review the canary')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary/install-lean.sh').write_text(updated)
+          PY
+          sh "$RUNNER_TEMP/bend-canary/install-lean.sh"
+          lean --version
+
+      - name: Check main and its imports
+        id: check
+        timeout-minutes: 3
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: bend main.bend --check-only
+
+      - name: Recheck every proof with the proven kernel
+        id: verdict
+        timeout-minutes: 10
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' && steps.lean.outcome == 'success' }}
+        continue-on-error: true
+        run: bend PROOF.bend --verdict
+
+      - name: Run every Bend unit test
+        id: unit
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: sh tests/run-unit.sh
+
+      - name: Build fresh helpers and core with the candidate
+        id: build
+        timeout-minutes: 10
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' && steps.dependencies.outcome == 'success' }}
+        continue-on-error: true
+        run: scripts/install.sh
+
+      - name: Smoke test CLI and MCP against the fake mail server
+        id: smoke
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os, pathlib, subprocess, sys, tempfile
+          spec = importlib.util.spec_from_file_location('canary_e2e', 'tests/test-e2e.py')
+          suite = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = suite
+          spec.loader.exec_module(suite)
+          with tempfile.TemporaryDirectory(prefix='canary-') as work:
+              subprocess.run(['sh', 'tests/gen-test-certs.sh', str(pathlib.Path(work) / 'certs')], check=True)
+              for mode in ('0', '1'):
+                  os.environ['MAILBEND_TEST_MCP'] = mode
+                  server = suite.Server(work)
+                  try:
+                      suite.reads(server)
+                      suite.cli_front_end(server)
+                      suite.mcp(server)
+                  finally:
+                      server.stop()
+          suite.check('No synthetic password in output', not any(suite.PASSWORD in text for text in suite.outputs))
+          failed = [name for name, ok in suite.results if not ok]
+          print(f'canary smoke: {len(suite.results) - len(failed)} passed, {len(failed)} failed')
+          raise SystemExit(bool(failed))
+          PY
+
+      - name: Report every outcome and retain a failing canary signal
+        timeout-minutes: 2
+        if: ${{ always() }}
+        env:
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          steps = json.loads(os.environ['STEP_RESULTS'])
+          candidate = steps.get('bend', {}).get('outputs', {})
+          lean = steps.get('requirement', {}).get('outputs', {})
+          ids = ['checkout', 'isolate', 'dependencies', 'bend', 'requirement', 'lean', 'check', 'verdict', 'unit', 'build', 'smoke']
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Bend upgrade observation\n\n')
+              summary.write('This workflow does not run on pull requests. Do not make it a required check.\n\n')
+              summary.write(f"- Bend version: {candidate.get('version', 'unavailable')}\n")
+              summary.write(f"- Archive SHA256: {candidate.get('sha256', 'unavailable')}\n")
+              summary.write(f"- Requested Lean: {lean.get('toolchain', 'unavailable')}\n\n")
+              summary.write('| Step | Outcome |\n| --- | --- |\n')
+              for name in ids:
+                  summary.write(f"| {name} | {steps.get(name, {}).get('outcome', 'skipped')} |\n")
+              summary.write('\nA skipped or cancelled step is not a pass. The production toolchain pins are unchanged.\n')
+          raise SystemExit(any(steps.get(name, {}).get('outcome') != 'success' for name in ids))
+          PY

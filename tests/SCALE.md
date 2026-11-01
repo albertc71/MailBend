@@ -11,6 +11,8 @@ Install GNU `time` (for example, `sudo apt-get install time` on Debian/Ubuntu).
 The suite uses Linux, GNU `time`, and local fake IMAP, SMTP and TypeSafe servers.
 It does not use an account, a real service key, or an external service.
 Build dependency downloads happen before measurement, not inside the suite.
+Set `MAILBEND_TEST_TMPDIR` to an existing directory with enough free space if
+the default temporary filesystem is small or unsuitable.
 The child environment omits inherited mail settings and proxies. The fake
 TypeSafe proxy is the only enabled route for classification.
 
@@ -45,8 +47,13 @@ can grow between samples, and summed RSS can count shared pages more than
 once. Bend reserves over 8 GiB of virtual address space, so a small address
 limit would reject even small workloads without measuring resident memory.
 Fake servers have a 1.5 GiB per-process address-space limit. The suite has a
-15-minute alarm covering setup, validation and all samples. Cleanup can add
-a short delay. A timeout, refusal, incomplete read, wrong result, or missing
+15-minute cooperative deadline covering setup, validation and all samples.
+Deadline and cancellation checks run between synchronous setup/validation
+phases, every call poll, and at most 100 ms apart while waiting for server
+readiness. Certificate commands have a maximum 15-second timeout. A phase
+already doing synchronous fixture or result work can delay cancellation; this
+is not a hard wall-clock limit. SIGINT, SIGTERM and SIGHUP request cancellation
+without interrupting child registration or cleanup. Cleanup can add a delay. A timeout, refusal, incomplete read, wrong result, or missing
 sample fails the run. The report retains failures rather than treating them
 as fast measurements. These safety limits can reject workloads that would
 succeed on a larger machine.
@@ -70,8 +77,12 @@ including successful work checks and sample variation, before copying it to
 `tests/scale-baseline.json`. Do not copy results between runner profiles.
 An unmeasured baseline remains a failing gate, not a guessed budget.
 
-The CI workflow runs scale tests weekly and on manual dispatch with `scale`
-enabled. Ordinary pull requests run only the fast contract controls.
+The CI workflow runs scale tests only on manual dispatch with `scale` enabled.
+The weekly schedule is deferred until a complete reviewed hosted-runner
+baseline exists and all exact workloads pass within the limits. Scale dispatch
+has a separate concurrency group from ordinary CI, so it cannot cancel a
+push check on the same branch. Ordinary pull requests run only the fast
+contract controls.
 `record_scale` saves a candidate result without comparing it. The workflow
 uploads the JSON even when a scenario fails. The GitHub-hosted runner needs
 its own verified baseline; a local result cannot stand in for it.

@@ -32,6 +32,39 @@ POLL_SECONDS = 0.01
 REPEATS = 5
 
 
+class Cancelled(BaseException):
+    pass
+
+
+class RunControl:
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.cancelled_signal = None
+        self.previous_handlers = {}
+
+    def __enter__(self):
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            self.previous_handlers[sig] = signal.signal(sig, self.request_cancel)
+        return self
+
+    def __exit__(self, *_):
+        for sig, handler in self.previous_handlers.items():
+            signal.signal(sig, handler)
+
+    def request_cancel(self, signum, _frame):
+        self.cancelled_signal = signum
+
+    def check(self):
+        if self.cancelled_signal is not None:
+            raise Cancelled(f"cancelled by {signal.Signals(self.cancelled_signal).name}")
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError("15-minute suite deadline reached")
+
+    def remaining(self, limit):
+        self.check()
+        return min(limit, max(0, self.deadline - time.monotonic()))
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -76,8 +109,10 @@ def group_snapshot(pid):
     return {"rss_kib": total if primary else None, "processes_scanned": scanned}
 
 
-def measure(command, env, work, timeout):
+def measure(command, env, work, timeout, control=None):
     """A fresh GNU time supervisor excludes the fixture parent from child RSS."""
+    if control is not None:
+        control.check()
     timer = shutil.which("time", path=env["PATH"])
     if not timer:
         raise RuntimeError("GNU time is required")
@@ -95,6 +130,8 @@ def measure(command, env, work, timeout):
         scanned_peak = 0
         try:
             while True:
+                if control is not None:
+                    control.check()
                 pid, status, usage = os.wait4(proc.pid, os.WNOHANG)
                 if pid:
                     proc.returncode = os.waitstatus_to_exitcode(status)
@@ -143,18 +180,26 @@ def measure(command, env, work, timeout):
 
 
 class Server:
-    def __init__(self, command, env, work, label, timeout):
+    def __init__(self, command, env, work, label, timeout, control=None):
+        if control is not None:
+            control.check()
         self.err = (work / f"{label}-stderr").open("wb")
-        self.proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                                     stderr=self.err, start_new_session=True, preexec_fn=server_limits)
+        self.proc = None
         try:
+            self.proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
+                                         stderr=self.err, start_new_session=True, preexec_fn=server_limits)
             deadline = time.monotonic() + timeout
             ready = b""
             with selectors.DefaultSelector() as selector:
                 selector.register(self.proc.stdout, selectors.EVENT_READ)
                 while b"\n" not in ready:
-                    if not selector.select(max(0, deadline - time.monotonic())):
+                    if control is not None:
+                        control.check()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
                         raise RuntimeError(f"{label} startup timed out")
+                    if not selector.select(min(0.1, remaining)):
+                        continue
                     chunk = os.read(self.proc.stdout.fileno(), 1024)
                     if not chunk or len(ready) + len(chunk) > 4096:
                         raise RuntimeError(f"{label} invalid readiness response")
@@ -168,19 +213,21 @@ class Server:
             raise
 
     def stop(self):
-        if self.proc.poll() is None:
+        if self.proc is not None:
             kill_group(self.proc)
-        self.proc.stdout.close()
+            self.proc.stdout.close()
         self.err.close()
 
 
-def certificates(work, env):
+def certificates(work, env, control):
     certs = work / "certs"
     certs.mkdir()
 
     def openssl(*args):
         subprocess.run(["openssl", *map(str, args)], check=True, env=env,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                       timeout=control.remaining(15))
+        control.check()
 
     openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
             "-keyout", certs / "ca-key.pem", "-out", certs / "ca.pem", "-subj", "/CN=Scale test CA")
@@ -201,6 +248,8 @@ def records(path):
 
 
 def verify(scenario, data, result, logged, state, requests):
+    if not isinstance(result, dict):
+        raise ValueError("tool result is not an object")
     if "error" in result or result.get("partial"):
         raise ValueError("tool returned an error or partial outcome")
     lines = [row["line"] for row in logged if row["proto"] == "imap"]
@@ -271,17 +320,20 @@ def verify(scenario, data, result, logged, state, requests):
             "typesafe_requests": sum("status" in r for r in requests)}
 
 
-def run_sample(scenario, work, certs, deadline):
+def run_sample(scenario, work, certs, control):
+    control.check()
     data = fixture(scenario)
+    control.check()
     fixture_path = work / "fixture.json"
     fixture_path.write_text(json.dumps(data))
+    control.check()
     env = clean_env(work)
     servers = []
     try:
         server = Server([sys.executable, str(ROOT / "tests/fake_mail_server.py"),
                          "--certdir", str(certs), "--fixture", str(fixture_path),
                          "--state", str(work / "state.json"), "--log", str(work / "mail.jsonl")],
-                        env, work, "mail", min(30, max(1, deadline - time.monotonic())))
+                        env, work, "mail", control.remaining(30), control)
         servers.append(server)
         call_env = {**env, "MAILBEND_EMAIL": USER, "MAILBEND_APP_PASSWORD": PASSWORD,
                     "MAILBEND_IMAP_HOST": "localhost", "MAILBEND_IMAP_PORT": server.ports["imap"],
@@ -292,7 +344,7 @@ def run_sample(scenario, work, certs, deadline):
             call_env["MAILBEND_SAVE_SENT"] = "1"
         if scenario.kind == "classify":
             ts = Server([sys.executable, str(ROOT / "tests/fake_typesafe.py"), "--certdir", str(certs),
-                         "--key", KEY, "--log", str(work / "typesafe.jsonl")], env, work, "typesafe", 10)
+                         "--key", KEY, "--log", str(work / "typesafe.jsonl")], env, work, "typesafe", control.remaining(10), control)
             servers.append(ts)
             keyfile = work / "key"
             keyfile.write_text(KEY)
@@ -301,11 +353,10 @@ def run_sample(scenario, work, certs, deadline):
                              "MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_IMAGES": "1",
                              "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
                              "https_proxy": f"http://127.0.0.1:{ts.ports['proxy']}"})
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("suite deadline reached before call")
         sample = measure([str(ROOT / "scripts/mailbend"), "call", scenario.tool,
-                          json.dumps(scenario.arguments)], call_env, work, min(CALL_SECONDS, remaining))
+                          json.dumps(scenario.arguments)], call_env, work,
+                         control.remaining(CALL_SECONDS), control)
+        control.check()
         logged = records(work / "mail.jsonl")
         sample["imap_logins"] = sum(row["proto"] == "imap" and
                                     (" LOGIN " in row["line"] or "AUTHENTICATE" in row["line"])
@@ -325,6 +376,7 @@ def run_sample(scenario, work, certs, deadline):
         sample["work"] = verify(scenario, data, result, logged,
                                 json.loads((work / "state.json").read_text()),
                                 records(work / "typesafe.jsonl"))
+        control.check()
         sample["status"] = "passed"
         return sample
     finally:
@@ -420,43 +472,42 @@ def main():
               "load_average_start": os.getloadavg(), "measurement": "cold launcher, warm OS cache; fixture setup excluded"}
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    def expired(_signal, _frame):
-        raise TimeoutError("15-minute suite deadline reached")
-
-    signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, max(0.001, deadline - time.monotonic()))
-    try:
-        with tempfile.TemporaryDirectory(prefix="mailbend-scale-") as tmp:
-            root = pathlib.Path(tmp)
-            certs = certificates(root, clean_env(root))
-            for scenario in SCENARIOS:
-                samples = []
-                for index in range(REPEATS):
-                    if time.monotonic() >= deadline:
-                        break
-                    work = root / f"{scenario.name}-{index}"
-                    work.mkdir()
-                    try:
-                        sample = run_sample(scenario, work, certs, deadline)
-                    except (AssertionError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as exc:
-                        location = traceback.extract_tb(exc.__traceback__)[-1]
-                        sample = {"status": "failed", "reason": type(exc).__name__,
-                                  "failure_site": f"{pathlib.Path(location.filename).name}:{location.lineno}"}
-                    samples.append(sample)
-                    shutil.rmtree(work)
-                    report["scenarios"][scenario.name] = summarize(samples)
-                    args.output.write_text(json.dumps(report, indent=2) + "\n")
-                    print(f"{scenario.name} sample {index + 1}: {sample['status']}", flush=True)
-                    if sample["status"] != "passed":
-                        break
-            if len(report["scenarios"]) == len(SCENARIOS) and all(
-                    value["status"] == "passed" for value in report["scenarios"].values()):
-                report["status"] = "measured"
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        report["suite_seconds"] = LIMIT_SECONDS - (deadline - time.monotonic())
-        report["load_average_end"] = os.getloadavg()
-        args.output.write_text(json.dumps(report, indent=2) + "\n")
+    with RunControl(deadline) as control:
+        try:
+            with tempfile.TemporaryDirectory(prefix="mailbend-scale-",
+                                             dir=os.environ.get("MAILBEND_TEST_TMPDIR") or None) as tmp:
+                root = pathlib.Path(tmp)
+                certs = certificates(root, clean_env(root), control)
+                for scenario in SCENARIOS:
+                    samples = []
+                    for index in range(REPEATS):
+                        control.check()
+                        work = root / f"{scenario.name}-{index}"
+                        work.mkdir()
+                        try:
+                            sample = run_sample(scenario, work, certs, control)
+                        except (AssertionError, ValueError, RuntimeError, TimeoutError,
+                                LookupError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+                            location = traceback.extract_tb(exc.__traceback__)[-1]
+                            sample = {"status": "failed", "reason": type(exc).__name__,
+                                      "failure_site": f"{pathlib.Path(location.filename).name}:{location.lineno}"}
+                        samples.append(sample)
+                        shutil.rmtree(work)
+                        report["scenarios"][scenario.name] = summarize(samples)
+                        args.output.write_text(json.dumps(report, indent=2) + "\n")
+                        print(f"{scenario.name} sample {index + 1}: {sample['status']}", flush=True)
+                        if sample["status"] != "passed":
+                            break
+                control.check()
+                if len(report["scenarios"]) == len(SCENARIOS) and all(
+                        value["status"] == "passed" for value in report["scenarios"].values()):
+                    report["status"] = "measured"
+        except (Cancelled, TimeoutError) as exc:
+            report["stop_reason"] = str(exc)
+        finally:
+            report["suite_seconds"] = LIMIT_SECONDS - (deadline - time.monotonic())
+            report["load_average_end"] = os.getloadavg()
+            args.output.write_text(json.dumps(report, indent=2) + "\n")
     problems = [] if args.record else compare(json.loads(args.baseline.read_text()), report)
     if report["status"] != "measured":
         problems.append("not all exact workloads completed five successful samples")

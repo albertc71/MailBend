@@ -104,6 +104,11 @@ def main() -> IO(Unit):
       text() ++ " 1 NIL (\"ATTACHMENT\" NIL))")))
     IO.print(large_base64())
     IO.print(large_qp())
+    IO.print("selected QP padded soft break " ++ decode("quoted-printable", 11, "foo= \t\r\nbar"))
+    IO.print("selected QP final soft break " ++ decode("quoted-printable", 5, "last="))
+    IO.print("selected QP final padded break " ++ decode("quoted-printable", 7, "last= \t"))
+    IO.print("selected QP invalid hex " ++ decode("quoted-printable", 5, "bad=Z"))
+    IO.print("selected base64 strictness " ++ decode("base64", 4, "aGk!"))
 
 #|1
 #|1 2.1 2.2
@@ -124,3 +129,8 @@ def main() -> IO(Unit):
 #|1
 #|base64 100000 True
 #|quoted-printable 36000 True
+#|selected QP padded soft break foobar
+#|selected QP final soft break last
+#|selected QP final padded break last
+#|selected QP invalid hex error
+#|selected base64 strictness error

@@ -458,10 +458,18 @@ def check_search() -> IO(Unit):
     IO.print(show_keys(T.keys_of(json(String.concat([
       "{\"before\":\"2026-03-01\",\"since\":\"2026-02-01\",\"from\":\"a\",\"to\":\"b\",",
       "\"cc\":\"c\",\"subject\":\"s\",\"body\":\"y\",\"text\":\"t\",\"unseen\":true,",
-      "\"seen\":true,\"flagged\":true}"])))))
+      "\"seen\":false,\"flagged\":true}"])))))
     IO.print(show_keys(T.keys_of(json("{\"since\":\"bad\",\"before\":\"worse\"}"))))
     IO.print(show_keys(T.keys_of(json("{\"since\":\"2026-02-01\",\"before\":\"worse\"}"))))
     IO.print(show_keys(T.keys_of(json("{\"from\":\"\",\"unseen\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"unseen\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"flagged\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"flagged\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":true,\"unseen\":false}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":true,\"unseen\":true}"))))
+    IO.print(show_keys(T.keys_of(json("{\"seen\":false,\"unseen\":false}"))))
     IO.print(show_msgs(T.requested([message(5, ""), message(9, ""), message(4, "")], [4, 5])) ++
       "|" ++ show_msgs(T.newest_first([message(5, ""), message(9, ""), message(4, "")])) ++
       "|" ++ show_msgs(T.oldest_first([message(5, ""), message(9, ""), message(4, "")])) ++
@@ -815,6 +823,31 @@ def check_drafts(+st: T.Stamp, +w: T.Want) -> IO(Unit):
     IO.print(show_line_endings(M.compose(T.draft_of(w, "me@my.org", st, True{}), "B")))
     IO.print(show_line_endings(M.compose(T.draft_of(w, "me@my.org", st, False{}), "B")))
 
+def show_random(r: Result<&2, &2, String, U32>) -> String:
+  match r:
+    case Done{n}:
+      U32.show(n)
+    case Fail{m}:
+      "refused"
+
+def show_stamp(r: Result<&2, &2, String, T.Stamp>) -> String:
+  match r:
+    case Done{T.Stamp{date, token}}:
+      token
+    case Fail{m}:
+      "refused"
+
+def randomness_cases() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("stamp first read " ++ show_stamp(T.stamp_checked(0, Fail{(1, "first")}, Done{1})))
+    IO.print("stamp second read " ++ show_stamp(T.stamp_checked(0, Done{1}, Fail{(1, "second")})))
+    IO.print("stamp both reads " ++ show_stamp(T.stamp_checked(0, Fail{(1, "first")}, Fail{(2, "second")})))
+    IO.print("stamp zero succeeds " ++ show_stamp(T.stamp_checked(0, Done{0}, Done{0})))
+    send : T.Out <- T.deliver_stamped(want(["a@x.com"], [], False{}), "me@example.com", T.stamp_checked(0, Fail{(1, "first")}, Done{0}))
+    draft : T.Out <- T.deliver_stamped(want(["a@x.com"], [], True{}), "me@example.com", T.stamp_checked(0, Done{0}, Fail{(1, "second")}))
+    IO.print("send random failure " ++ show_out(send))
+    IO.print("draft random failure " ++ show_out(draft))
+
 def check_compose() -> IO(Unit):
   do IO<Unit>:
     IO.print(C.bytes_str([72, 105]) ++ " " ++ T.basename("/a/b/c.txt") ++ " " ++
@@ -846,7 +879,7 @@ def check_compose() -> IO(Unit):
     IO.print(U32.show(T.secs_of(T.ProcOk{0, " 1700000000\n", ""})) ++ " " ++
       U32.show(T.secs_of(T.ProcOk{0, "x", ""})) ++ " " ++
       U32.show(T.secs_of(T.ProcRefused{"x"})) ++
-      " " ++ U32.show(T.rand_of(Done{5})) ++ " " ++ U32.show(T.rand_of(Fail{(1, "x")})))
+      " " ++ show_random(T.rand_of(Done{5})) ++ " " ++ show_random(T.rand_of(Fail{(1, "x")})))
     IO.print(T.domain_of("A <a@Example.com>") ++ " " ++ T.domain_of("bad"))
     check_drafts(T.stamp_of(1700000000, 1, 255), want(["A <a@x.com>"], ["b@z.com"], False{}))
     IO.print(
@@ -889,7 +922,7 @@ def check_reply_headers(+hs: List<&2, M.Hdr>) -> IO(Unit):
 def check_reply() -> IO(Unit):
   do IO<Unit>:
     IO.print(T.prefixed("Re:", "hello") ++ "|" ++ T.prefixed("Re:", " RE: hello") ++ "|" ++
-      T.prefixed("Fwd:", "fwd: x") ++ "|" ++ T.prefixed("Re:", ""))
+      T.prefixed("Fwd:", "fwd: x") ++ "|[" ++ T.prefixed("Re:", "") ++ "]")
     IO.print(show_line_endings(T.quote_lines(["a", "", "b"])) ++ "|" ++ T.quote_lines([]))
     IO.print(T.spec_key("A <A@X.com>") ++ " " ++
       String.join(T.spec_keys(["B@y", "c <C@z>"]), ",") ++ " " ++
@@ -1353,6 +1386,7 @@ def check_read_identity() -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    randomness_cases()
     check_switches()
     check_helper()
     check_runs()
@@ -1377,6 +1411,12 @@ def main() -> IO(Unit):
     check_triage()
     check_read_identity()
 
+#|stamp first read refused
+#|stamp second read refused
+#|stamp both reads refused
+#|stamp zero succeeds 00000000.0000000000000000
+#|send random failure err cannot compose message: random identifier generation failed
+#|draft random failure err cannot compose message: random identifier generation failed
 #|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|{"has_more":false,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
 #|d v d
@@ -1407,7 +1447,7 @@ def main() -> IO(Unit):
 #|mail server error: e1
 #|configuration error: e2
 #|connection or TLS verification failed: e3
-#|authentication failed (check MAILBEND_EMAIL and the app-specific password): e4
+#|authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) and the app-specific password): e4
 #|mail server error: e5
 #|mail server error: e128
 #|the TLS helper was killed by a signal: e130
@@ -1418,7 +1458,7 @@ def main() -> IO(Unit):
 #|ok {"changed":[3],"missing":[4]}
 #|cannot run the TLS helper: no path
 #|cannot run the TLS helper: timed out
-#|authentication failed (check MAILBEND_EMAIL and the app-specific password): login refused
+#|authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) and the app-specific password): login refused
 #|5 0
 #|True False False
 #|ok "250 2.0.0 queued as X"
@@ -1453,10 +1493,18 @@ def main() -> IO(Unit):
 #|ok {"folders":[{"name":"INBOX","delimiter":"/","attributes":["\\HasNoChildren","\\Marked"],"special_use":null,"selectable":true},{"name":"Sent Messages","delimiter":"/","attributes":["\\Sent"],"special_use":"sent","selectable":true},{"name":"New","delimiter":".","attributes":["\\All"],"special_use":"all","selectable":true}]}
 #|Drafts,Trash,Deleted Messages,Sent,Sent Messages,Junk,Archive none none
 #|a1 UID SEARCH ALL\r\n
-#|a1 UID SEARCH FROM "a" TO "b" CC "c" SUBJECT "s" BODY "y" TEXT "t" UNSEEN SEEN FLAGGED SINCE 1-Feb-2026 BEFORE 1-Mar-2026\r\n
+#|a1 UID SEARCH FROM "a" TO "b" CC "c" SUBJECT "s" BODY "y" TEXT "t" UNSEEN FLAGGED SINCE 1-Feb-2026 BEFORE 1-Mar-2026\r\n
 #|error "since" must be a date like 2026-02-01
 #|error "before" must be a date like 2026-02-01
-#|a1 UID SEARCH ALL\r\n
+#|a1 UID SEARCH SEEN\r\n
+#|a1 UID SEARCH SEEN\r\n
+#|a1 UID SEARCH UNSEEN\r\n
+#|a1 UID SEARCH UNSEEN\r\n
+#|a1 UID SEARCH FLAGGED\r\n
+#|a1 UID SEARCH UNFLAGGED\r\n
+#|a1 UID SEARCH SEEN\r\n
+#|error "seen" and "unseen" contradict each other; use opposite values or omit one
+#|error "seen" and "unseen" contradict each other; use opposite values or omit one
 #|5 4 |9 5 4 |4 5 9 |9 3 1 |1 3 9 |True False
 #|ok {"folder":"INBOX","uidvalidity":7,"total":12,"messages":[{"uid":5,"date":"","from":"","to":"","cc":"","subject":"Lunch","message_id":"","internal_date":"1-Feb-2026 10:00:00 +0000","size":42,"flags":["\\Seen"],"seen":true,"flagged":false},{"uid":4,"date":"","from":"","to":"","cc":"","subject":"Hi","message_id":"","internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"flags":["\\Flagged"],"seen":false,"flagged":true}]} | shown 5 4 
 #|err the folder's UIDVALIDITY changed between the search and the fetch, so these UIDs may name other messages; search again | shown 
@@ -1566,7 +1614,7 @@ def main() -> IO(Unit):
 #|error first
 #|atts f|message/rfc822|raw; | error bad
 #|09af 00000000 deadbeef ffffffff 12345678
-#|1700000000 0 0 5 0
+#|1700000000 0 0 5 refused
 #|Example.com bad
 #|Tue, 14 Nov 2023 22:13:20 +0000 6553f100.00000001000000ff mailbend-6553f100.00000001000000ff
 #|<6553f100.00000001000000ff@my.org> A <a@x.com>,c@y.com,b@z.com False a@x.com,c@y.com,b@z.com
@@ -1576,7 +1624,7 @@ def main() -> IO(Unit):
 #|ok {"ok":true,"saved_to":"Drafts","uid":42,"message_id":"<m@x>"}
 #|ok {"ok":true,"sent":true,"message_id":"<m@x>","recipients":2,"server_reply":"250 ok","smtp_outcome":"accepted","smtp_phase":"data_reply","smtp_reason":"accepted_by_server","next_action":"Do not resend. SMTP acceptance is not recipient delivery."} | err refused | partial null
 #|[MAILBEND_EMAIL is not a valid address][every recipient must be an address like name@example.com or "Name <name@example.com>"][at least one recipient (to, cc or bcc) is needed][][]
-#|Re: hello| RE: hello|fwd: x|Re: 
+#|Re: hello|Re: hello|Fwd: x|[Re: ]
 #|> a\n> \n> b\n|
 #|a@x.com b@y,c@z True False
 #|A <a@x>|b@y

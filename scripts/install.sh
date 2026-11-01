@@ -63,6 +63,16 @@ for arg in "$@"; do
   esac
 done
 
+if command -v clang >/dev/null 2>&1; then
+  libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || libc=
+  version=$(printf '%s\n' "$libc" | sed -n 's/^glibc \([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2/p')
+  set -- $version
+  if [ "$#" -ne 2 ] || [ "$libc" != "glibc $1.$2" ] ||
+      ! { [ "$1" -gt 2 ] || { [ "$1" -eq 2 ] && [ "$2" -ge 34 ]; }; } 2>/dev/null; then
+    fail "the compiled core needs glibc 2.34 or newer"
+  fi
+fi
+
 if ! command -v bend >/dev/null 2>&1; then
   if [ "$install_bend" = 1 ]; then
     sh scripts/install-bend.sh

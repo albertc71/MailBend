@@ -14,14 +14,12 @@ on:
         description: Record a candidate baseline without comparing or replacing the committed baseline
         type: boolean
         default: false
-  schedule:
-    - cron: '17 4 * * 1'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ inputs.scale && 'scale' || 'ci' }}
   cancel-in-progress: true
 
 env:
@@ -29,9 +27,9 @@ env:
 
 jobs:
   checks:
-    if: github.event_name != 'schedule' && !inputs.scale
+    if: ${{ !inputs.scale }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,10 +40,15 @@ jobs:
       - name: Secret scan (gitleaks, redacted; tree and history)
         run: sh scripts/scan-secrets.sh
 
+      - name: Documentation source names and drift mutations
+        run: |
+          python3 scripts/check-docs.py
+          python3 tests/test-docs.py
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang openssl time python3-jsonschema
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl time python3-jsonschema jq
 
       - name: Install Rust 1.99 (native/rust-toolchain.toml)
         run: rustup toolchain install 1.99 --profile minimal
@@ -57,6 +60,7 @@ jobs:
 
       - name: Generated schema is up to date
         run: |
+          python3 tools/gen-unicode-tags.py --check
           python3 tests/test-output-schema.py
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
@@ -133,6 +137,14 @@ jobs:
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
 
+      - name: Writing-laws guide snippets and rejected production mutation
+        run: |
+          python3 tests/test-writing-laws.py
+          python3 tests/formal/check-writing-laws.py
+
+      - name: Change-plan and UID wire mutation checks
+        run: python3 tests/formal/check-plan-wire-mutations.py
+
       - name: Unit tests
         run: sh tests/run-unit.sh
 
@@ -155,6 +167,9 @@ jobs:
       - name: Build
         run: scripts/install.sh
 
+      - name: Compromised-agent incident matrix
+        run: python3 tests/test-incidents.py
+
       - name: Installer staging, locking, signals and fallback warnings
         run: python3 tests/test-install.py
 
@@ -172,9 +187,10 @@ jobs:
           python3 tests/test-e2e.py
           MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py
           python3 tests/test-integrated-results.py
+          python3 tests/test-scheduled-recipes.py
 
   rust:
-    if: github.event_name != 'schedule' && !inputs.scale
+    if: ${{ !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -234,7 +250,7 @@ jobs:
         run: cargo deny --log-level warn --all-features check
 
   fuzz:
-    if: github.event_name != 'schedule' && !inputs.scale
+    if: ${{ !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -258,7 +274,7 @@ jobs:
           done
 
   scale:
-    if: github.event_name == 'schedule' || inputs.scale
+    if: inputs.scale
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
