@@ -11,6 +11,7 @@ Use --tool-scenarios-only for the second transport run after a complete run.
 import argparse
 import base64
 import copy
+import fcntl
 from email import policy
 from email.parser import BytesParser
 import importlib.util
@@ -22,6 +23,7 @@ import quopri
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1697,7 +1699,7 @@ def cli(srv, *args):
     return p
 
 
-USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments]"
+USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -]"
 
 
 def cli_front_end(srv):
@@ -1717,6 +1719,119 @@ def cli_front_end(srv):
     p = cli(srv, "call", "mail_probe")
     check("cli: call without arguments runs the tool with none", p.returncode == 0
           and json.loads(p.stdout).get("ok") is True, (p.returncode, p.stdout))
+    cli_stdin(srv)
+
+
+def cli_stdin(srv):
+    def run(data, name="nope", source="pipe"):
+        command = [LAUNCHER, "call", name, "-"]
+        if source == "file":
+            with tempfile.TemporaryFile() as handle:
+                handle.write(data)
+                handle.seek(0)
+                result = subprocess.run(command, stdin=handle, capture_output=True,
+                                        env=srv.env(), timeout=120)
+        else:
+            result = subprocess.run(command, input=data, capture_output=True,
+                                    env=srv.env(), timeout=120)
+        outputs.extend([result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")])
+        return result
+
+    for source in ("pipe", "file"):
+        p = run(b'{\n "from": "alice", "limit": 1\n}\n', "mail_search", source)
+        expected = cli(srv, "call", "mail_search", '{"from":"alice","limit":1}')
+        check(f"cli stdin: {source} multiline JSON matches argv result",
+              p.returncode == expected.returncode == 0 and p.stdout.decode() == expected.stdout,
+              (p.returncode, p.stdout[:200], p.stderr))
+
+    args = {"to": "a@example.com", "subject": "Unicode é 雪", "body": "café 🌱 �", "dry_run": True}
+    p = run(json.dumps(args, ensure_ascii=False).encode(), "mail_save_draft")
+    expected = cli(srv, "call", "mail_save_draft", json.dumps(args, ensure_ascii=False))
+    check("cli stdin: UTF-8 result is byte-identical to argv", p.returncode == expected.returncode == 0
+          and p.stdout.decode() == expected.stdout, (p.returncode, p.stdout, p.stderr))
+    args["body"] = "x" * (1024 * 1024)
+    p = run(json.dumps(args).encode(), "mail_save_draft")
+    value = json.loads(p.stdout) if p.stdout else {}
+    check("cli stdin: 1 MiB body reaches dry-run composition", p.returncode == 0
+          and dry_run_preview(value, 'APPEND "Drafts"')
+          and any(int(n) > 1024 * 1024 for n in re.findall(r"<(\d+) bytes>", json.dumps(value))),
+          (p.returncode, p.stdout[:500], p.stderr))
+
+    before = len(srv.log_lines())
+    invalid = [b"", b" \n\t", b"{", b"{} {}", b"{}x", b"{}\x00",
+               b'{"x":"\xff"}', b'{"x":"\xc0\xaf"}', b'{"x":"\xed\xa0\x80"}',
+               b'{"x":"\xf4\x90\x80\x80"}', b'{"x":"\xe2\x82"}', b'{"x":"\xe2\x82',
+               b'{"x":"\xe0\x80\xaf"}', b'{"x":"\x80"}']
+    for index, raw in enumerate(invalid):
+        p = run(raw, "mail_probe")
+        check(f"cli stdin: invalid document {index} refuses before connecting",
+              p.returncode == 2 and p.stdout == b"" and p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+
+    cap = 8 * 1024 * 1024
+    for length in (cap - 1, cap):
+        p = run(b"{}" + b" " * (length - 2))
+        check(f"cli stdin: {length} bytes accepted", p.returncode == 1
+              and json.loads(p.stdout) == {"error": "unknown tool: nope"}, (p.returncode, p.stderr))
+    p = run(b"{}" + b" " * (cap - 1), "mail_probe")
+    check("cli stdin: cap plus one refused before connecting", p.returncode == 2
+          and p.stdout == b"" and b"longer than 8 MiB" in p.stderr
+          and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    for char in ("é", "雪", "🌱"):
+        split = b'{"pad":"' + b"x" * (65535 - len(b'{"pad":"')) + char.encode() + b'"}'
+        p = run(split, source="file")
+        check(f"cli stdin: UTF-8 {len(char.encode())}-byte sequence across reads remains valid",
+              p.returncode == 1 and json.loads(p.stdout) == {"error": "unknown tool: nope"},
+              (p.returncode, p.stderr))
+
+    proc = subprocess.Popen([LAUNCHER, "call", "mail_probe", "-"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=srv.env())
+    try:
+        write_errors = []
+        capacity = fcntl.fcntl(proc.stdin.fileno(), fcntl.F_GETPIPE_SZ)
+        def write_prefix():
+            try:
+                proc.stdin.write(b"{}" + b" " * (2 * capacity))
+                proc.stdin.flush()
+            except OSError as error:
+                write_errors.append(str(error))
+        writer = threading.Thread(target=write_prefix)
+        writer.start()
+        writer.join(30)
+        if writer.is_alive():
+            proc.kill()
+            writer.join(5)
+            raise AssertionError("stdin reader did not consume the bounded prefix")
+        check("cli stdin: complete JSON waits for EOF before dispatch", not write_errors
+              and proc.poll() is None and len(srv.log_lines()) == before, write_errors)
+        out, err = proc.communicate(b" trailing", timeout=30)
+        outputs.extend([out.decode(errors="replace"), err.decode(errors="replace")])
+        check("cli stdin: later trailing input cannot run earlier JSON", proc.returncode == 2
+              and out == b"" and len(srv.log_lines()) == before, (proc.returncode, out, err))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+
+    peer, inherited = socket.socketpair()
+    try:
+        p = subprocess.run([LAUNCHER, "call", "mail_probe", "-"], stdin=inherited,
+                           capture_output=True, env=srv.env(), timeout=30)
+        check("cli stdin: socket rejected with exit 6 and pipe/file guidance", p.returncode == 6
+              and p.stdout == b"" and b"pipe or file" in p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    finally:
+        peer.close()
+        inherited.close()
+    directory = os.open(srv.work, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        p = subprocess.run([LAUNCHER, "call", "mail_probe", "-"], stdin=directory,
+                           capture_output=True, env=srv.env(), timeout=30)
+        check("cli stdin: unreadable descriptor refuses before dispatch", p.returncode == 2
+              and p.stdout == b"" and b"stdin arguments" in p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    finally:
+        os.close(directory)
 
 
 MUTATING_CALLS = {

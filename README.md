@@ -340,6 +340,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
 
+The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
+Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
+
 Check the connection first:
 
 ```sh
