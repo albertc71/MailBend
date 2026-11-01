@@ -886,6 +886,12 @@ def compose(srv):
     check("non-ASCII attachment names use RFC 2231 and read back", "filename*0*=utf-8''rapport%20%C3%A9.txt" in raw
           and "=?UTF-8?" not in raw.split("filename", 1)[-1].split("\r\n\r\n", 1)[0]
           and any(a["filename"] == "rapport é.txt" for a in r.get("attachments", [])), [a["filename"] for a in r.get("attachments", [])])
+    part = next((part for part in mime_oracle.terminal_parts(mime_oracle.parse(raw.encode('latin-1')))
+                 if part.get_filename() == "rapport é.txt"), None)
+    check("saved Unicode filename agrees with independent parser before ASCII fallback",
+          part is not None and part.get_param('name') == "rapport é.txt"
+          and "name*0*=utf-8''rapport%20%C3%A9.txt;\r\n name=\"rapport _.txt\"" in raw
+          and "filename*0*=utf-8''rapport%20%C3%A9.txt;\r\n filename=\"rapport _.txt\"" in raw)
 
     c, r = tool(srv, "mail_send", {"to": "friend@example.com", "cc": ["Carol <carol@example.com>"], "bcc": ["hidden@example.com"],
                                    "subject": "Hello ✓", "body": "Hi there\n.dot line\n"})

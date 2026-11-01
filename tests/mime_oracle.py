@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from urllib.parse import unquote_to_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 ADDRESS_FIELDS = {'from', 'to', 'cc', 'bcc', 'reply-to', 'sender'}
@@ -112,6 +113,31 @@ TYPE_EXPECTATIONS = {
 }
 
 
+def check_filename_parameters(part, filename):
+    plain = len(filename) <= 200 and all(c == '\t' or ' ' <= c <= '~' for c in filename)
+    for header, key in [('content-type', 'name'), ('content-disposition', 'filename')]:
+        require(part.get_param(key, header=header) == filename, header + ' filename differs from input Draft')
+        value = next(value for name, value in part.raw_items() if name.lower() == header)
+        parameters = value.split(';\r\n ')[1:]
+        if plain:
+            quoted = filename.replace('\\', '\\\\').replace('"', '\\"')
+            require(parameters == [key + '="' + quoted + '"'], 'short ASCII filename wire changed')
+            continue
+        fallback = ''.join(c if ' ' <= c <= '~' and c not in '"\\' else '_' for c in filename[:60])
+        require(parameters and parameters[-1] == key + '="' + fallback + '"', 'ASCII filename fallback changed')
+        pieces = []
+        for index, parameter in enumerate(parameters[:-1]):
+            prefix = key + '*' + str(index) + '*=' + ("utf-8''" if index == 0 else '')
+            require(parameter.startswith(prefix), 'composed filename continuations must precede fallback in order')
+            piece = parameter[len(prefix):]
+            require(0 < len(piece) <= 50 and re.fullmatch(r"(?:[A-Za-z0-9!#$&+.^_`|~-]|%[0-9A-F]{2})+", piece),
+                    'RFC 2231 filename piece split a percent token or exceeded its bound')
+            pieces.append(piece)
+        require(pieces and unquote_to_bytes(''.join(pieces)) == filename.encode('utf-8'),
+                'RFC 2231 filename bytes differ from UTF-8 input Draft')
+        require(all(len(parameter) + 1 <= 79 for parameter in parameters), 'filename parameter line exceeds bound')
+
+
 def check_input(raw, message, draft, case_name):
     require(message.get_content_type() == ('multipart/mixed' if draft['attachments'] else 'text/plain'),
             'root media type differs from input Draft')
@@ -136,6 +162,7 @@ def check_input(raw, message, draft, case_name):
     for part, attachment, content_type in zip(leaves[1:], draft['attachments'], types):
         require(part.get_content_type() == content_type, 'attachment type differs from reviewed expectation')
         require(part.get_filename() == attachment['filename'], 'filename differs from input Draft')
+        check_filename_parameters(part, attachment['filename'])
         original = base64.b64decode(attachment['data'], validate=True)
         if content_type.startswith('text/'):
             charset = 'us-ascii' if original.isascii() else 'utf-8'
@@ -280,8 +307,8 @@ def input_self_test():
            b'Message-ID: <self@corpus.invalid>\r\nIn-Reply-To: <before@corpus.invalid>\r\n'
            b'References: <root@corpus.invalid>\r\nContent-Type: multipart/mixed; boundary=B\r\n\r\n'
            b'--B\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nhello\r\n'
-           b'--B\r\nContent-Type: application/octet-stream\r\n'
-           b'Content-Disposition: attachment; filename=notes.bin\r\n'
+           b'--B\r\nContent-Type: application/octet-stream;\r\n name="notes.bin"\r\n'
+           b'Content-Disposition: attachment;\r\n filename="notes.bin"\r\n'
            b'Content-Transfer-Encoding: base64\r\n\r\naGk=\r\n--B--\r\n')
     draft = {'from': 'Sender <sender@example.invalid>', 'to': ['reader@example.invalid'], 'cc': [], 'bcc': [],
              'subject': 'original', 'date': 'Sat, 31 Oct 2026 12:00:00 +0000', 'message_id': '<self@corpus.invalid>',
@@ -293,7 +320,9 @@ def input_self_test():
                (b'Date: Sat, 31 Oct', b'Date: Fri, 30 Oct'), (b'<self@', b'<other@'),
                (b'<before@', b'<other@'), (b'<root@', b'<other@'),
                (b'multipart/mixed', b'multipart/alternative'), (b'hello', b'other'),
-               (b'notes.bin', b'other.bin'), (b'application/octet-stream', b'image/png'),
+               (b'\r\n name="notes.bin"', b'\r\n name="other.bin"'),
+               (b'\r\n filename="notes.bin"', b'\r\n filename="other.bin"'),
+               (b'application/octet-stream', b'image/png'),
                (b'aGk=', b'aG8='),
                (b'Subject: original', b'Cc: extra@example.invalid\r\nSubject: original'),
                (b'Subject: original', b'Bcc: extra@example.invalid\r\nSubject: original')]

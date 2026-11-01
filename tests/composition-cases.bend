@@ -39,6 +39,12 @@ type Case is Data:
   LongDisplay{}
   AsciiText{}
   NonUtf8Text{}
+  LongUnicodeFilename{}
+  LongAsciiFilename{}
+  ShortAsciiFilename{}
+  QuotedSemicolonFilename{}
+  BackslashFilename{}
+  ControlFilename{}
 
 def long_refs() -> String:
   "<root@x> " ++ String.repeat("<middle@x> ", 120n) ++ "<last1@x> <last2@x>"
@@ -48,6 +54,9 @@ def long_id(n: Nat, c: String) -> String:
 
 def ordinary(subject: String, irt: String, refs: String) -> M.Draft:
   M.Draft{"a@x", ["b@y"], [], [], subject, "body", "D", "<m@x>", irt, refs, []}
+
+def filename_draft(name: String) -> M.Draft:
+  M.Draft{"a@example.invalid", ["b@example.invalid"], [], [], "Filename compatibility", "body", "Sat, 31 Oct 2026 12:00:00 +0000", "<filename@corpus.invalid>", "", "", [M.Attach{name, "application/octet-stream", C.utf8_encode("café😀")}]}
 
 def tool_draft(keep: Bool) -> M.Draft:
   w : T.Want = T.Want{["A <a@x.com>"], ["c@y.com"], ["b@z.com"], "Subject", "Body", "<irt@x>",
@@ -120,6 +129,18 @@ def draft(c: Case) -> M.Draft:
       M.Draft{"a@example.invalid", ["b@example.invalid"], [], [], "ASCII attachment", "body", "Sat, 31 Oct 2026 12:00:00 +0000", "<ascii@corpus.invalid>", "", "", [M.Attach{"notes.csv", "text/csv", "one,two\r\n"}]}
     case NonUtf8Text{}:
       M.Draft{"a@example.invalid", ["b@example.invalid"], [], [], "Unlabelled legacy attachment", "body", "Sat, 31 Oct 2026 12:00:00 +0000", "<legacy@corpus.invalid>", "", "", [M.Attach{"notes.txt", "text/plain", "caf\u{E9}"}]}
+    case LongUnicodeFilename{}:
+      filename_draft(String.repeat("é😀", 45n) ++ ".pdf")
+    case LongAsciiFilename{}:
+      filename_draft(String.repeat("a", 201n) ++ ".txt")
+    case ShortAsciiFilename{}:
+      filename_draft("Q1; final \"v2\"\\notes.txt")
+    case QuotedSemicolonFilename{}:
+      filename_draft("Q1; résumé \"v2\".pdf")
+    case BackslashFilename{}:
+      filename_draft("répertoire\\notes.txt")
+    case ControlFilename{}:
+      filename_draft("résumé\r\nX-Evil: yes\t\u{0}.txt")
 
 def boundary(c: Case) -> String:
   match c:
@@ -200,6 +221,18 @@ def name(c: Case) -> String:
       "AsciiText"
     case NonUtf8Text{}:
       "NonUtf8Text"
+    case LongUnicodeFilename{}:
+      "LongUnicodeFilename"
+    case LongAsciiFilename{}:
+      "LongAsciiFilename"
+    case ShortAsciiFilename{}:
+      "ShortAsciiFilename"
+    case QuotedSemicolonFilename{}:
+      "QuotedSemicolonFilename"
+    case BackslashFilename{}:
+      "BackslashFilename"
+    case ControlFilename{}:
+      "ControlFilename"
 
 def subject.of(d: M.Draft) -> String:
   M.Draft{_, _, _, _, s, _, _, _, _, _, _} = d
@@ -212,4 +245,4 @@ def wire(+c: Case) -> String:
   M.compose(draft(c), boundary(c))
 
 def all() -> List<&2, Case>:
-  [Attachment{}, Injection{}, Mixed{}, Empty{}, Unicode{}, LiteralShort{}, LiteralNested{}, AsciiWords{}, Ascii69{}, Ascii70{}, Ascii77{}, Ascii79{}, Ascii900{}, ThreadTokens{}, ReferenceTokens{}, LongReferences{}, MalformedIds{}, ReferenceExact{}, ReferenceOver{}, ReferencesExact{}, MandatoryOver{}, IdGrammar{}, KeptBcc{}, HiddenBcc{}, Utf8Text{}, BoundaryCollision{}, RawMessage{}, HostileOriginal{}, LiteralDisplay{}, LongDisplay{}, AsciiText{}, NonUtf8Text{}]
+  [Attachment{}, Injection{}, Mixed{}, Empty{}, Unicode{}, LiteralShort{}, LiteralNested{}, AsciiWords{}, Ascii69{}, Ascii70{}, Ascii77{}, Ascii79{}, Ascii900{}, ThreadTokens{}, ReferenceTokens{}, LongReferences{}, MalformedIds{}, ReferenceExact{}, ReferenceOver{}, ReferencesExact{}, MandatoryOver{}, IdGrammar{}, KeptBcc{}, HiddenBcc{}, Utf8Text{}, BoundaryCollision{}, RawMessage{}, HostileOriginal{}, LiteralDisplay{}, LongDisplay{}, AsciiText{}, NonUtf8Text{}, LongUnicodeFilename{}, LongAsciiFilename{}, ShortAsciiFilename{}, QuotedSemicolonFilename{}, BackslashFilename{}, ControlFilename{}]

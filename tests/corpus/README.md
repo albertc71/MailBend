@@ -63,16 +63,30 @@ The unit composition registry retains the input Draft. Its headers, text, filena
 and attachment bytes are checked independently of MailBend's own readback. Existing
 unit cases with synthetic dates such as `D` test byte preservation, not date validity.
 Twelve deliberately broken observations verify that the comparator rejects disagreements.
-Fourteen independently corrupted wire messages verify that the Draft comparison rejects
+Fifteen independently corrupted wire messages verify that the Draft comparison rejects
 shared parser agreement on the wrong output.
 
-A current interoperability disagreement remains visible. MailBend emits an ASCII
-filename fallback before RFC 2231 continuations. Python `policy.default` can choose
-the fallback while MailBend chooses the Unicode filename. The strict composition
-check fails on that disagreement; it is not whitelisted. This is not proof that the
-wire violates RFC 2231. See the related [Python issue](https://github.com/python/cpython/issues/87113).
-Choosing whether to change legacy-client fallback behavior belongs in a separate fix.
-This corpus therefore does not yet establish complete composed-message agreement.
+MailBend emits RFC 2231 filename continuations before the unchanged ASCII fallback.
+This order lets Python `policy.default` retain the original Unicode or long ASCII
+filename. Short plain ASCII names keep their existing quoted output. Both
+`Content-Type` names and `Content-Disposition` filenames must match the original
+Draft, as must the UTF-8 filename bytes, fallback, continuation order and bounds.
+The strict comparisons have no filename whitelist.
+
+Extended-first output is an interoperability convention, not an RFC precedence
+requirement. [RFC 2231 section 3](https://www.rfc-editor.org/rfc/rfc2231#section-3)
+says MIME parameters are not order-sensitive, and
+[section 4.1](https://www.rfc-editor.org/rfc/rfc2231#section-4.1) defines combined
+encoding and continuations without specifying basic-versus-extended precedence.
+The related [Python issue](https://github.com/python/cpython/issues/87113) discusses
+HTTP precedence, not a MIME precedence rule. Python still reports duplicate-parameter
+defects for dual-form names. It can also report `UndecodableBytesDefect` when a
+continuation splits a UTF-8 character, despite reconstructing the correct name.
+These tests do not certify defect-free MIME or compatibility with every legacy client.
+The valid `rfc2231-extended-filename` read fixture uses extended-only parameters.
+The complete composition registry separately checks MailBend's dual-form output
+against the interoperability contract, without classifying that output as malformed
+or assigning an RFC-defined winner to duplicate logical names.
 
 `--validate-only` checks metadata, registry completeness and negative controls without
 Bend or a server. `--reads-only` and `--compositions-only` isolate a diagnosis; neither
