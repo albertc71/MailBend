@@ -45,6 +45,9 @@ server](#use). Details of the install are [below](#install-linux).
 Limits: Linux only, password login only (no OAuth); see
 [Known limits](#known-limits).
 
+For a dated comparison with other email connectors, see
+[the connector comparison](docs/COMPARISON.md).
+
 For shareable setup checks, run `scripts/mailbend diagnose` (local only), or
 explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp`.
 SMTP diagnostics authenticate without sending mail, including in read-only or
@@ -194,8 +197,8 @@ failed build, check, proof or compile leaves the installation as it was. A
 running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
-the pinned Bend to `~/.bend` after checking the archive's sha256; that
-release is Linux x64 only, so elsewhere install the same version yourself.
+the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
+pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -327,6 +330,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 ## Use
 
+For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
+They keep passwords in private files and use the public launcher.
+
 Check the connection first:
 
 ```sh
@@ -443,6 +449,10 @@ Settings, what leaves the machine, the `jev` result object,
 failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages
+
+For caller-owned systemd user timers, see the
+[read-only brief, notifier, and queued draft recipes](docs/RECIPES.md).
+MailBend itself remains daemon-free.
 
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
@@ -744,9 +754,16 @@ before relying on a complete link.
 
 ## Known limits
 
+For failed calls, provider limits, concurrency, upgrades, and rollback, use
+the [operator runbook](docs/OPERATIONS.md).
+
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
+- The compiled Bend core needs glibc 2.34 or newer. The installer checks this
+  before compilation. Downloads need `O_TMPFILE` support on the download
+  directory's file system, which WSL's `/mnt/c` can lack. `mailbend diagnose`
+  reports local platform prerequisites without paths or OS error text.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on

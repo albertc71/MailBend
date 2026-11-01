@@ -34,13 +34,22 @@ pub fn save_download(
 ) -> Result<(), Refusal> {
     let max = parse_max(max)?;
     let name = parse_file_name(name)?;
+    let directory = open_download_directory(attach, download, paths)?;
+    let mut file = create_unnamed(&directory).map_err(unnamed_error)?;
+    write_download(&mut file, max)?;
+    link_download(&file, &directory, name)
+}
+
+pub(crate) fn open_download_directory(
+    attach: &[u8],
+    download: &[u8],
+    paths: &[u8],
+) -> Result<OwnedFd, Refusal> {
     let (root, directory) = open_dedicated_directory(download, &DOWNLOADS)?;
     let lineage = lineage(&directory, &DOWNLOADS)?;
     refuse_attachment_overlap(attach, &lineage)?;
     refuse_startup_directory(root.as_os_str().as_bytes(), &lineage, paths)?;
-    let mut file = create_unnamed(&directory)?;
-    write_download(&mut file, max)?;
-    link_download(&file, &directory, name)
+    Ok(directory)
 }
 
 /// A directory and the directories above it, up to `/`, by device and inode.
@@ -133,21 +142,23 @@ fn refuse_startup_directory(root: &[u8], download: &Lineage, paths: &[u8]) -> Re
 
 /// An unnamed file in the download directory (O_TMPFILE): if this program
 /// stops before `link_download`, the kernel drops it and nothing is left.
-fn create_unnamed(directory: &OwnedFd) -> Result<File, Refusal> {
+pub(crate) fn create_unnamed(directory: &OwnedFd) -> nix::Result<File> {
     let flags = OFlag::O_TMPFILE | OFlag::O_WRONLY | OFlag::O_CLOEXEC;
-    openat(directory, ".", flags, Mode::from_bits_truncate(0o600))
-        .map(File::from)
-        .map_err(|errno| match errno {
-            Errno::EOPNOTSUPP | Errno::EISDIR => format!(
-                "{}'s file system cannot hold unnamed files (O_TMPFILE)",
-                DOWNLOADS.name
-            ),
-            _ => format!(
-                "cannot create a file in {}: {}",
-                DOWNLOADS.name,
-                errno.desc()
-            ),
-        })
+    openat(directory, ".", flags, Mode::from_bits_truncate(0o600)).map(File::from)
+}
+
+fn unnamed_error(errno: Errno) -> Refusal {
+    match errno {
+        Errno::EOPNOTSUPP | Errno::EISDIR => format!(
+            "{}'s file system cannot hold unnamed files (O_TMPFILE)",
+            DOWNLOADS.name
+        ),
+        _ => format!(
+            "cannot create a file in {}: {}",
+            DOWNLOADS.name,
+            errno.desc()
+        ),
+    }
 }
 
 fn not_bytes() -> Refusal {

@@ -1,5 +1,24 @@
 # Native boundaries
 
+`mailbend-attach check <attach-dir> <download-dir>` reports local prerequisites
+without reading credentials or file content. Either argument may be empty.
+It prints exactly four records in this order:
+
+```text
+openat2 ok|unsupported
+attach_dir ok|refused|unset
+download_tmpfile ok|unsupported|refused|unset
+arch x86_64|aarch64|other
+```
+
+`unsupported` means that a required kernel operation is unavailable to this
+process or file system. Directory probes reuse the read and save checks.
+Architecture records are informational, not a support or installation gate.
+The download probe closes an unnamed `O_TMPFILE` without linking it. It does
+not check the caller's PATH or authorize a save. Exit status is 0 when the
+fixed report was produced, including failed prerequisites, or 2 on helper
+failure. Bend owns interpretation and user guidance.
+
 MailBend has four small native programs:
 
 - `mailbend-tls/` (Rust): sockets, TLS and login, the only code that reads the
