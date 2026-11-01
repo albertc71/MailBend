@@ -28,7 +28,7 @@ Each holds for every folder list (any length, the folders anywhere in it), every
 | `two_conventional_folders_take_no_role` | No folder advertises the role, and two selectable folders with no role of their own have a conventional name: no folder takes it. | `two_conventional_example` |
 | `other_role_folder_never_takes_the_role` | A folder advertising another role (say `Trash` with `\Junk`) never takes this one by name; adding it anywhere changes nothing. | `other_role_example` |
 | `selectable_is_neither_noselect_nor_nonexistent` | A folder can be selected exactly when it advertises neither `\Noselect` nor `\NonExistent`. This ties the laws' `Tools.selectable` premises to the attributes the server sent. | `nonexistent_advertised_example` |
-| `recognized_roles_are_the_special_use_attributes` | A folder has a role of its own exactly when it advertises `\Drafts`, `\Sent`, `\Trash`, `\Junk`, `\Archive`, `\All` or `\Flagged`. This ties the laws' `Tools.recognized_role` premises to the attributes. | `all_mail_folder_example` |
+| `recognized_roles_are_the_special_use_attributes` | A folder has a role of its own exactly when it advertises `\Drafts`, `\Sent`, `\Trash`, `\Junk`, `\Archive`, `\All`, `\Flagged` or `\Important`. This ties the laws' `Tools.recognized_role` premises to the attributes. | `all_mail_folder_example`, `important_folder_example` |
 | `each_role_has_its_own_attribute_and_names` | `resolved_folders` resolves Drafts by `\Drafts`/`Drafts`, Trash by `\Trash`/`Trash`/`Deleted Messages`, Sent by `\Sent`/`Sent`/`Sent Messages`, Junk by `\Junk`/`Junk` and Archive by `\Archive`/`Archive`, each with its own override. | `each_role_example` |
 
 These are the promises in README.md's "Configure" section (the precedence paragraph and the override table) and AGENTS.md's role-folder rule. The examples are concrete instances on iCloud-like folders, placed before the proofs, so that when a law breaks, the first failure Bend prints names the folder the code now picks.
@@ -58,7 +58,7 @@ From the repository root:
 
 ```sh
 bend tests/formal/role-folders.bend --check-only   # about 10 s; the loop while editing
-python3 tests/formal/check-role-folders.py         # about 80 s; proofs, then 12 broken variants must fail
+python3 tests/formal/check-role-folders.py         # proofs, then 13 broken variants must fail
 bend PROOF.bend --verdict                          # about 1.5 min; every proof, rechecked by the kernel
 ```
 

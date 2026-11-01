@@ -338,6 +338,7 @@ def run_all(work):
     latin1_quotes(work)
     fallback(work)
     generic_folders(work)
+    important_folders(work)
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
@@ -356,6 +357,7 @@ def run_all(work):
     selected_parts(work)
     selected_parts_errors(work)
 
+    search_flags(work)
     search_pagination(work)
     get_new_start_now(work)
     refresh_known(work)
@@ -572,6 +574,50 @@ def sign_in_html(work):
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
                 srv.stop()
+
+
+def search_flags(work):
+    srv = Server(work)
+    try:
+        before = srv.st()
+        for args, key, expected in (
+            ({"flagged": False}, "UNFLAGGED", [6, 4, 3, 2, 1]),
+            ({"seen": False}, "UNSEEN", [6, 4, 3, 2, 1]),
+            ({"unseen": False}, "SEEN", [5]),
+            ({"seen": True, "unseen": False}, "SEEN", [5]),
+            ({"seen": False, "unseen": True}, "UNSEEN", [6, 4, 3, 2, 1]),
+        ):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", args)
+            searches = [line.split(" UID SEARCH ", 1)[1].split()
+                        for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+            check(f"search flags {args}: exact matching messages", c == 0
+                  and [m["uid"] for m in r.get("messages", [])] == expected, r)
+            check(f"search flags {args}: exactly one {key} key", searches == [[key]], searches)
+        for value in (True, False):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", {"seen": value, "unseen": value})
+            check(f"search flags: contradictory {value} pair refused before login", c != 0
+                  and "seen" in r.get("error", "") and "unseen" in r.get("error", "")
+                  and len(srv.log_lines()) == start, r)
+        c, first = tool(srv, "mail_search", {"flagged": False, "limit": 1})
+        cursor = first.get("next_cursor")
+        check("search flags: negative criterion yields a continuation", c == 0
+              and isinstance(cursor, str), first)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"cursor": cursor, "limit": 1})
+        check("search flags: omitted negative criterion refuses cursor before login", c != 0
+              and "cursor" in r.get("error", "") and len(srv.log_lines()) == start, r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search")
+        check("search flags: omitted flags keep every message", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == [6, 5, 4, 3, 2, 1], r)
+        searches = [line for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+        check("search flags: omitted flags still send ALL", len(searches) == 1
+              and searches[0].endswith(" UID SEARCH ALL"), searches)
+        check("search flags: message flags unchanged", srv.st() == before)
+    finally:
+        srv.stop()
 
 
 def search_pagination(work):
@@ -3512,6 +3558,59 @@ def typesafe_key_file(work):
     with open(os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         f.write(TYPESAFE_KEY + "\n")
     return key_file
+
+
+def important_folders(work):
+    fixture = jev_fixture()
+    important = "[Gmail]/Important"
+    special = {"[Gmail]/All Mail": "\\All", "[Gmail]/Starred": "\\Flagged",
+               important: "\\Important"}
+    for name, attr in special.items():
+        fixture["mailboxes"][name] = empty_mailbox([attr])
+    fixture["mailboxes"][important + "/Existing"] = empty_mailbox()
+    fixture["mailboxes"]["Important"] = empty_mailbox()
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    key_file = typesafe_key_file(work)
+    try:
+        c, r = tool(srv, "mail_list_folders")
+        folders = {f["name"]: f for f in r.get("folders", [])}
+        check("Important: advertised role is reported without a name fallback", c == 0
+              and folders.get(important, {}).get("special_use") == "important"
+              and folders.get("Important", {}).get("special_use") is None, r)
+        for name, args in (
+            ("mail_classify", {"uids": [7]}),
+            ("mail_triage", {"uids": [7], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
+            ("mail_get", {"uid": 7}),
+        ):
+            before, start = srv.st(), len(ts.requests())
+            c, r = tool(srv, name, args, **jev_env(ts, key_file))
+            requests = ts.requests()[start:]
+            categories = [q["criteria"] for request in requests
+                          for key, q in request["body"].get("questions", {}).items()
+                          if key.endswith("_category") and q.get("type") == "choice"]
+            check(f"Important: {name} excludes special-use folders and their children", c == 0
+                  and categories and all("Work" in q and "Important" in q
+                      and not any(folder in q for folder in special)
+                      and important + "/Existing" not in q for q in categories), (r, categories))
+            check(f"Important: {name} leaves messages and flags unchanged", srv.st() == before)
+        c, r = tool(srv, "mail_move", {"uids": [2], "uidvalidity": INBOX_VALIDITY,
+                                       "destination": important})
+        check("Important: explicitly named move still works", c == 0
+              and 2 not in msgs(srv.st(), "INBOX")
+              and len(msgs(srv.st(), important)) == 1, r)
+        for name, args in (
+            ("mail_label", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "label": important}),
+            ("mail_label", {"uids": [3], "uidvalidity": INBOX_VALIDITY,
+                            "label": important + "/Existing"}),
+            ("mail_create_folder", {"name": important + "/Child"}),
+            ("mail_rename_folder", {"from": "Work", "to": important + "/Renamed"}),
+            ("mail_rename_folder", {"from": important, "to": "Renamed"}),
+        ):
+            refused(srv, f"Important: {name} protects the reserved folder", name, args, "relies on")
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def jev(work):
