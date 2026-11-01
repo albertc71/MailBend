@@ -63,6 +63,46 @@ def check(root, verdict=False):
     )
 
 
+def declarations(source, label, strict=False):
+    lines = source.splitlines()
+    result = {}
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"^(law|def) ([A-Za-z_][A-Za-z_0-9.]*)[(:]", line)
+        if match is None:
+            require(not strict or not line.strip() or line.startswith(("#", "import ")),
+                    f"{label}:{index + 1}: unsupported top-level snippet text")
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and (not lines[end].strip() or lines[end][0].isspace()):
+            end += 1
+        key = (match[1], match[2])
+        require(key not in result, f"{label}: duplicate {key[0]} {key[1]}")
+        result[key] = "\n".join(lines[index:end]).strip()
+        index = end
+    return result
+
+
+def require_source_match(source, laws, proofs):
+    actual_laws = declarations(laws, "LAWS.bend")
+    actual_proofs = declarations(proofs, "PROOF.bend")
+    examples = declarations(source, "guide", strict=True)
+    require(examples, "guide: no declarations to compare")
+    for (kind, name), text in examples.items():
+        actual = actual_laws if kind == "law" else actual_proofs
+        target = name
+        if kind == "def" and ("law", name) in actual_laws:
+            target = "Laws." + name
+            text = text.replace("def " + name + "(", "def " + target + "(", 1)
+        key = (kind, target)
+        require(key in actual, f"guide {kind} {name}: missing source declaration {target}")
+        require([line.rstrip() for line in text.splitlines()] ==
+                [line.rstrip() for line in actual[key].splitlines()],
+                f"guide {kind} {name}: differs from source declaration {target}")
+
+
 def require_pass(result, label):
     require(result.returncode == 0 and "ALL PROOFS CHECK" in result.stdout,
             f"{label}\n{result.stdout}\n{result.stderr}")
@@ -74,6 +114,9 @@ def main():
     parser.add_argument("--guide", type=Path, default=ROOT / "docs/WRITING-LAWS.md")
     args = parser.parse_args()
     source = snippets(args.guide)
+    require_source_match(source, (ROOT / "LAWS.bend").read_text(encoding="utf-8"),
+                         (ROOT / "PROOF.bend").read_text(encoding="utf-8"))
+    print("PASS guide declarations match LAWS.bend and PROOF.bend")
     with tempfile.TemporaryDirectory(prefix="mailbend-law-guide-") as directory:
         root = Path(directory)
         shutil.copytree(ROOT / "src", root / "src")

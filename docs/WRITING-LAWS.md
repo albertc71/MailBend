@@ -23,7 +23,9 @@ the proven BendTT kernel. This does not prove that a law states the right
 promise. The translation to BendTT is not itself proved.
 
 The checker below extracts this page's marked Bend blocks in order into one
-temporary module, then checks that module with `--verdict`. It also requires
+temporary module. Before compiling, it checks each law and definition against
+its declaration in `LAWS.bend` or `PROOF.bend`, ignoring line endings and trailing whitespace only. It qualifies law proofs
+with `Laws.`. Then it checks the module with `--verdict`. It also requires
 a broken production search plan to fail. No snippet sends mail or runs a
 native helper. Imports in the first block are relative to that module at
 the temporary repository root.
@@ -38,7 +40,7 @@ Keep the relevant tests and source checks. See
 ## Start with an equality that computes
 
 Copy the shape of [`search_writes_nothing`](../LAWS.bend) and its
-[`Laws.search_writes_nothing` proof](../PROOF.bend#L69-L70).
+[`Laws.search_writes_nothing` proof](../PROOF.bend).
 The small example keeps the law and proof together. In the repository,
 `PROOF.bend` imports `LAWS.bend as Laws`, so its proof name has that prefix.
 
@@ -66,7 +68,7 @@ universal proof, not a test with one mailbox and an empty key list.
 When reduction stops at a computed Boolean, pass that Boolean to a helper
 and match its parameter. Follow
 [`get_new_writes_nothing`](../LAWS.bend) and
-[`get_new_writes_nothing.if`](../PROOF.bend#L122-L133).
+[`get_new_writes_nothing.if`](../PROOF.bend).
 
 ```bend guide:computed-condition
 law get_new_writes_nothing:
@@ -94,7 +96,8 @@ erased parameters used only in the proof's type.
 
 For an arbitrary list, prove the empty case and recurse on its tail.
 These two lemmas support [`thread_plans_write_nothing`](../LAWS.bend).
-They are copied from [the thread-search proofs](../PROOF.bend#L140-L161).
+They are copied from `thread_searches_add_no_write` and
+`thread_search_writes_nothing` in [PROOF.bend](../PROOF.bend).
 
 ```bend guide:list-induction
 def thread_searches_add_no_write(keys: List<&2, I.Key>, -rest: List<&2, I.Cmd>)
@@ -129,7 +132,7 @@ the headers-plan proof. These two lemmas alone do not prove that part.
 Bend parameters are affine by default. If a law parameter goes to two
 lemmas, bind a reusable copy. In
 [`rename_changes_no_mail`](../LAWS.bend), the proof in
-[PROOF.bend](../PROOF.bend#L849-L857) binds `+m = moved` before passing `m` to
+[PROOF.bend](../PROOF.bend), `Laws.rename_changes_no_mail`, binds `+m = moved` before passing `m` to
 `subscribe_moved_changes_no_mail` and `unsubscribe_old_changes_no_mail`.
 The list proof above uses `+keys` for the same reason.
 
@@ -140,7 +143,7 @@ erased `-x`, which cannot supply a runtime value.
 ## Eliminate an impossible Boolean premise
 
 For contradictory equalities, use the existing `bool_motive` and
-`true_is_not_false` pattern from [PROOF.bend](../PROOF.bend#L899-L908).
+`true_is_not_false` pattern from [PROOF.bend](../PROOF.bend).
 Its `and_left` lemma helps prove the independent triage promises, including
 [`triage_moves_only_to_known_folders`](../LAWS.bend).
 
@@ -181,7 +184,7 @@ For each new plan, check these risks:
 
 - State the promise independently of the plan's own guard. Do not prove
   only that a guard accepts its own output. Follow the triage laws and
-  [their lemmas](../PROOF.bend#L1081-L1168) that derive each promise from
+  [their lemmas](../PROOF.bend), `offered_moves` through `known_plans`, that derive each promise from
   the guard's verdict.
 - Prefer exact plans when command order, caller mailbox, UID list, or
   UIDVALIDITY matters. See
