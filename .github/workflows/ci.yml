@@ -30,6 +30,11 @@ jobs:
       - name: Secret scan (gitleaks, redacted; tree and history)
         run: sh scripts/scan-secrets.sh
 
+      - name: Documentation source names and drift mutations
+        run: |
+          python3 scripts/check-docs.py
+          python3 tests/test-docs.py
+
       - name: Install build dependencies
         run: |
           sudo apt-get update

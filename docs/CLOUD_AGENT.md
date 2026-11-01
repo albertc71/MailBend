@@ -46,7 +46,8 @@ environment owner install the packages listed in
 
 Setup reuses Bend when it is already installed; otherwise it installs the
 release tested in CI, pinned with its sha256 in
-[install-bend.sh](../scripts/install-bend.sh) (Linux x64 only). For a
+[install-bend.sh](../scripts/install-bend.sh). That installer pins only the
+Linux x64 archive. For a
 compiler-related rebuild failure, compare an existing Bend with that pinned
 version. Setup does not downgrade an installed Bend.
 
