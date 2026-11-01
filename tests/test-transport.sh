@@ -33,8 +33,9 @@ fail() { echo "FAIL $1 -- $2"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 # --- build the helper -------------------------------------------------
 mkdir -p "$ROOT/bin"
-if ! { (cd "$ROOT/native" && "${CARGO:-cargo}" build --release --locked --quiet -p mailbend-tls) \
-       && cp "$ROOT/native/target/release/mailbend-tls" "$HELPER"; } 2>"$WORK/build.err"; then
+if ! { (cd "$ROOT/native" && "${CARGO:-cargo}" build --release --locked --quiet -p mailbend-tls -p mailbend-typesafe) \
+       && cp "$ROOT/native/target/release/mailbend-tls" "$HELPER" \
+       && cp "$ROOT/native/target/release/mailbend-typesafe" "$ROOT/bin/mailbend-typesafe"; } 2>"$WORK/build.err"; then
   echo "FAIL build -- $(cat "$WORK/build.err")"
   exit 1
 fi
@@ -106,7 +107,7 @@ call_helper() {
   shift 2
   printf '%s' "$script" >"$WORK/in.txt"
   OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
-  env -u MAILBEND_SMTP_TLS_MODE MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
+  env -u MAILBEND_SMTP_TLS_MODE -u MAILBEND_LOGIN MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
       MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
       "$@" "$HELPER" "$protocol" <"$WORK/in.txt" >"$OUT" 2>"$ERR"
   CODE=$?
@@ -691,6 +692,11 @@ case_selected_section
 case_refresh
 case_smtp_modes
 case2
+if python3 "$ROOT/tests/test-process-protection.py"; then
+  pass "secret helpers refuse dumps and external environment reads"
+else
+  fail "secret helper process protection" "process checks failed"
+fi
 
 echo "transport: $PASS_COUNT passed, $FAIL_COUNT failed"
 [ "$FAIL_COUNT" -eq 0 ]

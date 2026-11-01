@@ -2,7 +2,7 @@
 
 import Base
 import ../../src/diagnostics.bend as D
-import ../../src/tools.bend as T
+import ../../src/policy.bend as T
 import ../../src/imap.bend as I
 import ../../src/json.bend as J
 

@@ -68,6 +68,8 @@ rendering, response interpretation, MIME behaviour, and agent-visible results.
 ## When using Bend
 - run `bend guide` to learn it (Bend 2 differs from the old Bend/HVM language)
 - use `LAWS.bend` to keep important rules; do not weaken a law to make code pass
+- follow [Writing laws](docs/WRITING-LAWS.md) for proof patterns and checks
+  against vacuous promises
 - run `bend PROOF.bend --verdict` before committing: it must print
   "ALL PROOFS CHECK". `--verdict` also rechecks every def with Bend's proven
   kernel, which it builds with the Lean that `scripts/install-lean.sh`
@@ -75,7 +77,8 @@ rendering, response interpretation, MIME behaviour, and agent-visible results.
 - the proof skills in `.agents/skills/` (`.claude/skills` links there) say
   when a change needs a proof rechecked, how to run it and how to read a
   failure: `role-folder-proofs` for role-folder resolution, `smtp-tls-proofs`
-  for SMTP TLS ordering
+  for SMTP TLS ordering, and `policy-proofs` for switch refusals, command
+  classifiers, draft plans and role provenance
 - Bend has no mutual recursion, `match` only inspects parameters, and defs
   must be declared before use; `Bool.pick` evaluates both branches, so never
   put a recursive call in both (that is exponential): recurse once and pick
@@ -88,7 +91,9 @@ Run every check in [CONTRIBUTING.md](CONTRIBUTING.md#checks).
 CI (`.github/workflows/ci.yml`) runs these checks on the Bend release pinned
 in `scripts/install-bend.sh`; bump `BEND_VERSION` and `BEND_SHA256` there
 together, and set `LEAN_TOOLCHAIN` in `scripts/install-lean.sh` to the Lean
-release that Bend's `--verdict` asks for.
+release that Bend's `--verdict` asks for. Follow the
+[Bend upgrade runbook](CONTRIBUTING.md#upgrade-bend), including the separate
+non-required canary, before proposing a pin change.
 
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in

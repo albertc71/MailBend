@@ -45,6 +45,9 @@ server](#use). Details of the install are [below](#install-linux).
 Limits: Linux only, password login only (no OAuth); see
 [Known limits](#known-limits).
 
+For a dated comparison with other email connectors, see
+[the connector comparison](docs/COMPARISON.md).
+
 For shareable setup checks, run `scripts/mailbend diagnose` (local only), or
 explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp`.
 SMTP diagnostics authenticate without sending mail, including in read-only or
@@ -194,8 +197,8 @@ failed build, check, proof or compile leaves the installation as it was. A
 running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
-the pinned Bend to `~/.bend` after checking the archive's sha256; that
-release is Linux x64 only, so elsewhere install the same version yourself.
+the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
+pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -240,6 +243,22 @@ Attachments and downloads stay off until `MAILBEND_ATTACH_DIR` and
 `MAILBEND_DOWNLOAD_DIR` name dedicated directories (see [Safety](#safety)).
 Jev's settings are in [docs/JEV.md](docs/JEV.md#settings).
 
+Outgoing sends and drafts refuse hidden Unicode tag characters outside valid
+emoji tag sequences, and bidi controls in attachment filenames, before stamping
+or delivery. Validity follows UTS #51 Annex C with pinned CLDR 49 identifiers,
+including valid non-RGI subdivision and numeric region flags. Ordinary RTL text,
+bidi controls outside filenames, and zero-width emoji joiners remain allowed.
+The `hidden_unicode` result reports `{tag, bidi, zero_width}` for the subject,
+body, sender display name, positional To/Cc/Bcc display names and attachment
+filenames. Encoded-word-looking filenames use literal RFC 2231 parameters and
+a neutral ASCII fallback so tolerant readers cannot decode hidden text from
+them. This ambiguous-input case changes MIME bytes, not the literal filename.
+LRM and RLM count in both `bidi` and `zero_width`. Allowed flags still
+have nonzero `tag` counts. Replies and forwards remove invalid tags only from
+copied source text and display names, and report those removals as `removed_tags`.
+The forwarded original `.eml` attachment remains unchanged. Dry runs report the
+same counts without sending or saving anything.
+
 Sending (`mail_send`, and replies and forwards that are not drafts) has its
 own optional settings. A malformed value refuses every send, never reads as
 off, and leaves drafts and reads alone:
@@ -268,10 +287,30 @@ modes. Ports never select a mode, and failures never fall back to another mode
 or plaintext. Empty or unknown mode values are configuration errors.
 OAuth is unsupported.
 
+If the provider requires a login name different from your email address, set
+`MAILBEND_LOGIN`. A nonempty value is used only for IMAP LOGIN and SMTP AUTH
+PLAIN/LOGIN. Unset or empty uses `MAILBEND_EMAIL`, which remains required and
+continues to supply the From address and reply identity. The login name must
+be printable ASCII without spaces. This option does not change recipient
+allowlists or establish compatibility with an untested provider.
+
+| Profile | Transport | Validation |
+| --- | --- | --- |
+| iCloud Mail, existing default profile | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |
+| Local synthetic server | SMTP STARTTLS and implicit TLS | Automated transport and end-to-end tests |
+| Other provider/account combinations | Either implemented SMTP mode | Not live-tested; no target accounts supplied |
+
+Implicit SMTP support was accepted to cover password-authenticated endpoints
+without STARTTLS. This adds a protocol mode, not a provider compatibility
+claim. Any later live-provider test requires separately authorized accounts
+and explicit disposable recipients.
+
 ### Print a provider configuration
 
 Run setup without credentials to print an environment block, an MCP `env`
 JSON block, provider prerequisites, and source links:
+
+List available providers with `mailbend setup --help`.
 
 ```sh
 mailbend setup --provider gmail --email reader@example.com
@@ -279,8 +318,8 @@ mailbend setup --provider gmail --email reader@example.com
 
 Replace the example address with your account's primary login address.
 `setup` does not use configured account settings, connect to a server, prompt for
-a password, write a file, or apply settings. Both blocks enable
-`MAILBEND_READ_ONLY=1`. Keep that restriction until you separately decide
+a password, write a file, or apply settings. Both blocks clear `MAILBEND_LOGIN` so login uses the printed email address,
+and enable `MAILBEND_READ_ONLY=1`. Keep that restriction until you separately decide
 which mail changes to allow.
 
 The output uses `MAILBEND_PASSWORD_FILE`. Replace its absolute placeholder
@@ -306,7 +345,7 @@ autodiscovery. Each output identifies its support tier and review date.
 | `gmx` | GMX.com endpoint set. Enable IMAP and use an application-specific password. |
 | `mailbox.org` | Main address. Use an email application password with two-factor authentication. |
 | `posteo` | Endpoints from Thunderbird ISPDB. Provider prerequisites could not be rechecked. Review app-password and additional account-protection requirements locally. |
-| `web.de` | Manual review only. ISPDB specifies a local-part login, but MailBend uses one full address for login and sending. No configuration is printed. |
+| `web.de` | Manual review only. ISPDB specifies a local-part login. The preset does not choose a login name; compatibility still needs review. No configuration is printed. |
 | `proton-bridge` | Manual review only. Local ports, connection mode, and trust in Bridge's self-signed certificate need an account-owner decision. No configuration is printed. |
 
 Unknown providers and OAuth-only names such as `outlook`, `hotmail`, and
@@ -334,16 +373,7 @@ guessing or creating a folder. The fixed `INBOX` name has no override.
 **Do not share `setup --check` output.** It can contain private folder names.
 Use `mailbend diagnose --imap --smtp` for shareable JSON instead.
 
-| Profile | Transport | Validation |
-| --- | --- | --- |
-| iCloud Mail, existing default profile | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |
-| Local synthetic server | SMTP STARTTLS and implicit TLS | Automated transport and end-to-end tests |
-| Other provider/account combinations | Either implemented SMTP mode | Not live-tested; no target accounts supplied |
-
-Implicit SMTP support was accepted to cover password-authenticated endpoints
-without STARTTLS. This adds a protocol mode, not a provider compatibility
-claim. Any later live-provider test requires separately authorized accounts
-and explicit disposable recipients.
+### Role folder resolution
 
 The role folders are Drafts, Trash, Sent, Junk and Archive. Each role
 resolves independently, in this order: a nonempty explicit override, a
@@ -377,6 +407,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 ## Use
 
+For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
+They keep passwords in private files and use the public launcher.
+
 Check the connection first:
 
 ```sh
@@ -388,6 +421,20 @@ scripts/mailbend tools        # the tool list with JSON schemas
 
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
+
+Stopping the server PID with INT, TERM, HUP or QUIT stops the core but allows
+an already-started helper plan to continue, with either pipe or socket stdin.
+The helper's per-operation timeouts still apply, but there is no total-plan
+deadline after the core exits. A plan can still stop on a server rejection or
+I/O failure. SMTP sends no message bytes if the core has exited before the
+helper writes its pre-body progress marker. Once that marker succeeds, the
+send may continue. SIGKILL remains the hard stop for the adapter and core,
+not a guarantee that every helper has stopped. Clients that terminate a
+broader process tree can also kill helpers.
+
+After the core exits there is no completion or partial result, and MailBend
+does not retry the plan. Check the mailbox or delivery outcome before retrying
+a change. See the [adapter lifecycle](native/README.md#mcp-stdin-adapter).
 
 Register the MCP server (stdio) with your agent, using the absolute path:
 
@@ -480,6 +527,10 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages
 
+For caller-owned systemd user timers, see the
+[read-only brief, notifier, and queued draft recipes](docs/RECIPES.md).
+MailBend itself remains daemon-free.
+
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
@@ -569,9 +620,11 @@ synthetic cost measurements and experiment decision are in
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as
-  `UID EXPUNGE` (proven).
+  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID
+  commands. Commands that take a UID list preserve its order. STORE preserves
+  the requested flag and add or remove operation (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
-  caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
+  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
@@ -623,7 +676,7 @@ synthetic cost measurements and experiment decision are in
   `To Delete` or a category folder passed in, never into INBOX, a role
   folder or the folder it reads, and creates no folder (proven for every
   input).
-- **An interrupted move says so.** A move (`mail_move`, `mail_trash`,
+- **The running core reports interrupted changes.** A move (`mail_move`, `mail_trash`,
   `mail_label`) cut off when its COPY may have run fails with `partial: true`
   (the messages may be in both folders; `isError` over MCP, exit 1 on the
   CLI), never as an error that implies nothing changed. A refused or earlier
@@ -637,7 +690,8 @@ synthetic cost measurements and experiment decision are in
   A helper that never started (a relative `MAILBEND_TLS_HELPER`, or one that
   cannot be spawned) changed nothing, so it is an ordinary error; one that
   failed after starting or was killed by a signal may have, so these changes
-  count it as cut off.
+  count it as cut off. These results require the core to remain alive. Stopping
+  the core can leave a completed or partial change with no result to the client.
 - **Attachments stay inside one directory.** Attachments are read only from
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   the credential-free `mailbend-attach`, which refuses symlinks, `..`, hard
@@ -657,14 +711,26 @@ synthetic cost measurements and experiment decision are in
   directory in `PATH`). A saved file is still untrusted content. Mechanics:
   [native/README.md](native/README.md#contract).
 - **Jev sees only what you allow.** See [Jev](#jev-optional).
-- **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
-  test server; whoever sets it decides which servers are trusted, so never
-  set it in production. `scripts/mailbend` prints a warning when it is set.
+- **Trust overrides replace the system trust store.** Both network helpers
+  honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, combining their certificates when
+  both are configured. No usable roots means failure, not platform fallback.
+  Empty directory entries are ignored, but an empty file value fails to load.
+  A nonempty `MAILBEND_CA_FILE` takes precedence and exists for local test
+  servers. Never set it in production. Whoever sets an override chooses
+  which servers are trusted. Certificate and hostname verification remain
+  mandatory. `scripts/mailbend` warns when an override is set.
+  `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
+  without the path. See the [native trust rule](native/README.md#contract).
 - **Commands run in lock-step.** They run one at a time and stop at the
   first rejection; message contents are framed as IMAP literals, so a
   message cannot spoof a server reply.
 
 ### What the proofs cover
+
+`PROOF.bend` imports the pure policy module rather than tool orchestration or the
+generated schema. CI separately kernel-checks `src/tools.bend` and the
+tool-layer laws in [`tests/formal/tool-laws.bend`](tests/formal/tool-laws.bend),
+so this separation does not reduce the previous tool-layer coverage.
 
 The bounded [SMTP TLS-ordering model](.agents/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
@@ -682,6 +748,19 @@ from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Fold
 discovery, override validation and how each tool uses the resolved folder are
 covered by the end-to-end tests.
 
+The switch laws cover every operation and JSON argument value. Read-only calls
+that can write, drafts-only calls that send, and Jev-dependent calls with Jev off
+all return a non-empty refusal. The send classifier is fixed independently to the
+operation and `as_draft` field. Unrecognized Boolean switch strings produce a bad
+flag, and a bad flag in any of the five configuration positions rejects the whole
+configuration. Environment reads and tool dispatch remain end-to-end tested.
+
+Each mutating IMAP constructor has a law for its exact effect and write status,
+for every argument. A draft plan is exactly one APPEND with Draft and Seen flags.
+Every resolved role has a structural witness of its exact name and selectability
+in the original listing, with no bound on the list length. The policy mutation
+check rejects changed gates, classifiers, draft plans and invented role names.
+
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
@@ -695,8 +774,8 @@ makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome la
 for every exit code and transcript, and that confirmed acceptance survives a
 later process failure. Native progress production itself remains a tested IO
 boundary. The native
-helpers, TLS, MIME parsing, the agent's choices and the runtime
-configuration are covered by tests and review, not by proofs, and nothing
+helpers, TLS, MIME parsing, the agent's choices and environment
+loading are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
@@ -770,9 +849,16 @@ before relying on a complete link.
 
 ## Known limits
 
+For failed calls, provider limits, concurrency, upgrades, and rollback, use
+the [operator runbook](docs/OPERATIONS.md).
+
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
+- The compiled Bend core needs glibc 2.34 or newer. The installer checks this
+  before compilation. Downloads need `O_TMPFILE` support on the download
+  directory's file system, which WSL's `/mnt/c` can lack. `mailbend diagnose`
+  reports local platform prerequisites without paths or OS error text.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on

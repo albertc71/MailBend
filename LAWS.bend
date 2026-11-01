@@ -22,7 +22,7 @@ import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
-import ./src/tools.bend as Tools
+import ./src/policy.bend as Policy
 
 import ./src/response.bend as Response
 
@@ -98,6 +98,11 @@ law tools_listed_per_config:
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
        "mail_get_thread"] : List<&2, String>})
+
+# LAW: every operation's tool name resolves back to that operation.
+law from_name_inverts_name:
+  for op: Ops.Op
+  {Ops.from_name(Ops.name(op)) == Some{op} : Maybe<&2, Ops.Op>}
 
 # Read plans
 # ----------
@@ -229,6 +234,12 @@ law get_new_writes_nothing:
   for mbox: String
   for since: U32
   {I.any_writes(Ops.plan_new(mbox, since)) == False{} : Bool}
+
+# LAW: taking a current-end checkpoint only examines the folder, without
+# searching, fetching messages, selecting for writes, or changing mail.
+law get_new_now_examines_only:
+  for mbox: String
+  {Ops.plan_new_now(mbox) == [I.CExamine{mbox}] : List<&2, I.Cmd>}
 
 # LAW: refresh is read-only, pins identity before reading UIDs, and uses
 # only metadata FETCH followed by a caller-bounded UID SEARCH.
@@ -652,6 +663,87 @@ law copy_move_checks_uidplus:
   {Ops.checks_uidplus(Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv)) ==
     True{} : Bool}
 
+# Exact command rendering
+# -----------------------
+
+# Base's List.map accepts affine lists, while command UIDs use Data lists.
+def uid_decimal_strings(uids: List<&2, U32>) -> List<&2, String>:
+  match uids:
+    case Nil{}:
+      []
+    case u <> t:
+      U32.show(u) <> uid_decimal_strings(t)
+
+law uid_set_is_comma_joined:
+  for uids: List<&2, U32>
+  {I.uid_set(uids) == String.join(uid_decimal_strings(uids), ",") : String}
+
+law select_renders_callers_folder:
+  for mbox: String
+  {I.cmd_str(I.CSelect{mbox}) == "SELECT " ++ I.mailbox(mbox) : String}
+
+law copy_renders_exactly:
+  for uids: List<&2, U32>
+  for dest: String
+  {I.cmd_str(I.CCopy{uids, dest}) == "UID COPY " ++ I.uid_set(uids) ++ " " ++
+    I.mailbox(dest) : String}
+
+law move_renders_exactly:
+  for uids: List<&2, U32>
+  for dest: String
+  {I.cmd_str(I.CMove{uids, dest}) == "UID MOVE " ++ I.uid_set(uids) ++ " " ++
+    I.mailbox(dest) : String}
+
+law fetch_renders_exactly:
+  for uids: List<&2, U32>
+  for items: List<&2, I.Item>
+  {I.cmd_str(I.CFetch{uids, items}) == "UID FETCH " ++ I.uid_set(uids) ++ " (" ++
+    I.items_str(items) ++ ")" : String}
+
+law search_renders_uid_search:
+  for keys: List<&2, I.Key>
+  {I.cmd_str(I.CSearch{keys}) == "UID SEARCH " ++ I.search_args(keys) : String}
+
+law guard_search_renders_exact_uids:
+  for uids: List<&2, U32>
+  {I.cmd_str(I.CSearch{[I.KUids{uids}]}) == "UID SEARCH UID " ++ I.uid_set(uids) : String}
+
+# Both operations and every flag name are literals, independent of their renderers.
+law store_renders_exactly:
+  for uids: List<&2, U32>
+  ({I.cmd_str(I.CStore{uids, True{}, I.FSeen{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Seen)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FSeen{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Seen)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FDeleted{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Deleted)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FDeleted{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Deleted)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FDraft{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Draft)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FDraft{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Draft)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FFlagged{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Flagged)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FFlagged{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Flagged)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FAnswered{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT (\\Answered)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FAnswered{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT (\\Answered)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FColourBit0{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT ($MailFlagBit0)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FColourBit0{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT ($MailFlagBit0)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FColourBit1{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT ($MailFlagBit1)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FColourBit1{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT ($MailFlagBit1)" : String} &
+   {I.cmd_str(I.CStore{uids, True{}, I.FColourBit2{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " +FLAGS.SILENT ($MailFlagBit2)" : String} &
+   {I.cmd_str(I.CStore{uids, False{}, I.FColourBit2{}}) ==
+      "UID STORE " ++ I.uid_set(uids) ++ " -FLAGS.SILENT ($MailFlagBit2)" : String})
+
 # UIDVALIDITY pinning
 # -------------------
 
@@ -763,6 +855,148 @@ law delete_pins_callers_uidvalidity:
   {Ops.pin_line_or(
     Ops.plan_delete(mbox, uids, confirm, uidplus, uidv), I.uidv_line(uidv)) ==
     I.uidv_line(uidv) : String}
+
+# These equalities retain every command, so no later mailbox switch is hidden.
+law mark_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for seen: Bool
+  for uidv: U32
+  {Ops.plan_mark(mbox, uids, seen, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, seen, I.FSeen{}}
+    ] : List<&2, I.Cmd>}
+
+law flag_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for colour: I.Colour
+  for b0: Bool
+  for b1: Bool
+  for b2: Bool
+  for uidv: U32
+  ({Ops.plan_flag(mbox, uids, None{}, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>} &
+   ({I.colour_bits(colour) == I.Bits{b0, b1, b2} : I.Bits} ->
+    {Ops.plan_flag(mbox, uids, Some{colour}, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FFlagged{}},
+      I.CStore{uids, b0, I.FColourBit0{}},
+      I.CStore{uids, b1, I.FColourBit1{}},
+      I.CStore{uids, b2, I.FColourBit2{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>}))
+
+law unflag_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  {Ops.plan_unflag(mbox, uids, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, False{}, I.FFlagged{}},
+      I.CStore{uids, False{}, I.FColourBit0{}},
+      I.CStore{uids, False{}, I.FColourBit1{}},
+      I.CStore{uids, False{}, I.FColourBit2{}},
+      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}
+    ] : List<&2, I.Cmd>}
+
+law move_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for dest: String
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_move(mbox, uids, dest, True{}, uidplus, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CMove{uids, dest}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_move(mbox, uids, dest, False{}, True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CCopy{uids, dest},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_move(mbox, uids, dest, False{}, False{}, uidv) == [] : List<&2, I.Cmd>})
+
+law trash_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for trash: String
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_trash(mbox, uids, trash, True{}, uidplus, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CMove{uids, trash}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_trash(mbox, uids, trash, False{}, True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CCopy{uids, trash},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_trash(mbox, uids, trash, False{}, False{}, uidv) == [] : List<&2, I.Cmd>})
+
+law label_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for label: String
+  for uidplus: Bool
+  for uidv: U32
+  ({Ops.plan_label(mbox, uids, label, True{}, uidplus, uidv) == [
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CMove{uids, label}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_label(mbox, uids, label, False{}, True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CCopy{uids, label},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_label(mbox, uids, label, False{}, False{}, uidv) == [] : List<&2, I.Cmd>})
+
+law delete_opens_callers_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  ({Ops.plan_delete(mbox, uids, "permanently-delete", True{}, uidv) == [
+      I.CCapability{},
+      I.CExpectWord{"UIDPLUS"},
+      I.CSelect{mbox},
+      I.CExpect{I.uidv_line(uidv)},
+      I.CSearch{[I.KUids{uids}]},
+      I.CStore{uids, True{}, I.FDeleted{}},
+      I.CExpunge{uids}
+    ] : List<&2, I.Cmd>} &
+   {Ops.plan_delete(mbox, uids, "permanently-delete", False{}, uidv) == [] : List<&2, I.Cmd>})
 
 # Drafts
 # ------
@@ -1270,13 +1504,13 @@ law outgoing_headers_state_has_no_body:
 # ---------------------
 
 # The observable SMTP outcome, including the successful internal result.
-def smtp_outcome(o: Tools.Out) -> String:
+def smtp_outcome(o: Policy.Out) -> String:
   match o:
-    case Tools.Ok{j}:
+    case Policy.Ok{j}:
       "accepted"
-    case Tools.Partial{j}:
-      Tools.str_arg(j, "smtp_outcome", "missing")
-    case Tools.Err{m}:
+    case Policy.Partial{j}:
+      Policy.str_arg(j, "smtp_outcome", "missing")
+    case Policy.Err{m}:
       "error"
 
 # LAW: once DATA started without a final acknowledgement, or progress is
@@ -1285,8 +1519,8 @@ law smtp_unconfirmed_is_unknown:
   for code: U32
   for out: String
   for err: String
-  ({smtp_outcome(Tools.smtp_code.phase("data_started", code, out, err)) == "unknown" : String} &
-   {smtp_outcome(Tools.smtp_code.phase("", code, out, err)) == "unknown" : String})
+  ({smtp_outcome(Policy.smtp_code.phase("data_started", code, out, err)) == "unknown" : String} &
+   {smtp_outcome(Policy.smtp_code.phase("", code, out, err)) == "unknown" : String})
 
 # LAW: a final DATA acceptance stays successful for every later process
 # exit code; a failed QUIT or interruption cannot turn it into a refusal.
@@ -1294,8 +1528,8 @@ law smtp_acceptance_survives_exit:
   for code: U32
   for out: String
   for err: String
-  {Tools.smtp_code.phase("data_accepted", code, out, err) ==
-    Tools.Ok{J.str(S.last_ok(String.lines(out), ""))} : Tools.Out}
+  {Policy.smtp_code.phase("data_accepted", code, out, err) ==
+    Policy.Ok{J.str(S.last_ok(String.lines(out), ""))} : Policy.Out}
 
 # Read response projections
 # -------------------------
@@ -1324,3 +1558,257 @@ law response_preserves_nonbody:
   for nonbody: {Response.body_key(key) == False{} : Bool}
   {Response.fit_field(J.kv(key, value), left) ==
     Response.Field{J.kv(key, value), left, False{}} : Response.Field}
+
+# Policy and classifier soundness
+# -------------------------------
+
+# LAW: STORE has its exact mutating effect and is always classified as writing
+law store_classifies_as_writing:
+  for uids: List<&2, U32>
+  for add: Bool
+  for flag: I.Flag
+  ({I.effect(I.CStore{uids, add, flag}) == I.EMail{} : I.Effect} &
+   {I.writes(I.effect(I.CStore{uids, add, flag})) == True{} : Bool} &
+   {I.any_writes([I.CStore{uids, add, flag}]) == True{} : Bool})
+
+# LAW: COPY has its exact mutating effect and is always classified as writing
+law copy_classifies_as_writing:
+  for uids: List<&2, U32>
+  for dest: String
+  ({I.effect(I.CCopy{uids, dest}) == I.ECopy{} : I.Effect} &
+   {I.writes(I.effect(I.CCopy{uids, dest})) == True{} : Bool} &
+   {I.any_writes([I.CCopy{uids, dest}]) == True{} : Bool})
+
+# LAW: MOVE has its exact mutating effect and is always classified as writing
+law move_classifies_as_writing:
+  for uids: List<&2, U32>
+  for dest: String
+  ({I.effect(I.CMove{uids, dest}) == I.EMail{} : I.Effect} &
+   {I.writes(I.effect(I.CMove{uids, dest})) == True{} : Bool} &
+   {I.any_writes([I.CMove{uids, dest}]) == True{} : Bool})
+
+# LAW: EXPUNGE has its exact mutating effect and is always classified as writing
+law expunge_classifies_as_writing:
+  for uids: List<&2, U32>
+  ({I.effect(I.CExpunge{uids}) == I.EExpunge{} : I.Effect} &
+   {I.writes(I.effect(I.CExpunge{uids})) == True{} : Bool} &
+   {I.any_writes([I.CExpunge{uids}]) == True{} : Bool})
+
+# LAW: APPEND has its exact mutating effect and is always classified as writing
+law append_classifies_as_writing:
+  for mbox: String
+  for flags: List<&2, I.Flag>
+  for msg: String
+  ({I.effect(I.CAppend{mbox, flags, msg}) == I.EMail{} : I.Effect} &
+   {I.writes(I.effect(I.CAppend{mbox, flags, msg})) == True{} : Bool} &
+   {I.any_writes([I.CAppend{mbox, flags, msg}]) == True{} : Bool})
+
+# LAW: CREATE has its exact mutating effect and is always classified as writing
+law create_classifies_as_writing:
+  for mbox: String
+  ({I.effect(I.CCreate{mbox}) == I.EFolder{} : I.Effect} &
+   {I.writes(I.effect(I.CCreate{mbox})) == True{} : Bool} &
+   {I.any_writes([I.CCreate{mbox}]) == True{} : Bool})
+
+# LAW: RENAME has its exact mutating effect and is always classified as writing
+law rename_classifies_as_writing:
+  for from: String
+  for to: String
+  ({I.effect(I.CRename{from, to}) == I.EFolder{} : I.Effect} &
+   {I.writes(I.effect(I.CRename{from, to})) == True{} : Bool} &
+   {I.any_writes([I.CRename{from, to}]) == True{} : Bool})
+
+# LAW: SUBSCRIBE has its exact mutating effect and is always classified as writing
+law subscribe_classifies_as_writing:
+  for mbox: String
+  ({I.effect(I.CSubscribe{mbox}) == I.EFolder{} : I.Effect} &
+   {I.writes(I.effect(I.CSubscribe{mbox})) == True{} : Bool} &
+   {I.any_writes([I.CSubscribe{mbox}]) == True{} : Bool})
+
+# LAW: UNSUBSCRIBE has its exact mutating effect and is always classified as writing
+law unsubscribe_classifies_as_writing:
+  for mbox: String
+  ({I.effect(I.CUnsubscribe{mbox}) == I.EFolder{} : I.Effect} &
+   {I.writes(I.effect(I.CUnsubscribe{mbox})) == True{} : Bool} &
+   {I.any_writes([I.CUnsubscribe{mbox}]) == True{} : Bool})
+
+# LAW: SELECT has its exact mutating effect and is always classified as writing
+law select_classifies_as_writing:
+  for mbox: String
+  ({I.effect(I.CSelect{mbox}) == I.ESelect{} : I.Effect} &
+   {I.writes(I.effect(I.CSelect{mbox})) == True{} : Bool} &
+   {I.any_writes([I.CSelect{mbox}]) == True{} : Bool})
+
+# LAW: the plan classifier checks every command, not only the first one
+law any_writes_checks_each_command:
+  for command: I.Cmd
+  for rest: List<&2, I.Cmd>
+  ({I.any_writes([]) == False{} : Bool} &
+   {I.any_writes(command <> rest) ==
+     (I.writes(I.effect(command)) || I.any_writes(rest)) : Bool})
+
+# LAW: saving a draft is exactly one APPEND of its message, marked Draft and Seen
+law draft_is_exact_append:
+  for drafts: String
+  for msg: String
+  {Ops.plan_draft(drafts, msg) ==
+    [I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}] : List<&2, I.Cmd>}
+
+# LAW: a helper that never started is not an uncertain mailbox change
+law refused_helper_is_not_lost:
+  for msg: String
+  {Policy.helper_lost(Policy.ProcRefused{msg}) == False{} : Bool}
+
+def sending_call(op: Ops.Op, args: J.Json) -> Bool:
+  match op:
+    case Ops.OSend{}:
+      True{}
+    case Ops.OReply{}:
+      Bool.not(Maybe.default(&2, Bool, J.as_bool(J.get(args, "as_draft")), False{}))
+    case Ops.OForward{}:
+      Bool.not(Maybe.default(&2, Bool, J.as_bool(J.get(args, "as_draft")), False{}))
+    case _:
+      False{}
+
+# LAW: only Send and non-draft Reply or Forward calls send over SMTP
+law sending_calls_are_exact:
+  for op: Ops.Op
+  for args: J.Json
+  {Policy.sends(op, args) == sending_call(op, args) : Bool}
+
+# LAW: read-only refuses every call whose operation is not read-only
+law read_only_refuses_writes:
+  for +op: Ops.Op
+  for args: J.Json
+  for drafts: Bool
+  for jev: Bool
+  for write: {Ops.is_read_only(op) == False{} : Bool}
+  {String.is_empty(Policy.refusal(op, args, True{}, drafts, jev)) == False{} : Bool}
+
+# LAW: drafts-only refuses every call that sends over SMTP
+law drafts_only_refuses_sends:
+  for +op: Ops.Op
+  for args: J.Json
+  for +ro: Bool
+  for +jev: Bool
+  for sending: {Policy.sends(op, args) == True{} : Bool}
+  {String.is_empty(Policy.refusal(op, args, ro, True{}, jev)) == False{} : Bool}
+
+# LAW: Jev-off refuses every operation that needs Jev
+law jev_off_refuses_jev_calls:
+  for +op: Ops.Op
+  for +args: J.Json
+  for +ro: Bool
+  for +drafts: Bool
+  for needs: {Ops.needs_jev(op) == True{} : Bool}
+  {String.is_empty(Policy.refusal(op, args, ro, drafts, False{})) == False{} : Bool}
+
+# LAW: a Boolean switch outside the documented on and off values is bad
+law malformed_switch_is_bad:
+  for name: String
+  for value: String
+  for not_empty: {String.is_empty(value) == False{} : Bool}
+  for not_zero: {String.eq(value, "0") == False{} : Bool}
+  for not_false: {String.eq(String.to_lower(value), "false") == False{} : Bool}
+  for not_one: {String.eq(value, "1") == False{} : Bool}
+  for not_true: {String.eq(String.to_lower(value), "true") == False{} : Bool}
+  {Policy.flag_value(name, value) ==
+    Policy.FlagBad{name ++ " must be 1, true, 0, false or empty"} : Policy.Flag}
+
+# LAW: a bad read-only switch rejects config, whatever the other settings are
+law bad_read_only_rejects_config:
+  for drafts_only: Policy.Flag
+  for api_key_set: Bool
+  for typesafe: Policy.Flag
+  for content: String
+  for zero_retention: Policy.Flag
+  for images: Policy.Flag
+  for key_file: String
+  for msg: String
+  {Result.is_done(&2, &2, String, Policy.Config,
+    Policy.config_of(Policy.FlagBad{msg}, drafts_only, api_key_set, typesafe, content,
+      zero_retention, images, key_file)) == False{} : Bool}
+
+# LAW: a bad drafts-only switch rejects config, whatever the other settings are
+law bad_drafts_only_rejects_config:
+  for read_only: Policy.Flag
+  for api_key_set: Bool
+  for typesafe: Policy.Flag
+  for content: String
+  for zero_retention: Policy.Flag
+  for images: Policy.Flag
+  for key_file: String
+  for msg: String
+  {Result.is_done(&2, &2, String, Policy.Config,
+    Policy.config_of(read_only, Policy.FlagBad{msg}, api_key_set, typesafe, content,
+      zero_retention, images, key_file)) == False{} : Bool}
+
+# LAW: a bad typesafe switch rejects config, whatever the other settings are
+law bad_typesafe_rejects_config:
+  for read_only: Policy.Flag
+  for drafts_only: Policy.Flag
+  for api_key_set: Bool
+  for content: String
+  for zero_retention: Policy.Flag
+  for images: Policy.Flag
+  for key_file: String
+  for msg: String
+  {Result.is_done(&2, &2, String, Policy.Config,
+    Policy.config_of(read_only, drafts_only, api_key_set, Policy.FlagBad{msg}, content,
+      zero_retention, images, key_file)) == False{} : Bool}
+
+# LAW: a bad zero-retention switch rejects config, whatever the other settings are
+law bad_zero_retention_rejects_config:
+  for read_only: Policy.Flag
+  for drafts_only: Policy.Flag
+  for api_key_set: Bool
+  for typesafe: Policy.Flag
+  for content: String
+  for images: Policy.Flag
+  for key_file: String
+  for msg: String
+  {Result.is_done(&2, &2, String, Policy.Config,
+    Policy.config_of(read_only, drafts_only, api_key_set, typesafe, content,
+      Policy.FlagBad{msg}, images, key_file)) == False{} : Bool}
+
+# LAW: a bad images switch rejects config, whatever the other settings are
+law bad_images_rejects_config:
+  for read_only: Policy.Flag
+  for drafts_only: Policy.Flag
+  for api_key_set: Bool
+  for typesafe: Policy.Flag
+  for content: String
+  for zero_retention: Policy.Flag
+  for key_file: String
+  for msg: String
+  {Result.is_done(&2, &2, String, Policy.Config,
+    Policy.config_of(read_only, drafts_only, api_key_set, typesafe, content, zero_retention,
+      Policy.FlagBad{msg}, key_file)) == False{} : Bool}
+# A witness keeps the exact listed name and the folder's selectability,
+# rather than assuming a name comparison or a bounded example is sound.
+def listed_selectable(fs: List<&2, I.Folder>, +name: String) -> Type:
+  match fs:
+    case Nil{}:
+      Empty
+    case I.Folder{n, d, attrs} <> rest:
+      Either<&1, &1,
+        ({name == n : String} & {Policy.selectable(attrs) == True{} : Bool}),
+        listed_selectable(rest, name)>
+
+def resolved_in_listing(fs: List<&2, I.Folder>, role: Maybe<&2, String>) -> Type:
+  match role:
+    case None{}:
+      Unit
+    case Some{name}:
+      listed_selectable(fs, name)
+
+# LAW: every resolved role names a selectable folder in the original listing
+law resolved_role_names_selectable_folder:
+  for fs: List<&2, I.Folder>
+  for +override: String
+  for attr: String
+  for a: String
+  for b: String
+  resolved_in_listing(fs, Policy.resolved_role(fs, override, attr, a, b))
+
+# End policy and classifier soundness

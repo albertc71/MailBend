@@ -72,8 +72,8 @@ def presets() -> List<&2, Preset>:
         "https://support.gmx.com/security/2fa/application-specific-passwords.html"],
       "documented GMX.com profile; not live-tested"},
     Preset{"web.de", Manual{"Thunderbird ISPDB specifies a local-part username for WEB.DE. " ++
-      "MailBend uses one full email address for both login and sending, and full-address " ++
-      "login was not established by the reviewed provider documentation. " ++
+      "This preset does not choose a login name. MAILBEND_LOGIN supports a separate " ++
+      "login, but that does not establish compatibility with this provider. " ++
       "No configuration was guessed; this profile needs manual compatibility review."},
       "ISPDB specifies the part before @; full-address login is unverified.",
       "Enable POP3/IMAP access in WEB.DE settings and create an app password. " ++
@@ -133,7 +133,7 @@ def env_fields(s: Settings, email: String) -> List<&2, J.Json>:
     case Manual{reason}:
       []
     case Remote{imap, imap_port, smtp, smtp_port, tls, save_sent}:
-      [J.kv("MAILBEND_EMAIL", J.str(email)),
+      [J.kv("MAILBEND_EMAIL", J.str(email)), J.kv("MAILBEND_LOGIN", J.str("")),
         J.kv("MAILBEND_PASSWORD_FILE", J.str(password_path())),
         J.kv("MAILBEND_IMAP_HOST", J.str(imap)), J.kv("MAILBEND_IMAP_PORT", J.str(imap_port)),
         J.kv("MAILBEND_SMTP_HOST", J.str(smtp)), J.kv("MAILBEND_SMTP_PORT", J.str(smtp_port)),

@@ -1,5 +1,24 @@
 # Native boundaries
 
+`mailbend-attach check <attach-dir> <download-dir>` reports local prerequisites
+without reading credentials or file content. Either argument may be empty.
+It prints exactly four records in this order:
+
+```text
+openat2 ok|unsupported
+attach_dir ok|refused|unset
+download_tmpfile ok|unsupported|refused|unset
+arch x86_64|aarch64|other
+```
+
+`unsupported` means that a required kernel operation is unavailable to this
+process or file system. Directory probes reuse the read and save checks.
+Architecture records are informational, not a support or installation gate.
+The download probe closes an unnamed `O_TMPFILE` without linking it. It does
+not check the caller's PATH or authorize a save. Exit status is 0 when the
+fixed report was produced, including failed prerequisites, or 2 on helper
+failure. Bend owns interpretation and user guidance.
+
 MailBend has four small native programs:
 
 - `mailbend-tls/` (Rust): sockets, TLS and login, the only code that reads the
@@ -76,16 +95,26 @@ Polling observes input, backpressure, child exit and signals without a reader
 thread. EOF drains pending bytes and closes the pipe, then waits for the core's
 existing work; it introduces no new request timeout.
 
-INT, TERM, HUP and QUIT are forwarded to the child's process group. Numeric
-exit codes are preserved and the direct child is reaped. The adapter re-raises
-termination signals where possible; an ignored signal uses shell-equivalent
-`128 + signal` (including Rust's ignored SIGPIPE, reported as 141).
+INT, TERM, HUP and QUIT are forwarded to the core's PID, not its process
+group. As with pipe stdin, a helper plan already started can continue after
+the core exits. The helper still stops on rejection, protocol failure or a
+per-operation I/O timeout. There is no total-plan deadline after the core
+exits. SMTP requires a successful progress write before message bytes, so a
+closed core progress pipe stops a send that has not crossed that boundary.
+No result can be reported after the core exits, and shutdown does not retry
+the plan. Numeric exit codes are preserved and the direct child is reaped.
+The adapter re-raises termination signals where possible; an ignored signal
+uses shell-equivalent `128 + signal` (including Rust's ignored SIGPIPE,
+reported as 141).
 Before exec, a guarded child mode
 sets Linux's parent-death signal and checks its expected parent, so killing the
-adapter also kills the direct core. This does not promise to kill descendants
-already spawned by the core after an uncatchable parent kill. Bend retains all
-framing, UTF-8 validation, request limits and mail policy. The raw compiled
-core still cannot reopen socket stdin; clients must use the public launcher.
+adapter with SIGKILL also kills the direct core. This does not promise to kill
+descendants already spawned by the core after an uncatchable parent kill.
+An adapter failure still kills the core's entire process group with SIGKILL.
+Clients that terminate a broader process tree can also kill helpers; these
+PID-signal semantics do not establish compatibility with a particular client.
+Bend retains all framing, UTF-8 validation, request limits and mail policy.
+The raw compiled core still cannot reopen socket stdin; clients must use the public launcher.
 
 `python3 tests/test-stdio.py` exercises the real compiled core, including a
 raw-core negative control that reproduces the original `ENXIO` failure.
@@ -117,13 +146,24 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 ```
 
 - **TLS**: rustls (ring provider), TLS 1.2+, peer certificate required,
-  chain verified against the system trust store (or `MAILBEND_CA_FILE`, which
-  replaces it), host name verified (DNS names against the certificate's DNS
+  chain verified against the selected trust store, host name verified
+  (DNS names against the certificate's DNS
   names, numeric hosts against its IP addresses), SNI sent for DNS names.
   There is no way to skip verification: one function builds every TLS
   configuration, clippy forbids rustls's `dangerous()` API, and CI greps for
   it. Certificates must carry subjectAltName entries (no CN-only
   certificates).
+  Both network helpers use the same trust rule. A nonempty `MAILBEND_CA_FILE`
+  replaces all other roots and is intended for local tests. Otherwise,
+  `SSL_CERT_FILE` or nonempty entries in the colon-separated `SSL_CERT_DIR`
+  replace platform roots. When both are configured, their certificates are
+  combined. Unusable entries are skipped, but no usable roots means failure,
+  never fallback. An empty `SSL_CERT_FILE` fails to load. Empty directory
+  entries are ignored, so an empty `SSL_CERT_DIR` alone uses platform roots.
+  With neither override, the system trust store applies.
+  `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
+  as the trust-store reason, never a file path. The native diagnostic line
+  is `trust_store ok <token>`.
   SMTP defaults to mandatory STARTTLS, with EHLO repeated after the upgrade.
   `MAILBEND_SMTP_TLS_MODE=implicit` instead verifies TLS before the greeting.
   Only `starttls` and `implicit` are accepted; unset defaults to `starttls`.
@@ -136,7 +176,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   budget. The default cloud resolver, `cloudflare-dns.com:443`, is
   bootstrapped with Cloudflare's `1.1.1.1` and `1.0.0.1` anycast addresses.
   Other resolver hostnames use system DNS for bootstrap. DoH verifies both
-  its peer and hostname, using the system CA store or `MAILBEND_CA_FILE`.
+  its peer and hostname, using the same selected trust store.
   Every helper process resolves anew; no addresses or credentials are cached
   on disk. The resolver sees only DNS queries, never mail credentials/content.
 - **Connection overrides**: `MAILBEND_IMAP_CONNECT_IP` and
@@ -156,7 +196,11 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 - **TypeSafe key**: if `MAILBEND_TYPESAFE_API_KEY` is set, `imap` and `smtp`
   exit 2 before reading anything: the TypeSafe key must never share a
   process with the mail password.
-- **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
+- **Credentials**: `MAILBEND_EMAIL` remains required. A nonempty optional
+  `MAILBEND_LOGIN` replaces it only for IMAP LOGIN and SMTP AUTH PLAIN/LOGIN;
+  unset or empty keeps the email login. The selected login must use printable
+  ASCII without spaces. The login override never changes the From or reply identity.
+  `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` come from the
   environment, or the password from `MAILBEND_PASSWORD_FILE` (an absolute
   path to a regular file owned by the user, mode 600, opened with
   `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)`, so no component
@@ -271,7 +315,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 - **Environment**: if `MAILBEND_TYPESAFE_API_KEY` is set (even empty) it
   exits 2. Otherwise it re-executes itself with only
   `MAILBEND_TYPESAFE_KEY_FILE`, `MAILBEND_TIMEOUT_MS`, `MAILBEND_DOH_URL`,
-  `MAILBEND_CA_FILE`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`,
+  `MAILBEND_CA_FILE`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`,
   `ALL_PROXY`, `no_proxy` and `NO_PROXY`, so `/proc/<pid>/environ` holds no
   mail password or other setting.
 - **Key**: read from `MAILBEND_TYPESAFE_KEY_FILE` with the same rules as
@@ -291,7 +335,7 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   `HTTPS_PROXY`, `all_proxy` or `ALL_PROXY`, the first set (HTTP `CONNECT`,
   unless `no_proxy` or `NO_PROXY` lists the host), else the DoH resolver of
   `MAILBEND_DOH_URL`, else system DNS; then the same verified TLS as the
-  mail helper (`MAILBEND_CA_FILE` replaces the trust store). Each attempt
+  mail helper, including the trust rule above. Each attempt
   has `MAILBEND_TIMEOUT_MS` from connecting to the end of the answer, whose
   size is capped at 4 MiB.
 - **Retries**: HTTP 429 and 5xx answers, and timeouts, are tried again after

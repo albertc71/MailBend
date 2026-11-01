@@ -102,4 +102,4 @@ def main() -> IO(Unit):
 #|False
 #|False
 #|False
-#|{"MAILBEND_EMAIL":"o'hara+$`whoami`@example.com","MAILBEND_PASSWORD_FILE":"/absolute/path/to/mailbend-password","MAILBEND_IMAP_HOST":"imap.example.com","MAILBEND_IMAP_PORT":"993","MAILBEND_SMTP_HOST":"smtp.example.com","MAILBEND_SMTP_PORT":"465","MAILBEND_SMTP_TLS_MODE":"implicit","MAILBEND_READ_ONLY":"1","MAILBEND_SAVE_SENT":"0"}
+#|{"MAILBEND_EMAIL":"o'hara+$`whoami`@example.com","MAILBEND_LOGIN":"","MAILBEND_PASSWORD_FILE":"/absolute/path/to/mailbend-password","MAILBEND_IMAP_HOST":"imap.example.com","MAILBEND_IMAP_PORT":"993","MAILBEND_SMTP_HOST":"smtp.example.com","MAILBEND_SMTP_PORT":"465","MAILBEND_SMTP_TLS_MODE":"implicit","MAILBEND_READ_ONLY":"1","MAILBEND_SAVE_SENT":"0"}

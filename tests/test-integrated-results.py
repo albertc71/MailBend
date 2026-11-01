@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual combined selected-MIME/projection contract checks, CLI and MCP."""
+"""Combined selected-MIME/projection checks and modern MCP persona-task replays."""
 import base64
 import copy
 import importlib.util
@@ -79,4 +79,5 @@ with tempfile.TemporaryDirectory(prefix='mailbend-combined-', dir='/tmp') as wor
                 srv.stop()
 failed = [name for name, ok in t.results if not ok]
 print(f'combined selected projections: {len(t.results) - len(failed)} passed, {len(failed)} failed')
-sys.exit(bool(failed))
+persona = subprocess.run([sys.executable, str(root / 'tests/test-persona.py')])
+sys.exit(bool(failed) or persona.returncode != 0)
