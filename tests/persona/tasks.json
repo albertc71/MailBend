@@ -694,8 +694,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 2,
-        "result_bytes": 2183,
-        "estimated_tokens": 546
+        "result_bytes": 2801,
+        "estimated_tokens": 701
       }
     },
     {
@@ -788,8 +788,8 @@
       "budget": {
         "calls": 2,
         "imap_logins": 2,
-        "result_bytes": 2197,
-        "estimated_tokens": 550
+        "result_bytes": 2815,
+        "estimated_tokens": 704
       }
     },
     {
