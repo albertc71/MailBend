@@ -196,7 +196,11 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 - **TypeSafe key**: if `MAILBEND_TYPESAFE_API_KEY` is set, `imap` and `smtp`
   exit 2 before reading anything: the TypeSafe key must never share a
   process with the mail password.
-- **Credentials**: `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` from the
+- **Credentials**: `MAILBEND_EMAIL` remains required. A nonempty optional
+  `MAILBEND_LOGIN` replaces it only for IMAP LOGIN and SMTP AUTH PLAIN/LOGIN;
+  unset or empty keeps the email login. The selected login must use printable
+  ASCII without spaces. The login override never changes the From or reply identity.
+  `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` come from the
   environment, or the password from `MAILBEND_PASSWORD_FILE` (an absolute
   path to a regular file owned by the user, mode 600, opened with
   `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)`, so no component

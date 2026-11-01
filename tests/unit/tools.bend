@@ -1447,7 +1447,7 @@ def main() -> IO(Unit):
 #|mail server error: e1
 #|configuration error: e2
 #|connection or TLS verification failed: e3
-#|authentication failed (check MAILBEND_EMAIL and the app-specific password): e4
+#|authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) and the app-specific password): e4
 #|mail server error: e5
 #|mail server error: e128
 #|the TLS helper was killed by a signal: e130
@@ -1458,7 +1458,7 @@ def main() -> IO(Unit):
 #|ok {"changed":[3],"missing":[4]}
 #|cannot run the TLS helper: no path
 #|cannot run the TLS helper: timed out
-#|authentication failed (check MAILBEND_EMAIL and the app-specific password): login refused
+#|authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) and the app-specific password): login refused
 #|5 0
 #|True False False
 #|ok "250 2.0.0 queued as X"
