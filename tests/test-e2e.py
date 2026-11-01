@@ -221,6 +221,9 @@ def setup_diagnostics(work):
         code, checks = diagnose(srv)
         check("diagnostics: default checks local setup without network", code == 0
               and not srv.log_lines() and diagnosed(checks, "smtp", "authentication", "skipped"))
+        check("diagnostics: trust source is a fixed token", all(
+            diagnosed(checks, protocol, "trust_store", "ok", "mailbend_ca_file")
+            for protocol in ("imap", "smtp")))
         code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_READ_ONLY="1",
                                MAILBEND_DRAFTS_ONLY="1", MAILBEND_MAX_SENDS_PER_DAY="1",
                                MAILBEND_STATE_DIR=os.path.join(work, "diagnostic-counter"))
@@ -235,7 +238,8 @@ def setup_diagnostics(work):
                                 env=srv.env(), capture_output=True, text=True, timeout=35)
         outputs.extend([native.stdout, native.stderr])
         check("diagnostics: native output contains only fixed transport facts", native.returncode == 0
-              and not native.stderr and native.stdout.splitlines() == [stage + " ok" for stage in
+              and not native.stderr and native.stdout.splitlines() == [stage + " ok" +
+                  (" mailbend_ca_file" if stage == "trust_store" else "") for stage in
                   ("configuration", "credentials", "trust_store", "dns", "connect", "greeting",
                    "ehlo", "tls", "ehlo_tls", "authentication")], "unexpected native fact stream")
         check("diagnostics: direct native check still sends no message", srv.st() == before)
@@ -338,6 +342,7 @@ def run_all(work):
     latin1_quotes(work)
     fallback(work)
     generic_folders(work)
+    important_folders(work)
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
@@ -356,7 +361,9 @@ def run_all(work):
     selected_parts(work)
     selected_parts_errors(work)
 
+    search_flags(work)
     search_pagination(work)
+    get_new_start_now(work)
     refresh_known(work)
     import importlib.util
     spec = importlib.util.spec_from_file_location("response_projection_cases",
@@ -364,6 +371,63 @@ def run_all(work):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+
+
+def get_new_start_now(work):
+    uidv = FIX['mailboxes']['INBOX']['uidvalidity']
+    srv = Server(work)
+    try:
+        before = srv.st()['mailboxes']
+        c, checkpoint = tool(srv, 'mail_get_new', {'start': 'now'}, MAILBEND_READ_ONLY='1')
+        check('get_new start now: returns the current end without messages',
+              c == 0 and checkpoint == {'folder': 'INBOX', 'uidvalidity': uidv,
+                  'uidvalidity_changed': False, 'next_since_uid': 6,
+                  'has_more': False, 'messages': []}, checkpoint)
+        logged = srv.log_lines()
+        check('get_new start now: only EXAMINE, without SEARCH, FETCH, or writes',
+              sum(' EXAMINE ' in line for line in logged) == 1
+              and not any(any(command in line for command in
+                              MUTATING_COMMANDS + (' SELECT ', ' SEARCH ', ' FETCH '))
+                          for line in logged)
+              and before == srv.st()['mailboxes'], logged)
+        c, added = tool(srv, 'mail_save_draft', {'subject': 'Arrived after checkpoint',
+                       'body': 'New synthetic mail'}, MAILBEND_DRAFTS_FOLDER='INBOX')
+        check('get_new start now: fixture appends a message after the checkpoint',
+              c == 0 and 7 in msgs(srv.st(), 'INBOX'), added)
+        c, arrival = tool(srv, 'mail_get_new', {
+            'since_uid': checkpoint.get('next_since_uid', 0),
+            'uidvalidity': checkpoint.get('uidvalidity', 0)})
+        check('get_new start now: the checkpoint returns exactly the appended message',
+              c == 0 and [m['uid'] for m in arrival.get('messages', [])] == [7]
+              and arrival.get('next_since_uid') == 7, arrival)
+        n = len(srv.log_lines())
+        for args in ({'start': 'now', 'since_uid': 0},
+                     {'start': 'now', 'since_uid': 6, 'uidvalidity': uidv},
+                     {'start': ''}, {'start': 'later'}, {'start': 'NOW'},
+                     {'start': None}, {'start': 1}, {'start': True}):
+            c, r = tool(srv, 'mail_get_new', args)
+            check(f'get_new start now: invalid arguments fail before login {args!r}',
+                  c != 0 and 'start' in r.get('error', '')
+                  and ('since_uid' not in args or 'since_uid' in r.get('error', ''))
+                  and len(srv.log_lines()) == n, r)
+        c, empty = tool(srv, 'mail_get_new', {'folder': 'Archive', 'start': 'now'})
+        check('get_new start now: an empty folder starts at zero',
+              c == 0 and empty.get('next_since_uid') == 0
+              and empty.get('messages') == [] and not empty.get('has_more'), empty)
+    finally:
+        srv.stop()
+    for uidnext in (None, 'not-a-number', 0, 4294967296, '07',
+                    {'line': '* OK [UIDNEXT 7'}):
+        fixture = copy.deepcopy(FIX)
+        fixture['uidnext_response'] = {'INBOX': uidnext}
+        srv = Server(work, fixture=fixture)
+        try:
+            c, r = tool(srv, 'mail_get_new', {'start': 'now'})
+            check(f'get_new start now: invalid UIDNEXT {uidnext!r} cannot become a checkpoint',
+                  c != 0 and 'UIDNEXT' in r.get('error', '')
+                  and 'next_since_uid' not in r and 'messages' not in r, r)
+        finally:
+            srv.stop()
 
 
 def refresh_known(work):
@@ -514,6 +578,50 @@ def sign_in_html(work):
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
                 srv.stop()
+
+
+def search_flags(work):
+    srv = Server(work)
+    try:
+        before = srv.st()
+        for args, key, expected in (
+            ({"flagged": False}, "UNFLAGGED", [6, 4, 3, 2, 1]),
+            ({"seen": False}, "UNSEEN", [6, 4, 3, 2, 1]),
+            ({"unseen": False}, "SEEN", [5]),
+            ({"seen": True, "unseen": False}, "SEEN", [5]),
+            ({"seen": False, "unseen": True}, "UNSEEN", [6, 4, 3, 2, 1]),
+        ):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", args)
+            searches = [line.split(" UID SEARCH ", 1)[1].split()
+                        for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+            check(f"search flags {args}: exact matching messages", c == 0
+                  and [m["uid"] for m in r.get("messages", [])] == expected, r)
+            check(f"search flags {args}: exactly one {key} key", searches == [[key]], searches)
+        for value in (True, False):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", {"seen": value, "unseen": value})
+            check(f"search flags: contradictory {value} pair refused before login", c != 0
+                  and "seen" in r.get("error", "") and "unseen" in r.get("error", "")
+                  and len(srv.log_lines()) == start, r)
+        c, first = tool(srv, "mail_search", {"flagged": False, "limit": 1})
+        cursor = first.get("next_cursor")
+        check("search flags: negative criterion yields a continuation", c == 0
+              and isinstance(cursor, str), first)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"cursor": cursor, "limit": 1})
+        check("search flags: omitted negative criterion refuses cursor before login", c != 0
+              and "cursor" in r.get("error", "") and len(srv.log_lines()) == start, r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search")
+        check("search flags: omitted flags keep every message", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == [6, 5, 4, 3, 2, 1], r)
+        searches = [line for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+        check("search flags: omitted flags still send ALL", len(searches) == 1
+              and searches[0].endswith(" UID SEARCH ALL"), searches)
+        check("search flags: message flags unchanged", srv.st() == before)
+    finally:
+        srv.stop()
 
 
 def search_pagination(work):
@@ -1126,7 +1234,8 @@ else:
 print('no controlling terminal', file=sys.stderr, flush=True)
 os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
 """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("MAILBEND_") and k not in {"SSL_CERT_FILE", "SSL_CERT_DIR"}}
     env["MAILBEND_READ_ONLY"] = "1"
     data = "".join(json.dumps(r) + "\n" for r in requests)
     for launcher in (pathlib.Path(LAUNCHER), ROOT / "scripts/mailbend-cloud"):
@@ -3456,6 +3565,59 @@ def typesafe_key_file(work):
     return key_file
 
 
+def important_folders(work):
+    fixture = jev_fixture()
+    important = "[Gmail]/Important"
+    special = {"[Gmail]/All Mail": "\\All", "[Gmail]/Starred": "\\Flagged",
+               important: "\\Important"}
+    for name, attr in special.items():
+        fixture["mailboxes"][name] = empty_mailbox([attr])
+    fixture["mailboxes"][important + "/Existing"] = empty_mailbox()
+    fixture["mailboxes"]["Important"] = empty_mailbox()
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    key_file = typesafe_key_file(work)
+    try:
+        c, r = tool(srv, "mail_list_folders")
+        folders = {f["name"]: f for f in r.get("folders", [])}
+        check("Important: advertised role is reported without a name fallback", c == 0
+              and folders.get(important, {}).get("special_use") == "important"
+              and folders.get("Important", {}).get("special_use") is None, r)
+        for name, args in (
+            ("mail_classify", {"uids": [7]}),
+            ("mail_triage", {"uids": [7], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
+            ("mail_get", {"uid": 7}),
+        ):
+            before, start = srv.st(), len(ts.requests())
+            c, r = tool(srv, name, args, **jev_env(ts, key_file))
+            requests = ts.requests()[start:]
+            categories = [q["criteria"] for request in requests
+                          for key, q in request["body"].get("questions", {}).items()
+                          if key.endswith("_category") and q.get("type") == "choice"]
+            check(f"Important: {name} excludes special-use folders and their children", c == 0
+                  and categories and all("Work" in q and "Important" in q
+                      and not any(folder in q for folder in special)
+                      and important + "/Existing" not in q for q in categories), (r, categories))
+            check(f"Important: {name} leaves messages and flags unchanged", srv.st() == before)
+        c, r = tool(srv, "mail_move", {"uids": [2], "uidvalidity": INBOX_VALIDITY,
+                                       "destination": important})
+        check("Important: explicitly named move still works", c == 0
+              and 2 not in msgs(srv.st(), "INBOX")
+              and len(msgs(srv.st(), important)) == 1, r)
+        for name, args in (
+            ("mail_label", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "label": important}),
+            ("mail_label", {"uids": [3], "uidvalidity": INBOX_VALIDITY,
+                            "label": important + "/Existing"}),
+            ("mail_create_folder", {"name": important + "/Child"}),
+            ("mail_rename_folder", {"from": "Work", "to": important + "/Renamed"}),
+            ("mail_rename_folder", {"from": important, "to": "Renamed"}),
+        ):
+            refused(srv, f"Important: {name} protects the reserved folder", name, args, "relies on")
+    finally:
+        ts.stop()
+        srv.stop()
+
+
 def jev(work):
     work = os.path.realpath(work)
     key_file = typesafe_key_file(work)
@@ -3568,10 +3730,13 @@ def jev_headers(srv, work, key_file):
               all(q["body"]["model"] == "jev-1.14.0" and q["user_agent"] == "mailbend" for q in sent), sent[:1])
         check("jev headers: each request goes through CONNECT api.typesafe.ai:443",
               all(q["connect"] == "CONNECT api.typesafe.ai:443 HTTP/1.1" for q in ts.records()), ts.records()[:1])
-        envs = [names for q in sent for names in q["env_names"]]
-        check("jev headers: mailbend-typesafe runs without the mail password or any other setting",
-              envs and all("MAILBEND_TYPESAFE_KEY_FILE" in names and "MAILBEND_APP_PASSWORD" not in names
-                           and "MAILBEND_EMAIL" not in names and "UNRELATED_SETTING" not in names for names in envs), envs)
+        envs = [entry for q in sent for entry in q["env_names"]]
+        check("jev headers: each TypeSafe request has a protected or readable confined helper",
+              sent and all(q["env_names"] for q in sent) and all(
+                  entry == {"non_dumpable": True}
+                  or ("MAILBEND_TYPESAFE_KEY_FILE" in entry.get("names", [])
+                      and not {"MAILBEND_APP_PASSWORD", "MAILBEND_EMAIL", "UNRELATED_SETTING"}
+                      .intersection(entry["names"])) for entry in envs), envs)
         reported = r.get("requests", [])
         check("jev headers: requests report the UTF-8 bytes sent and TypeSafe's token count",
               [q["bytes"] for q in reported] == [q["bytes"] for q in sent]

@@ -526,11 +526,37 @@ def qp_decode.pair(
     case False{}:
       SCon{b, SCon{a, SCon{'=', acc}}}
 
+def qp_unpad.trim(s: String) -> String:
+  match s:
+    case SCon{' ', t}:
+      qp_unpad.trim(t)
+    case SCon{'\t', t}:
+      qp_unpad.trim(t)
+    case _:
+      s
+
+def qp_unpad.go(s: String, acc: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(qp_unpad.trim(acc))
+    case SCon{'\r', SCon{'\n', t}}:
+      qp_unpad.go(t, SCon{'\n', SCon{'\r', qp_unpad.trim(acc)}})
+    case SCon{'\n', t}:
+      qp_unpad.go(t, SCon{'\n', qp_unpad.trim(acc)})
+    case SCon{c, t}:
+      qp_unpad.go(t, SCon{c, acc})
+
+# RFC 2045 transport padding is removed before interpreting body escapes.
+def qp_unpad(s: String) -> String:
+  qp_unpad.go(s, "")
+
 # The output is built reversed, so a long body stays a loop.
-def qp_decode.go(s: String, +q: Bool, acc: String) -> String:
+def qp_decode.go(s: String, +q: Bool, +acc: String) -> String:
   match s:
     case SNil{}:
       String.reverse(acc)
+    case SCon{'=', SNil{}}:
+      String.reverse(Bool.pick(String, q, SCon{'=', acc}, acc))
     case SCon{'=', SCon{'\r', SCon{'\n', t}}}:
       qp_decode.go(t, q, acc)
     case SCon{'=', SCon{'\n', t}}:
@@ -546,8 +572,12 @@ def qp_decode.go(s: String, +q: Bool, acc: String) -> String:
       qp_decode.go(t, q, SCon{c, acc})
 
 # Quoted-printable to bytes. With `q` (RFC 2047 "Q" encoding) '_' is a space.
-def qp_decode(s: String, +q: Bool) -> String:
-  qp_decode.go(s, q, "")
+def qp_decode(s: String, q: Bool) -> String:
+  match q:
+    case True{}:
+      qp_decode.go(s, True{}, "")
+    case False{}:
+      qp_decode.go(qp_unpad(s), False{}, "")
 
 # The "=XX" escape of byte n.
 def qp_encode.escape(+n: U32) -> String:

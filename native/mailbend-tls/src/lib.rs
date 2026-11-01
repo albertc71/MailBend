@@ -12,6 +12,8 @@ pub mod smtp;
 pub(crate) mod text;
 
 mod connection;
+#[cfg(test)]
+mod credential_lifetime;
 mod creds;
 pub mod diagnostic;
 mod route;
@@ -34,6 +36,7 @@ pub use settings::Protocol;
 /// server, writing the server's transcript to stdout. Everything that can
 /// be checked locally is checked before connecting.
 pub fn run(protocol: Protocol) -> Result<Outcome, Exit> {
+    mailbend_io::process::no_dumps().map_err(Exit::usage)?;
     if matches!(protocol, Protocol::Smtp) {
         smtp::session::progress("before_data")?;
     }
@@ -42,17 +45,17 @@ pub fn run(protocol: Protocol) -> Result<Outcome, Exit> {
     let credentials = creds::load()?;
     let input = read_input()?;
     let plan = Plan::parse(protocol, &input)?;
-    let tls = tls::client_config(settings.ca_file.as_deref())?;
+    let (tls, _) = tls::client_config(settings.ca_file.as_deref())?;
     let mut conn = Connection::new(route::connect(&settings, &tls)?);
     let host = &settings.host;
     let outcome = match &plan {
-        Plan::Imap(commands) => imap::session::run(&mut conn, &tls, host, &credentials, commands),
+        Plan::Imap(commands) => imap::session::run(&mut conn, &tls, host, credentials, commands),
         Plan::Smtp(steps) => smtp::session::run(
             &mut conn,
             &tls,
             host,
             settings.smtp_tls_mode,
-            &credentials,
+            credentials,
             steps,
         ),
     };
