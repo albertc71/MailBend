@@ -2448,5 +2448,14 @@ def Laws.brief_plans_write_nothing(folder, checkpoint, since):
 def Laws.awaiting_disabled_filters_keep_candidate(n):
   {==}
 
+def Laws.brief_complete_unseen_highwater(high, last):
+  {==}
+
+def Laws.brief_partial_unseen_prefix(high, last):
+  {==}
+
+def Laws.brief_arrivals_keep_prefix(since, more, last):
+  {==}
+
 def Laws.json_serialized_bytes(j):
   JsonSize.show_bytes(j)

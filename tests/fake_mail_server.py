@@ -1095,6 +1095,13 @@ class IMAPSession:
                 if m.get("omit_fetch_data"):
                     continue
                 name, content, sets_seen = render_section(spec, m)
+                header_value = m.get("header_fetch_value")
+                if name.startswith("BODY[HEADER.FIELDS") and header_value in (
+                        "empty-literal", "empty-quoted", "nil"):
+                    value = {"empty-literal": "{0}\r\n", "empty-quoted": '""', "nil": "NIL"}[header_value]
+                    name = name.replace("HEADER.FIELDS(", "HEADER.FIELDS (", 1)
+                    parts.append(f"{name} {value}")
+                    continue
                 if m.get("measure_sections") and not name.startswith("BODY[HEADER"):
                     self.logger.log("imap-section-bytes", f"{name} {len(content)}")
                 if sets_seen and not self.readonly and '\\Seen' not in m['flags']:

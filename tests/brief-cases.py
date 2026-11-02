@@ -93,6 +93,85 @@ def run(t, work):
     finally:
         srv.stop()
 
+    # UIDNEXT is a snapshot boundary, not the maximum unseen UID. The existing
+    # override also models messages arriving after EXAMINE but before SEARCH.
+    for scenario, messages, high, limit, expected, cursor, basis in (
+        ('empty folder', [], 0, 50, [], 0, 'high_water'),
+        ('all seen', [message(8, 'known@example.test', flags=['\\Seen'])],
+         8, 50, [], 8, 'high_water'),
+        ('seen higher UID', [message(2, 'new@example.test'),
+                            message(8, 'known@example.test', flags=['\\Seen'])],
+         8, 50, [2], 8, 'high_water'),
+        ('capped unseen', [message(2, 'new@example.test'), message(4, 'new@example.test'),
+                          message(8, 'known@example.test', flags=['\\Seen'])],
+         8, 1, [2], 2, 'selected_prefix'),
+        ('snapshot race', [message(2, 'new@example.test'),
+                           message(5, 'known@example.test', flags=['\\Seen']),
+                           message(6, 'new@example.test')],
+         4, 50, [2], 4, 'high_water'),
+    ):
+        changed = copy.deepcopy(fixture)
+        changed['mailboxes']['INBOX']['messages'] = messages
+        changed['uidnext_response'] = {'INBOX': high + 1}
+        srv = t.Server(work, fixture=changed)
+        try:
+            code, page = t.tool(srv, 'mail_brief', {'limit': limit})
+            t.check(f'brief: {scenario} uses the safe snapshot/prefix cursor', code == 0 and
+                    [m['uid'] for m in page.get('messages', [])] == expected and
+                    page.get('next_since_uid') == cursor and page.get('checkpoint_basis') == basis, page)
+            code, follow = t.tool(srv, 'mail_brief', {'since_uid': cursor, 'uidvalidity': uidv})
+            t.check(f'brief: {scenario} continuation loses no arrival or backlog UID', code == 0 and
+                    [m['uid'] for m in follow.get('messages', [])] ==
+                    [m['uid'] for m in messages if m['uid'] > cursor], follow)
+        finally:
+            srv.stop()
+
+    for invalid in (None, 0, '07', 'not-a-number', 4294967296):
+        changed = copy.deepcopy(fixture)
+        changed['uidnext_response'] = {'INBOX': invalid}
+        srv = t.Server(work, fixture=changed)
+        try:
+            code, page = t.tool(srv, 'mail_brief')
+            t.check(f'brief: invalid snapshot UIDNEXT {invalid!r} fails closed', code != 0 and
+                    'next_since_uid' not in page and 'UIDNEXT' in page.get('error', ''), page)
+        finally:
+            srv.stop()
+
+    for mode in ('empty-literal', 'empty-quoted', 'nil'):
+        changed = copy.deepcopy(fixture)
+        changed['mailboxes']['INBOX']['messages'][0].update(
+            raw='X-Unrequested: synthetic', header_fetch_value=mode)
+        srv = t.Server(work, fixture=changed)
+        try:
+            code, page = t.tool(srv, 'mail_brief', {'limit': 1})
+            if mode == 'nil':
+                t.check('brief: persistent NIL remains missing evidence, no checkpoint',
+                        code != 0 and 'next_since_uid' not in page, page)
+            else:
+                rows = page.get('messages', [])
+                t.check(f'brief: {mode} remains selected exactly once', code == 0 and
+                        [m['uid'] for m in rows] == [1] and
+                        rows[0]['group'] == 'unknown_people' and page.get('next_since_uid') == 1, page)
+        finally:
+            srv.stop()
+
+    changed = copy.deepcopy(fixture)
+    changed['mailboxes']['INBOX']['messages'] = [
+        message(1, 'known@example.test', f'To: {fixture["user"]}\r\nReferences: ' + 'x' * 5120 + '\r\n'),
+        message(2, 'list@example.test', 'List-Id: news.example.test\r\nList-Unsubscribe: ' + 'x' * 5120 + '\r\n'),
+        message(3, 'known@example.test', 'To: ' + 'x' * 4097 + '\r\n'),
+        message(4, 'list@example.test', 'List-Id: one\r\nList-Id: two\r\n')]
+    srv = t.Server(work, fixture=changed)
+    try:
+        code, page = t.tool(srv, 'mail_brief')
+        rows = page.get('messages', [])
+        t.check('brief: only relevant fields consume classification bound; duplicates stay conservative',
+                code == 0 and [m['group'] for m in rows] ==
+                ['people', 'lists', 'unknown_people', 'unknown_people'] and
+                rows[0]['delivery'] == 'direct' and rows[2]['delivery'] == 'other_or_unknown', page)
+    finally:
+        srv.stop()
+
     for failure in ('missing_fetch', 'identity_race', 'search_missing', 'search_malformed'):
         changed = copy.deepcopy(fixture)
         extra = ()

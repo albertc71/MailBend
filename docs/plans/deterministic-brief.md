@@ -21,8 +21,9 @@ The JSON `messages` array is UID ordered and carries the same tags. `groups`
 contains only derived counts, not a second copy of message payloads. List and
 automation signals take priority over a known correspondent; direct delivery
 never changes the primary group. Duplicate classification headers do not count
-as a bulk signal. An incomplete or over-4096-byte header block produces unknown
-classification. Unusable sender or recipient syntax makes only that address
+as a bulk signal. An incomplete header block or over-4096-byte relevant classification fields
+produces unknown classification. Only From, To, Cc, List-Id, Auto-Submitted and
+Precedence consume that bound; duplicates are preserved in shared evidence. Unusable sender or recipient syntax makes only that address
 evidence unknown. A single nonempty raw List-Id is an untrusted list signal,
 not strict RFC validation or proof of list membership.
 
@@ -45,14 +46,22 @@ stateDiagram-v2
 ```
 
 An empty page skips Sent lookup. Malformed From does not suppress independent
-To/Cc evidence. The next checkpoint is the last selected arrival UID (or the
-input UID on an empty page). It is not a cursor over future unread-state changes.
+To/Cc evidence. Arrival mode returns the last selected UID (or its input on an empty page).
+Unseen mode validates the same EXAMINE UIDNEXT, then excludes SEARCH UIDs above
+UIDNEXT minus one. A complete page checkpoints that high-water UID, including
+an empty page. A capped page checkpoints only the selected prefix, not the
+high-water UID. `checkpoint_basis` exposes this distinction. Continuing a partial
+prefix as arrivals can include older seen messages; it cannot skip omitted unseen
+messages. Neither mode follows future unread-state changes.
 No success path omits selected messages. Header fetching pins UIDVALIDITY in the
 same session, and then verifies the complete selected UID sequence.
 
 ## Evidence and limits
 
-- At most 100 selected messages, default 50.
+- At most 100 selected messages, default 50. SEARCH above 10000 UIDs fails closed;
+  `mail_get_new {"start":"now"}` can intentionally seed a fresh baseline.
+- Explicit empty selected headers use the shared acquisition helper; persistent
+  NIL, absent or wrong sections fail closed without a checkpoint.
 - At most 50 distinct selected sender addresses matched.
 - One Sent search over 30 days and at most 100 newest candidate headers.
 - No body fetch for the deterministic brief. No preview, cache or native change.
@@ -94,3 +103,20 @@ Keep #61 open for optional preview extraction and its `preview_partial` and
 estimated token fields, plus the separately authorized #139 quality evaluation.
 Lifetime first-time classification needs a distinct evidence contract; stored
 Sent windows cannot supply it. No paid service or real mailbox was used here.
+
+## Review follow-up: snapshot checkpoints
+
+The separate [checkpoint model](brief-model/Checkpoint.tla) explores arbitrary
+unseen subsets, EXAMINE high-water marks and oldest selected prefixes. It checks
+that no omitted eligible UID is at or below the returned cursor, complete pages
+use the snapshot boundary, and racing SEARCH UIDs above that boundary are not
+selected. It models the selection rule, not the IMAP server or parser. Production
+kernel laws cover both checkpoint branches; synthetic server tests cover their
+wiring, malformed UIDNEXT and concurrent-arrival transcripts.
+
+Review alternatives: using the maximum SEARCH UID was rejected because a racing
+seen arrival between the snapshot and a later unseen arrival could be skipped.
+Always returning the high-water UID was rejected because capped unseen backlogs
+would be lost. Always returning the last selected UID replayed all-seen history.
+The typed arrival/unseen window plus explicit cursor basis keeps these cases
+separate without changing message summaries or contact-evidence semantics.

@@ -568,6 +568,49 @@ MailBend itself remains daemon-free.
 
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
+
+Save a new arrival cursor only after a successful result. If FETCH omits a
+selected message or returns NIL header data, `mail_get_new` returns an error
+without messages or `next_since_uid`. Retry with the same saved cursor and
+UIDVALIDITY. The retry searches again, so a UID expunged between SEARCH and
+FETCH is no longer selected. An explicit empty header string is represented
+as a message with empty selected fields and does not block the cursor.
+
+A server that persistently omits a still-present UID or returns NIL still
+blocks polling at that gap. Retry cannot repair unavailable server data.
+Do not switch to `start: "now"` to hide this error unless you intend to skip
+the backlog. NIL is absent data, not the empty string
+([RFC 9051 section 4.5](https://www.rfc-editor.org/rfc/rfc9051.html#section-4.5)).
+
+This is an explicit current limitation, tracked in the
+[#241 review discussion](https://github.com/albertc71/MailBend/pull/241#discussion_r4440348365)
+following [#238](https://github.com/albertc71/MailBend/pull/238#discussion_r4439995924).
+A future recovery contract must distinguish unavailable header data from
+fetched empty data; this change does not claim to solve persistent NIL.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Search
+    Search --> Reset: UIDVALIDITY changed
+    Search --> Unchanged: no selected UIDs
+    Search --> Fetch: bounded selected UIDs
+    Fetch --> Error: transport or protocol failure
+    Fetch --> Reset: UIDVALIDITY changed
+    Fetch --> Error: any selected UID lacks header data or returns NIL
+    Fetch --> Publish: every selected UID has header data, including empty strings
+    Error --> Search: retry the original checkpoint
+    Publish --> [*]
+    Unchanged --> [*]
+    Reset --> [*]
+```
+
+Empty-string coverage accepts the exact requested header-name set regardless
+of order, letter case, repeated spaces or quoted names. It rejects duplicate
+names, different sections and partial sections. This compatibility is tested
+with synthetic responses, not a live provider mailbox. The compatibility path
+limits the section key to 1024 characters and does not accept escaped or
+literal header names.
+
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
 1–100 `uids` to refresh the cache. Duplicates count toward the input limit and
 are returned once, sorted. UIDs and UIDVALIDITY must be in 1–4294967295; empty
@@ -1014,20 +1057,18 @@ The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
 UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
 claim that untrusted headers establish real-world identity.
 
-
-## License
-
-MIT; see [LICENSE](LICENSE).
-
-
 ### Deterministic metadata brief
 
 `mail_brief` answers a bounded metadata attention question in one call. With no
 `since_uid`, it selects unseen, undeleted messages oldest first. Pass `since_uid: 0`
 to start an arrival stream, or the prior `next_since_uid` and `uidvalidity` to
 continue it. The default page is 50 messages, with a maximum of 100. A checkpoint
-from an unseen page is an arrival checkpoint, not a cursor for later changes to
-read status. Use `mail_refresh` for known-message flag changes.
+from a complete unseen page uses the EXAMINE UIDNEXT minus one (`checkpoint_basis:
+high_water`), including when no unseen messages exist. SEARCH arrivals above that
+snapshot wait for the next call. A capped page uses its last selected UID
+(`selected_prefix`), never skipping unreturned unseen messages. Continuing that
+prefix with `since_uid` can also return historical seen mail. Neither cursor
+tracks later changes to read status. Use `mail_refresh` for known-message flag changes.
 
 Every returned message has one `group` and an independent `delivery` value.
 Groups are `people`, `lists`, `automated` and `unknown_people`. `groups` gives the
@@ -1058,3 +1099,15 @@ Optional body previews, lifetime first-time classification, and #139's paid
 agent-quality comparison remain outside this metadata core. The synthetic
 persona check measures tool calls and metadata coverage, not agent quality.
 See [the design and state model](docs/plans/deterministic-brief.md).
+
+Only From, To, Cc, List-Id, Auto-Submitted and Precedence consume the 4096-byte
+classification bound; duplicates remain visible and malformed evidence stays
+conservative. Original summaries are unchanged. Explicit empty header strings
+are represented; persistent NIL or absent selected data still fails closed.
+SEARCH is capped at 10000 UIDs. To intentionally discard an old backlog, seed a
+fresh baseline with `mail_get_new {"start":"now"}` and pass its cursor to the
+brief. A count limit is not a byte budget: set `max_response_bytes` when needed.
+
+## License
+
+MIT; see [LICENSE](LICENSE).

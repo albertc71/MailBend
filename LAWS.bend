@@ -1972,6 +1972,23 @@ law awaiting_disabled_filters_keep_candidate:
   for n: AwaitThread.Node
   {Await.excluded(n, Await.Filters{False{}, False{}}) == False{} : Bool}
 
+# An unseen snapshot is sealed only after its entire eligible selection fits.
+law brief_complete_unseen_highwater:
+  for high: U32
+  for last: U32
+  {Brief.checkpoint(Brief.UnseenWindow{high}, False{}, last) == high : U32}
+
+law brief_partial_unseen_prefix:
+  for high: U32
+  for last: U32
+  {Brief.checkpoint(Brief.UnseenWindow{high}, True{}, last) == last : U32}
+
+law brief_arrivals_keep_prefix:
+  for since: U32
+  for more: Bool
+  for last: U32
+  {Brief.checkpoint(Brief.ArrivalWindow{since}, more, last) == last : U32}
+
 # This equality is modulo 2^32, like both production counters. It does not
 # establish that an arbitrary JSON value fits a natural byte allowance.
 law json_serialized_bytes:

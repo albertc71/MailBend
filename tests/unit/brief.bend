@@ -30,6 +30,11 @@ def main() -> IO(Unit):
     IO.print(label(B.item(msg(1, "From: known@x\r\n\r\n"),
       [C.Contact{"known@x", "", 1, 0, True{}}], [], "me@x")))
     IO.print(I.uid_set(B.uids(B.items([msg(2, ""), msg(1, ""), msg(2, "")], [], [], ""))))
+    IO.print(U32.show(B.checkpoint(B.UnseenWindow{8}, False{}, 0)))
+    IO.print(U32.show(B.checkpoint(B.UnseenWindow{8}, False{}, 2)))
+    IO.print(U32.show(B.checkpoint(B.UnseenWindow{8}, True{}, 2)))
+    IO.print(I.uid_set(B.window_uids([0, 2, 4, 5, 6], B.UnseenWindow{4})))
+    IO.print(I.uid_set(B.window_uids([0, 2, 4, 5, 6], B.ArrivalWindow{4})))
 
 #|people:direct:
 #|unknown_people:cc_only:
@@ -45,3 +50,8 @@ def main() -> IO(Unit):
 #|unknown_people:other_or_unknown:
 #|unknown_people:other_or_unknown:
 #|2,1,2
+#|8
+#|8
+#|2
+#|2,4
+#|5,6
