@@ -88,6 +88,18 @@ def law_references(text, path, root):
     return refs
 
 
+def heading_slugs(text):
+    slugs = set()
+    for heading in re.findall(r"^#+ (.+)$", text, re.M):
+        base = re.sub(r"[^a-z0-9 _-]", "", heading.lower()).replace(" ", "-")
+        slug = base
+        suffix = 0
+        while slug in slugs:
+            suffix += 1
+            slug = f"{base}-{suffix}"
+        slugs.add(slug)
+    return slugs
+
 
 def skill_references(root):
     errors = []
@@ -100,7 +112,10 @@ def skill_references(root):
 
     spec = importlib.util.spec_from_file_location("mailbend_documented_schema", root / "tools/gen-schema.py")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as error:
+        raise ValueError(f"tools/gen-schema.py: cannot load schema ({type(error).__name__}: {error})") from error
     tools = required({tool["name"]: set(tool["inputSchema"]["properties"])
                       for tool in module.TOOLS}, "schema tools")
     tool_name = r"mail_[A-Za-z_0-9]+"
@@ -116,29 +131,36 @@ def skill_references(root):
             name, raw = match.groups()
             if path == directory / "references/tools.md":
                 listed.add(name)
-            if not raw.strip():
-                continue
-            for argument in raw.split(","):
+            signature_arguments = set()
+            for argument in raw.split(",") if raw.strip() else []:
                 argument = argument.strip()
                 if not re.fullmatch(NAME, argument):
                     errors.append(f"{label}: invalid argument notation {name}({raw})")
                 else:
                     arguments.add((name, argument))
+                    signature_arguments.add(argument)
+            if path == directory / "references/tools.md" and name in tools:
+                errors.extend(f"{label}: missing argument {name}.{argument}"
+                              for argument in sorted(tools[name] - signature_arguments))
         for name, argument in sorted(arguments):
             if name in tools and argument not in tools[name]:
                 errors.append(f"{label}: unknown argument {name}.{argument}")
         for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", text):
-            if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            repository_prefix = "https://github.com/albertc71/MailBend/blob/main/"
+            if target.startswith(repository_prefix):
+                relative, _, anchor = target[len(repository_prefix):].partition("#")
+                destination = (root / relative).resolve()
+            elif re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
                 continue
-            relative, _, anchor = target.partition("#")
-            destination = (path.parent / relative).resolve() if relative else path
-            if not destination.is_file():
+            else:
+                relative, _, anchor = target.partition("#")
+                destination = (path.parent / relative).resolve() if relative else path
+            if not destination.is_relative_to(root):
+                errors.append(f"{label}: linked file outside repository {target}")
+            elif not destination.is_file():
                 errors.append(f"{label}: missing linked file {target}")
             elif anchor and destination.suffix == ".md":
-                headings = re.findall(r"^#+ (.+)$", destination.read_text(), re.M)
-                slugs = {re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
-                         for heading in headings}
-                if anchor not in slugs:
+                if anchor not in heading_slugs(destination.read_text()):
                     errors.append(f"{label}: missing linked heading {target}")
     errors.extend(f"skills/mailbend/references/tools.md: missing tool {name}"
                   for name in sorted(tools.keys() - listed))

@@ -52,6 +52,7 @@ class DriftChecks(unittest.TestCase):
         self.assertEqual(result.returncode, 1 if expected else 0, result.stdout + result.stderr)
         if expected:
             self.assertIn(expected, result.stderr)
+        return result
 
     def test_current_documentation(self):
         self.check()
@@ -76,7 +77,7 @@ class DriftChecks(unittest.TestCase):
 
     def test_skill_valid_scoped_arguments(self):
         self.append("skills/mailbend/SKILL.md", "\nUse `mail_get.projection` or mail_get.max_response_bytes.\n")
-        self.append("skills/mailbend/references/tools.md", "\n`mail_get(folder, uid, projection, max_response_bytes)`\n")
+        self.append("skills/mailbend/SKILL.md", "\n`mail_get(folder, uid, projection, max_response_bytes)`\n")
         self.check()
 
     def test_skill_signature_rejects_unparsed_argument(self):
@@ -97,6 +98,60 @@ class DriftChecks(unittest.TestCase):
         self.check("missing linked file references/not-there.md")
         self.append("skills/mailbend/SKILL.md", "\n[Missing](../../README.md#not-a-heading)\n")
         self.check("missing linked heading ../../README.md#not-a-heading")
+
+    def test_skill_absolute_repository_anchor_is_checked(self):
+        self.replace("skills/mailbend/SKILL.md", "README.md#safety", "README.md#no-such-heading")
+        self.check("missing linked heading https://github.com/albertc71/MailBend/blob/main/README.md#no-such-heading")
+
+    def test_skill_absolute_repository_file_is_checked(self):
+        self.replace("skills/mailbend/SKILL.md", "README.md#safety", "missing.md#safety")
+        self.check("missing linked file https://github.com/albertc71/MailBend/blob/main/missing.md#safety")
+
+    def test_skill_foreign_urls_are_not_local_files(self):
+        self.append("skills/mailbend/SKILL.md", "\n[Foreign](https://example.test/absent.md#absent)\n"
+                    "[Other branch](https://github.com/albertc71/MailBend/blob/mainland/absent.md#absent)\n")
+        self.check()
+
+    def test_skill_repository_url_cannot_leave_checkout(self):
+        self.append("skills/mailbend/SKILL.md", "\n[Outside](https://github.com/albertc71/MailBend/blob/main/../outside.md#title)\n")
+        self.check("linked file outside repository")
+
+    def test_skill_index_signature_requires_every_argument(self):
+        self.replace("skills/mailbend/references/tools.md",
+                     "mail_get(folder, uid, uidvalidity, section, max_bytes, projection, max_response_bytes)",
+                     "mail_get(folder, uid)")
+        self.check("missing argument mail_get.uidvalidity")
+
+    def test_skill_empty_index_signature_does_not_hide_arguments(self):
+        self.replace("skills/mailbend/references/tools.md", "mail_refresh(folder, uids, uidvalidity)", "mail_refresh()")
+        self.check("missing argument mail_refresh.uidvalidity")
+
+    def test_skill_new_schema_argument_requires_index_update(self):
+        self.append("tools/gen-schema.py", '\nTOOLS[0]["inputSchema"]["properties"]["future_option"] = {"type": "boolean"}\n')
+        self.check("missing argument mail_probe.future_option")
+
+    def test_skill_underscore_and_duplicate_heading_anchors(self):
+        self.append("README.md", "\n### `mail_get` sections\n### `mail_get` sections\n"
+                    "### Repeated\n### Repeated-1\n### Repeated\n")
+        self.append("skills/mailbend/SKILL.md", "\n[First](../../README.md#mail_get-sections)\n"
+                    "[Second](../../README.md#mail_get-sections-1)\n"
+                    "[Collision](https://github.com/albertc71/MailBend/blob/main/README.md#repeated-2)\n")
+        self.check()
+        self.append("skills/mailbend/SKILL.md", "\n[Absent](../../README.md#mail_get-sections-2)\n")
+        self.check("missing linked heading ../../README.md#mail_get-sections-2")
+
+    def test_skill_missing_schema_is_a_clean_failure(self):
+        (self.root / "tools/gen-schema.py").unlink()
+        result = self.check("tools/gen-schema.py: cannot load schema")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_broken_schema_is_a_clean_failure(self):
+        for content, exception in [("def broken(:\n", "SyntaxError"),
+                                   ('raise RuntimeError("fixture import failure")\n', "RuntimeError")]:
+            with self.subTest(exception=exception):
+                (self.root / "tools/gen-schema.py").write_text(content)
+                result = self.check(f"cannot load schema ({exception}:")
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_skill_schema_import_does_not_regenerate(self):
         generated = self.root / "src/schema.bend"
