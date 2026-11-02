@@ -1,5 +1,4 @@
-# Shareable setup diagnostics. Only explicit flags authorize network checks.
-# No server text, addresses, folder names, credentials or helper errors escape.
+# Redacted diagnostics and a separate local-only setup report.
 
 import Base
 import ./json.bend as J
@@ -8,6 +7,9 @@ import ./policy.bend as Policy
 import ./imap.bend as I
 import ./ops.bend as Ops
 import ./jev.bend as Jev
+
+type Check is Data:
+  Check{checks: List<&2, J.Json>, suggestions: List<&2, J.Json>}
 
 def guidance(stage: String) -> String:
   match stage:
@@ -257,31 +259,83 @@ def folder_result(f: T.Fs()) -> List<&2, J.Json>:
       [role("inbox", Policy.named_folder(fs, "INBOX")), role("drafts", drafts),
         role("trash", trash), role("sent", sent), role("junk", junk), role("archive", archive)]
 
-def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(List<&2, J.Json>):
+def candidate_names(
+  xs: List<&2, I.Folder>, +all: List<&2, I.Folder>, +variable: String
+) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case I.Folder{+name, delimiter, attrs} <> t:
+      List.filter.put(String, name, candidate_names(t, all, variable),
+        String.is_empty(T.invalid_override(all, name, variable)))
+
+def candidates.preferred(
+  marked: List<&2, I.Folder>, fs: List<&2, I.Folder>, attr: String, a: String, b: String
+) -> List<&2, I.Folder>:
+  match marked:
+    case Nil{}:
+      Policy.role_candidates(fs, attr, a, b, False{})
+    case _:
+      marked
+
+def suggestion(
+  resolved: Maybe<&2, String>, role: String, +variable: String,
+  +fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String
+) -> List<&2, J.Json>:
+  match resolved:
+    case Some{name}:
+      []
+    case None{}:
+      possible = candidates.preferred(Policy.role_candidates(fs, attr, a, b, True{}), fs, attr, a, b)
+      [J.obj([J.kv("role", J.str(role)), J.kv("variable", J.str(variable)),
+        J.kv("candidates", J.strs(candidate_names(possible, fs, variable))),
+        J.kv("status", J.str("suggestions_only"))])]
+
+def folder_suggestions(f: T.Fs()) -> List<&2, J.Json>:
+  match f:
+    case Fail{msg}:
+      []
+    case Done{Policy.Folders{+fs, drafts, trash, sent, junk, archive}}:
+      List.concat(&2, J.Json, [
+        suggestion(drafts, "drafts", "MAILBEND_DRAFTS_FOLDER", fs,
+          "\\Drafts", Policy.drafts_name(), Policy.drafts_name()),
+        suggestion(trash, "trash", "MAILBEND_TRASH_FOLDER", fs,
+          "\\Trash", Policy.trash_name(), Policy.deleted_messages_name()),
+        suggestion(sent, "sent", "MAILBEND_SENT_FOLDER", fs,
+          "\\Sent", Policy.sent_name(), Policy.sent_messages_name()),
+        suggestion(junk, "junk", "MAILBEND_JUNK_FOLDER", fs,
+          "\\Junk", Policy.junk_name(), Policy.junk_name()),
+        suggestion(archive, "archive", "MAILBEND_ARCHIVE_FOLDER", fs,
+          "\\Archive", Policy.archive_name(), Policy.archive_name())])
+
+def folder_check(+f: T.Fs()) -> Check:
+  Check{folder_result(f), folder_suggestions(f)}
+
+def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(Check):
   match advertised:
     case False{}:
-      do IO<List<&2, J.Json>>:
+      do IO<Check>:
         f : T.Fs() <- T.folders_overrides(fs)
-        return folder_result(f)
+        return folder_check(f)
     case True{}:
-      do IO<List<&2, J.Json>>:
+      do IO<Check>:
         p : Policy.Proc <- helper("imap", I.script(Ops.plan_roles()))
         f : T.Fs() <- T.roles_of(T.imap_result(p), fs)
-        return folder_result(f)
+        return folder_check(f)
 
-def folders.result(r: T.Run()) -> IO(List<&2, J.Json>):
+def folders.result(r: T.Run()) -> IO(Check):
   match r:
     case Fail{msg}:
-      IO.pure(List<&2, J.Json>, [fact("imap", "folders", "failed", "discovery_failed")])
+      IO.pure(Check, Check{[fact("imap", "folders", "failed", "discovery_failed")], []})
     case Done{+lines}:
       folders.roles(T.merge_folders(I.folders(lines), []), I.has_cap(I.caps(lines), "SPECIAL-USE"))
 
-def folders(checked: Bool) -> IO(List<&2, J.Json>):
+def folders(checked: Bool) -> IO(Check):
   match checked:
     case False{}:
-      IO.pure(List<&2, J.Json>, [fact("imap", "folders", "skipped", "not_checked")])
+      IO.pure(Check, Check{[fact("imap", "folders", "skipped", "not_checked")], []})
     case True{}:
-      do IO<List<&2, J.Json>>:
+      do IO<Check>:
         p : Policy.Proc <- helper("imap", I.script(Ops.plan_probe()))
         folders.result(T.imap_result(p))
 
@@ -293,41 +347,68 @@ def auth_ok(xs: List<&2, J.Json>) -> Bool:
       (String.eq(Policy.str_arg(h, "stage", ""), "authentication") &&
         String.eq(Policy.str_arg(h, "status", ""), "ok")) || auth_ok(t)
 
-def result(+checks: List<&2, J.Json>) -> Policy.Out:
-  +json = J.obj([J.kv("checks", J.arr(checks)), J.kv("redacted", J.bool(True{})),
+def report_json(checks: List<&2, J.Json>) -> J.Json:
+  J.obj([J.kv("checks", J.arr(checks)), J.kv("redacted", J.bool(True{})),
     J.kv("scope", J.str("Setup checks only: no mailbox-write, recipient, send-quota or " ++
       "delivery guarantee; no sending permission is granted."))])
+
+def result(c: Check) -> Policy.Out:
+  Check{+checks, suggestions} = c
+  +json = report_json(checks)
   Bool.pick(Policy.Out, failed(checks), Policy.Partial{json}, Policy.Ok{json})
 
-def run.config(c: Policy.Config, imap: Bool, smtp: Bool) -> IO(Policy.Out):
+def run.folders(i: List<&2, J.Json>, s: List<&2, J.Json>, f: Check) -> Check:
+  Check{checks, suggestions} = f
+  Check{List.append(&2, J.Json, i, List.append(&2, J.Json, s, checks)), suggestions}
+
+def run.config(c: Policy.Config, imap: Bool, smtp: Bool) -> IO(Check):
   match c:
     case Policy.ConfigBad{msg}:
       skipped = List.append(&2, J.Json, stage_facts(stages(), "imap", []),
         stage_facts(stages(), "smtp", []))
-      T.pure_out(result(fact("local", "configuration", "failed",
-        "invalid_switches_or_policy") <> skipped))
+      IO.pure(Check, Check{fact("local", "configuration", "failed",
+        "invalid_switches_or_policy") <> skipped, []})
     case Policy.Config{ro, drafts, jev, images}:
-      do IO<Policy.Out>:
+      do IO<Check>:
         p : List<&2, J.Json> <- platform()
         +i : List<&2, J.Json> <- transport("imap", imap)
         s : List<&2, J.Json> <- transport("smtp", smtp)
-        f : List<&2, J.Json> <- folders(auth_ok(i))
-        return result(List.append(&2, J.Json, p,
-          List.append(&2, J.Json, i, List.append(&2, J.Json, s, f))))
+        f : Check <- folders(auth_ok(i))
+        return run.folders(List.append(&2, J.Json, p, i), s, f)
 
 # Validate the send-copy switch without invoking sending or reserving quota.
-def run.save_sent(c: Policy.Config, save: Policy.Flag, imap: Bool, smtp: Bool) -> IO(Policy.Out):
+def run.save_sent(c: Policy.Config, save: Policy.Flag, imap: Bool, smtp: Bool) -> IO(Check):
   match save:
     case Policy.FlagBad{msg}:
       run.config(Policy.ConfigBad{msg}, imap, smtp)
     case _:
       run.config(c, imap, smtp)
 
-def run(imap: Bool, smtp: Bool) -> IO(Policy.Out):
-  do IO<Policy.Out>:
+def run_checks(imap: Bool, smtp: Bool) -> IO(Check):
+  do IO<Check>:
     c : Policy.Config <- T.config()
     save : Policy.Flag <- T.flag("MAILBEND_SAVE_SENT")
     run.save_sent(c, save, imap, smtp)
+
+def run(imap: Bool, smtp: Bool) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    check : Check <- run_checks(imap, smtp)
+    return result(check)
+
+def setup_result(c: Check) -> Policy.Out:
+  Check{+checks, suggestions} = c
+  +json = J.obj([J.kv("local_only", J.bool(True{})),
+    J.kv("diagnostics", report_json(checks)), J.kv("suggestions", J.arr(suggestions)),
+    J.kv("scope", J.str("Private local output may contain folder names. Suggestions are not " ++
+      "applied and do not choose among candidates. Empty candidates mean no safe match. " ++
+      "Use mail_probe locally to inspect other existing folders; never create or guess one. " ++
+      "Use diagnose --imap --smtp for shareable output."))])
+  Bool.pick(Policy.Out, failed(checks), Policy.Partial{json}, Policy.Ok{json})
+
+def setup() -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    c : Check <- run_checks(True{}, True{})
+    return setup_result(c)
 
 # The offline inventory deliberately has no helper, file or network capability.
 def posture_char(+c: Char) -> Bool:
