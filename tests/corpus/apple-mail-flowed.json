@@ -1,0 +1,46 @@
+{
+  "status": "known_unsupported",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "MailBend does not join format=flowed lines. This fixture is not an Apple Mail capture or a client compatibility claim."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc3676"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/124"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "apple-mail-flowed",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<apple-mail-flowed@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "A flowed paragraph.\n-- \nSynthetic signature.",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "known_wrong": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "apple-mail-flowed",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<apple-mail-flowed@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "A flowed \nparagraph.\n-- \nSynthetic signature.",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "diagnostic": "MailBend does not join format=flowed lines. This fixture is not an Apple Mail capture or a client compatibility claim."
+}

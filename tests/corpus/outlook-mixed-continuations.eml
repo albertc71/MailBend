@@ -1,0 +1,37 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: outlook-mixed-continuations
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <outlook-mixed-continuations@corpus.invalid>
+MIME-Version: 1.0
+X-Mailer: Synthetic Outlook shape, not a client export
+Content-Type: multipart/mixed; boundary=outlook-mixed
+
+Synthetic preamble.
+--outlook-mixed
+Content-Type: multipart/alternative; boundary=outlook-alt
+
+Synthetic preamble.
+--outlook-alt
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Quarterly caf=C3=A9 report.
+--outlook-alt
+Content-Type: text/html; charset=utf-8
+
+<p>Quarterly caf&#233; report.</p>
+--outlook-alt--
+Synthetic epilogue.
+
+--outlook-mixed
+Content-Type: application/pdf
+Content-Disposition: attachment;
+ filename*0*=utf-8'en'r%C3%A9;
+ filename*1=" sum";
+ filename*2*=.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQ=
+--outlook-mixed--
+Synthetic epilogue.

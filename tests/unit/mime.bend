@@ -3,6 +3,7 @@
 import Base
 import ../../src/mime.bend as M
 import ../../src/codec.bend as C
+import ../composition-cases.bend as V
 
 def show_line_breaks(s: String) -> String:
   match s:
@@ -63,9 +64,6 @@ def show_headers(+hs: List<&2, M.Hdr>) -> IO(Unit):
     IO.print(M.header(hs, "to"))
     IO.print(M.main_value(M.header(hs, "content-type")) ++ " " ++ M.param(M.header(hs, "content-type"), "boundary"))
 
-def attachment_draft() -> M.Draft:
-  M.Draft{"Tester <tester@example.com>", ["José Q <jose@example.com>", "b@example.com"], [], [], "Résumé attached", "Line one\nligne deux é\n", "Sun, 27 Sep 2026 03:19:30 +0000", "<1@example.com>", "", "", [M.Attach{"notes.txt", "text/plain", "hello"}]}
-
 # Whether a message is 7-bit: printable ASCII, tabs and CRLF only.
 def crlf_plain(s: String) -> Bool:
   C.is_plain(String.concat(String.split(String.concat(String.split(s, '\r')), '\n')))
@@ -78,9 +76,6 @@ def roundtrip(+m: String) -> IO(Unit):
     IO.print(show_parts(M.parts(m)))
 
 # Caller-supplied threading headers and content types cannot add header lines.
-def header_injection_draft() -> M.Draft:
-  M.Draft{"t@example.com", ["a@example.com"], [], [], "s", "b", "d", "<1@x>", "<x@y>\r\nBcc: evil@example.com", "", [M.Attach{"f.txt", "text/plain\r\nX-Evil: 1", "hi"}]}
-
 def has_no_injected_headers(+m: String) -> Bool:
   Bool.not(String.contains(m, "\r\nBcc:") || String.contains(m, "\r\nX-Evil:"))
 
@@ -114,8 +109,8 @@ def show_parts_raw(p: M.Parts) -> String:
 def print_parts(m: String) -> IO(Unit):
   IO.print(show_parts_raw(M.parts(m)))
 
-def print_compose(d: M.Draft, b: String) -> IO(Unit):
-  IO.print(show_line_breaks(M.compose(d, b)))
+def print_compose(c: V.Case) -> IO(Unit):
+  IO.print(show_line_breaks(V.wire(c)))
 
 # A multipart message nested `n` levels deep around one text/plain part.
 def nested(+n: Nat) -> String:
@@ -163,13 +158,10 @@ def html_cases() -> IO(Unit):
     IO.print("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]")
     IO.print("[" ++ M.html_text("1 &gt; 0 &amp;&amp; &quot;q&quot; &#39;s&#39;&nbsp;&foo; &amp;lt;") ++ "] [" ++ M.html_text("\ttab\t\t sp  ") ++ "] [" ++ M.html_text("") ++ "] [" ++ M.html_text("&lt;b&gt;") ++ "]")
 
-def compose_draft() -> M.Draft:
-  M.Draft{"Zoë Ñ <z@example.com>", [], ["c1@example.com", "\"Doe, J\" <j@x.com>", "<bare@x.com>"], ["hidden@example.com"], "plain subject", "a\rb\nc\r\nd=e é", "D", "<m@x>", "  <p@x>\r\n ", "<r1@x>  <r2@x>\t<r3@x>", [M.Attach{"résumé.pdf", "Application/PDF", "%PDF\u{FF}"}, M.Attach{"bad.bin", "x", ""}, M.Attach{"m.eml", "message/rfc822", "Subject: \u{E9}\r\n\r\nhi"}]}
-
 def compose_cases() -> IO(Unit):
   do IO<Unit>:
-    print_compose(compose_draft(), "BB")
-    print_compose(M.Draft{"a@b.c", ["x@y.z"], [], [], "", "", "D", "<i@x>", "", "", []}, "unused")
+    print_compose(V.Mixed{})
+    print_compose(V.Empty{})
     IO.print(M.encode_header("") ++ "|" ++ M.encode_header("Café") ++ "|" ++ show_line_breaks(M.encode_header(String.repeat("é", 30n))) ++ "|" ++ Nat.show(String.length(M.encode_header(String.repeat("a", 900n)))) ++ " " ++ Nat.show(String.length(M.encode_header(String.repeat("a", 901n)))))
     IO.print(M.safe_ctype("text/") ++ " " ++ M.safe_ctype("/x") ++ " " ++ M.safe_ctype("a/b/c") ++ " " ++ M.safe_ctype("") ++ " " ++ M.safe_ctype("image/svg+xml") ++ " " ++ M.safe_ctype("Message/RFC822"))
     IO.print(Bool.show(M.seven_bit(String.repeat("a", 998n), 0)) ++ " " ++ Bool.show(M.seven_bit(String.repeat("a", 999n), 0)) ++ " " ++ Bool.show(M.seven_bit("a\u{0}", 0)) ++ " " ++ Bool.show(M.seven_bit("a\nb", 0)) ++ " " ++ Bool.show(M.seven_bit("a\rb", 0)) ++ " " ++ Bool.show(M.seven_bit("\u{7F}", 0)) ++ " " ++ Bool.show(M.seven_bit("", 0)))
@@ -271,14 +263,11 @@ def local_name_cases() -> IO(Unit):
     IO.print("[" ++ M.local_name("..") ++ "] [" ++ M.local_name(".") ++ "] [" ++ M.local_name("") ++ "] [" ++ M.local_name("\u{202E}") ++ "]")
     IO.print(Nat.show(String.length(M.local_name(String.repeat("a", 300n)))) ++ " " ++ Nat.show(String.length(M.local_name(String.repeat("\u{E9}", 200n)))) ++ " " ++ Nat.show(String.length(M.local_name("a" ++ String.repeat("\u{1F600}", 64n)))) ++ " " ++ M.local_name("caf\u{E9}.txt"))
 
-def conformance_draft(subject: String, irt: String, refs: String, atts: List<&2, M.Attach>) -> M.Draft:
-  M.Draft{"a@x", ["b@y"], [], [], subject, "body", "D", "<m@x>", irt, refs, atts}
+def composed_header(c: V.Case) -> String:
+  M.head_of(M.split(V.wire(c)))
 
-def composed_header(subject: String) -> String:
-  M.head_of(M.split(M.compose(conformance_draft(subject, "", "", []), "B")))
-
-def subject_roundtrip(+subject: String) -> Bool:
-  String.eq(M.decode_header(M.header(M.headers(composed_header(subject)), "subject")), subject)
+def subject_roundtrip(+c: V.Case) -> Bool:
+  String.eq(M.decode_header(M.header(M.headers(composed_header(c)), "subject")), V.subject(c))
 
 def unfold(s: String) -> String:
   match s:
@@ -289,30 +278,27 @@ def unfold(s: String) -> String:
     case SCon{c, t}:
       SCon{c, unfold(t)}
 
-def composed_thread(irt: String, refs: String, name: String) -> String:
-  String.trim(M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", irt, refs, []), "B")))), name))
-
-def long_refs() -> String:
-  "<root@x> " ++ String.repeat("<middle@x> ", 120n) ++ "<last1@x> <last2@x>"
+def composed_thread(c: V.Case, name: String) -> String:
+  String.trim(M.header(M.headers(M.head_of(M.split(V.wire(c)))), name))
 
 def conformance_cases() -> IO(Unit):
   do IO<Unit>:
-    IO.print("encoded subject line bound " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("é", 80n)), 0, 0), 77)))
+    IO.print("encoded subject line bound " ++ Bool.show(U32.is_le(max_line(composed_header(V.Unicode{}), 0, 0), 77)))
     IO.print("encoded display line bound " ++ Bool.show(U32.is_le(max_line("From: " ++ M.encode_addr(String.repeat("é", 39n) ++ " <long.address@example.invalid>"), 0, 0), 77)))
-    IO.print("literal encoded words " ++ Bool.show(subject_roundtrip("=?x?=")) ++ " " ++ Bool.show(subject_roundtrip("Re: =?UTF-8?B?SGFja2Vk?=")))
-    IO.print("long ASCII subject line bound " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("one two ", 20n) ++ "end"), 0, 0), 79)))
+    IO.print("literal encoded words " ++ Bool.show(subject_roundtrip(V.LiteralShort{})) ++ " " ++ Bool.show(subject_roundtrip(V.LiteralNested{})))
+    IO.print("long ASCII subject line bound " ++ Bool.show(U32.is_le(max_line(composed_header(V.AsciiWords{}), 0, 0), 79)))
     IO.print("ASCII subject whitespace preserved " ++ Bool.show(String.eq(unfold(M.encode_header(String.repeat("one  two ", 20n) ++ "end")), String.repeat("one  two ", 20n) ++ "end")))
-    IO.print("first subject token bounds " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("a", 69n)), 0, 0), 79)) ++ " " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("a", 70n)), 0, 0), 79)) ++ " " ++ Bool.show(U32.is_le(max_line(composed_header(String.repeat("a", 77n)), 0, 0), 79)))
+    IO.print("first subject token bounds " ++ Bool.show(U32.is_le(max_line(composed_header(V.Ascii69{}), 0, 0), 79)) ++ " " ++ Bool.show(U32.is_le(max_line(composed_header(V.Ascii70{}), 0, 0), 79)) ++ " " ++ Bool.show(U32.is_le(max_line(composed_header(V.Ascii77{}), 0, 0), 79)))
     IO.print("literal display word " ++ Bool.show(String.contains(M.encode_addr("=?UTF-8?B?SGFja2Vk?= <a@x>"), "=?UTF-8?B?PT9VVEYtOD9CP1NHRmphMlZrPz0=?=")))
     IO.print("UTF-8 attachment charset " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"notes.txt", "text/plain", C.utf8_encode("café")}), "text/plain; charset=utf-8")))
     IO.print("ASCII attachment charset " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"notes.csv", "text/csv", "one,two\r\n"}), "text/csv; charset=us-ascii")))
     IO.print("invalid UTF-8 attachment unchanged " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"notes.txt", "text/plain", "caf\u{E9}"}), "text/plain;\r\n name=")))
     IO.print("binary attachment unchanged " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"data.bin", "application/octet-stream", "ASCII"}), "application/octet-stream;\r\n name=")))
-    IO.print("threading tokens " ++ M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", "<a@x> (by relay)", "(note) <root@x> junk <a@x>", []), "B")))), "in-reply-to"))
-    IO.print("references tokens " ++ M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", "", "(note) <root@x> junk <a@x>", []), "B")))), "references"))
-    IO.print("references bound " ++ Bool.show(Nat.is_le(String.length(M.header(M.headers(M.head_of(M.split(M.compose(conformance_draft("s", "", "<root@x> " ++ String.repeat("<middle@x> ", 120n) ++ "<last1@x> <last2@x>", []), "B")))), "references")), 986n)))
-    IO.print("references keep endpoints " ++ Bool.show(String.starts_with(composed_thread("", long_refs(), "references"), "<root@x> ")) ++ " " ++ Bool.show(String.ends_with(composed_thread("", long_refs(), "references"), "<last1@x> <last2@x>")))
-    IO.print("threading malformed dropped [" ++ composed_thread("(fake <comment@x>) <a@x> <bad> <two@@x> <space @x> <\u{E9}@x> <open", "", "in-reply-to") ++ "]")
+    IO.print("threading tokens " ++ M.header(M.headers(M.head_of(M.split(V.wire(V.ThreadTokens{})))), "in-reply-to"))
+    IO.print("references tokens " ++ M.header(M.headers(M.head_of(M.split(V.wire(V.ReferenceTokens{})))), "references"))
+    IO.print("references bound " ++ Bool.show(Nat.is_le(String.length(M.header(M.headers(M.head_of(M.split(V.wire(V.LongReferences{})))), "references")), 986n)))
+    IO.print("references keep endpoints " ++ Bool.show(String.starts_with(composed_thread(V.LongReferences{}, "references"), "<root@x> ")) ++ " " ++ Bool.show(String.ends_with(composed_thread(V.LongReferences{}, "references"), "<last1@x> <last2@x>")))
+    IO.print("threading malformed dropped [" ++ composed_thread(V.MalformedIds{}, "in-reply-to") ++ "]")
     IO.print("boundary collision encoded " ++ Bool.show(String.contains(M.att_part("B", M.Attach{"original.eml", "message/rfc822", "Subject: old\r\n\r\n--B\r\nbody"}), "Content-Type: application/octet-stream")))
     IO.print("whole QP padded soft break " ++ M.readable_text(M.parts("Content-Transfer-Encoding: quoted-printable\r\n\r\nfoo= \r\nbar")))
     IO.print("whole QP final soft break " ++ M.readable_text(M.parts("Content-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nlast=\r\n--B--\r\n")))
@@ -328,19 +314,16 @@ def attachment_text(+part: String) -> String:
 def raw_attachment(data: String) -> Bool:
   String.contains(M.att_part("B", M.Attach{"m.eml", "message/rfc822", data}), "Content-Transfer-Encoding: 7bit")
 
-def long_id(n: Nat, c: String) -> String:
-  "<" ++ String.repeat(c, n) ++ "@x>"
-
 def conformance_edges() -> IO(Unit):
   do IO<Unit>:
-    IO.print("single long subject token roundtrip " ++ Bool.show(subject_roundtrip(String.repeat("a", 79n))) ++ " " ++ Bool.show(subject_roundtrip(String.repeat("a", 900n))))
-    IO.print("first subject token roundtrip " ++ Bool.show(subject_roundtrip(String.repeat("a", 69n))) ++ " " ++ Bool.show(subject_roundtrip(String.repeat("a", 70n))) ++ " " ++ Bool.show(subject_roundtrip(String.repeat("a", 77n))))
+    IO.print("single long subject token roundtrip " ++ Bool.show(subject_roundtrip(V.Ascii79{})) ++ " " ++ Bool.show(subject_roundtrip(V.Ascii900{})))
+    IO.print("first subject token roundtrip " ++ Bool.show(subject_roundtrip(V.Ascii69{})) ++ " " ++ Bool.show(subject_roundtrip(V.Ascii70{})) ++ " " ++ Bool.show(subject_roundtrip(V.Ascii77{})))
     IO.print("text charset validity " ++ Bool.show(charset_is("\u{0}\t\r\n", "us-ascii")) ++ " " ++ Bool.show(charset_is(C.utf8_encode("é€😀�"), "utf-8")) ++ " " ++ Bool.show(charset_is("\u{C0}\u{AF}", "")) ++ " " ++ Bool.show(charset_is("\u{ED}\u{A0}\u{80}", "")) ++ " " ++ Bool.show(charset_is("\u{F4}\u{90}\u{80}\u{80}", "")) ++ " " ++ Bool.show(charset_is("\u{C3}", "")) ++ " " ++ Bool.show(charset_is("\u{80}", "")))
     IO.print("text attachment roundtrip " ++ attachment_text(M.att_part("B", M.Attach{"café.txt", "text/plain", C.utf8_encode("café")})))
     IO.print("boundary prefix checks " ++ Bool.show(raw_attachment("--B\r\n")) ++ " " ++ Bool.show(raw_attachment("Subject: s\r\n\r\n--B--\r\n")) ++ " " ++ Bool.show(raw_attachment("Subject: s\r\n\r\n--Bextra\r\n")) ++ " " ++ Bool.show(raw_attachment("Subject: s\r\n\r\ntext --B\r\n")))
-    IO.print("reference exact limits " ++ Bool.show(Nat.is_eq(String.length(composed_thread("", long_id(982n, "a"), "references")), 986n)) ++ " " ++ Bool.show(String.is_empty(composed_thread("", long_id(983n, "a"), "references"))) ++ " " ++ Bool.show(Nat.is_eq(String.length(composed_thread("", long_id(496n, "a") ++ " " ++ long_id(481n, "b"), "references")), 986n)))
-    IO.print("oversized mandatory references omitted " ++ Bool.show(String.is_empty(composed_thread("<reply@x>", long_id(336n, "a") ++ " " ++ long_id(336n, "b") ++ " " ++ long_id(336n, "c"), "references"))) ++ " " ++ composed_thread("<reply@x>", long_id(336n, "a") ++ " " ++ long_id(336n, "b") ++ " " ++ long_id(336n, "c"), "in-reply-to"))
-    IO.print("thread token grammar " ++ composed_thread("<bad<inner@x>> <a..b@x> <a@.x> <ok@[127.0.0.1]> <ok@[IPv6:abcd::1]> (nested (fake <n@x>)) \"quote <q@x>\" <end@x>", "", "in-reply-to"))
+    IO.print("reference exact limits " ++ Bool.show(Nat.is_eq(String.length(composed_thread(V.ReferenceExact{}, "references")), 986n)) ++ " " ++ Bool.show(String.is_empty(composed_thread(V.ReferenceOver{}, "references"))) ++ " " ++ Bool.show(Nat.is_eq(String.length(composed_thread(V.ReferencesExact{}, "references")), 986n)))
+    IO.print("oversized mandatory references omitted " ++ Bool.show(String.is_empty(composed_thread(V.MandatoryOver{}, "references"))) ++ " " ++ composed_thread(V.MandatoryOver{}, "in-reply-to"))
+    IO.print("thread token grammar " ++ composed_thread(V.IdGrammar{}, "in-reply-to"))
     IO.print("tab and long whitespace preserved " ++ Bool.show(String.eq(unfold(M.encode_header(String.repeat("a\tb ", 40n))), String.repeat("a\tb ", 40n))) ++ " " ++ Bool.show(String.eq(unfold(M.encode_header("start" ++ String.repeat(" ", 200n) ++ "end")), "start" ++ String.repeat(" ", 200n) ++ "end")))
     IO.print("attachment parameter line bound " ++ Bool.show(U32.is_le(max_line(M.att_part("B", M.Attach{String.repeat("n", 60n), "text/plain", "a"}), 0, 0), 79)))
     IO.print("bare address line bound " ++ Bool.show(U32.is_le(max_line(M.field_line("From", M.encode_addr(String.repeat("a", 72n) ++ "@x")), 0, 0), 79)))
@@ -350,9 +333,9 @@ def main() -> IO(Unit):
     show_headers(M.headers(M.head_of(M.split(multipart_message()))))
     IO.print(show_parts(M.parts(multipart_message())))
     IO.print(show_parts(M.parts("Subject: plain\r\n\r\nJust text\r\n")))
-    roundtrip(M.compose(attachment_draft(), "b0undary"))
+    roundtrip(V.wire(V.Attachment{}))
     IO.print(M.rfc5322_date(0) ++ " / " ++ M.rfc5322_date(951782400) ++ " / " ++ M.rfc5322_date(1790480370) ++ " / " ++ M.rfc5322_date(4102444799))
-    IO.print(Bool.show(has_no_injected_headers(M.compose(header_injection_draft(), "b"))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
+    IO.print(Bool.show(has_no_injected_headers(V.wire(V.Injection{}))) ++ " " ++ M.safe_ctype("Text/Plain") ++ " " ++ M.safe_ctype("a/b; x=\"y\"") ++ " " ++ Bool.show(M.seven_bit("ok\r\nline", 0)) ++ " " ++ Bool.show(M.seven_bit("caf\u{E9}", 0)))
     IO.print(show_line_breaks(M.name_param("filename", "résumé.pdf")) ++ " | " ++ M.name_param("filename", "plain.txt"))
     IO.print(Nat.show(String.length(M.encode_header(String.repeat("a", 950n)))) ++ " " ++ Bool.show(String.contains(M.encode_header(String.repeat("a", 950n)), "\r\n ")) ++ " " ++ show_line_breaks(M.fold_ids(["<a@x>", "<b@y>"])))
     IO.print(Bool.show(String.eq(M.param("attachment; " ++ String.concat(String.split(M.name_param("filename", long_name()), '\n')), "filename"), long_name())) ++ " " ++ Bool.show(U32.is_lt(max_line(M.name_param("filename", long_name()), 0, 0), 80)))
@@ -397,7 +380,7 @@ def main() -> IO(Unit):
 #|ligne deux é html= atts=notes.txt|text/plain|5;
 #|Thu, 1 Jan 1970 00:00:00 +0000 / Tue, 29 Feb 2000 00:00:00 +0000 / Sun, 27 Sep 2026 03:39:30 +0000 / Thu, 31 Dec 2099 23:59:59 +0000
 #|True text/plain application/octet-stream True False
-#|filename="r_sum_.pdf";\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf | filename="plain.txt"
+#|filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n filename="r_sum_.pdf" | filename="plain.txt"
 #|1640 True <a@x>\r\n <b@y>
 #|True True
 #|Q1; final "v2".pdf | text/plain | john@example.com
@@ -430,12 +413,12 @@ def main() -> IO(Unit):
 #|text= html= atts=
 #|[a b] [ x y ] [unclosed ] [stray > here]
 #|[1 > 0 && "q" 's' &foo; &lt;] [ tab sp ] [] [<b>]
-#|From: =?UTF-8?B?Wm/DqyDDkQ==?=\r\n <z@example.com>\r\nCc: c1@example.com,\r\n "Doe, J" <j@x.com>,\r\n bare@x.com\r\nBcc: hidden@example.com\r\nSubject: plain subject\r\nDate: D\r\nMessage-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <r1@x>\r\n <r2@x>\r\n <r3@x>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BB"\r\n\r\nThis is a multi-part message in MIME format.\r\n--BB\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\na\r\nb\r\nc\r\nd=3De =C3=A9\r\n--BB\r\nContent-Type: application/pdf;\r\n name="r_sum_.pdf";\r\n name*0*=utf-8''r%C3%A9sum%C3%A9.pdf\r\nContent-Disposition: attachment;\r\n filename="r_sum_.pdf";\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERv8=\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="bad.bin"\r\nContent-Disposition: attachment;\r\n filename="bad.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nU3ViamVjdDog6Q0KDQpoaQ==\r\n--BB--\r\n
+#|From: =?UTF-8?B?Wm/DqyDDkQ==?=\r\n <z@example.com>\r\nCc: c1@example.com,\r\n "Doe, J" <j@x.com>,\r\n bare@x.com\r\nBcc: hidden@example.com\r\nSubject: plain subject\r\nDate: D\r\nMessage-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <r1@x>\r\n <r2@x>\r\n <r3@x>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BB"\r\n\r\nThis is a multi-part message in MIME format.\r\n--BB\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\na\r\nb\r\nc\r\nd=3De =C3=A9\r\n--BB\r\nContent-Type: application/pdf;\r\n name*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n name="r_sum_.pdf"\r\nContent-Disposition: attachment;\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n filename="r_sum_.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERv8=\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="bad.bin"\r\nContent-Disposition: attachment;\r\n filename="bad.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nU3ViamVjdDog6Q0KDQpoaQ==\r\n--BB--\r\n
 #|From: a@b.c\r\nTo: x@y.z\r\nSubject: \r\nDate: D\r\nMessage-ID: <i@x>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n
 #||=?UTF-8?B?Q2Fmw6k=?=|=?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?=\r\n =?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqQ==?=|900 1561
 #|application/octet-stream application/octet-stream application/octet-stream application/octet-stream image/svg+xml message/rfc822
 #|True False False False False False True
-#|name="a\"b\\c" | 204 | f="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";\r\n f*0*=utf-8''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*1*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*2*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*3*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*4*=a
+#|name="a\"b\\c" | 204 | f*0*=utf-8''aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*1*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*2*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*3*=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;\r\n f*4*=a;\r\n f="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 #|[] [<a@x>\r\n <b@y>] [<a@x>]
 #|--B\r\nContent-Type: text/plain; charset=us-ascii;\r\n name="a.txt"\r\nContent-Disposition: attachment;\r\n filename="a.txt"\r\nContent-Transfer-Encoding: base64\r\n\r\naGk=\r\n | --B\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nYQpi\r\n
 #|Thu, 29 Feb 2024 00:00:00 +0000 / Fri, 31 Dec 1999 23:59:59 +0000 / Sun, 7 Feb 2106 06:28:15 +0000 / Thu, 1 Jan 1970 23:59:59 +0000 / Mon, 6 May 2024 12:53:20 +0000
