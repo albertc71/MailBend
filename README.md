@@ -918,7 +918,16 @@ the [operator runbook](docs/OPERATIONS.md).
   UIDs. The caller owns scheduling and state (see [polling](#polling-known-messages)).
 - Each character of a fetched message is a separate value in memory, so
   very large messages (the 16 MiB `mail_get` / 25 MiB forward caps) use a
-  lot of RAM.
+  lot of RAM. The [synthetic scale suite](tests/SCALE.md) measures those exact
+  inputs with per-call wall time and maximum-process RSS. Its committed
+  baseline states whether a complete measurement exists; an unmeasured or
+  different-runner baseline fails comparison. It does not establish a minimum
+  RAM requirement for small boards. The verified Ubuntu x86-64 hosted
+  baseline completes all five samples of the 16 MiB read and 25 MiB forward
+  with a matching Sent copy. Their median maximum-process RSS is 1,076,724
+  KiB (about 1.03 GiB) and 2,479,384 KiB (about 2.36 GiB), respectively;
+  fixture and validation memory are excluded. See the scale guide for the
+  runner profile, ranges and preserved earlier failed observations.
 - Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.

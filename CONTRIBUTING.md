@@ -43,6 +43,7 @@ Use Python 3.13.18 (the CI pin), or a runtime containing the
 checks this capability: older `email.policy.default` incorrectly inserts whitespace
 between adjacent encoded words in display names.
 The scheduled recipe test also needs `jq` and `flock` from util-linux.
+The scale contract checks need GNU `time` (`sudo apt-get install time` on Ubuntu).
 
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
@@ -61,6 +62,7 @@ python3 tests/test-writing-laws.py                # malformed guide fences fail 
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
+python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
 bash tests/test-transport.sh
