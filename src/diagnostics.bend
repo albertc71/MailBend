@@ -355,17 +355,40 @@ def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(Check):
         f : T.Fs() <- T.roles_of(T.imap_result(p), fs)
         return folder_check(f)
 
+def storage_fact(s: I.Storage) -> J.Json:
+  J.obj([J.kv("protocol", J.str("imap")), J.kv("stage", J.str("storage")),
+    J.kv("level", J.str(I.storage_level(s)))])
+
+def storage_check(c: Check, s: I.Storage) -> Check:
+  Check{checks, suggestions} = c
+  Check{List.append(&2, J.Json, checks, [storage_fact(s)]), suggestions}
+
+def storage_probe(advertised: Bool) -> IO(I.Storage):
+  match advertised:
+    case False{}:
+      IO.pure(I.Storage, I.StorageUnknown{})
+    case True{}:
+      do IO<I.Storage>:
+        p : Policy.Proc <- helper("imap", I.script(Ops.plan_quota()))
+        return T.quota_result(T.imap_result(p))
+
 def folders.result(r: T.Run()) -> IO(Check):
   match r:
     case Fail{msg}:
-      IO.pure(Check, Check{[fact("imap", "folders", "failed", "discovery_failed")], []})
+      IO.pure(Check, Check{[fact("imap", "folders", "failed", "discovery_failed"),
+        storage_fact(I.StorageUnknown{})], []})
     case Done{+lines}:
-      folders.roles(T.merge_folders(I.folders(lines), []), I.has_cap(I.caps(lines), "SPECIAL-USE"))
+      do IO<Check>:
+        c : Check <- folders.roles(T.merge_folders(I.folders(lines), []),
+          I.has_cap(I.caps(lines), "SPECIAL-USE"))
+        s : I.Storage <- storage_probe(I.quota_advertised(lines))
+        return storage_check(c, s)
 
 def folders(checked: Bool) -> IO(Check):
   match checked:
     case False{}:
-      IO.pure(Check, Check{[fact("imap", "folders", "skipped", "not_checked")], []})
+      IO.pure(Check, Check{[fact("imap", "folders", "skipped", "not_checked"),
+        storage_fact(I.StorageUnknown{})], []})
     case True{}:
       do IO<Check>:
         p : Policy.Proc <- helper("imap", I.script(Ops.plan_probe()))

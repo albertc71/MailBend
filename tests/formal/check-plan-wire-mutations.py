@@ -15,6 +15,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 GUARD = '[I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]'
 MUTATIONS = (
+    ("quota plan mutates flags", "src/ops.bend", '[I.CGetQuotaRoot{"INBOX"}]',
+     '[I.CGetQuotaRoot{"INBOX"}, I.CStore{[1], True{}, I.FSeen{}}]',
+     "plan_quota_writes_nothing"),
     ("guard selects another folder", "src/ops.bend", GUARD,
      GUARD.replace('CSelect{mbox}', 'CSelect{"Other"}'), "mark_opens_callers_folder"),
     ("guard searches other UIDs", "src/ops.bend", GUARD,

@@ -115,6 +115,10 @@ law from_name_inverts_name:
 # Read plans open mailboxes with EXAMINE, fetch with BODY.PEEK and never
 # change anything: for every mailbox, UID, size, key list and checkpoint.
 
+# LAW: the quota plan writes nothing
+law plan_quota_writes_nothing:
+  {I.any_writes(Ops.plan_quota()) == False{} : Bool}
+
 # LAW: the probe plan writes nothing
 law probe_writes_nothing:
   {I.any_writes(Ops.plan_probe()) == False{} : Bool}

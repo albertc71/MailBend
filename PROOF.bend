@@ -108,6 +108,9 @@ def Laws.from_name_inverts_name(op):
 # Read plans
 # ----------
 
+def Laws.plan_quota_writes_nothing():
+  {==}
+
 def Laws.probe_writes_nothing():
   {==}
 
@@ -275,6 +278,8 @@ def Laws.checked_read_preserves_writes(cs, ids):
       {==}
     case I.CCapability{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
+    case I.CGetQuotaRoot{m} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
     case I.CList{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
     case I.CListRoles{} <> t:
@@ -323,6 +328,9 @@ def Laws.checked_read_without_identities_unchanged(cs):
       {==}
     case I.CCapability{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CCapability{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CGetQuotaRoot{m} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CGetQuotaRoot{m} <> x,
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CList{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CList{} <> x,
