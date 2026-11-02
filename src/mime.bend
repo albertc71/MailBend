@@ -199,6 +199,19 @@ def header(hs: List<&2, Hdr>, +name: String) -> String:
 # RFC 2047 encoded words
 # ----------------------
 
+# Empty fields preserve the existing whitespace and malformed-word behavior.
+def header_split.go(s: String, +sep: Char, +cur: String, +parts: List<&2, String>) -> List<&2, String>:
+  match s:
+    case SNil{}:
+      cur <> parts
+    case SCon{+c, t}:
+      +cut = Char.is_eq(c, sep)
+      header_split.go(t, sep, Bool.pick(String, cut, "", SCon{c, cur}),
+        Bool.pick(List<&2, String>, cut, cur <> parts, parts))
+
+def header_split(s: String, sep: Char) -> List<&2, String>:
+  header_split.go(String.reverse(s), sep, "", [])
+
 def ew_bytes(b64: Bool, text: String) -> String:
   match b64:
     case True{}:
@@ -206,19 +219,19 @@ def ew_bytes(b64: Bool, text: String) -> String:
     case False{}:
       C.qp_decode(text, True{})
 
-def ew_charset.language_tail(s: String, need_char: Bool) -> Bool:
+def ew_charset.language_tail(s: String, need_char: Bool, valid: Bool) -> Bool:
   match s:
     case SNil{}:
-      Bool.not(need_char)
+      valid && Bool.not(need_char)
     case SCon{'-', t}:
-      Bool.not(need_char) && ew_charset.language_tail(t, True{})
+      ew_charset.language_tail(t, True{}, valid && Bool.not(need_char))
     case SCon{+c, t}:
-      (Char.is_alpha(c) || Char.is_digit(c)) && ew_charset.language_tail(t, False{})
+      ew_charset.language_tail(t, False{}, valid && (Char.is_alpha(c) || Char.is_digit(c)))
 
 def ew_charset.language(s: String) -> Bool:
   match s:
     case SCon{c, t}:
-      Char.is_alpha(c) && ew_charset.language_tail(t, False{})
+      Char.is_alpha(c) && ew_charset.language_tail(t, False{}, True{})
     case SNil{}:
       False{}
 
@@ -234,9 +247,9 @@ def ew_charset(ps: List<&2, String>, original: String) -> String:
 # word read as UTF-8.
 def ew_parts(ps: List<&2, String>, word: String) -> String:
   match ps:
-    case "=" <> +cs <> enc <> text <> "=" <> Nil{}:
-      C.charset_decode(ew_charset(String.split(cs, '*'), cs),
-        ew_bytes(String.eq(String.to_upper(enc), "B"), text))
+    case "=" <> +cs <> +enc <> text <> "=" <> Nil{}:
+      C.charset_decode(ew_charset(header_split(cs, '*'), cs),
+        ew_bytes(String.eq(enc, "B") || String.eq(enc, "b"), text))
     case _:
       C.utf8_decode(word)
 
@@ -247,33 +260,36 @@ def is_ew(+w: String) -> Bool:
 def ew_word(+w: String, encoded: Bool) -> String:
   match encoded:
     case True{}:
-      ew_parts(String.split(w, '?'), w)
+      ew_parts(header_split(w, '?'), w)
     case False{}:
       C.utf8_decode(w)
 
-# Joins decoded words; the space between two encoded words is dropped.
-def ew_join(ws: List<&2, String>, prev_ew: Bool, first: Bool) -> String:
+def ew_join.go(ws: List<&2, String>, prev_ew: Bool, first: Bool, +out: String) -> String:
   match ws:
     case Nil{}:
-      ""
+      String.reverse(out)
     case +w <> t:
       +encoded = is_ew(w)
-      sep = Bool.pick(String, first || (prev_ew && encoded), "", " ")
-      sep ++ ew_word(w, encoded) ++ ew_join(t, encoded, False{})
+      out = Bool.pick(String, first || (prev_ew && encoded), out, SCon{' ', out})
+      ew_join.go(t, encoded, False{}, String.reverse.go(ew_word(w, encoded), out))
 
-def tab_to_space(s: String) -> String:
+def ew_join(ws: List<&2, String>, prev_ew: Bool, first: Bool) -> String:
+  ew_join.go(ws, prev_ew, first, "")
+
+def tab_to_space.go(s: String, out: String) -> String:
   match s:
     case SNil{}:
-      ""
-    case SCon{'\t', t}:
-      SCon{' ', tab_to_space(t)}
-    case SCon{c, t}:
-      SCon{c, tab_to_space(t)}
+      String.reverse(out)
+    case SCon{+c, t}:
+      tab_to_space.go(t, SCon{Bool.pick(Char, Char.is_eq(c, '\t'), ' ', c), out})
+
+def tab_to_space(s: String) -> String:
+  tab_to_space.go(s, "")
 
 # A raw header value to text: encoded words decoded, raw 8-bit read as UTF-8.
 # Space and tab are both linear whitespace between words.
 def decode_header(v: String) -> String:
-  ew_join(String.split(tab_to_space(v), ' '), False{}, True{})
+  ew_join(header_split(tab_to_space(v), ' '), False{}, True{})
 
 # Text copied from an untrusted header into one visible line. Decode once,
 # replace C0/C1 and line separators with spaces, and drop zero-width bidi

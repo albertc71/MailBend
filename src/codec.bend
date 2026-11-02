@@ -296,12 +296,15 @@ def cp1252_decode.code(b: U32) -> U32:
     case _:
       b
 
-def cp1252_decode(bytes: String) -> String:
+def cp1252_decode.go(bytes: String, out: String) -> String:
   match bytes:
     case SNil{}:
-      ""
+      String.reverse(out)
     case SCon{c, t}:
-      SCon{chr(cp1252_decode.code(u(c))), cp1252_decode(t)}
+      cp1252_decode.go(t, SCon{chr(cp1252_decode.code(u(c))), out})
+
+def cp1252_decode(bytes: String) -> String:
+  cp1252_decode.go(bytes, "")
 
 def charset_decode.cp1252(yes: Bool, bytes: String) -> String:
   match yes:
@@ -339,11 +342,18 @@ def charset_decode.is_cp1252(+name: String) -> Bool:
     || String.eq(name, "us-ascii") || String.eq(name, "windows-1252")
     || String.eq(name, "x-cp1252")
 
+def charset_decode.lower(s: String, out: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(out)
+    case SCon{c, t}:
+      charset_decode.lower(t, SCon{Char.to_lower(c), out})
+
 # Bytes in a named charset to text. Unknown charsets decode as UTF-8, which
 # keeps ASCII intact and marks anything else with U+FFFD.
 def charset_decode(cs: String, bytes: String) -> String:
-  name = String.to_lower(String.reverse(charset_decode.trim_start(
-    String.reverse(charset_decode.trim_start(cs)))))
+  name = charset_decode.lower(String.reverse(charset_decode.trim_start(
+    String.reverse(charset_decode.trim_start(cs)))), "")
   charset_decode.cp1252(charset_decode.is_cp1252(name), bytes)
 
 # Base64
