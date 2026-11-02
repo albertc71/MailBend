@@ -87,7 +87,11 @@ CPU model, logical CPU count, Bend version, Python implementation/version,
 limits and sample count. The profile also hashes the measurement harness,
 fixture generator, image generator and both fake servers. A different
 profile is incomparable and fails. Changing either fake server or fixture
-module requires re-recording every selected baseline. Wall-time, maximum-process RSS or IMAP
+module requires re-recording every selected baseline. Ordinary CI checks
+those source hashes with `python3 tests/test-scale-baseline.py`. This check
+is separate from the measurement job so a stale record blocks ordinary CI
+without preventing collection of a replacement candidate. The measurement
+job still cannot pass an incomparable profile. Wall-time, maximum-process RSS or IMAP
 login medians more than 25% above the baseline fail. The fast contract tests
 include a deliberate 26% slowdown and reject invalid or incomplete samples.
 This threshold detects a budget breach; it does not by itself establish a
@@ -160,7 +164,6 @@ review verified JSON SHA-256
 This is evidence for that historical 7763 profile, not the newer fixture
 hash or all hosted CPU models.
 
-
 ## Previous 9V45 measurement
 
 [Run 41397060015](https://github.com/albertc71/MailBend/actions/runs/41397060015)
@@ -191,7 +194,7 @@ The older CPU was different, so timing differences do not prove a speedup.
 RSS and IMAP-login medians are close, but only matching complete profiles
 can pass the regression gate.
 
-### Earlier 7763 measurement
+## Earlier 7763 measurement
 
 The previous 7763 candidate is retained in Git history and its hosted log:
 
