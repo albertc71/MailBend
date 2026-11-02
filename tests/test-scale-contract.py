@@ -8,10 +8,12 @@ import subprocess
 import pathlib
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from unittest import mock
 
+from scale_baseline import select_baseline
 from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message
 
 SPEC = importlib.util.spec_from_file_location("scale", pathlib.Path(__file__).with_name("test-scale.py"))
@@ -196,6 +198,139 @@ sys.exit(24)
         for result in (None, [], "bad", 5, True):
             with self.subTest(result=result), self.assertRaisesRegex(ValueError, "not an object"):
                 scale.verify(SCENARIOS[0], {}, result, [], {}, [])
+
+    def test_profile_tracks_fixture_dependencies_and_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "tests").mkdir()
+            names = ("scale_fixtures.py", "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")
+            for name in names:
+                (root / "tests" / name).write_text(name)
+            timer = root / "time"
+            timer.write_text("synthetic timer")
+            with mock.patch.object(scale, "ROOT", root), \
+                    mock.patch.object(scale.shutil, "which", return_value=str(timer)), \
+                    mock.patch.object(scale.subprocess, "check_output", return_value="synthetic version"):
+                original = scale.profile()
+                self.assertEqual(original["python_version"], scale.platform.python_version())
+                self.assertEqual(original["python_implementation"], scale.platform.python_implementation())
+                before = report()
+                before["profile"] = original
+                for name in names:
+                    path = root / "tests" / name
+                    path.write_text(name + " changed")
+                    after = report()
+                    after["profile"] = scale.profile()
+                    self.assertIn("not comparable", scale.compare(before, after)[0], name)
+                    path.write_text(name)
+                with mock.patch.object(scale.platform, "python_version", return_value="different Python"):
+                    after = report()
+                    after["profile"] = scale.profile()
+                    self.assertIn("not comparable", scale.compare(before, after)[0])
+
+    def test_comparison_filter_covers_measured_dependencies(self):
+        workflow = (scale.ROOT / ".github/workflows/scale-compare.yml").read_text()
+        paths = {line.removeprefix("      - ") for line in workflow.splitlines()
+                 if line.startswith("      - ")}
+        self.assertEqual(paths, {
+            "tests/test-scale.py", "tests/scale_fixtures.py", "tests/image_fixtures.py",
+            "tests/fake_mail_server.py", "tests/fake_typesafe.py", "tests/scale-baseline.json",
+            ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml",
+            "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py"})
+
+    def test_baseline_selection_preserves_full_profile_gate(self):
+        for cpu in ("AMD EPYC 9V45 96-Core Processor", "AMD EPYC 7763 64-Core Processor"):
+            with self.subTest(cpu=cpu):
+                baseline = json.loads(select_baseline(cpu).read_text())
+                self.assertEqual(baseline["profile"]["cpu"], cpu)
+                self.assertEqual(scale.compare(baseline, baseline), [])
+                changed = json.loads(json.dumps(baseline))
+                changed["profile"]["python_version"] = "different"
+                self.assertEqual(scale.compare(baseline, changed), [
+                    "runner/toolchain profile differs; measurements are not comparable"])
+        for cpu in ("unknown", "", "AMD EPYC 7763"):
+            with self.subTest(cpu=cpu), self.assertRaises(ValueError):
+                select_baseline(cpu)
+
+    def test_unknown_cpu_workflow_captures_evidence_but_cannot_pass(self):
+        workflow = (scale.ROOT / ".github/workflows/ci.yml").read_text()
+        step = workflow.split("      - name: Measure only local synthetic workloads\n", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            python = root / "python3"
+            python.write_text("#!/bin/sh\n"
+                'case "$1" in\n'
+                '  tests/scale_baseline.py) [ "$UNKNOWN_CPU" = yes ] && exit 1; echo reviewed.json ;;\n'
+                '  tests/test-scale.py) printf "%s\\n" "$*" > "$CALL_LOG" ;;\n'
+                'esac\n')
+            python.chmod(0o755)
+            for unknown, expected in (("yes", 1), ("no", 0)):
+                with self.subTest(unknown=unknown):
+                    env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"],
+                               RECORD_SCALE="false", UNKNOWN_CPU=unknown, CALL_LOG=str(root / "call"))
+                    result = subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env,
+                                            capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    call = (root / "call").read_text()
+                    self.assertIn("--output scale-results.json", call)
+                    self.assertNotIn("--record", call)
+                    self.assertEqual("--baseline reviewed.json" in call, unknown == "no")
+
+    def test_forward_command_guards_allow_only_sent_append(self):
+        safe = ['A1 EXAMINE "INBOX"', 'A2 UID FETCH 1 (BODY.PEEK[])',
+                'A3 APPEND "Sent" (\\Seen) {24}']
+        scale.verify_commands("forward", safe)
+        for line in ('A1 SELECT "INBOX"', 'A2 EXPUNGE', 'A3 UID EXPUNGE 1',
+                     'A4 UID FETCH 1 (BODY[])', 'A5 UID STORE 1 +FLAGS (\\Seen)',
+                     'A6 APPEND "INBOX" (\\Seen) {24}', 'A7 CREATE "Other"',
+                     'a8 select "INBOX"'):
+            with self.subTest(command=line), self.assertRaises(ValueError):
+                scale.verify(SCENARIOS[4], {}, {}, [{"proto": "imap", "line": line}], {}, [])
+        with self.assertRaises(ValueError):
+            scale.verify_commands("read", safe)
+
+    def test_normal_exit_stops_remaining_group_members(self):
+        for exit_code in (0, 17):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                work = pathlib.Path(directory)
+                record = work / "orphan.json"
+                command = ("import json,os,pathlib,subprocess,sys; "
+                           "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']); "
+                           f"pathlib.Path({str(record)!r}).write_text(json.dumps([child.pid,os.getpgrp()])); "
+                           f"sys.exit({exit_code})")
+                try:
+                    result = scale.measure([sys.executable, "-c", command], scale.clean_env(work), work, 5)
+                    self.assertEqual(result["exit_code"], exit_code)
+                    self.assertFalse(result["timed_out"])
+                    child, group = json.loads(record.read_text())
+                    self.assertNotEqual(group, os.getpgrp())
+                    deadline = time.monotonic() + 2
+                    while True:
+                        try:
+                            self.assert_group_stopped(group)
+                            break
+                        except AssertionError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(0.01)
+                finally:
+                    if record.exists():
+                        _, group = json.loads(record.read_text())
+                        if group != os.getpgrp():
+                            try:
+                                os.killpg(group, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            deadline = time.monotonic() + 2
+                            while True:
+                                try:
+                                    self.assert_group_stopped(group)
+                                    break
+                                except AssertionError:
+                                    if time.monotonic() >= deadline:
+                                        raise
+                                    time.sleep(0.01)
 
     def test_equal_baseline(self):
         self.assertEqual(scale.compare(report(), report()), [])

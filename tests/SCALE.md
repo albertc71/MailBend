@@ -26,7 +26,10 @@ Each scenario needs five successful, independently verified calls. A fresh
 launcher and fresh fake server serve each call. The OS cache is not cleared.
 Fixture generation, TLS certificate setup and result validation are outside
 the measured interval. Fake-server work during the request, including Sent
-state persistence, remains in wall time. These are local fake-server costs,
+state persistence, remains in wall time. Every measured process group is swept after its leader exits, including
+normal and nonzero exits, before the next sample starts. Forward calls also
+reject SELECT, EXPUNGE, non-PEEK body reads and mutations other than the
+explicit Sent APPEND. These are local fake-server costs,
 not provider latency or a comparison between implementations.
 
 `peak_rss_kib` is GNU time’s Linux maximum RSS of an individual process in the
@@ -61,11 +64,28 @@ succeed on a larger machine.
 ## Compare a recorded baseline
 
 ```sh
-python3 tests/test-scale.py --baseline tests/scale-baseline.json --output build/scale-results.json
+baseline=$(python3 tests/scale_baseline.py)
+python3 tests/test-scale.py --baseline "$baseline" --output build/scale-results.json
 ```
 
+The selector accepts exactly the two reviewed CPU model names and chooses a
+fixed baseline file. An unknown CPU fails selection. CI still collects a
+bounded candidate using the unchanged full-profile comparison, then forces
+a failed job even if that command unexpectedly exits successfully. This is
+evidence capture, not a baseline or acceptance fallback. Selection is not
+acceptance: the unchanged harness still requires the same full profile.
+It never combines measurements or records a replacement automatically.
+The scale job pins CPython 3.13.18, like ordinary CI. The 7763 baseline below
+uses that version and the current fake servers. The retained 9V45 record
+used 3.12.3 and older fake servers: selecting it must still fail full-profile
+comparison until fresh 9V45 evidence is independently reviewed. Intel 8573C
+has been observed but has no reviewed baseline; its evidence-only run cannot
+pass. CPU selection alone never makes a stale or unknown profile acceptable.
+
 The comparison requires the same runner, operating system, architecture,
-CPU model, logical CPU count, Bend version, limits and sample count. A different
+CPU model, logical CPU count, Bend version, Python implementation/version,
+limits and sample count. The profile also hashes the measurement harness,
+fixture generator, image generator and both fake servers. A different
 profile is incomparable and fails. Wall-time, maximum-process RSS or IMAP
 login medians more than 25% above the baseline fail. The fast contract tests
 include a deliberate 26% slowdown and reject invalid or incomplete samples.
@@ -74,7 +94,7 @@ statistically significant regression. Inspect the ranges and host load.
 
 `--record` never updates the committed baseline. Review a complete result,
 including successful work checks and sample variation, before copying it to
-`tests/scale-baseline.json`. Do not copy results between runner profiles.
+the matching reviewed baseline file. Do not copy results between runner profiles.
 An unmeasured baseline remains a failing gate, not a guessed budget.
 
 The CI workflow runs scale tests on manual dispatch with `scale` enabled and
@@ -84,10 +104,12 @@ workflow reaches the default branch. Scale runs have a separate concurrency
 group from ordinary CI, so they cannot cancel a push check on the same branch.
 Ordinary product pull requests run only the fast contract controls. A separate
 `Scale comparison` workflow runs when a pull request changes the measurement
-harness, fixtures, baseline or that comparison workflow itself. It reuses the
+harness, fixtures (including image generation and both fake servers), either
+baseline, the selector or either workflow. Changes to the shared CI workflow trigger comparison
+because it also defines the scale environment. It reuses the
 same bounded scale job in comparison mode, checks out the exact PR head, and
 does not join the ordinary `checks` aggregate. Pull requests that change only documentation or unrelated
-product/CI files do not trigger it. No secrets or additional token permissions
+product files do not trigger it. No secrets or additional token permissions
 are passed to the reused workflow.
 `record_scale` saves a candidate result without comparing it. The workflow
 logs the full JSON and its SHA-256 hash even when a scenario fails. The JSON
@@ -108,6 +130,64 @@ GNU time output. The report then keeps only the sampled diagnostic peak.
 The timer binary hash and version are part of the comparable runner profile.
 
 ## Hosted baseline
+
+[Run 41397060015](https://github.com/albertc71/MailBend/actions/runs/41397060015)
+measured all 35 samples on source `e0494f20a891b59bb96fc4426be32233e1ee0968`
+in 526.76 seconds. Its comparison correctly failed against the old profile;
+the complete candidate was independently reviewed before being committed
+unchanged as the current baseline. Its verified JSON SHA-256 is
+`e06ec29924bcd8e27b86f26e69a4c972eb9ca29fc455e5e347c8be8442b6ef2f`.
+A subsequent matching-profile comparison is still required; this candidate
+run is not a comparison pass.
+
+The expanded profile records GitHub-hosted Ubuntu 24.04.5 LTS, x86-64,
+AMD EPYC 9V45, four logical CPUs, Bend 2.0.35 and CPython 3.12.3, plus the
+actual harness, fixture dependencies and timer hashes. Workloads, sample
+counts and limits are unchanged. No metadata was guessed onto old samples.
+
+| Workload | Median seconds | Seconds range | Median max-process RSS (KiB) | Median IMAP logins |
+| --- | ---: | ---: | ---: | ---: |
+| search-100000 | 0.23 | 0.23–0.24 | 53,032 | 2 |
+| folders-1000 | 1.78 | 1.77–1.79 | 39,220 | 2 |
+| folders-5000 | 39.81 | 39.77–39.99 | 42,180 | 2 |
+| read-16mib | 2.57 | 2.55–2.62 | 1,076,656 | 1 |
+| forward-25mib | 11.09 | 10.99–11.39 | 2,479,428 | 5 |
+| thread-1000 | 47.14 | 47.04–47.30 | 86,388 | 6 |
+| classify-images-50 | 0.26 | 0.25–0.27 | 39,216 | 14 |
+
+The older CPU was different, so timing differences do not prove a speedup.
+RSS and IMAP-login medians are close, but only matching complete profiles
+can pass the regression gate.
+
+### Second supported hosted CPU
+
+The current 7763 baseline comes from
+[run 41402595457](https://github.com/albertc71/MailBend/actions/runs/41402595457),
+source `9e591fc86bfac81e61b9568d3463a34756955cf4`. All 35 exact samples passed
+in 706.85 seconds with CPython 3.13.18 and the main-integrated fixture hashes.
+Independent review verified all 26,864 bytes and JSON SHA-256
+`eafd9e0710bd713f45e9d4b954b6091ac8b4ad4ec3b8009cdf59b03a4076c2d8`.
+This run correctly failed against the old profile. It establishes the new
+7763 candidate, not a successful regression comparison. A later matching
+profile must pass the unchanged 25% gate before readiness.
+
+The previous 7763 candidate is retained in Git history and its hosted log:
+
+Standard public runners also assigned AMD EPYC 7763. Instead of replacing
+one CPU's baseline with another's, the original `scale-baseline-epyc7763.json` retained
+[run 41399173308](https://github.com/albertc71/MailBend/actions/runs/41399173308)
+unchanged: source `b9b583cdc4f2128b30d55c14cfb086e60d2626a3`, all 35 successful
+samples, 699.07 seconds. Independent review verified full JSON SHA-256
+`a1b82bac473aefa91f1c5768039e4d2666d94754cc620fb8d7b1555f84eed5b4`.
+Its profile differs from the 9V45 candidate only in CPU model. This run also
+failed comparison correctly against the other CPU, not workload validation.
+Neither candidate is itself a successful regression comparison. The selected
+baseline must pass all unchanged full-profile and 25% checks on a later run.
+
+### Previous hosted baseline
+
+The original report remains in Git history and the linked hosted log. It is
+historical evidence, not the current expanded-profile comparison baseline.
 
 [Run 41379240425](https://github.com/albertc71/MailBend/actions/runs/41379240425)
 recorded all seven exact workloads with five verified samples each on source

@@ -4,9 +4,11 @@
     "runner": "github-hosted",
     "os": "Ubuntu 24.04.5 LTS",
     "arch": "x86_64",
-    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "cpu": "AMD EPYC 9V45 96-Core Processor",
     "logical_cpus": 4,
     "bend": "bend 2.0.35",
+    "python_implementation": "CPython",
+    "python_version": "3.12.3",
     "rss_semantics": "gnu-time-child-max-process-kib-not-tree-sum",
     "gnu_time_sha256": "3b11dec50514a8473e9f6efa7a34d584d0657538c09988f61b72d38ad4991a10",
     "gnu_time_version": "time (GNU Time) UNKNOWN",
@@ -15,7 +17,12 @@
     "call_limit_seconds": 90,
     "repeats": 5,
     "fixture_generator_sha256": "84f1a63c4d5e69c775d0d172e5a266f6f67a5affd497fa27f1e30293456b0d02",
-    "measurement_sha256": "e1d43487940ad641dfd32ff1b236283f33fa3a3682dded765deb79a8cae03cb1"
+    "fixture_dependencies_sha256": {
+      "image_fixtures.py": "9a1af6dd57315bbc7f887af6b80cc2043d36bd980a66cf6e9a70750a7f4be2d0",
+      "fake_mail_server.py": "d6676527e6d3c05445220500fe8906e934cbffc914ad4a5ade59f70ddd860533",
+      "fake_typesafe.py": "3e5f972977cd6d63ae0a49b31bde7db5e6b7d034ac60b692bb30da45e91d2f98"
+    },
+    "measurement_sha256": "7b7793617e257393fe193bc6ed1059d1d40bd73d2777e648ccac0998917d9ae7"
   },
   "status": "measured",
   "scenarios": {
@@ -23,16 +30,16 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 0.32184898600002043,
-          "peak_rss_kib": 53052,
-          "user_seconds": 0.2,
-          "system_seconds": 0.03,
+          "wall_seconds": 0.22508596599999464,
+          "peak_rss_kib": 53220,
+          "user_seconds": 0.15,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 57920,
-          "supervisor_cpu_seconds": 0.12838999999999995,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 58280,
+          "supervisor_cpu_seconds": 0.05189099999999999,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -43,16 +50,16 @@
           }
         },
         {
-          "wall_seconds": 0.36811491200001,
-          "peak_rss_kib": 53068,
-          "user_seconds": 0.22,
-          "system_seconds": 0.03,
+          "wall_seconds": 0.24011860400003116,
+          "peak_rss_kib": 52980,
+          "user_seconds": 0.16,
+          "system_seconds": 0.01,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 57996,
-          "supervisor_cpu_seconds": 0.1641450000000001,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 58188,
+          "supervisor_cpu_seconds": 0.06577100000000005,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -63,16 +70,16 @@
           }
         },
         {
-          "wall_seconds": 0.34033746800002973,
-          "peak_rss_kib": 53016,
-          "user_seconds": 0.21,
-          "system_seconds": 0.03,
+          "wall_seconds": 0.22669303699996135,
+          "peak_rss_kib": 53240,
+          "user_seconds": 0.14,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 57940,
-          "supervisor_cpu_seconds": 0.1450700000000001,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 58312,
+          "supervisor_cpu_seconds": 0.05329999999999996,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -83,16 +90,16 @@
           }
         },
         {
-          "wall_seconds": 0.32765783199999987,
-          "peak_rss_kib": 53188,
-          "user_seconds": 0.2,
-          "system_seconds": 0.03,
+          "wall_seconds": 0.22954882499999485,
+          "peak_rss_kib": 53032,
+          "user_seconds": 0.15,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 57924,
-          "supervisor_cpu_seconds": 0.13378900000000016,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 58180,
+          "supervisor_cpu_seconds": 0.05608699999999989,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -103,16 +110,16 @@
           }
         },
         {
-          "wall_seconds": 0.3216316959999972,
-          "peak_rss_kib": 53192,
-          "user_seconds": 0.2,
-          "system_seconds": 0.03,
+          "wall_seconds": 0.22586121799997727,
+          "peak_rss_kib": 52952,
+          "user_seconds": 0.14,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 57956,
-          "supervisor_cpu_seconds": 0.12779699999999972,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 58132,
+          "supervisor_cpu_seconds": 0.05183100000000007,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -125,14 +132,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 0.32765783199999987,
-          "min": 0.3216316959999972,
-          "max": 0.36811491200001
+          "median": 0.22669303699996135,
+          "min": 0.22508596599999464,
+          "max": 0.24011860400003116
         },
         "peak_rss_kib": {
-          "median": 53068,
-          "min": 53016,
-          "max": 53192
+          "median": 53032,
+          "min": 52952,
+          "max": 53240
         },
         "imap_logins": {
           "median": 2,
@@ -145,16 +152,16 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 2.417217117000007,
-          "peak_rss_kib": 39288,
-          "user_seconds": 2.03,
+          "wall_seconds": 1.766565206999985,
+          "peak_rss_kib": 39220,
+          "user_seconds": 1.61,
           "system_seconds": 0.03,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44164,
-          "supervisor_cpu_seconds": 0.9567279999999997,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 44328,
+          "supervisor_cpu_seconds": 0.36703699999999984,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -165,16 +172,16 @@
           }
         },
         {
-          "wall_seconds": 2.3682201810000265,
-          "peak_rss_kib": 39068,
-          "user_seconds": 2.02,
-          "system_seconds": 0.05,
+          "wall_seconds": 1.7918916630000012,
+          "peak_rss_kib": 39300,
+          "user_seconds": 1.62,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44196,
-          "supervisor_cpu_seconds": 0.9078789999999999,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 44448,
+          "supervisor_cpu_seconds": 0.372154,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -185,16 +192,16 @@
           }
         },
         {
-          "wall_seconds": 2.3763400299999944,
-          "peak_rss_kib": 39316,
-          "user_seconds": 2.03,
-          "system_seconds": 0.04,
+          "wall_seconds": 1.772088922000023,
+          "peak_rss_kib": 39296,
+          "user_seconds": 1.61,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44112,
-          "supervisor_cpu_seconds": 0.9163560000000004,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 44380,
+          "supervisor_cpu_seconds": 0.3724590000000003,
+          "max_processes_scanned": 156,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -205,16 +212,16 @@
           }
         },
         {
-          "wall_seconds": 2.393204570000023,
-          "peak_rss_kib": 39108,
-          "user_seconds": 2.03,
-          "system_seconds": 0.04,
+          "wall_seconds": 1.7877729279999812,
+          "peak_rss_kib": 39096,
+          "user_seconds": 1.62,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 43836,
-          "supervisor_cpu_seconds": 0.9330980000000006,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 44364,
+          "supervisor_cpu_seconds": 0.3882939999999999,
+          "max_processes_scanned": 156,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -225,16 +232,16 @@
           }
         },
         {
-          "wall_seconds": 2.3854163000000312,
-          "peak_rss_kib": 39280,
-          "user_seconds": 2.04,
-          "system_seconds": 0.05,
+          "wall_seconds": 1.7848506189999966,
+          "peak_rss_kib": 39172,
+          "user_seconds": 1.62,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44220,
-          "supervisor_cpu_seconds": 0.9251499999999995,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 44236,
+          "supervisor_cpu_seconds": 0.3750180000000003,
+          "max_processes_scanned": 156,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -247,14 +254,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 2.3854163000000312,
-          "min": 2.3682201810000265,
-          "max": 2.417217117000007
+          "median": 1.7848506189999966,
+          "min": 1.766565206999985,
+          "max": 1.7918916630000012
         },
         "peak_rss_kib": {
-          "median": 39280,
-          "min": 39068,
-          "max": 39316
+          "median": 39220,
+          "min": 39096,
+          "max": 39300
         },
         "imap_logins": {
           "median": 2,
@@ -267,16 +274,16 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 52.94511411600001,
-          "peak_rss_kib": 42184,
-          "user_seconds": 46.7,
-          "system_seconds": 0.18,
+          "wall_seconds": 39.80969826799998,
+          "peak_rss_kib": 42272,
+          "user_seconds": 37.03,
+          "system_seconds": 0.08,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44292,
-          "supervisor_cpu_seconds": 20.245671,
-          "max_processes_scanned": 169,
+          "sampled_group_peak_rss_kib": 44708,
+          "supervisor_cpu_seconds": 8.327957,
+          "max_processes_scanned": 156,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -287,16 +294,16 @@
           }
         },
         {
-          "wall_seconds": 52.81516324300003,
-          "peak_rss_kib": 42192,
-          "user_seconds": 46.53,
-          "system_seconds": 0.19,
+          "wall_seconds": 39.79631632000002,
+          "peak_rss_kib": 42180,
+          "user_seconds": 37.03,
+          "system_seconds": 0.08,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44336,
-          "supervisor_cpu_seconds": 20.292444,
-          "max_processes_scanned": 169,
+          "sampled_group_peak_rss_kib": 44656,
+          "supervisor_cpu_seconds": 8.367521,
+          "max_processes_scanned": 156,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -307,16 +314,16 @@
           }
         },
         {
-          "wall_seconds": 52.36322450099999,
-          "peak_rss_kib": 42160,
-          "user_seconds": 45.89,
-          "system_seconds": 0.17,
+          "wall_seconds": 39.83051397899999,
+          "peak_rss_kib": 42148,
+          "user_seconds": 36.96,
+          "system_seconds": 0.07,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44284,
-          "supervisor_cpu_seconds": 19.965213000000006,
-          "max_processes_scanned": 169,
+          "sampled_group_peak_rss_kib": 44492,
+          "supervisor_cpu_seconds": 8.339637999999999,
+          "max_processes_scanned": 156,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -327,16 +334,16 @@
           }
         },
         {
-          "wall_seconds": 52.881871520999994,
-          "peak_rss_kib": 42164,
-          "user_seconds": 46.66,
-          "system_seconds": 0.16,
+          "wall_seconds": 39.98545309300005,
+          "peak_rss_kib": 42196,
+          "user_seconds": 36.99,
+          "system_seconds": 0.08,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44564,
-          "supervisor_cpu_seconds": 20.17319700000001,
-          "max_processes_scanned": 169,
+          "sampled_group_peak_rss_kib": 44740,
+          "supervisor_cpu_seconds": 8.424466999999995,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -347,16 +354,16 @@
           }
         },
         {
-          "wall_seconds": 52.51322987900005,
-          "peak_rss_kib": 42056,
-          "user_seconds": 46.28,
-          "system_seconds": 0.18,
+          "wall_seconds": 39.77023643799998,
+          "peak_rss_kib": 42152,
+          "user_seconds": 36.97,
+          "system_seconds": 0.07,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44320,
-          "supervisor_cpu_seconds": 20.06568,
-          "max_processes_scanned": 169,
+          "sampled_group_peak_rss_kib": 44676,
+          "supervisor_cpu_seconds": 8.289757999999999,
+          "max_processes_scanned": 155,
           "imap_logins": 2,
           "status": "passed",
           "work": {
@@ -369,14 +376,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 52.81516324300003,
-          "min": 52.36322450099999,
-          "max": 52.94511411600001
+          "median": 39.80969826799998,
+          "min": 39.77023643799998,
+          "max": 39.98545309300005
         },
         "peak_rss_kib": {
-          "median": 42164,
-          "min": 42056,
-          "max": 42192
+          "median": 42180,
+          "min": 42148,
+          "max": 42272
         },
         "imap_logins": {
           "median": 2,
@@ -389,36 +396,16 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 3.580715957999928,
-          "peak_rss_kib": 1076628,
-          "user_seconds": 3.02,
-          "system_seconds": 0.52,
-          "exit_code": 0,
-          "timed_out": false,
-          "memory_stop": null,
-          "sampled_group_peak_rss_kib": 1078092,
-          "supervisor_cpu_seconds": 1.3842230000000129,
-          "max_processes_scanned": 169,
-          "imap_logins": 1,
-          "status": "passed",
-          "work": {
-            "fixture_count": 16777216,
-            "body_bytes_fetched": 16777216,
-            "smtp_messages": 0,
-            "typesafe_requests": 0
-          }
-        },
-        {
-          "wall_seconds": 3.59695457600003,
+          "wall_seconds": 2.622022087000005,
           "peak_rss_kib": 1076656,
-          "user_seconds": 3.03,
-          "system_seconds": 0.53,
+          "user_seconds": 2.21,
+          "system_seconds": 0.38,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 1076328,
-          "supervisor_cpu_seconds": 1.3906690000000026,
-          "max_processes_scanned": 169,
+          "sampled_group_peak_rss_kib": 1078184,
+          "supervisor_cpu_seconds": 0.6170089999999959,
+          "max_processes_scanned": 155,
           "imap_logins": 1,
           "status": "passed",
           "work": {
@@ -429,16 +416,16 @@
           }
         },
         {
-          "wall_seconds": 3.5958859779999557,
-          "peak_rss_kib": 1076792,
-          "user_seconds": 2.99,
-          "system_seconds": 0.57,
+          "wall_seconds": 2.5747040039999547,
+          "peak_rss_kib": 1076604,
+          "user_seconds": 2.14,
+          "system_seconds": 0.39,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 1076592,
-          "supervisor_cpu_seconds": 1.3895399999999967,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 1078004,
+          "supervisor_cpu_seconds": 0.5796620000000026,
+          "max_processes_scanned": 155,
           "imap_logins": 1,
           "status": "passed",
           "work": {
@@ -449,16 +436,16 @@
           }
         },
         {
-          "wall_seconds": 3.5914768360000835,
-          "peak_rss_kib": 1076724,
-          "user_seconds": 3.02,
-          "system_seconds": 0.53,
+          "wall_seconds": 2.572605572000043,
+          "peak_rss_kib": 1076660,
+          "user_seconds": 2.16,
+          "system_seconds": 0.38,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 1077740,
-          "supervisor_cpu_seconds": 1.3644530000000046,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 1078188,
+          "supervisor_cpu_seconds": 0.5877230000000004,
+          "max_processes_scanned": 155,
           "imap_logins": 1,
           "status": "passed",
           "work": {
@@ -469,16 +456,36 @@
           }
         },
         {
-          "wall_seconds": 3.591420143999926,
-          "peak_rss_kib": 1076812,
-          "user_seconds": 2.99,
-          "system_seconds": 0.55,
+          "wall_seconds": 2.550534986999992,
+          "peak_rss_kib": 1076684,
+          "user_seconds": 2.14,
+          "system_seconds": 0.37,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 1076996,
-          "supervisor_cpu_seconds": 1.3656290000000126,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 1077060,
+          "supervisor_cpu_seconds": 0.5756699999999988,
+          "max_processes_scanned": 155,
+          "imap_logins": 1,
+          "status": "passed",
+          "work": {
+            "fixture_count": 16777216,
+            "body_bytes_fetched": 16777216,
+            "smtp_messages": 0,
+            "typesafe_requests": 0
+          }
+        },
+        {
+          "wall_seconds": 2.565748331000009,
+          "peak_rss_kib": 1076648,
+          "user_seconds": 2.16,
+          "system_seconds": 0.37,
+          "exit_code": 0,
+          "timed_out": false,
+          "memory_stop": null,
+          "sampled_group_peak_rss_kib": 1077920,
+          "supervisor_cpu_seconds": 0.5708599999999961,
+          "max_processes_scanned": 155,
           "imap_logins": 1,
           "status": "passed",
           "work": {
@@ -491,14 +498,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 3.5914768360000835,
-          "min": 3.580715957999928,
-          "max": 3.59695457600003
+          "median": 2.572605572000043,
+          "min": 2.550534986999992,
+          "max": 2.622022087000005
         },
         "peak_rss_kib": {
-          "median": 1076724,
-          "min": 1076628,
-          "max": 1076812
+          "median": 1076656,
+          "min": 1076604,
+          "max": 1076684
         },
         "imap_logins": {
           "median": 1,
@@ -511,16 +518,16 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 13.027117868999994,
-          "peak_rss_kib": 2479500,
-          "user_seconds": 9.23,
-          "system_seconds": 1.34,
+          "wall_seconds": 11.385446200000047,
+          "peak_rss_kib": 2479388,
+          "user_seconds": 8.5,
+          "system_seconds": 0.95,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 2515568,
-          "supervisor_cpu_seconds": 5.016382000000007,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 2517496,
+          "supervisor_cpu_seconds": 2.6108680000000035,
+          "max_processes_scanned": 155,
           "imap_logins": 5,
           "status": "passed",
           "work": {
@@ -531,16 +538,16 @@
           }
         },
         {
-          "wall_seconds": 12.948764205999964,
-          "peak_rss_kib": 2479288,
-          "user_seconds": 9.15,
-          "system_seconds": 1.34,
+          "wall_seconds": 11.087641236000081,
+          "peak_rss_kib": 2479428,
+          "user_seconds": 8.43,
+          "system_seconds": 0.92,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 2517240,
-          "supervisor_cpu_seconds": 4.938991000000009,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 2510184,
+          "supervisor_cpu_seconds": 2.4018489999999986,
+          "max_processes_scanned": 155,
           "imap_logins": 5,
           "status": "passed",
           "work": {
@@ -551,16 +558,16 @@
           }
         },
         {
-          "wall_seconds": 12.844612820000066,
-          "peak_rss_kib": 2479384,
-          "user_seconds": 9.1,
-          "system_seconds": 1.34,
+          "wall_seconds": 11.228662153000073,
+          "peak_rss_kib": 2479464,
+          "user_seconds": 8.6,
+          "system_seconds": 0.96,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 2516984,
-          "supervisor_cpu_seconds": 4.885518000000005,
-          "max_processes_scanned": 165,
+          "sampled_group_peak_rss_kib": 2512176,
+          "supervisor_cpu_seconds": 2.676066999999996,
+          "max_processes_scanned": 155,
           "imap_logins": 5,
           "status": "passed",
           "work": {
@@ -571,16 +578,16 @@
           }
         },
         {
-          "wall_seconds": 12.949181253999996,
-          "peak_rss_kib": 2479364,
-          "user_seconds": 9.16,
-          "system_seconds": 1.36,
+          "wall_seconds": 10.986617667000019,
+          "peak_rss_kib": 2479444,
+          "user_seconds": 8.36,
+          "system_seconds": 0.96,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 2517180,
-          "supervisor_cpu_seconds": 4.979187999999972,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 2513204,
+          "supervisor_cpu_seconds": 2.3816899999999954,
+          "max_processes_scanned": 155,
           "imap_logins": 5,
           "status": "passed",
           "work": {
@@ -591,16 +598,16 @@
           }
         },
         {
-          "wall_seconds": 12.892533464000053,
-          "peak_rss_kib": 2479392,
-          "user_seconds": 9.14,
-          "system_seconds": 1.31,
+          "wall_seconds": 11.080838910000011,
+          "peak_rss_kib": 2479192,
+          "user_seconds": 8.44,
+          "system_seconds": 0.95,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 2517332,
-          "supervisor_cpu_seconds": 4.972760999999984,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 2509988,
+          "supervisor_cpu_seconds": 2.4358590000000007,
+          "max_processes_scanned": 155,
           "imap_logins": 5,
           "status": "passed",
           "work": {
@@ -613,14 +620,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 12.948764205999964,
-          "min": 12.844612820000066,
-          "max": 13.027117868999994
+          "median": 11.087641236000081,
+          "min": 10.986617667000019,
+          "max": 11.385446200000047
         },
         "peak_rss_kib": {
-          "median": 2479384,
-          "min": 2479288,
-          "max": 2479500
+          "median": 2479428,
+          "min": 2479192,
+          "max": 2479464
         },
         "imap_logins": {
           "median": 5,
@@ -633,16 +640,56 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 55.971236094000005,
-          "peak_rss_kib": 86500,
-          "user_seconds": 55.13,
-          "system_seconds": 0.08,
+          "wall_seconds": 47.1429523889999,
+          "peak_rss_kib": 86288,
+          "user_seconds": 46.7,
+          "system_seconds": 0.04,
+          "exit_code": 0,
+          "timed_out": false,
+          "memory_stop": null,
+          "sampled_group_peak_rss_kib": 86920,
+          "supervisor_cpu_seconds": 9.79439700000001,
+          "max_processes_scanned": 156,
+          "imap_logins": 6,
+          "status": "passed",
+          "work": {
+            "fixture_count": 1000,
+            "body_bytes_fetched": 0,
+            "smtp_messages": 0,
+            "typesafe_requests": 0
+          }
+        },
+        {
+          "wall_seconds": 47.259454471000026,
+          "peak_rss_kib": 86388,
+          "user_seconds": 46.81,
+          "system_seconds": 0.05,
+          "exit_code": 0,
+          "timed_out": false,
+          "memory_stop": null,
+          "sampled_group_peak_rss_kib": 87020,
+          "supervisor_cpu_seconds": 9.769956999999991,
+          "max_processes_scanned": 154,
+          "imap_logins": 6,
+          "status": "passed",
+          "work": {
+            "fixture_count": 1000,
+            "body_bytes_fetched": 0,
+            "smtp_messages": 0,
+            "typesafe_requests": 0
+          }
+        },
+        {
+          "wall_seconds": 47.03762451399996,
+          "peak_rss_kib": 86436,
+          "user_seconds": 46.59,
+          "system_seconds": 0.05,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
           "sampled_group_peak_rss_kib": 87068,
-          "supervisor_cpu_seconds": 20.914719999999996,
-          "max_processes_scanned": 166,
+          "supervisor_cpu_seconds": 9.840587,
+          "max_processes_scanned": 154,
           "imap_logins": 6,
           "status": "passed",
           "work": {
@@ -653,16 +700,16 @@
           }
         },
         {
-          "wall_seconds": 55.63796193499991,
-          "peak_rss_kib": 86344,
-          "user_seconds": 54.82,
-          "system_seconds": 0.07,
+          "wall_seconds": 47.300451275,
+          "peak_rss_kib": 86440,
+          "user_seconds": 46.85,
+          "system_seconds": 0.04,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 87292,
-          "supervisor_cpu_seconds": 20.87586600000003,
-          "max_processes_scanned": 166,
+          "sampled_group_peak_rss_kib": 87200,
+          "supervisor_cpu_seconds": 9.992470000000004,
+          "max_processes_scanned": 161,
           "imap_logins": 6,
           "status": "passed",
           "work": {
@@ -673,56 +720,16 @@
           }
         },
         {
-          "wall_seconds": 56.22415610100006,
-          "peak_rss_kib": 86516,
-          "user_seconds": 55.4,
-          "system_seconds": 0.07,
+          "wall_seconds": 47.14450798900009,
+          "peak_rss_kib": 86296,
+          "user_seconds": 46.7,
+          "system_seconds": 0.05,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 87084,
-          "supervisor_cpu_seconds": 21.128319999999988,
-          "max_processes_scanned": 166,
-          "imap_logins": 6,
-          "status": "passed",
-          "work": {
-            "fixture_count": 1000,
-            "body_bytes_fetched": 0,
-            "smtp_messages": 0,
-            "typesafe_requests": 0
-          }
-        },
-        {
-          "wall_seconds": 55.83477336399994,
-          "peak_rss_kib": 86268,
-          "user_seconds": 55.01,
-          "system_seconds": 0.07,
-          "exit_code": 0,
-          "timed_out": false,
-          "memory_stop": null,
-          "sampled_group_peak_rss_kib": 87348,
-          "supervisor_cpu_seconds": 21.034504999999996,
-          "max_processes_scanned": 166,
-          "imap_logins": 6,
-          "status": "passed",
-          "work": {
-            "fixture_count": 1000,
-            "body_bytes_fetched": 0,
-            "smtp_messages": 0,
-            "typesafe_requests": 0
-          }
-        },
-        {
-          "wall_seconds": 55.89912325399996,
-          "peak_rss_kib": 86480,
-          "user_seconds": 55.09,
-          "system_seconds": 0.07,
-          "exit_code": 0,
-          "timed_out": false,
-          "memory_stop": null,
-          "sampled_group_peak_rss_kib": 87048,
-          "supervisor_cpu_seconds": 21.01821299999999,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 86928,
+          "supervisor_cpu_seconds": 9.805627000000001,
+          "max_processes_scanned": 155,
           "imap_logins": 6,
           "status": "passed",
           "work": {
@@ -735,14 +742,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 55.89912325399996,
-          "min": 55.63796193499991,
-          "max": 56.22415610100006
+          "median": 47.14450798900009,
+          "min": 47.03762451399996,
+          "max": 47.300451275
         },
         "peak_rss_kib": {
-          "median": 86480,
-          "min": 86268,
-          "max": 86516
+          "median": 86388,
+          "min": 86288,
+          "max": 86440
         },
         "imap_logins": {
           "median": 6,
@@ -755,16 +762,16 @@
       "status": "passed",
       "samples": [
         {
-          "wall_seconds": 0.3825705389999712,
-          "peak_rss_kib": 39304,
-          "user_seconds": 0.22,
-          "system_seconds": 0.04,
+          "wall_seconds": 0.2637485480000805,
+          "peak_rss_kib": 39216,
+          "user_seconds": 0.17,
+          "system_seconds": 0.03,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44224,
-          "supervisor_cpu_seconds": 0.1598369999999818,
-          "max_processes_scanned": 165,
+          "sampled_group_peak_rss_kib": 44232,
+          "supervisor_cpu_seconds": 0.06138300000001351,
+          "max_processes_scanned": 156,
           "imap_logins": 14,
           "status": "passed",
           "work": {
@@ -775,16 +782,16 @@
           }
         },
         {
-          "wall_seconds": 0.37174090800021986,
-          "peak_rss_kib": 39272,
-          "user_seconds": 0.23,
-          "system_seconds": 0.04,
+          "wall_seconds": 0.26303278299997146,
+          "peak_rss_kib": 39140,
+          "user_seconds": 0.17,
+          "system_seconds": 0.03,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 43956,
-          "supervisor_cpu_seconds": 0.14902900000001296,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 44348,
+          "supervisor_cpu_seconds": 0.060601999999995826,
+          "max_processes_scanned": 156,
           "imap_logins": 14,
           "status": "passed",
           "work": {
@@ -795,16 +802,16 @@
           }
         },
         {
-          "wall_seconds": 0.379490824999948,
-          "peak_rss_kib": 39124,
-          "user_seconds": 0.23,
-          "system_seconds": 0.05,
+          "wall_seconds": 0.2712079039999935,
+          "peak_rss_kib": 39236,
+          "user_seconds": 0.18,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 43964,
-          "supervisor_cpu_seconds": 0.1567670000000021,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 44304,
+          "supervisor_cpu_seconds": 0.06874100000000283,
+          "max_processes_scanned": 156,
           "imap_logins": 14,
           "status": "passed",
           "work": {
@@ -815,16 +822,16 @@
           }
         },
         {
-          "wall_seconds": 0.37876346999996713,
-          "peak_rss_kib": 39156,
-          "user_seconds": 0.23,
-          "system_seconds": 0.05,
+          "wall_seconds": 0.2607394760000261,
+          "peak_rss_kib": 39140,
+          "user_seconds": 0.18,
+          "system_seconds": 0.02,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44012,
-          "supervisor_cpu_seconds": 0.1560350000000028,
-          "max_processes_scanned": 167,
+          "sampled_group_peak_rss_kib": 44208,
+          "supervisor_cpu_seconds": 0.05839800000000395,
+          "max_processes_scanned": 156,
           "imap_logins": 14,
           "status": "passed",
           "work": {
@@ -835,16 +842,16 @@
           }
         },
         {
-          "wall_seconds": 0.36748417100011466,
+          "wall_seconds": 0.25083693999999923,
           "peak_rss_kib": 39288,
-          "user_seconds": 0.23,
-          "system_seconds": 0.04,
+          "user_seconds": 0.17,
+          "system_seconds": 0.03,
           "exit_code": 0,
           "timed_out": false,
           "memory_stop": null,
-          "sampled_group_peak_rss_kib": 44096,
-          "supervisor_cpu_seconds": 0.15463899999997466,
-          "max_processes_scanned": 168,
+          "sampled_group_peak_rss_kib": 44308,
+          "supervisor_cpu_seconds": 0.05833900000000369,
+          "max_processes_scanned": 156,
           "imap_logins": 14,
           "status": "passed",
           "work": {
@@ -857,14 +864,14 @@
       ],
       "metrics": {
         "wall_seconds": {
-          "median": 0.37876346999996713,
-          "min": 0.36748417100011466,
-          "max": 0.3825705389999712
+          "median": 0.26303278299997146,
+          "min": 0.25083693999999923,
+          "max": 0.2712079039999935
         },
         "peak_rss_kib": {
-          "median": 39272,
-          "min": 39124,
-          "max": 39304
+          "median": 39216,
+          "min": 39140,
+          "max": 39288
         },
         "imap_logins": {
           "median": 14,
@@ -874,18 +881,18 @@
       }
     }
   },
-  "source_commit": "a13504b703175f5b9ae9c1bdb9fcbcf3aca496f2",
-  "core_sha256": "438c7c48da802055803959344064a3d98830493630ae54c4b30bb02b283bdf9b",
+  "source_commit": "e0494f20a891b59bb96fc4426be32233e1ee0968",
+  "core_sha256": "c594d645122c21906e684d6f3c3d462bd6da531553699de6d5f5c1a9e4daca9f",
   "load_average_start": [
-    1.2509765625,
-    1.20751953125,
-    0.6103515625
+    1.54833984375,
+    0.90087890625,
+    0.3720703125
   ],
   "measurement": "cold launcher, warm OS cache; fixture setup excluded",
-  "suite_seconds": 661.0285631639999,
+  "suite_seconds": 526.763518018,
   "load_average_end": [
-    1.4072265625,
-    1.44287109375,
-    1.06396484375
+    1.22998046875,
+    1.20263671875,
+    0.77392578125
   ]
 }
