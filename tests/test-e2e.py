@@ -5367,6 +5367,7 @@ def triage_positive_reuse(work, key_file):
             lines = [record["line"] for record in records]
             searches = [line for line in lines if " SEARCH OR TO " in line]
             sent_sessions = sum(' EXAMINE "Sent Messages"' in line for line in lines)
+            role_sessions = sum(' LIST "" "*" RETURN (SPECIAL-USE)' in line for line in lines)
             if mode == "uidvalidity":
                 check("triage positive reuse: unresolved sender generation change still aborts", c != 0 and
                       "Sent UIDVALIDITY changed" in r.get("error", "") and not ts.requests() and
@@ -5382,8 +5383,8 @@ def triage_positive_reuse(work, key_file):
                           for uid in (SAFE, NO_FOLDER, FRIENDLY, duplicate)), r)
                 check(f"triage positive reuse: {mode} duplicate senders share one SEARCH and two Sent sessions",
                       len(searches) == 1 and 'TO "news@example.com"' in searches[0] and
-                      sent_sessions == 2 and logins(records) == 4,
-                      (searches, sent_sessions, logins(records)))
+                      sent_sessions == 2 and role_sessions == 1 and logins(records) == 5,
+                      (searches, sent_sessions, role_sessions, logins(records)))
             else:
                 check(f"triage positive reuse: {mode} cannot skip unproven senders", c == 0 and
                       len(searches) == 3 and sent_sessions == 6 and
