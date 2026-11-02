@@ -30,7 +30,7 @@ import ./src/response.bend as Response
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly nine tools
+# Reading is read-only, and permanent deletion is not. Exactly eleven tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
 # mail_classify only asks TypeSafe about messages; mail_triage asks it, then
@@ -56,11 +56,11 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these nine, in this order
-law read_only_tools_are_exactly_nine:
+# LAW: the read-only tools are exactly these eleven, in this order
+law read_only_tools_are_exactly_eleven:
   {Ops.read_only_names(Ops.all_ops()) ==
     ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-      "mail_get_thread", "mail_awaiting_reply", "mail_classify"]
+      "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify"]
     : List<&2, String>}
 
 # LAW: the tools each configuration lists: with Jev on, every tool; with it
@@ -71,38 +71,38 @@ law tools_listed_per_config:
   for drafts: Bool
   ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_awaiting_reply", "mail_classify", "mail_triage",
+       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify", "mail_triage",
        "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_awaiting_reply", "mail_get_attachment",
+       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_send",
        "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_awaiting_reply", "mail_classify", "mail_triage",
+       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify", "mail_triage",
        "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_awaiting_reply", "mail_get_attachment",
+       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_reply",
        "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_awaiting_reply", "mail_classify"] : List<&2, String>} &
+       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_awaiting_reply"] : List<&2, String>})
+       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents"] : List<&2, String>})
 
 # LAW: every operation's tool name resolves back to that operation.
 law from_name_inverts_name:
@@ -273,13 +273,6 @@ law awaiting_sent_writes_nothing:
   for sent: String
   for since: String
   {I.any_writes(Ops.plan_awaiting_sent(sent, since)) == False{} : Bool}
-
-# LAW: for every Sent folder and addresses, the search of Sent for mail to
-# them writes nothing
-law sent_search_writes_nothing:
-  for sent: String
-  for addrs: List<&2, String>
-  {I.any_writes(Ops.plan_sent_search(sent, addrs)) == False{} : Bool}
 
 # LAW: for every mailbox and UIDs, reading their flags again writes nothing
 law reread_flags_writes_nothing:
@@ -1828,3 +1821,15 @@ law resolved_role_names_selectable_folder:
 law awaiting_incomplete_is_unknown:
   for valid: Bool
   {Await.classify.if(valid, False{}, False{}) == Await.Unknown{} : Await.Status}
+
+# LAW: contact scans read only, and header fetches pin the discovered generation.
+law contact_plans:
+  for folder: String
+  for since: String
+  for uids: List<&2, U32>
+  for uidv: U32
+  ({I.any_writes(Ops.plan_contacts_search(folder, since)) == False{} : Bool} &
+   {I.any_writes(Ops.plan_contacts_headers(folder, uids, uidv)) == False{} : Bool} &
+   {Ops.plan_contacts_headers(folder, uids, uidv) ==
+    [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)},
+     I.CFetch{uids, [I.IUid{}, I.IDate{}, I.IContactHeaders{}]}] : List<&2, I.Cmd>})

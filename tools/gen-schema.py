@@ -265,6 +265,19 @@ def output_schema(name):
                        "age_days": NN, "to": S, "cc": S, "subject": S, "anchor": anchor})
         variants += [record({"complete": B, "reason": S, "searched": STRINGS,
                              "archive_resolved": B, "as_of": N, "messages": array(item)})]
+    elif name in ("mail_contacts", "mail_correspondents"):
+        evidence = {"observed_count": N, "latest_internaldate": NN}
+        coverage = record({"folder": S, "uidvalidity": NN, "sampled_headers": N,
+                           "complete": B, "reason": S})
+        common = {"complete": B, "as_of": N, "since": S, "archive_resolved": B,
+                  "coverage": array(coverage)}
+        if name == "mail_contacts":
+            variants += [record({**common, "contacts": array(record({"address": S,
+                                  "display_name": S, **evidence})), "allowlist_suggestion": S})]
+        else:
+            variants += [record({**common, "correspondents": array(record({"address": S,
+                         "sent": record(evidence),
+                         "received": array(record({"folder": S, **evidence}))}))})]
     elif name == "mail_classify":
         variants += [record({"folder": S, "uidvalidity": NN, "content": CONTENT,
                              "categories": STRINGS, "candidates": STRINGS,
@@ -644,6 +657,31 @@ TOOLS = [
          {"window_days": param("integer", minimum=1, maximum=3650, default=30),
           "min_age_days": param("integer", minimum=0, maximum=3650, default=3),
           "limit": param("integer", minimum=1, maximum=50, default=50)}),
+    tool("mail_contacts",
+         "Read-only contacts observed in stored Sent To/Cc/Bcc headers. Scan the highest UIDs "
+         "within an INTERNALDATE SINCE window, at most limit headers. Rank by observed-message "
+         "frequency then INTERNALDATE recency. Return every matching address in the sample, never "
+         "choose one ambiguous name. Display names are untrusted hints. ASCII mailbox keys are "
+         "lowercased by MailBend convention. Bcc may have been removed by the server; no envelope "
+         "history or lifetime absence is claimed. Each header is capped at 4096 bytes, each SEARCH "
+         "at 10000 UIDs, and output at 256 KiB. Coverage marks caps or unsupported evidence. "
+         "The allowlist suggestion is text for human review, never applied. No cache, files or Jev.",
+         hints(read_only=True, idempotent=True),
+         {"query": param("string", maxLength=128),
+          "window_days": param("integer", minimum=1, maximum=3650, default=30),
+          "limit": param("integer", minimum=1, maximum=100, default=100)}),
+    tool("mail_correspondents",
+         "Read-only exact stored-header observations for 1..50 bare addresses. Uses the same "
+         "bounded recent UID scan as mail_contacts, plus INBOX and resolved Archive. Sent counts "
+         "deduplicate To/Cc/Bcc within each message. Received counts are per-folder occurrences, "
+         "not distinct messages across Gmail labels or copies. Counts are observed lower bounds "
+         "when coverage is incomplete and never prove lifetime absence or complete Bcc history. "
+         "Recency is INTERNALDATE, not the untrusted Date header. Window uses IMAP calendar-day "
+         "SINCE semantics. No flags, configuration, files or Jev calls.",
+         hints(read_only=True, idempotent=True),
+         {"addresses": param("array", items=param("string", maxLength=254), minItems=1, maxItems=50),
+          "window_days": param("integer", minimum=1, maximum=3650, default=30),
+          "limit": param("integer", minimum=1, maximum=100, default=100)}, ["addresses"]),
     tool("mail_classify",
          "Ask Jev (TypeSafe's model) about messages, changing nothing (they stay "
          "unread): for each UID, the existing folder it belongs in "

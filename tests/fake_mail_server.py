@@ -702,7 +702,8 @@ def render_section(spec: bytes, m: dict):
         content = content[:-1]
     if start is not None:
         s = int(start)
-        content = content[s:s + int(count)] if count is not None else content[s:]
+        if not (m.get("ignore_header_partial") and inside_upper.startswith("HEADER.FIELDS")):
+            content = content[s:s + int(count)] if count is not None else content[s:]
         name = f'BODY[{inside}]<{s}>'
     else:
         name = f'BODY[{inside}]'

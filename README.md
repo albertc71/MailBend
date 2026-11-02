@@ -77,6 +77,8 @@ Jev off, no tool asks it.
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
 | `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
+| `mail_contacts` | Bounded Sent contact candidates and a human-reviewed allowlist value. Ambiguous names return every sampled match | no | no |
+| `mail_correspondents` | Exact observed Sent recipient and per-folder received counts within an explicit window | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file | — |
@@ -886,6 +888,45 @@ the [operator runbook](docs/OPERATIONS.md).
 - Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
+
+### Live contacts and correspondent observations
+
+`mail_contacts` scans stored Sent To/Cc/Bcc headers. `mail_correspondents` uses the
+same scan for up to 50 bare addresses and also scans INBOX and the resolved Archive.
+Both are read-only. They do not call Jev, write files, change configuration or add a cache.
+
+The default is a 30-day IMAP `SINCE` calendar-day window and at most 100 highest
+UIDs per folder. `window_days` accepts 1–3650 and `limit` accepts 1–100. Highest UIDs
+mean recently appended messages, not necessarily the newest Date headers. Recency
+is validated INTERNALDATE. Counts describe observed stored headers, not lifetime
+history or SMTP envelope recipients. A server may strip Bcc. Received counts stay
+separate by folder because Gmail labels and copies can expose the same message twice.
+
+Each address counts once per Sent message even when repeated in To/Cc/Bcc. Keys use
+MailBend's lowercased ASCII addr-spec convention; this is not a universal RFC mailbox
+equivalence claim. Unsupported or malformed address forms make coverage incomplete.
+Display names are untrusted hints and do not establish identity. `query` matches
+address or display-name text, and every matching address in the sample is returned.
+There is no automatic choice when a name is ambiguous.
+
+`coverage` gives each folder's identity, inspected count and completeness. Missing
+FETCH data, changed UIDVALIDITY, invalid dates, unsupported headers or a sample cap
+cannot establish absence. Even complete coverage is only for the stated stored-header
+window. Each header is capped at 4096 bytes, each SEARCH at 10000 UIDs, each message
+at 100 address tokens, aggregation at 500 addresses and output at 256 KiB.
+
+`allowlist_suggestion` is a raw comma-separated value for a person to inspect before
+setting `MAILBEND_ALLOWED_RECIPIENTS`. It is not a shell command. Do not execute or
+interpolate it as shell code. Existing configuration is never changed. Persistent
+cache and optional vCard-directory access from #62 remain deferred owner decisions.
+
+Triage uses the same exact Sent scan without a date window. A positive observed
+match remains a correspondent. Missing observations veto deletion when coverage
+is capped or incomplete; substring SEARCH hits no longer establish correspondence.
+The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
+UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
+claim that untrusted headers establish real-world identity.
+
 
 ## License
 

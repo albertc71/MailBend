@@ -42,7 +42,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_nine():
+def Laws.read_only_tools_are_exactly_eleven():
   {==}
 
 def Laws.tools_listed_per_config(drafts):
@@ -69,6 +69,10 @@ def Laws.from_name_inverts_name(op):
     case Ops.OGetThread{}:
       {==}
     case Ops.OAwaitingReply{}:
+      {==}
+    case Ops.OContacts{}:
+      {==}
+    case Ops.OCorrespondents{}:
       {==}
     case Ops.OClassify{}:
       {==}
@@ -231,9 +235,6 @@ def Laws.thread_plans_write_nothing(folders, keys, found):
 
 def Laws.awaiting_sent_writes_nothing(sent, since):
   {==}
-
-def Laws.sent_search_writes_nothing(sent, addrs):
-  thread_search_writes_nothing([sent], Ops.sent_keys(addrs))
 
 def Laws.reread_flags_writes_nothing(mbox, uids):
   {==}
@@ -417,6 +418,8 @@ def Laws.fetch_items_never_set_seen(item):
     case I.ISize{}:
       {==}
     case I.IHeaders{}:
+      {==}
+    case I.IContactHeaders{}:
       {==}
     case I.IStructure{}:
       {==}
@@ -1848,6 +1851,10 @@ def Laws.sending_calls_are_exact(op, args):
       {==}
     case Ops.OAwaitingReply{}:
       {==}
+    case Ops.OContacts{}:
+      {==}
+    case Ops.OCorrespondents{}:
+      {==}
     case Ops.OClassify{}:
       {==}
     case Ops.OTriage{}:
@@ -2275,3 +2282,6 @@ def Laws.awaiting_incomplete_is_unknown(valid):
       {==}
     case False{}:
       {==}
+
+def Laws.contact_plans(folder, since, uids, uidv):
+  ({==}, ({==}, {==}))

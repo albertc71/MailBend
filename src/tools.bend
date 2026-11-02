@@ -13,6 +13,7 @@ import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
 import ./awaiting.bend as Await
+import ./contacts.bend as Contacts
 import ./search-cursor.bend as SC
 import ./image.bend as Image
 import ./jev.bend as Jev
@@ -4761,6 +4762,279 @@ def t_awaiting(+args: J.Json) -> IO(Policy.Out):
       U32.is_ge(limit, 1) && U32.is_le(limit, 50) && U32.is_ge(now, (window * 86400 : U32)),
       since, now, age, limit)
 
+# Live stored-header contacts
+# ---------------------------
+
+type ContactScan is Data:
+  ContactScan{folder: String, uidv: Maybe<&2, U32>, contacts: List<&2, Contacts.Contact>,
+    sampled: U32, complete: Bool, reason: String}
+
+def contacts_failed(folder: String, reason: String) -> ContactScan:
+  ContactScan{folder, None{}, [], 0, False{}, reason}
+
+def contacts_observed(o: Contacts.Observed, folder: String, uidv: U32, sampled: U32)
+  -> ContactScan:
+  Contacts.Observed{cs, +parsed} = o
+  ContactScan{folder, Some{uidv}, cs, sampled, parsed,
+    Bool.pick(String, parsed, "", "sample cap, missing FETCH or unsupported header/date evidence")}
+
+def contacts_header_bytes(short: Bool, hs: String) -> Bool:
+  match short:
+    case False{}:
+      False{}
+    case True{}:
+      U32.is_le(C.utf8_len(hs), 4096)
+
+def contacts_raw_small(m: I.Msg) -> Bool:
+  I.Msg{u, flags, +date, size, +hs, body, st} = m
+  contacts_header_bytes(Nat.is_le(String.length(String.take(hs, 4097n)), 4096n), hs) &&
+    Nat.is_le(String.length(String.take(date, 65n)), 64n)
+
+def contacts_node.if(valid: Bool, f: String, v: Maybe<&2, U32>, m: I.Msg,
+  rest: List<&2, T.Node>) -> List<&2, T.Node>:
+  match valid:
+    case False{}:
+      rest
+    case True{}:
+      T.node(f, v, m) <> rest
+
+def contacts_nodes(ms: List<&2, I.Msg>, +f: String, +v: Maybe<&2, U32>) -> List<&2, T.Node>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      contacts_node.if(contacts_raw_small(m), f, v, m, contacts_nodes(t, f, v))
+
+def contacts_found_nodes(fs: List<&2, Found>) -> List<&2, T.Node>:
+  match fs:
+    case Nil{}:
+      []
+    case Found{f, v, us, ms} <> t:
+      List.append(&2, T.Node, contacts_nodes(ms, f, v), contacts_found_nodes(t))
+
+def contacts_fetched(r: Result<&2, &2, String, List<&2, Found>>, +folder: String,
+  +uids: List<&2, U32>, uidv: U32, total: Nat, sent: Bool, query: String, now: U32)
+  -> ContactScan:
+  match r:
+    case Fail{m}:
+      contacts_failed(folder, m)
+    case Done{+fs}:
+      +nodes = contacts_found_nodes(fs)
+      +complete = Nat.is_eq(List.length(&2, U32, uids), total) &&
+        await_fetch_complete([Ops.FolderUids{folder, uids}], nodes)
+      contacts_observed(Contacts.observe(nodes, sent, query, now, Contacts.Observed{[], complete}),
+        folder, uidv, U32.from_nat(List.length(&2, T.Node, nodes)))
+
+def contacts_selected(uids: List<&2, U32>, +f: String, +v: U32, fs: List<&2, Found>,
+  total: Nat, sent: Bool, query: String, now: U32) -> IO(ContactScan):
+  match uids:
+    case Nil{}:
+      IO.pure(ContactScan, ContactScan{f, Some{v}, [], 0, True{}, ""})
+    case +h <> +t:
+      do IO<ContactScan>:
+        fetched : Result<&2, &2, String, List<&2, Found>> <- await_run(
+          Done{Ops.plan_contacts_headers(f, h <> t, v)}, fs)
+        return contacts_fetched(fetched, f, h <> t, v, total, sent, query, now)
+
+def contacts_searched(r: Result<&2, &2, String, List<&2, Found>>, folder: String,
+  limit: U32, sent: Bool, query: String, now: U32) -> IO(ContactScan):
+  match r:
+    case Done{Found{+f, Some{+v}, +us, +ms} <> Nil{}}:
+      +selected = Contacts.largest(us)
+      contacts_selected(List.take(&2, U32, selected, U32.to_nat(limit)), f, v,
+        [Found{f, Some{v}, us, ms}], List.length(&2, U32, selected), sent, query, now)
+    case Done{_}:
+      IO.pure(ContactScan, contacts_failed(folder, "missing folder identity"))
+    case Fail{m}:
+      IO.pure(ContactScan, contacts_failed(folder, m))
+
+def contacts_scan(+folder: String, since: String, limit: U32, sent: Bool,
+  query: String, now: U32) -> IO(ContactScan):
+  do IO<ContactScan>:
+    r : Result<&2, &2, String, List<&2, Found>> <- await_run(
+      Done{Ops.plan_contacts_search(folder, since)}, [])
+    contacts_searched(r, folder, limit, sent, query, now)
+
+def contacts_received(folders: List<&2, String>, +since: String, +limit: U32, +now: U32)
+  -> IO(List<&2, ContactScan>):
+  match folders:
+    case Nil{}:
+      IO.pure(List<&2, ContactScan>, [])
+    case f <> t:
+      do IO<List<&2, ContactScan>>:
+        scan : ContactScan <- contacts_scan(f, since, limit, False{}, "", now)
+        rest : List<&2, ContactScan> <- contacts_received(t, since, limit, now)
+        return scan <> rest
+
+def contacts_evidence(c: Contacts.Contact) -> List<&2, J.Json>:
+  Contacts.Contact{a, n, count, +latest, matched} = c
+  [J.kv("observed_count", J.num(count)),
+   J.kv("latest_internaldate", Bool.pick(J.Json, U32.is_zero(latest), J.JNull{}, J.num(latest)))]
+
+def contacts_item(+c: Contacts.Contact) -> J.Json:
+  Contacts.Contact{address, name, count, latest, matched} = c
+  J.obj(List.append(&2, J.Json,
+    [J.kv("address", J.str(address)), J.kv("display_name", J.str(name))], contacts_evidence(c)))
+
+def contacts_items(cs: List<&2, Contacts.Contact>) -> List<&2, J.Json>:
+  match cs:
+    case Nil{}:
+      []
+    case c <> t:
+      contacts_item(c) <> contacts_items(t)
+
+def contacts_coverage(s: ContactScan) -> J.Json:
+  ContactScan{f, v, cs, n, complete, reason} = s
+  J.obj([J.kv("folder", J.str(f)), J.kv("uidvalidity", maybe_num(v)),
+    J.kv("sampled_headers", J.num(n)), J.kv("complete", J.bool(complete)),
+    J.kv("reason", J.str(reason))])
+
+def contacts_coverages(xs: List<&2, ContactScan>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      contacts_coverage(x) <> contacts_coverages(t)
+
+def contacts_complete(xs: List<&2, ContactScan>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case ContactScan{f, v, cs, n, complete, reason} <> t:
+      complete && contacts_complete(t)
+
+def contacts_received_item(s: ContactScan, address: String) -> J.Json:
+  ContactScan{f, v, cs, n, complete, reason} = s
+  J.obj(J.kv("folder", J.str(f)) <> contacts_evidence(Contacts.find(cs, address)))
+
+def contacts_received_items(xs: List<&2, ContactScan>, +address: String) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case s <> t:
+      contacts_received_item(s, address) <> contacts_received_items(t, address)
+
+def correspondents_items(addrs: List<&2, String>, +sent: List<&2, Contacts.Contact>,
+  +received: List<&2, ContactScan>) -> List<&2, J.Json>:
+  match addrs:
+    case Nil{}:
+      []
+    case +a <> t:
+      J.obj([J.kv("address", J.str(a)),
+        J.kv("sent", J.obj(contacts_evidence(Contacts.find(sent, a)))),
+        J.kv("received", J.arr(contacts_received_items(received, a)))]) <>
+        correspondents_items(t, sent, received)
+
+def contacts_bounded(valid: Bool, j: J.Json) -> Policy.Out:
+  match valid:
+    case True{}:
+      Policy.Ok{j}
+    case False{}:
+      Policy.Err{"contact result exceeds 500 addresses or 256 KiB; lower the header limit; no candidate selected"}
+
+def contacts_out(+sent: ContactScan, +received: List<&2, ContactScan>, contacts: Bool,
+  addrs: List<&2, String>, +since: String, +now: U32, +archive: Bool) -> Policy.Out:
+  ContactScan{f, v, +cs, n, complete, reason} = sent
+  +ranked = List.sort(~Contacts.Contact, ~(a => b => Contacts.before(a, b)), Contacts.matching(cs))
+  common : List<&2, J.Json> = [J.kv("complete", J.bool(contacts_complete(sent <> received))),
+    J.kv("as_of", J.num(now)), J.kv("since", J.str(since)),
+    J.kv("archive_resolved", J.bool(archive)),
+    J.kv("coverage", J.arr(contacts_coverages(sent <> received))) ]
+  fields = Bool.pick(List<&2, J.Json>, contacts,
+    [J.kv("contacts", J.arr(contacts_items(ranked))),
+      J.kv("allowlist_suggestion", J.str(String.join(Contacts.keys(ranked), ",")))],
+    [J.kv("correspondents", J.arr(correspondents_items(addrs, cs, received)))])
+  +j = J.obj(List.append(&2, J.Json, common, fields))
+  contacts_bounded(U32.is_le(C.utf8_len(J.show(j)), 262144) &&
+    Nat.is_le(List.length(&2, Contacts.Contact, cs), 500n), j)
+
+def contacts_folders(fs: Fs(), +contacts: Bool, addrs: List<&2, String>, query: String,
+  +since: String, +limit: U32, +now: U32) -> IO(Policy.Out):
+  match fs:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{Policy.Folders{all, drafts, trash, None{}, junk, archive}}:
+      pure_out(Policy.Err{"Sent folder is unresolved"})
+    case Done{Policy.Folders{all, drafts, trash, Some{f}, junk, +archive}}:
+      do IO<Policy.Out>:
+        sent : ContactScan <- contacts_scan(f, since, limit, True{}, query, now)
+        received : List<&2, ContactScan> <- contacts_received(
+          Bool.pick(List<&2, String>, contacts, [], thread_folders.put(["INBOX"], archive)),
+          since, limit, now)
+        return contacts_out(sent, received, contacts, addrs, since, now,
+          Maybe.is_some(&2, String, archive))
+
+def contacts_probe(r: Run(), contacts: Bool, addrs: List<&2, String>, query: String,
+  since: String, limit: U32, now: U32) -> IO(Policy.Out):
+  match r:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{+lines}:
+      do IO<Policy.Out>:
+        fs : Fs() <- await_roles(I.has_cap(I.caps(lines), "SPECIAL-USE"),
+          merge_folders(I.folders(lines), []))
+        contacts_folders(fs, contacts, addrs, query, since, limit, now)
+
+def contacts_addresses(xs: J.Json, left: Nat, nonempty: Bool) -> Bool:
+  match xs left:
+    case J.JEnd{} _:
+      nonempty
+    case J.JCons{J.JStr{s}, t} 1n+rest:
+      Contacts.bare(s) && contacts_addresses(t, rest, True{})
+    case _ _:
+      False{}
+
+def contacts_query_small(short: Bool, s: String) -> Bool:
+  match short:
+    case False{}:
+      False{}
+    case True{}:
+      M.no_ctl(s)
+
+def contacts_query_arg(v: Maybe<&2, J.Json>) -> Bool:
+  match v:
+    case None{}:
+      True{}
+    case Some{J.JStr{+s}}:
+      contacts_query_small(Nat.is_le(String.length(String.take(s, 129n)), 128n), s)
+    case _:
+      False{}
+
+def contacts_address_arg(v: Maybe<&2, J.Json>) -> Bool:
+  match v:
+    case Some{J.JArr{xs}}:
+      contacts_addresses(xs, 50n, False{})
+    case _:
+      False{}
+
+def contacts_args(+args: J.Json, contacts: Bool) -> Bool:
+  Bool.pick(Bool, contacts, contacts_query_arg(J.get(args, "query")),
+    contacts_address_arg(J.get(args, "addresses")))
+
+def contacts_start(valid: Bool, +args: J.Json, contacts: Bool, since: String,
+  limit: U32, now: U32) -> IO(Policy.Out):
+  match valid:
+    case False{}:
+      pure_out(Policy.Err{"invalid contacts arguments: window 1..3650, limit 1..100, " ++
+        "1..50 bare addresses or query up to 128 characters"})
+    case True{}:
+      do IO<Policy.Out>:
+        r : Run() <- await_raw(Ops.plan_probe())
+        contacts_probe(r, contacts, lowered(strs_arg(args, "addresses")), String.to_lower(Policy.str_arg(args, "query", "")),
+          since, limit, now)
+
+def t_contacts(+args: J.Json, +contacts: Bool) -> IO(Policy.Out):
+  +window = u32_arg(args, "window_days", 30)
+  +limit = u32_arg(args, "limit", 100)
+  do IO<Policy.Out>:
+    +now : U32 <- now_seconds()
+    since : String = Maybe.default(&2, String,
+      I.imap_date(M.iso_date((now - window * 86400 : U32))), "")
+    contacts_start(contacts_args(args, contacts) && await_arg_valid(J.get(args, "window_days")) &&
+      await_arg_valid(J.get(args, "limit")) && U32.is_ge(window, 1) && U32.is_le(window, 3650) &&
+      U32.is_ge(limit, 1) && U32.is_le(limit, 100) && U32.is_ge(now, (window * 86400 : U32)),
+      args, contacts, since, limit, now)
+
 def stamp() -> IO(Result<&2, &2, String, Stamp>):
   do IO<Result<&2, &2, String, Stamp>>:
     secs : U32 <- now_seconds()
@@ -7151,19 +7425,6 @@ def settle(t: Triaging, written: Maybe<&2, List<&2, String>>) -> Triaging:
   Triaging{call, c, cats, opts, roles, caps, review, found, not_found} = t
   Triaging{call, c, cats, opts, roles, caps, review, settled(found, written), not_found}
 
-def written_to.found(rs: List<&2, I.RLine>) -> Bool:
-  Bool.not(List.is_empty(&2, U32, I.search_uids(rs)))
-
-# The senders the Sent search found mail to, in To or in Cc: tags `n` and
-# `n` + 1 search for the first of `addrs` (see plan_sent_search).
-def written_to(addrs: List<&2, String>, +lines: List<&2, I.RLine>, +n: U32) -> List<&2, String>:
-  match addrs:
-    case Nil{}:
-      []
-    case a <> t:
-      List.filter.put(String, a, written_to(t, lines, (n + 2 : U32)),
-        written_to.found(I.replies(lines, n)) || written_to.found(I.replies(lines, (n + 1 : U32))))
-
 # Whether a message is asked about in a request of its own.
 def asked_alone(c: Jev.Content, p: Pending) -> Bool:
   Pending{Jev.Fetched{f, Jev.Text{text, whole}, r}, vetoes, sender} = p
@@ -7490,23 +7751,46 @@ def triage_ask(+t: Triaging) -> IO(Policy.Out):
     r : Tally() <- ask_all(Retried{}, steps, Jev.option_keys(cats, opts))
     triage_answered(r, t)
 
-def triage_written(r: Run(), addrs: List<&2, String>, t: Triaging) -> IO(Policy.Out):
-  match r:
-    case Fail{m}:
-      pure_out(Policy.Err{"cannot search the Sent folder for mail to the senders (" ++ m ++
-        "); nothing was moved"})
-    case Done{lines}:
-      triage_ask(settle(t, Some{written_to(addrs, lines, 2)}))
+def triage_contact_state(+known: List<&2, String>, complete: Bool, p: Pending) -> Pending:
+  match p:
+    case Pending{f, vetoes, None{}}:
+      Pending{f, vetoes, None{}}
+    case Pending{f, vetoes, Some{+a}}:
+      state = Bool.pick(Maybe<&2, List<&2, String>>, complete || C.is_in(a, known),
+        Some{known}, None{})
+      settled.put(Some{a}, f, vetoes, state)
 
-def triage_sent.put(sent: Maybe<&2, String>, +addrs: List<&2, String>,
+def triage_contact_states(ps: List<&2, Pending>, +known: List<&2, String>, +complete: Bool)
+  -> List<&2, Pending>:
+  match ps:
+    case Nil{}:
+      []
+    case p <> t:
+      triage_contact_state(known, complete, p) <> triage_contact_states(t, known, complete)
+
+def triage_contacts(scan: ContactScan, t: Triaging) -> Triaging:
+  ContactScan{f, v, cs, n, complete, reason} = scan
+  Triaging{call, c, cats, opts, roles, caps, review, found, missing} = t
+  Triaging{call, c, cats, opts, roles, caps, review,
+    triage_contact_states(found, Contacts.keys(cs), complete), missing}
+
+def triage_contacts_ready(scan: ContactScan, t: Triaging) -> IO(Policy.Out):
+  match scan:
+    case ContactScan{f, None{}, cs, n, complete, reason}:
+      pure_out(Policy.Err{"cannot verify Sent correspondence (" ++ reason ++ "); nothing was moved"})
+    case ContactScan{f, Some{v}, cs, n, complete, reason}:
+      triage_ask(triage_contacts(ContactScan{f, Some{v}, cs, n, complete, reason}, t))
+
+def triage_sent.put(sent: Maybe<&2, String>, addrs: List<&2, String>,
   t: Triaging) -> IO(Policy.Out):
   match sent:
     case None{}:
       triage_ask(settle(t, None{}))
     case Some{box}:
       do IO<Policy.Out>:
-        r : Run() <- imap_run(Ops.plan_sent_search(box, addrs))
-        triage_written(r, addrs, t)
+        now : U32 <- now_seconds()
+        scan : ContactScan <- contacts_scan(box, "", 100, True{}, "", now)
+        triage_contacts_ready(scan, t)
 
 def triage_sent.if(
   no_senders: Bool,
@@ -7830,6 +8114,10 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
       projected(args, jev, t_get_thread(args))
     case Ops.OAwaitingReply{}:
       t_awaiting(args)
+    case Ops.OContacts{}:
+      t_contacts(args, True{})
+    case Ops.OCorrespondents{}:
+      t_contacts(args, False{})
     case Ops.OClassify{}:
       t_classify(args, jev, images)
     case Ops.OTriage{}:

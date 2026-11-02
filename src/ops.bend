@@ -18,6 +18,8 @@ type Op is Data:
   ORefresh{}
   OGetThread{}
   OAwaitingReply{}
+  OContacts{}
+  OCorrespondents{}
   OClassify{}
   OTriage{}
   OGetAttachment{}
@@ -53,6 +55,10 @@ def is_read_only(op: Op) -> Bool:
       True{}
     case ORefresh{}:
       True{}
+    case OContacts{}:
+      True{}
+    case OCorrespondents{}:
+      True{}
     case OAwaitingReply{}:
       True{}
     case OGetThread{}:
@@ -85,6 +91,10 @@ def name(op: Op) -> String:
       "mail_get_new"
     case ORefresh{}:
       "mail_refresh"
+    case OContacts{}:
+      "mail_contacts"
+    case OCorrespondents{}:
+      "mail_correspondents"
     case OAwaitingReply{}:
       "mail_awaiting_reply"
     case OGetThread{}:
@@ -135,6 +145,8 @@ def all_ops() -> List<&2, Op>:
     ORefresh{},
     OGetThread{},
     OAwaitingReply{},
+    OContacts{},
+    OCorrespondents{},
     OClassify{},
     OTriage{},
     OGetAttachment{},
@@ -412,21 +424,14 @@ def plan_thread_search(folders: List<&2, String>, +keys: List<&2, I.Key>) -> Lis
 def plan_awaiting_sent(sent: String, since: String) -> List<&2, I.Cmd>:
   [I.CExamine{sent}, I.CSearch{[I.KSentSince{since}, I.KUndeleted{}]}]
 
-# The keys of mail the user wrote to each address: one in To, then one in
-# Cc. Bcc is not searched.
-def sent_keys(addrs: List<&2, String>) -> List<&2, I.Key>:
-  match addrs:
-    case Nil{}:
-      []
-    case +a <> t:
-      I.KTo{a} <> (I.KCc{a} <> sent_keys(t))
+# Empty since scans the whole stored folder for triage, still with a fetch cap.
+def plan_contacts_search(folder: String, +since: String) -> List<&2, I.Cmd>:
+  [I.CExamine{folder}, I.CSearch{Bool.pick(List<&2, I.Key>, String.is_empty(since),
+    [I.KUndeleted{}], [I.KSince{since}, I.KUndeleted{}])}]
 
-# Whether the user has written to each address: the Sent folder opened with
-# EXAMINE, then one UID SEARCH of undeleted mail per key of sent_keys.
-# mail_triage reads the replies by tag: tag 1 opens Sent, then each address
-# has two tags, To before Cc.
-def plan_sent_search(sent: String, addrs: List<&2, String>) -> List<&2, I.Cmd>:
-  plan_thread_search([sent], sent_keys(addrs))
+def plan_contacts_headers(folder: String, uids: List<&2, U32>, uidv: U32) -> List<&2, I.Cmd>:
+  [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)},
+    I.CFetch{uids, [I.IUid{}, I.IDate{}, I.IContactHeaders{}]}]
 
 # The flags of some messages, read again: the folder opened with EXAMINE,
 # then a UID FETCH of FLAGS.
