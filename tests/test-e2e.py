@@ -5623,7 +5623,8 @@ GATE_PEM = ("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAfakefakefakefakefa
 GATE_TEXT = "the gated body text"
 ARCHIVE_VALIDITY = FIX["mailboxes"]["Archive"]["uidvalidity"]
 ANNOTATED_READS = [("mail_search", {}), ("mail_get", {"uid": GATE_PREVIEWED}), ("mail_get_new", {"since_uid": 40, "uidvalidity": GATE_VALIDITY}),
-                   ("mail_get_thread", {"uid": 2})]
+                   ("mail_get_thread", {"uid": 2}),
+                   ("mail_brief", {"since_uid": 40, "uidvalidity": GATE_VALIDITY})]
 
 
 def forwarded(inner, depth):
@@ -5770,7 +5771,7 @@ def gates_tool_list(srv, work, key_file):
                   set(changing) == set(MUTATING_CALLS) | more and not missing, (sorted(changing), missing))
         open_world = {t["name"] for t in tool_list(srv) if t["annotations"]["readOnlyHint"]
                       and t["annotations"]["openWorldHint"]}
-        check("gates: of the reads, the four Jev may annotate are marked open-world",
+        check("gates: exactly the annotatable reads are marked open-world",
               open_world == {name for name, _ in ANNOTATED_READS}, open_world)
     finally:
         ts.stop()
@@ -6099,7 +6100,7 @@ def gates_annotations(srv, work, key_file):
         check("gates: suspected_injection is shown only where Jev suspects it", flagged == {GATE_INJECTION}, listed)
         missing = [(name, r) for name, args in ANNOTATED_READS[1:] for c, r in [tool(srv, name, args, **env)]
                    if c != 0 or not has_key(r, "jev")]
-        check("gates: mail_get, mail_get_new and mail_get_thread carry jev objects", not missing, missing)
+        check("gates: all other annotatable reads carry jev objects", not missing, missing)
         extra = [(name, r) for name in ("mail_probe", "mail_list_folders") for c, r in [tool(srv, name, {}, **env)]
                  if c != 0 or has_key(r, "jev")]
         check("gates: the other reads carry no jev object", not extra, extra)
