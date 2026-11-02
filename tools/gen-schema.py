@@ -7,6 +7,7 @@ CI fails when the checked-in src/schema.bend differs from the output.
 JSON object keys keep the order in which they are written here, so
 reordering keys changes the generated text.
 """
+from collections import Counter
 import json
 import re
 from pathlib import Path
@@ -920,10 +921,11 @@ def def_name(entry):
     return "tool_defs." + entry["name"]
 
 
-def tool_def(entry):
+def tool_def(entry, shared):
     """A def returning one tool's JSON text."""
     text = json.dumps(entry, ensure_ascii=True, separators=(",", ":"))
-    literals = ",\n    ".join(f'"{escaped(piece)}"'
+    literals = ",\n    ".join((shared[piece] + '()') if piece in shared
+                               else f'"{escaped(piece)}"'
                                for piece in wrap(text, LITERAL_WIDTH))
     return (f"def {def_name(entry)}() -> String:\n"
             "  String.concat([\n"
@@ -941,7 +943,19 @@ def tool_list_def(tools):
 
 def render(tools):
     """The whole src/schema.bend text."""
-    defs = [tool_def(entry) for entry in tools] + [tool_list_def(tools)]
+    # Share repeated literal ASTs, not JSON schema objects: every emitted byte
+    # and the order of each tool's concatenation remain unchanged.
+    pieces = [piece for entry in tools
+              for piece in wrap(json.dumps(entry, ensure_ascii=True,
+                                           separators=(",", ":")), LITERAL_WIDTH)]
+    counts = Counter(pieces)
+    shared = {}
+    for piece in pieces:
+        if counts[piece] > 1 and piece not in shared:
+            shared[piece] = f"schema_piece.p{len(shared):04d}"
+    defs = [f'def {name}() -> String:\n  "{escaped(piece)}"\n'
+            for piece, name in shared.items()]
+    defs += [tool_def(entry, shared) for entry in tools] + [tool_list_def(tools)]
     return HEADER + "".join("\n" + d for d in defs)
 
 
