@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest import mock
 
+from scale_baseline import select_baseline
 from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message
 
 SPEC = importlib.util.spec_from_file_location("scale", pathlib.Path(__file__).with_name("test-scale.py"))
@@ -233,7 +234,22 @@ sys.exit(24)
         self.assertEqual(paths, {
             "tests/test-scale.py", "tests/scale_fixtures.py", "tests/image_fixtures.py",
             "tests/fake_mail_server.py", "tests/fake_typesafe.py", "tests/scale-baseline.json",
-            ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml"})
+            ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml",
+            "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py"})
+
+    def test_baseline_selection_preserves_full_profile_gate(self):
+        for cpu in ("AMD EPYC 9V45 96-Core Processor", "AMD EPYC 7763 64-Core Processor"):
+            with self.subTest(cpu=cpu):
+                baseline = json.loads(select_baseline(cpu).read_text())
+                self.assertEqual(baseline["profile"]["cpu"], cpu)
+                self.assertEqual(scale.compare(baseline, baseline), [])
+                changed = json.loads(json.dumps(baseline))
+                changed["profile"]["python_version"] = "different"
+                self.assertEqual(scale.compare(baseline, changed), [
+                    "runner/toolchain profile differs; measurements are not comparable"])
+        for cpu in ("unknown", "", "AMD EPYC 7763"):
+            with self.subTest(cpu=cpu), self.assertRaises(ValueError):
+                select_baseline(cpu)
 
     def test_forward_command_guards_allow_only_sent_append(self):
         safe = ['A1 EXAMINE "INBOX"', 'A2 UID FETCH 1 (BODY.PEEK[])',

@@ -8,6 +8,8 @@ on:
       - tests/fake_mail_server.py
       - tests/fake_typesafe.py
       - tests/scale-baseline.json
+      - tests/scale-baseline-epyc7763.json
+      - tests/scale_baseline.py
       - .github/workflows/scale-compare.yml
       - .github/workflows/ci.yml
 permissions:

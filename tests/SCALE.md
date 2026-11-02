@@ -64,8 +64,14 @@ succeed on a larger machine.
 ## Compare a recorded baseline
 
 ```sh
-python3 tests/test-scale.py --baseline tests/scale-baseline.json --output build/scale-results.json
+baseline=$(python3 tests/scale_baseline.py)
+python3 tests/test-scale.py --baseline "$baseline" --output build/scale-results.json
 ```
+
+The selector accepts exactly the two reviewed CPU model names and chooses a
+fixed baseline file. An unknown CPU fails without fallback. Selection is not
+acceptance: the unchanged harness still requires the same full profile.
+It never combines measurements or records a replacement automatically.
 
 The comparison requires the same runner, operating system, architecture,
 CPU model, logical CPU count, Bend version, Python implementation/version,
@@ -79,7 +85,7 @@ statistically significant regression. Inspect the ranges and host load.
 
 `--record` never updates the committed baseline. Review a complete result,
 including successful work checks and sample variation, before copying it to
-`tests/scale-baseline.json`. Do not copy results between runner profiles.
+the matching reviewed baseline file. Do not copy results between runner profiles.
 An unmeasured baseline remains a failing gate, not a guessed budget.
 
 The CI workflow runs scale tests on manual dispatch with `scale` enabled and
@@ -89,8 +95,8 @@ workflow reaches the default branch. Scale runs have a separate concurrency
 group from ordinary CI, so they cannot cancel a push check on the same branch.
 Ordinary product pull requests run only the fast contract controls. A separate
 `Scale comparison` workflow runs when a pull request changes the measurement
-harness, fixtures (including image generation and both fake servers), baseline
-or either workflow. Changes to the shared CI workflow trigger comparison
+harness, fixtures (including image generation and both fake servers), either
+baseline, the selector or either workflow. Changes to the shared CI workflow trigger comparison
 because it also defines the scale environment. It reuses the
 same bounded scale job in comparison mode, checks out the exact PR head, and
 does not join the ordinary `checks` aggregate. Pull requests that change only documentation or unrelated
@@ -143,6 +149,19 @@ counts and limits are unchanged. No metadata was guessed onto old samples.
 The older CPU was different, so timing differences do not prove a speedup.
 RSS and IMAP-login medians are close, but only matching complete profiles
 can pass the regression gate.
+
+### Second supported hosted CPU
+
+Standard public runners also assigned AMD EPYC 7763. Instead of replacing
+one CPU's baseline with another's, `scale-baseline-epyc7763.json` retains
+[run 41399173308](https://github.com/albertc71/MailBend/actions/runs/41399173308)
+unchanged: source `b9b583cdc4f2128b30d55c14cfb086e60d2626a3`, all 35 successful
+samples, 699.07 seconds. Independent review verified full JSON SHA-256
+`a1b82bac473aefa91f1c5768039e4d2666d94754cc620fb8d7b1555f84eed5b4`.
+Its profile differs from the 9V45 candidate only in CPU model. This run also
+failed comparison correctly against the other CPU, not workload validation.
+Neither candidate is itself a successful regression comparison. The selected
+baseline must pass all unchanged full-profile and 25% checks on a later run.
 
 ### Previous hosted baseline
 

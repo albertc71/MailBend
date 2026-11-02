@@ -338,7 +338,8 @@ jobs:
           if [ "$RECORD_SCALE" = true ]; then
             python3 tests/test-scale.py --record --output scale-results.json
           else
-            python3 tests/test-scale.py --output scale-results.json
+            baseline=$(python3 tests/scale_baseline.py)
+            python3 tests/test-scale.py --baseline "$baseline" --output scale-results.json
           fi
       - name: Log measurements, including failed and incomplete runs
         if: always()
