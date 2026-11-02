@@ -54,6 +54,7 @@ type Key is Data:
   KUndeleted{}
   KHeader{name: String, value: String}
   KUidFrom{n: U32}
+  KUidRange{first: U32, last: U32}
   KUids{uids: List<&2, U32>}
 
 # Fetch items. None of them can set \Seen: message content is only ever
@@ -567,6 +568,8 @@ def key_str(k: Key) -> String:
       "HEADER " ++ astring(n) ++ " " ++ astring(v)
     case KUidFrom{n}:
       "UID " ++ U32.show(n) ++ ":*"
+    case KUidRange{first, last}:
+      "UID " ++ U32.show(first) ++ ":" ++ U32.show(last)
     case KUids{us}:
       "UID " ++ uid_set(us)
 

@@ -115,7 +115,7 @@ def main() -> IO(Unit):
 #|mail_search | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string from:string to:string cc:string subject:string body:string text:string since:string before:string unseen:boolean seen:boolean flagged:boolean cursor:string limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string max_bytes:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string start:string[now] since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
-#|mail_brief | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
+#|mail_brief | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string continuation:object since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_refresh | readOnlyHint,idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
 #|mail_get_thread | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_awaiting_reply | readOnlyHint,idempotentHint | required - | window_days:integer min_age_days:integer limit:integer exclude_lists:boolean exclude_automated:boolean
@@ -138,5 +138,5 @@ def main() -> IO(Unit):
 #|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
-#|481442 characters
-#|hash 4053005576
+#|484893 characters
+#|hash 2545046655

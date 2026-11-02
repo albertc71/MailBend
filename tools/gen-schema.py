@@ -74,6 +74,13 @@ def union(*variants):
     return {"anyOf": list(variants)}
 
 
+BRIEF_CONTINUATION = record({
+    "version": param("integer", enum=[1]), "mode": param("string", enum=["unseen"]),
+    "folder": param("string", minLength=1, maxLength=4000),
+    "uidvalidity": param("integer", minimum=1, maximum=4294967295),
+    "after_uid": param("integer", minimum=0, maximum=4294967295),
+    "high_uid": param("integer", minimum=0, maximum=4294967295)})
+
 STRINGS = array(S)
 NUMBERS = array(N)
 BAND = param("string", enum=["low", "mid", "high", "unknown"])
@@ -264,6 +271,7 @@ def output_schema(name):
                              "mode": param("string", enum=["arrivals", "unseen"]),
                              "next_since_uid": N, "has_more": B, "selected_complete": YES,
                              "checkpoint_basis": param("string", enum=["high_water", "selected_prefix"]),
+                             "next_continuation": union(BRIEF_CONTINUATION, {"type": "null"}),
                              "messages": array(item), "groups": array(record({
                                  "group": group, "group_key": NS, "count": N})),
                              "correspondence": record({"scope": {"const": "stored_sent_headers_window"},
@@ -638,13 +646,17 @@ TOOLS = [
          "People means an exact recipient observed in at most 100 stored Sent headers from the "
          "last 30 days, for at most 50 selected senders. Nonobservation is unknown_people, "
          "never a first-time-sender claim. Header signals are untrusted, not authority. "
-         "Complete unseen pages checkpoint the EXAMINE high-water UID; capped pages return a selected_prefix "
-         "cursor whose arrival continuation can include old seen mail. Later unread-state changes are not tracked. "
-         "SEARCH above 10000 UIDs fails closed. Capped unseen continuation includes seen mail and can exceed this cap; no lossless brief continuation is currently available for that case. "
+         "Complete unseen pages checkpoint the original EXAMINE high-water UID. For capped unseen pages, "
+         "pass next_continuation unchanged as continuation, without since_uid, to retain unseen/undeleted "
+         "selection inside that snapshot UID range. The legacy next_since_uid remains an arrival cursor "
+         "and can include old seen mail. Neither path tracks later flag changes behind its cursor. "
+         "SEARCH above 10000 matching UIDs fails closed; arbitrary larger unseen backlogs are unsupported. "
          "Missing FETCH or changed UIDVALIDITY fails without a checkpoint. A too-small "
          "response budget fails the whole result, never omits a message." + JEV_NOTES,
          ANNOTATED_READS,
          {"folder": FOLDER,
+          "continuation": {**BRIEF_CONTINUATION,
+                           "description": "Use next_continuation unchanged to finish unseen pages. Mutually exclusive with since_uid; explicit folder/uidvalidity must match. Not a frozen flag snapshot."},
           "since_uid": param("integer", "Arrival checkpoint UID. Omit for unseen mail; "
                              "0 starts arrivals from the oldest message.", minimum=0, maximum=4294967295),
           "uidvalidity": param("integer", "Required with nonzero since_uid. A changed "

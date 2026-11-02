@@ -1974,14 +1974,16 @@ law awaiting_disabled_filters_keep_candidate:
 
 # An unseen snapshot is sealed only after its entire eligible selection fits.
 law brief_complete_unseen_highwater:
+  for after: U32
   for high: U32
   for last: U32
-  {Brief.checkpoint(Brief.UnseenWindow{high}, False{}, last) == high : U32}
+  {Brief.checkpoint(Brief.UnseenWindow{after, high}, False{}, last) == high : U32}
 
 law brief_partial_unseen_prefix:
+  for after: U32
   for high: U32
   for last: U32
-  {Brief.checkpoint(Brief.UnseenWindow{high}, True{}, last) == last : U32}
+  {Brief.checkpoint(Brief.UnseenWindow{after, high}, True{}, last) == last : U32}
 
 law brief_arrivals_keep_prefix:
   for since: U32
@@ -1994,3 +1996,30 @@ law brief_arrivals_keep_prefix:
 law json_serialized_bytes:
   for j: J.Json
   {C.utf8_len(J.show(j)) == Response.bytes(j) : U32}
+
+
+law brief_range_writes_nothing:
+  for folder: String
+  for uidv: U32
+  for after: U32
+  for high: U32
+  {I.any_writes(Ops.plan_brief_range(folder, uidv, after, high)) == False{} : Bool}
+
+law brief_range_wire:
+  for first: U32
+  for last: U32
+  {I.key_str(I.KUidRange{first, last}) == "UID " ++ U32.show(first) ++ ":" ++ U32.show(last) : String}
+
+law brief_completed_has_no_continuation:
+  for window: Brief.SelectionWindow
+  for folder: String
+  for uidv: U32
+  for last: U32
+  {Brief.next_cursor(window, False{}, folder, uidv, last) == J.JNull{} : J.Json}
+
+law brief_unseen_filter_interval:
+  for after: U32
+  for high: U32
+  for uid: U32
+  {Brief.window_contains(Brief.UnseenWindow{after, high}, uid) ==
+    (U32.is_gt(uid, after) && U32.is_le(uid, high)) : Bool}
