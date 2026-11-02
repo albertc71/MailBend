@@ -58,8 +58,15 @@ same session, and then verifies the complete selected UID sequence.
 
 ## Evidence and limits
 
-- At most 100 selected messages, default 50. SEARCH above 10000 UIDs fails closed;
-  `mail_get_new {"start":"now"}` can intentionally seed a fresh baseline.
+- At most 100 selected messages, default 50. SEARCH above 10000 UIDs fails closed.
+  Capped unseen continuation switches to all arrivals, including seen mail; on
+  large folders that SEARCH can exceed the cap repeatedly. A smaller page does
+  not narrow the SEARCH and repeating unseen mode repeats its first page. No
+  lossless brief continuation currently handles this case. `start=now` discards
+  the backlog, not recovers it. No-skip safety is not a paging-progress guarantee.
+- Unseen mode excludes `\Deleted` UIDs; a complete high-water checkpoint passes
+  those UIDs even if later undeleted. Arrivals have no `UNDELETED` filter. Neither
+  mode follows subsequent flag changes.
 - Explicit empty selected headers use the shared acquisition helper; persistent
   NIL, absent or wrong sections fail closed without a checkpoint.
 - At most 50 distinct selected sender addresses matched.
@@ -106,12 +113,13 @@ Sent windows cannot supply it. No paid service or real mailbox was used here.
 
 ## Review follow-up: snapshot checkpoints
 
-The separate [checkpoint model](brief-model/Checkpoint.tla) explores arbitrary
+The separate [checkpoint model](brief-model/Checkpoint.tla) is **design-time only**,
+not run by CI and not linked to production code by an automatic drift check. It explores arbitrary
 unseen subsets, EXAMINE high-water marks and oldest selected prefixes. It checks
 that no omitted eligible UID is at or below the returned cursor, complete pages
 use the snapshot boundary, and racing SEARCH UIDs above that boundary are not
 selected. It models the selection rule, not the IMAP server or parser. Production
-kernel laws cover both checkpoint branches; synthetic server tests cover their
+kernel laws cover checkpoint branches, not the window filter; synthetic server tests cover their
 wiring, malformed UIDNEXT and concurrent-arrival transcripts.
 
 Review alternatives: using the maximum SEARCH UID was rejected because a racing

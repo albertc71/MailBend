@@ -1,4 +1,5 @@
 ---------------------------- MODULE Checkpoint ----------------------------
+\* Design-time exploration only: CI does not run or compare this model to code.
 EXTENDS Naturals, FiniteSets
 CONSTANT Uids
 VARIABLES done, high, unseen, selected, more, cursor

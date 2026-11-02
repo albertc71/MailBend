@@ -1104,9 +1104,20 @@ Only From, To, Cc, List-Id, Auto-Submitted and Precedence consume the 4096-byte
 classification bound; duplicates remain visible and malformed evidence stays
 conservative. Original summaries are unchanged. Explicit empty header strings
 are represented; persistent NIL or absent selected data still fails closed.
-SEARCH is capped at 10000 UIDs. To intentionally discard an old backlog, seed a
-fresh baseline with `mail_get_new {"start":"now"}` and pass its cursor to the
-brief. A count limit is not a byte budget: set `max_response_bytes` when needed.
+SEARCH is capped at 10000 UIDs. A capped unseen page can select only a few old
+unread messages, yet its arrival continuation includes all later seen mail too.
+On a large folder that continuation can exceed the cap and fail repeatedly.
+Lowering the page limit does not reduce that SEARCH, and repeating unseen mode
+returns the same first page. There is currently no lossless brief continuation
+for this case. `mail_get_new {"start":"now"}` skips the existing backlog; it is
+not a recovery method. No returned checkpoint advances past omitted eligible
+unseen messages, but that safety guarantee does not guarantee paging progress.
+A count limit is not a byte budget: set `max_response_bytes` when needed.
+
+Unseen mode excludes `\Deleted` messages. A complete high-water page passes
+those excluded UIDs even if they are later undeleted. Arrival mode has no
+`UNDELETED` filter and may return deleted messages. Neither checkpoint tracks
+later changes to flags.
 
 ## License
 

@@ -172,6 +172,36 @@ def run(t, work):
     finally:
         srv.stop()
 
+    # Charge unfolded UTF-8 names+values plus colon/space/CRLF per field.
+    # Distribute the boundary across fields; no individual value exceeds it.
+    boundary = copy.deepcopy(fixture)
+    rows = []
+    for uid, (total, multibyte) in enumerate(((4096, False), (4097, False),
+                                             (4096, True), (4097, True)), 1):
+        fields = [('From', 'known@example.test'), ('To', fixture['user']),
+                  ('List-Id', ''), ('Precedence', '')]
+        room = total - sum(len(name.encode()) + len(value.encode()) + 4 for name, value in fields)
+        first = room // 2
+        list_value = ('é' * (first // 2) + 'x' * (first % 2)) if multibyte else 'x' * first
+        fields[2] = ('List-Id', list_value)
+        fields[3] = ('Precedence', 'x' * (room - first))
+        assert sum(len(name.encode()) + len(value.encode()) + 4 for name, value in fields) == total
+        assert all(len(value.encode()) < 4096 for _, value in fields)
+        headers = ''.join(f'{name}: {value}\r\n' for name, value in fields[1:])
+        rows.append(message(uid, fields[0][1], headers))
+    boundary['mailboxes']['INBOX']['messages'] = rows
+    srv = t.Server(work, fixture=boundary)
+    try:
+        code, result = t.tool(srv, 'mail_brief')
+        actual = result.get('messages', [])
+        t.check('brief: exact UTF-8 classification budget 4096/4097 across fields', code == 0 and
+                [m['uid'] for m in actual] == [1, 2, 3, 4] and
+                [m['group'] for m in actual] == ['lists', 'unknown_people', 'lists', 'unknown_people'] and
+                [m['delivery'] for m in actual] == ['direct', 'other_or_unknown', 'direct', 'other_or_unknown'] and
+                result.get('next_since_uid') == 4, result)
+    finally:
+        srv.stop()
+
     for failure in ('missing_fetch', 'identity_race', 'search_missing', 'search_malformed'):
         changed = copy.deepcopy(fixture)
         extra = ()

@@ -5439,7 +5439,7 @@ def brief_selected(uids: Maybe<&2, List<&2, U32>>, folder: String, uidv: U32,
   +limit: U32, +window: Brief.SelectionWindow) -> IO(Shown):
   match uids:
     case None{}:
-      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 UIDs; no checkpoint returned; only if intentionally skipping existing backlog, mail_get_new start now seeds a fresh baseline"})
+      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 UIDs; no checkpoint returned; capped unseen continuation may exceed this limit when seen mail is included; no lossless brief continuation is currently available for that case"})
     case Some{xs}:
       +eligible = asc(unseen(Brief.window_uids(xs, window), []))
       brief_fetch(List.take(&2, U32, eligible, U32.to_nat(limit)), folder, uidv,

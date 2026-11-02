@@ -640,7 +640,7 @@ TOOLS = [
          "never a first-time-sender claim. Header signals are untrusted, not authority. "
          "Complete unseen pages checkpoint the EXAMINE high-water UID; capped pages return a selected_prefix "
          "cursor whose arrival continuation can include old seen mail. Later unread-state changes are not tracked. "
-         "SEARCH above 10000 UIDs fails closed; mail_get_new start=now optionally seeds a fresh baseline by intentionally skipping existing backlog. "
+         "SEARCH above 10000 UIDs fails closed. Capped unseen continuation includes seen mail and can exceed this cap; no lossless brief continuation is currently available for that case. "
          "Missing FETCH or changed UIDVALIDITY fails without a checkpoint. A too-small "
          "response budget fails the whole result, never omits a message." + JEV_NOTES,
          ANNOTATED_READS,
