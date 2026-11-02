@@ -130,6 +130,10 @@ jobs:
         run: python3 tests/formal/check-policy.py
       - name: Role-folder resolution mutation checks
         run: python3 tests/formal/check-role-folders.py
+
+      - name: Response and image budget proof mutation checks
+        run: python3 tests/formal/check-response-image-budgets.py
+
       - name: Writing-laws guide snippets and rejected production mutation
         run: |
           python3 tests/test-writing-laws.py

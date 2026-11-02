@@ -38,6 +38,11 @@ checks valid input. Selected-part acceptance does not certify wire validity.
 Encoded words split mid-character or placed inside quotes are malformed under
 [RFC 2047 section 5](https://www.rfc-editor.org/rfc/rfc2047#section-5).
 
+`encoded-word-oversized-recovery` preserves the existing recovery for an encoded
+word longer than RFC 2047 permits. It is a compatibility case, not a length-policy
+change or a stack-depth test. `tests/unit/header-depth.bend` exercises the large
+inputs with tail-safe fixtures and observers.
+
 `html` is untrusted source content, not sanitized browser markup. The corpus reads
 never render it or fetch any referenced resource. Decoded headers may also retain
 untrusted controls in `mail_get`; reply scenarios separately check safe quoting.

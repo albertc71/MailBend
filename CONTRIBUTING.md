@@ -10,6 +10,14 @@ discuss larger changes before writing them.
   plain `EXPUNGE`, UID commands, discovered role folders, the
   native-helper boundaries and what Jev may do).
 - Keep safety rules in `LAWS.bend`. Do not weaken a law to make code pass.
+  The `tests/formal/budget-*-observers.bend` and `budget-observers.bend` modules,
+  imported by `LAWS.bend`, are also part
+  of that law contract: review changes to `admit_all`, `lengths_exact`,
+  `Within` and the other observers as changes to the laws, and explain them
+  in the pull request. Do not weaken an observer or premise to make a proof
+  pass. The budget mutation check fingerprints `tests/formal/budget-*.bend` and
+  `tests/formal/scalar-*.bend`, including these observer modules, to check that its run leaves the checkout
+  unchanged; this is not an approval gate for later contract changes.
 - Never put real credentials, account addresses or mail in code, tests,
   fixtures, issues or pull requests. Tests run against the local fake server
   (`tests/fake_mail_server.py`) with a synthetic password, and CI scans the
@@ -49,6 +57,7 @@ bend tests/formal/tool-laws.bend --verdict        # tool-layer laws kept out of 
 python3 tests/formal/check-policy.py              # pure policy boundary and rejected mutations
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
+python3 tests/formal/check-response-image-budgets.py # budget proofs reject broken admission/cuts
 python3 tests/test-writing-laws.py                # malformed guide fences fail closed
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
