@@ -29,6 +29,9 @@ def run(raw: String, selected: List<&2, U32>, uidv: U32) -> String:
     "* OK [UIDVALIDITY " ++ U32.show(uidv) ++ "] ok\r\n" ++ raw ++
     "a2 OK fetched\r\n"), ""), "INBOX", 7, 9, True{}, selected))
 
+def empty_header(value: String) -> String:
+  "* 1 FETCH (UID 9 BODY[HEADER.FIELDS (" ++ I.header_fields() ++ ")] " ++ value ++ ")\r\n"
+
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(run(header(4) ++ header(9), [4, 5, 9], 7))
@@ -36,9 +39,15 @@ def main() -> IO(Unit):
     IO.print(run("* 1 FETCH (UID 9 FLAGS ())\r\n", [9], 7))
     IO.print(run(header(9) ++ header(4) ++ header(9) ++ header(99), [4, 9], 7))
     IO.print(run(header(4), [4, 9], 8))
+    IO.print(run(empty_header("\"\""), [9], 7))
+    IO.print(run(empty_header("{0}\r\n"), [9], 7))
+    IO.print(run(empty_header("NIL"), [9], 7))
 
 #|error FETCH did not return every requested message; retry the same checkpoint messages=0
 #|error FETCH did not return every requested message; retry the same checkpoint messages=0
 #|error FETCH did not return every requested message; retry the same checkpoint messages=0
 #|{"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":4,"date":"","from":"","to":"","cc":"","subject":"X","message_id":"","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false},{"uid":9,"date":"","from":"","to":"","cc":"","subject":"X","message_id":"","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false}]}
 #|{"folder":"INBOX","uidvalidity":8,"uidvalidity_changed":true,"next_since_uid":0,"has_more":true,"messages":[]}
+#|{"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":9,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false}]}
+#|{"folder":"INBOX","uidvalidity":7,"uidvalidity_changed":false,"next_since_uid":9,"has_more":true,"messages":[{"uid":9,"date":"","from":"","to":"","cc":"","subject":"","message_id":"","internal_date":"","size":0,"flags":[],"seen":false,"flagged":false,"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false}]}
+#|error FETCH did not return every requested message; retry the same checkpoint messages=0
