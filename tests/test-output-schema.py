@@ -89,6 +89,19 @@ def check(name, value, valid=True):
     checks += 1
 
 
+probe = dict(ok=True, account="fixture@example.test", imap_host="localhost", tls_verified=True,
+             capabilities=[], idle=False, move=False, uidplus=False, folder_count=1,
+             special_use={k: None for k in ("inbox", "drafts", "sent", "trash", "junk", "archive")})
+for storage in ("unknown", dict(used_kib=95, limit_kib=100, percent=95),
+                dict(used_kib=150, limit_kib=100, percent=150)):
+    check("mail_probe", {**probe, "storage": storage})
+for storage in ({}, None, "unsupported", dict(used_kib=-1, limit_kib=100, percent=0),
+                dict(used_kib=0, limit_kib=0, percent=0),
+                dict(used_kib=4294967296, limit_kib=100, percent=95),
+                dict(used_kib=95, limit_kib=100, percent=95.5)):
+    check("mail_probe", {**probe, "storage": storage}, False)
+check("mail_probe", probe, False)
+
 hidden_count = dict(tag=0, bidi=0, zero_width=0)
 hidden = dict(subject=hidden_count, body=hidden_count, **{"from": hidden_count},
               to=[hidden_count], cc=[], bcc=[], attachment_filenames=[])

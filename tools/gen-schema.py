@@ -234,7 +234,11 @@ def output_schema(name):
                              "idle": B, "move": B, "uidplus": B,
                              "special_use": record({k: NS for k in
                                  ("inbox", "drafts", "sent", "trash", "junk", "archive")}),
-                             "folder_count": N})]
+                             "folder_count": N,
+                             "storage": union({"const": "unknown"}, record({
+                                 "used_kib": param("integer", minimum=0, maximum=4294967295),
+                                 "limit_kib": param("integer", minimum=1, maximum=4294967295),
+                                 "percent": param("integer", minimum=0, maximum=4294967295)}))})]
     elif name == "mail_list_folders":
         variants += [record({"folders": array(record({"name": S, "delimiter": S,
                          "attributes": STRINGS, "special_use": NS, "selectable": B}))})]

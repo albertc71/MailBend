@@ -630,6 +630,7 @@ def run_all(work, *, tool_scenarios_only=False):
         failures(srv, work)
     finally:
         srv.stop()
+    quota_reporting(work)
     reply_quoting(work)
     reply_unicode_quoting(work)
     authentication_login(work)
@@ -671,6 +672,92 @@ def run_all(work, *, tool_scenarios_only=False):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+
+
+def quota_reporting(work):
+    normal = '* QUOTAROOT INBOX "private-server-marker"\r\n' + \
+             '* QUOTA "private-server-marker" (STORAGE 95001 100000)\r\n'
+    variants = [
+        ("QUOTA", normal, "OK", {"used_kib": 95001, "limit_kib": 100000, "percent": 95}),
+        ("QUOTA=RES-STORAGE", normal, "OK",
+         {"used_kib": 95001, "limit_kib": 100000, "percent": 95}),
+        ("", normal, "OK", "unknown"),
+        ("QUOTASET,QUOTA=RES-MESSAGE,XQUOTA,QUOTA=RES-STORAGE-X", normal, "OK", "unknown"),
+        ("QUOTA", "", "OK", "unknown"),
+        ("QUOTA", normal.replace('100000)', '100000'), "OK", "unknown"),
+        ("QUOTA", normal.replace('INBOX "', 'INBOX other "'), "OK", "unknown"),
+        ("QUOTA", normal, "NO", "unknown"),
+        ("QUOTA", normal.replace('95001 100000', '0 0'), "OK", "unknown"),
+        ("QUOTA", normal.replace('95001 100000', '4294967296 100000'), "OK", "unknown"),
+    ]
+    for caps, reply, status, expected in variants:
+        fixture = copy.deepcopy(FIX)
+        fixture.update(quota_reply=reply, quota_status=status)
+        srv = Server(work, caps=caps, fixture=fixture)
+        try:
+            before = srv.st()
+            code, result = tool(srv, "mail_probe", MAILBEND_READ_ONLY="1")
+            lines = srv.log_lines()
+            advertised = caps in ("QUOTA", "QUOTA=RES-STORAGE")
+            check(f"quota: {caps or 'absent'} {status} storage contract",
+                  code == 0 and result.get("storage") == expected, result)
+            check("quota: capability-gated exact session and command budget",
+                  sum(" LOGIN " in x for x in lines) == 1 + advertised
+                  and sum(' GETQUOTAROOT "INBOX"' in x for x in lines) == advertised, lines)
+            check("quota: probe does not select or change mail", before == srv.st()
+                  and not any(any(word in x for word in MUTATING_COMMANDS + (' SELECT ', ' EXAMINE '))
+                              for x in lines), lines)
+        finally:
+            srv.stop()
+
+    for used, limit, level in ((95001, 100000, "above_90_percent"),
+                               (901, 1000, "above_90_percent"), (90, 100, "ok"),
+                               (100, 100, "full"), (150, 100, "full"), (0, 0, "unknown")):
+        fixture = copy.deepcopy(FIX)
+        fixture['quota_reply'] = normal.replace('95001 100000', f'{used} {limit}')
+        srv = Server(work, caps="QUOTA", fixture=fixture)
+        try:
+            code, checks = diagnose(srv, "--imap")
+            storage = [c for c in checks if c.get("stage") == "storage"]
+            check("quota: diagnose exposes only a coarse storage level", code == 0 and storage ==
+                  [{"protocol": "imap", "stage": "storage", "level": level}], storage)
+            text = json.dumps(checks)
+            check("quota: diagnostic contains no storage counts, roots or server text",
+                  all(x not in text for x in ('used_kib', 'limit_kib', '"percent":',
+                                             'private-server-marker', 'quota fixture completed')))
+        finally:
+            srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    fixture['quota_refusals'] = {'APPEND': '[OVERQUOTA] private-server-marker',
+                                 'COPY': '[OVERQUOTA] private-server-marker'}
+    srv = Server(work, caps="UIDPLUS", fixture=fixture)
+    guidance = "the mailbox is over its storage quota; free space, then retry the refused operation"
+    try:
+        before = srv.st()['mailboxes']
+        code, result = tool(srv, "mail_save_draft", {"body": "synthetic fixture"})
+        check("quota: APPEND refusal is fixed guidance", code != 0
+              and guidance in result.get("error", "")
+              and "before saving again" in result.get("error", "")
+              and 'private-server-marker' not in json.dumps(result), result)
+        code, result = tool(srv, "mail_label", {"uids": [1], "uidvalidity": INBOX_VALIDITY,
+                                               "label": "Work/Projects"})
+        check("quota: COPY refusal is fixed guidance", code != 0
+              and guidance in result.get("error", "") and 'private-server-marker' not in json.dumps(result), result)
+        code, result = tool(srv, "mail_label", {"uids": [1], "uidvalidity": 99,
+                                               "label": "Work/Projects"})
+        check("quota: stale UIDVALIDITY retains precedence", code != 0
+              and "UIDVALIDITY changed" in result.get("error", "")
+              and guidance not in json.dumps(result), result)
+        check("quota: refused saves and copies leave mail unchanged", srv.st()['mailboxes'] == before)
+        code, result = tool(srv, "mail_send", {"to": ["friend@example.com"], "body": "synthetic fixture"},
+                            MAILBEND_SAVE_SENT="1")
+        check("quota: failed Sent copy never instructs resending accepted SMTP", code == 0
+              and result.get("smtp_outcome") == "accepted" and result.get("next_action") == "Do not resend. SMTP acceptance is not recipient delivery."
+              and guidance in result.get("sent_copy", "")
+              and "before saving again" in result.get("sent_copy", ""), result)
+    finally:
+        srv.stop()
 
 
 def get_new_start_now(work):

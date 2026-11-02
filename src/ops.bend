@@ -223,6 +223,9 @@ def from_name(n: String) -> Maybe<&2, Op>:
 
 # Reads open folders with EXAMINE (read-only) and fetch only with PEEK.
 
+def plan_quota() -> List<&2, I.Cmd>:
+  [I.CGetQuotaRoot{"INBOX"}]
+
 # Capabilities and folders.
 def plan_probe() -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}]

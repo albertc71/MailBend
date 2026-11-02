@@ -69,7 +69,7 @@ Jev off, no tool asks it.
 
 | Tool | What it does | Changes mail | Jev |
 | --- | --- | --- | --- |
-| `mail_probe` | Verified TLS login, server capabilities, role folders | no | — |
+| `mail_probe` | Verified TLS login, server capabilities, role folders, storage quota | no | — |
 | `mail_list_folders` | Mailboxes/folders with advertised special-use attributes | no | — |
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no | adds notes |
 | `mail_get` | Read one message: headers, text, HTML with link targets, attachment list | no | adds notes |
@@ -431,6 +431,26 @@ scripts/mailbend call mail_get '{"uid": 1234}'
 scripts/mailbend tools        # the tool list with JSON schemas
 ```
 
+`mail_probe.storage` is `"unknown"` or `{used_kib, limit_kib, percent}`.
+A successful post-login CAPABILITY with exact `QUOTA` or `QUOTA=RES-STORAGE`
+adds one read-only session for `GETQUOTAROOT "INBOX"`. Without either token,
+the existing login count stays unchanged. Storage counts are KiB and `percent`
+is the integer floor of `100 * used_kib / limit_kib`.
+Values above 100 are not clamped. A failed, missing, malformed, ambiguous,
+or out-of-range reply stays unknown without failing the probe.
+
+`mailbend diagnose --imap` reports only `ok`, `above_90_percent`, `full`, or
+`unknown` for storage. The warning threshold uses the exact ratio, not the
+rounded percentage. Diagnostics omit usage counts, quota roots, and server text.
+A refused `[OVERQUOTA]` operation gets fixed free-space guidance. An accepted
+SMTP send whose Sent copy fails still says `Do not resend.`
+
+This is generic IMAP storage information, not permission to send or proof of
+remaining delivery capacity. It does not validate iCloud's quota root or shared
+account storage. That authorized live check remains open in
+[issue #160](https://github.com/albertc71/MailBend/issues/160).
+See [storage quota limits and review notes](docs/plans/storage-quota.md).
+
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
 
@@ -618,7 +638,7 @@ synthetic cost measurements and experiment decision are in
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven).
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
-  every read plan (probe, folders, search, get, new mail, refresh, thread) contains
+  every read plan (probe, quota, folders, search, get, new mail, refresh, thread) contains
   no command that can change a mailbox, for every argument, and
   that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`.
 - **Nothing is lost by accident.** Move and trash never expunge before
