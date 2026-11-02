@@ -11,6 +11,7 @@ import ./jev.bend as Jev
 type Check is Data:
   Check{checks: List<&2, J.Json>, suggestions: List<&2, J.Json>}
 
+# Keep tuple positions aligned with guidance's String.eq list and dispatch tests.
 def guidance.choose(flags: Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool) -> String:
   match flags:
     case (True{}, _, _, _, _, _, _, _, _):
@@ -77,6 +78,7 @@ def platform_fact(+check: String, status: String, detail: String) -> J.Json:
 def platform_error(reason: String) -> J.Json:
   fact_guided("local", "platform", "failed", reason, platform_guidance("helper"))
 
+# Keep tuple positions aligned with platform_line's String.eq list and dispatch tests.
 def platform_line.choose(
   flags: Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool
 ) -> J.Json:

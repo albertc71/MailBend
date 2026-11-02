@@ -12,6 +12,9 @@
 # "What the proofs cover" in README.md says what is left to tests.
 
 import Base
+import ./tests/formal/budget-observers.bend as Budget
+import ./tests/formal/budget-bind-observers.bend as BindBudget
+import ./tests/formal/budget-wire-observers.bend as WireBudget
 import ./src/codec.bend as C
 import ./src/json.bend as J
 import ./src/imap.bend as I
@@ -1564,6 +1567,63 @@ law response_preserves_nonbody:
   {Response.fit_field(J.kv(key, value), left) ==
     Response.Field{J.kv(key, value), left, False{}} : Response.Field}
 
+# LAW: every cut is an initial segment of the original scalar string.
+law prefix_is_prefix:
+  for s: String
+  for +left: U32
+  exs suffix: String
+  {Budget.prefix_text(Response.prefix(s, left)) ++ suffix == s : String}
+
+# LAW: the actual cut conserves its allowance as natural numbers. This
+# bounds the sum of each emitted scalar's JSON-escaped UTF-8 byte cost.
+law prefix_conserves_scalar_allowance:
+  for s: String
+  for left: U32
+  {U32.to_nat(left) == Nat.add(Budget.escaped_bytes(Budget.prefix_text(Response.prefix(s, left))),
+    U32.to_nat(Budget.prefix_left(Response.prefix(s, left)))) : Nat}
+
+# LAW: enough room for all scalar escapes preserves the entire text and
+# leaves exactly the unused natural-number allowance.
+law prefix_whole_when_scalar_room:
+  for s: String
+  for left: U32
+  for extra: Nat
+  for enough: {U32.to_nat(left) == Nat.add(Budget.escaped_bytes(s), extra) : Nat}
+  ({Budget.prefix_text(Response.prefix(s, left)) == s : String} &
+   {U32.to_nat(Budget.prefix_left(Response.prefix(s, left))) == extra : Nat})
+
+# Image admission budgets
+# -----------------------
+
+# LAW: binding a token either records it in both the corpus and Used fate,
+# when absent from the corpus, or retries without changing either value.
+law image_used_only_with_clear_ref:
+  for token: String
+  for left: Nat
+  for corpus: String
+  for still: Image.Still
+  for room: Image.Room
+  for rest: List<&2, Image.Verdict>
+  for acc: List<&2, Image.Fate>
+  {Image.bind_use(Some{token}, left, corpus, still, room, rest, acc) ==
+    Bool.pick(Image.Bind, Image.ref_clear(token, corpus),
+      Image.BWalk{rest, corpus ++ "\n" ++ token, room,
+        Image.Used{Image.Sent{still, Image.Ref{token}}} <> acc},
+      Image.BMint{left, corpus, still, room, rest, acc}) : Image.Bind}
+
+# LAW: a pure fold of the real admission step takes no more than four stills.
+law image_admission_count_cap:
+  for vs: List<&2, Image.Verdict>
+  {Nat.is_le(List.length(&2, Image.Still, Budget.stills(Budget.admit_all(vs,
+    Image.room_new()))), U32.to_nat(Image.image_count_cap())) == True{} : Bool}
+
+# LAW: the taken byte strings fit the request cap when their lengths are
+# represented exactly by the U32 byte counter. The premise is explicit.
+law image_admission_byte_cap:
+  for vs: List<&2, Image.Verdict>
+  for exact: Budget.lengths_exact(Budget.stills(Budget.admit_all(vs, Image.room_new())))
+  Budget.Within<Budget.exact_bytes(Budget.stills(Budget.admit_all(vs, Image.room_new()))),
+    Image.image_request_cap()>
 # Policy and classifier soundness
 # -------------------------------
 
@@ -1833,3 +1893,43 @@ law contact_plans:
    {Ops.plan_contacts_headers(folder, uids, uidv) ==
     [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)},
      I.CFetch{uids, [I.IUid{}, I.IDate{}, I.IContactHeaders{}]}] : List<&2, I.Cmd>})
+
+# Scalar wire bytes, and production image state-machine budgets
+# -------------------------------------------------------------
+# The scalar law is unconditional: overflow safety follows from the cut's
+# natural-number allowance, not an assumed U32 counter correspondence.
+law prefix_fits_allowance:
+  for s: String
+  for left: U32
+  Budget.Within<U32.to_nat(C.utf8_len(J.esc(Budget.prefix_text(Response.prefix(s, left))))), left>
+
+# Every arbitrary draw history through the same transition used by bind_run
+# bounds Used fates, including its pending image and final list reversal.
+law image_bind_count_cap:
+  for draws: List<&2, Maybe<&2, String>>
+  for vs: List<&2, Image.Verdict>
+  for corpus: String
+  Budget.Within<BindBudget.used(False{}, List.reverse(&2, Image.Fate,
+    BindBudget.accumulator(BindBudget.trace(draws,
+      Image.BWalk{vs, corpus, Image.room_new(), []})))), Image.image_count_cap()>
+
+law image_bind_byte_cap:
+  for draws: List<&2, Maybe<&2, String>>
+  for vs: List<&2, Image.Verdict>
+  for corpus: String
+  for exact: BindBudget.lengths_exact(List.reverse(&2, Image.Fate,
+    BindBudget.accumulator(BindBudget.trace(draws,
+      Image.BWalk{vs, corpus, Image.room_new(), []}))))
+  Budget.Within<BindBudget.exact_used(List.reverse(&2, Image.Fate,
+    BindBudget.accumulator(BindBudget.trace(draws,
+      Image.BWalk{vs, corpus, Image.room_new(), []})))), Image.image_request_cap()>
+
+# The whole-string premise uses unbounded wire weight, not a possibly wrapped
+# U32 serialization counter for arbitrary mathematical strings.
+law prefix_whole_when_room:
+  for s: String
+  for left: U32
+  for extra: Nat
+  for enough: {U32.to_nat(left) == Nat.add(WireBudget.utf8_weight(J.esc(s)), extra) : Nat}
+  ({Budget.prefix_text(Response.prefix(s, left)) == s : String} &
+   {U32.to_nat(Budget.prefix_left(Response.prefix(s, left))) == extra : Nat})

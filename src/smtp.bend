@@ -16,18 +16,25 @@ def ensure_crlf.if(msg: String, ended: Bool) -> String:
 def ensure_crlf(+msg: String) -> String:
   ensure_crlf.if(msg, String.ends_with(msg, "\r\n"))
 
+def dot_stuff.go(text: String, line_start: Bool, out: String) -> String:
+  match text:
+    case SNil{}:
+      String.reverse(out)
+    case SCon{'.', rest}:
+      match line_start:
+        case True{}:
+          dot_stuff.go(rest, False{}, SCon{'.', SCon{'.', out}})
+        case False{}:
+          dot_stuff.go(rest, False{}, SCon{'.', out})
+    case SCon{'\n', rest}:
+      dot_stuff.go(rest, True{}, SCon{'\n', out})
+    case SCon{char, rest}:
+      dot_stuff.go(rest, False{}, SCon{char, out})
+
 # Doubles a leading '.' on every line (RFC 5321 4.5.2). `line_start` says
 # whether the next char starts a line.
 def dot_stuff(text: String, line_start: Bool) -> String:
-  match text:
-    case SNil{}:
-      ""
-    case SCon{'.', rest}:
-      Bool.pick(String, line_start, "..", ".") ++ dot_stuff(rest, False{})
-    case SCon{'\n', rest}:
-      "\n" ++ dot_stuff(rest, True{})
-    case SCon{char, rest}:
-      SCon{char, dot_stuff(rest, False{})}
+  dot_stuff.go(text, line_start, "")
 
 def rcpt_lines(recipients: List<&2, String>) -> String:
   match recipients:
