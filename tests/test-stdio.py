@@ -28,7 +28,7 @@ ENV["MAILBEND_READ_ONLY"] = "1"
 ENV["MAILBEND_TYPESAFE"] = "0"
 ENV["BEND_NO_TELEMETRY"] = "1"
 READ_TOOLS = {"mail_probe", "mail_list_folders", "mail_search", "mail_get",
-              "mail_get_new", "mail_refresh", "mail_get_thread"}
+              "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply"}
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 META = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {}}
@@ -812,6 +812,22 @@ class StdioTests(unittest.TestCase):
                 session.peer.shutdown(socket.SHUT_WR)
                 self.assertEqual(session.proc.wait(timeout=30), 0)
                 self.assertEqual(session.proc.stderr.read(), b"")
+
+    def test_cli_stdin_interpreter_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "scripts").mkdir()
+            launcher = root / "scripts/mailbend"
+            shutil.copy2(ROOT / "scripts/mailbend", launcher)
+            for name in ("main.bend", "src"):
+                (root / name).symlink_to(ROOT / name)
+            payload = json.dumps({"body": "x" * (1024 * 1024),
+                                  "unicode": "é 雪 🌱"}, ensure_ascii=False).encode()
+            result = subprocess.run([str(launcher), "call", "nope", "-"], input=payload,
+                                    capture_output=True, env=ENV, cwd="/", timeout=120)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {"error": "unknown tool: nope"})
+            self.assertEqual(result.stderr, b"mailbend: the tool failed\n")
 
     def test_bypass_exposes_original_socket_failure(self):
         with Session(ROOT / "bin/mailbend-core") as session:

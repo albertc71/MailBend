@@ -1,11 +1,15 @@
-# Shareable setup diagnostics. Only explicit flags authorize network checks.
-# No server text, addresses, folder names, credentials or helper errors escape.
+# Redacted diagnostics and a separate local-only setup report.
 
 import Base
 import ./json.bend as J
 import ./tools.bend as T
+import ./policy.bend as Policy
 import ./imap.bend as I
 import ./ops.bend as Ops
+import ./jev.bend as Jev
+
+type Check is Data:
+  Check{checks: List<&2, J.Json>, suggestions: List<&2, J.Json>}
 
 def guidance(stage: String) -> String:
   match stage:
@@ -119,11 +123,11 @@ def platform_facts(lines: List<&2, String>) -> List<&2, J.Json>:
     case _:
       [platform_line("")]
 
-def platform_result(p: T.Proc) -> List<&2, J.Json>:
+def platform_result(p: Policy.Proc) -> List<&2, J.Json>:
   match p:
-    case T.ProcOk{0, out, err}:
+    case Policy.ProcOk{0, out, err}:
       platform_facts(String.lines(out))
-    case T.ProcRefused{msg}:
+    case Policy.ProcRefused{msg}:
       [platform_error("unavailable")]
     case _:
       [platform_error("timeout_or_helper_failure")]
@@ -134,9 +138,9 @@ def platform_at(path: String, attach: String, download: String) -> IO(List<&2, J
       do IO<List<&2, J.Json>>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
           Process.run(SCon{'/', t}, ["check", attach, download], "", 4096, 30000)
-        return platform_result(T.proc_of(r))
+        return platform_result(Policy.proc_of(r))
     case _:
-      IO.pure(List<&2, J.Json>, platform_result(T.ProcRefused{""}))
+      IO.pure(List<&2, J.Json>, platform_result(Policy.ProcRefused{""}))
 
 def platform() -> IO(List<&2, J.Json>):
   do IO<List<&2, J.Json>>:
@@ -186,18 +190,18 @@ def stage_facts(
     case s <> t:
       stage_fact(protocol, s, lines) <> stage_facts(t, protocol, lines)
 
-def helper_at(path: String, mode: String, input: String) -> IO(T.Proc):
+def helper_at(path: String, mode: String, input: String) -> IO(Policy.Proc):
   match path:
     case SCon{'/', t}:
-      do IO<T.Proc>:
+      do IO<Policy.Proc>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
           Process.run(SCon{'/', t}, [mode], input, 1048576, 30000)
-        return T.proc_of(r)
+        return Policy.proc_of(r)
     case _:
-      IO.pure(T.Proc, T.ProcRefused{""})
+      IO.pure(Policy.Proc, Policy.ProcRefused{""})
 
-def helper(mode: String, input: String) -> IO(T.Proc):
-  do IO<T.Proc>:
+def helper(mode: String, input: String) -> IO(Policy.Proc):
+  do IO<Policy.Proc>:
     path : String <- T.env_or("MAILBEND_TLS_HELPER", "")
     helper_at(path, mode, input)
 
@@ -206,7 +210,7 @@ def failed(xs: List<&2, J.Json>) -> Bool:
     case Nil{}:
       False{}
     case h <> t:
-      +status = T.str_arg(h, "status", "")
+      +status = Policy.str_arg(h, "status", "")
       String.eq(status, "failed") || String.eq(status, "uncertain") || failed(t)
 
 def transport_facts.if(
@@ -227,11 +231,11 @@ def transport_facts(+protocol: String, out: String, network: Bool) -> List<&2, J
     (Bool.not(network) || List.contains(~String, ~String.eq, lines, "authentication ok"))
   transport_facts.if(protocol, checks, failed(checks) || complete)
 
-def transport_result(protocol: String, network: Bool, p: T.Proc) -> List<&2, J.Json>:
+def transport_result(protocol: String, network: Bool, p: Policy.Proc) -> List<&2, J.Json>:
   match p:
-    case T.ProcOk{0, out, err}:
+    case Policy.ProcOk{0, out, err}:
       transport_facts(protocol, out, network)
-    case T.ProcRefused{msg}:
+    case Policy.ProcRefused{msg}:
       [fact(protocol, "helper", "failed", "unavailable")]
     case _:
       [fact(protocol, "helper", "failed", "timeout_or_helper_failure")]
@@ -239,7 +243,7 @@ def transport_result(protocol: String, network: Bool, p: T.Proc) -> List<&2, J.J
 def transport(+protocol: String, +network: Bool) -> IO(List<&2, J.Json>):
   do IO<List<&2, J.Json>>:
     mode : String = Bool.pick(String, network, "diagnose-", "diagnose-config-") ++ protocol
-    p : T.Proc <- helper(mode, "")
+    p : Policy.Proc <- helper(mode, "")
     return transport_result(protocol, network, p)
 
 def role(name: String, value: Maybe<&2, String>) -> J.Json:
@@ -251,36 +255,88 @@ def folder_result(f: T.Fs()) -> List<&2, J.Json>:
   match f:
     case Fail{msg}:
       [fact("imap", "folders", "failed", "discovery_or_override_failed")]
-    case Done{T.Folders{fs, drafts, trash, sent, junk, archive}}:
-      [role("inbox", T.named_folder(fs, "INBOX")), role("drafts", drafts),
+    case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
+      [role("inbox", Policy.named_folder(fs, "INBOX")), role("drafts", drafts),
         role("trash", trash), role("sent", sent), role("junk", junk), role("archive", archive)]
 
-def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(List<&2, J.Json>):
+def candidate_names(
+  xs: List<&2, I.Folder>, +all: List<&2, I.Folder>, +variable: String
+) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      []
+    case I.Folder{+name, delimiter, attrs} <> t:
+      List.filter.put(String, name, candidate_names(t, all, variable),
+        String.is_empty(T.invalid_override(all, name, variable)))
+
+def candidates.preferred(
+  marked: List<&2, I.Folder>, fs: List<&2, I.Folder>, attr: String, a: String, b: String
+) -> List<&2, I.Folder>:
+  match marked:
+    case Nil{}:
+      Policy.role_candidates(fs, attr, a, b, False{})
+    case _:
+      marked
+
+def suggestion(
+  resolved: Maybe<&2, String>, role: String, +variable: String,
+  +fs: List<&2, I.Folder>, +attr: String, +a: String, +b: String
+) -> List<&2, J.Json>:
+  match resolved:
+    case Some{name}:
+      []
+    case None{}:
+      possible = candidates.preferred(Policy.role_candidates(fs, attr, a, b, True{}), fs, attr, a, b)
+      [J.obj([J.kv("role", J.str(role)), J.kv("variable", J.str(variable)),
+        J.kv("candidates", J.strs(candidate_names(possible, fs, variable))),
+        J.kv("status", J.str("suggestions_only"))])]
+
+def folder_suggestions(f: T.Fs()) -> List<&2, J.Json>:
+  match f:
+    case Fail{msg}:
+      []
+    case Done{Policy.Folders{+fs, drafts, trash, sent, junk, archive}}:
+      List.concat(&2, J.Json, [
+        suggestion(drafts, "drafts", "MAILBEND_DRAFTS_FOLDER", fs,
+          "\\Drafts", Policy.drafts_name(), Policy.drafts_name()),
+        suggestion(trash, "trash", "MAILBEND_TRASH_FOLDER", fs,
+          "\\Trash", Policy.trash_name(), Policy.deleted_messages_name()),
+        suggestion(sent, "sent", "MAILBEND_SENT_FOLDER", fs,
+          "\\Sent", Policy.sent_name(), Policy.sent_messages_name()),
+        suggestion(junk, "junk", "MAILBEND_JUNK_FOLDER", fs,
+          "\\Junk", Policy.junk_name(), Policy.junk_name()),
+        suggestion(archive, "archive", "MAILBEND_ARCHIVE_FOLDER", fs,
+          "\\Archive", Policy.archive_name(), Policy.archive_name())])
+
+def folder_check(+f: T.Fs()) -> Check:
+  Check{folder_result(f), folder_suggestions(f)}
+
+def folders.roles(fs: List<&2, I.Folder>, advertised: Bool) -> IO(Check):
   match advertised:
     case False{}:
-      do IO<List<&2, J.Json>>:
+      do IO<Check>:
         f : T.Fs() <- T.folders_overrides(fs)
-        return folder_result(f)
+        return folder_check(f)
     case True{}:
-      do IO<List<&2, J.Json>>:
-        p : T.Proc <- helper("imap", I.script(Ops.plan_roles()))
+      do IO<Check>:
+        p : Policy.Proc <- helper("imap", I.script(Ops.plan_roles()))
         f : T.Fs() <- T.roles_of(T.imap_result(p), fs)
-        return folder_result(f)
+        return folder_check(f)
 
-def folders.result(r: T.Run()) -> IO(List<&2, J.Json>):
+def folders.result(r: T.Run()) -> IO(Check):
   match r:
     case Fail{msg}:
-      IO.pure(List<&2, J.Json>, [fact("imap", "folders", "failed", "discovery_failed")])
+      IO.pure(Check, Check{[fact("imap", "folders", "failed", "discovery_failed")], []})
     case Done{+lines}:
       folders.roles(T.merge_folders(I.folders(lines), []), I.has_cap(I.caps(lines), "SPECIAL-USE"))
 
-def folders(checked: Bool) -> IO(List<&2, J.Json>):
+def folders(checked: Bool) -> IO(Check):
   match checked:
     case False{}:
-      IO.pure(List<&2, J.Json>, [fact("imap", "folders", "skipped", "not_checked")])
+      IO.pure(Check, Check{[fact("imap", "folders", "skipped", "not_checked")], []})
     case True{}:
-      do IO<List<&2, J.Json>>:
-        p : T.Proc <- helper("imap", I.script(Ops.plan_probe()))
+      do IO<Check>:
+        p : Policy.Proc <- helper("imap", I.script(Ops.plan_probe()))
         folders.result(T.imap_result(p))
 
 def auth_ok(xs: List<&2, J.Json>) -> Bool:
@@ -288,41 +344,371 @@ def auth_ok(xs: List<&2, J.Json>) -> Bool:
     case Nil{}:
       False{}
     case +h <> t:
-      (String.eq(T.str_arg(h, "stage", ""), "authentication") &&
-        String.eq(T.str_arg(h, "status", ""), "ok")) || auth_ok(t)
+      (String.eq(Policy.str_arg(h, "stage", ""), "authentication") &&
+        String.eq(Policy.str_arg(h, "status", ""), "ok")) || auth_ok(t)
 
-def result(+checks: List<&2, J.Json>) -> T.Out:
-  +json = J.obj([J.kv("checks", J.arr(checks)), J.kv("redacted", J.bool(True{})),
+def report_json(checks: List<&2, J.Json>) -> J.Json:
+  J.obj([J.kv("checks", J.arr(checks)), J.kv("redacted", J.bool(True{})),
     J.kv("scope", J.str("Setup checks only: no mailbox-write, recipient, send-quota or " ++
       "delivery guarantee; no sending permission is granted."))])
-  Bool.pick(T.Out, failed(checks), T.Partial{json}, T.Ok{json})
 
-def run.config(c: T.Config, imap: Bool, smtp: Bool) -> IO(T.Out):
+def result(c: Check) -> Policy.Out:
+  Check{+checks, suggestions} = c
+  +json = report_json(checks)
+  Bool.pick(Policy.Out, failed(checks), Policy.Partial{json}, Policy.Ok{json})
+
+def run.folders(i: List<&2, J.Json>, s: List<&2, J.Json>, f: Check) -> Check:
+  Check{checks, suggestions} = f
+  Check{List.append(&2, J.Json, i, List.append(&2, J.Json, s, checks)), suggestions}
+
+def run.config(c: Policy.Config, imap: Bool, smtp: Bool) -> IO(Check):
   match c:
-    case T.ConfigBad{msg}:
+    case Policy.ConfigBad{msg}:
       skipped = List.append(&2, J.Json, stage_facts(stages(), "imap", []),
         stage_facts(stages(), "smtp", []))
-      T.pure_out(result(fact("local", "configuration", "failed",
-        "invalid_switches_or_policy") <> skipped))
-    case T.Config{ro, drafts, jev, images}:
-      do IO<T.Out>:
+      IO.pure(Check, Check{fact("local", "configuration", "failed",
+        "invalid_switches_or_policy") <> skipped, []})
+    case Policy.Config{ro, drafts, jev, images}:
+      do IO<Check>:
         p : List<&2, J.Json> <- platform()
         +i : List<&2, J.Json> <- transport("imap", imap)
         s : List<&2, J.Json> <- transport("smtp", smtp)
-        f : List<&2, J.Json> <- folders(auth_ok(i))
-        return result(List.append(&2, J.Json, p,
-          List.append(&2, J.Json, i, List.append(&2, J.Json, s, f))))
+        f : Check <- folders(auth_ok(i))
+        return run.folders(List.append(&2, J.Json, p, i), s, f)
 
 # Validate the send-copy switch without invoking sending or reserving quota.
-def run.save_sent(c: T.Config, save: T.Flag, imap: Bool, smtp: Bool) -> IO(T.Out):
+def run.save_sent(c: Policy.Config, save: Policy.Flag, imap: Bool, smtp: Bool) -> IO(Check):
   match save:
-    case T.FlagBad{msg}:
-      run.config(T.ConfigBad{msg}, imap, smtp)
+    case Policy.FlagBad{msg}:
+      run.config(Policy.ConfigBad{msg}, imap, smtp)
     case _:
       run.config(c, imap, smtp)
 
-def run(imap: Bool, smtp: Bool) -> IO(T.Out):
-  do IO<T.Out>:
-    c : T.Config <- T.config()
-    save : T.Flag <- T.flag("MAILBEND_SAVE_SENT")
+def run_checks(imap: Bool, smtp: Bool) -> IO(Check):
+  do IO<Check>:
+    c : Policy.Config <- T.config()
+    save : Policy.Flag <- T.flag("MAILBEND_SAVE_SENT")
     run.save_sent(c, save, imap, smtp)
+
+def run(imap: Bool, smtp: Bool) -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    check : Check <- run_checks(imap, smtp)
+    return result(check)
+
+def setup_result(c: Check) -> Policy.Out:
+  Check{+checks, suggestions} = c
+  +json = J.obj([J.kv("local_only", J.bool(True{})),
+    J.kv("diagnostics", report_json(checks)), J.kv("suggestions", J.arr(suggestions)),
+    J.kv("scope", J.str("Private local output may contain folder names. Suggestions are not " ++
+      "applied and do not choose among candidates. Empty candidates mean no safe match. " ++
+      "Use mail_probe locally to inspect other existing folders; never create or guess one. " ++
+      "Use diagnose --imap --smtp for shareable output."))])
+  Bool.pick(Policy.Out, failed(checks), Policy.Partial{json}, Policy.Ok{json})
+
+def setup() -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    c : Check <- run_checks(True{}, True{})
+    return setup_result(c)
+
+# The offline inventory deliberately has no helper, file or network capability.
+def posture_char(+c: Char) -> Bool:
+  Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '.') ||
+    Char.is_eq(c, '-') || Char.is_eq(c, ':')
+
+def posture_host_chars(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      posture_char(c) && posture_host_chars(t)
+
+def posture_host(+s: String) -> Bool:
+  Bool.not(String.is_empty(s)) && posture_host_chars(s)
+
+def posture_port.put(v: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  match v:
+    case Some{+p}:
+      Bool.pick(Maybe<&2, U32>, U32.is_zero(p) || U32.is_gt(p, 65535), None{}, Some{p})
+    case None{}:
+      None{}
+
+def posture_port(v: String) -> Maybe<&2, U32>:
+  posture_port.put(U32.read(v))
+
+def posture_endpoint.put(name: String, host: String, p: Maybe<&2, U32>, valid: Bool) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match p valid:
+    case Some{port} True{}:
+      Done{T.PostureEndpoint{host, port}}
+    case _ _:
+      Fail{name ++ " must name a host and a port from 1 to 65535; value omitted"}
+
+def posture_endpoint(name: String, +host: String, port: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  posture_endpoint.put(name, host, posture_port(port), posture_host(host))
+
+def posture_authority.parts(name: String, ps: List<&2, String>, fallback: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match ps:
+    case h <> Nil{}:
+      posture_endpoint(name, h, fallback)
+    case h <> p <> Nil{}:
+      posture_endpoint(name, h, p)
+    case _:
+      Fail{name ++ " has an invalid endpoint; value omitted"}
+
+def posture_authority.bracket(name: String, ps: List<&2, String>, fallback: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match ps:
+    case h <> "" <> Nil{}:
+      posture_endpoint(name, h, fallback)
+    case h <> SCon{':', p} <> Nil{}:
+      posture_endpoint(name, h, p)
+    case _:
+      Fail{name ++ " has an invalid endpoint; value omitted"}
+
+def posture_authority(name: String, s: String, fallback: String) ->
+  Result<&2, &2, String, T.PostureEndpoint>:
+  match s:
+    case SCon{'[', t}:
+      posture_authority.bracket(name, String.split(t, ']'), fallback)
+    case _:
+      posture_authority.parts(name, String.split(s, ':'), fallback)
+
+def posture_url_authority(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{c, t}:
+      match c:
+        case '/':
+          ""
+        case '?':
+          ""
+        case '#':
+          ""
+        case _:
+          SCon{c, posture_url_authority(t)}
+
+def posture_doh(s: String) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match s:
+    case "":
+      Done{None{}}
+    case SCon{'h', SCon{'t', SCon{'t', SCon{'p', SCon{'s', SCon{':', SCon{'/', SCon{'/', t}}}}}}}}:
+      do Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+        e : T.PostureEndpoint <-
+          posture_authority("MAILBEND_DOH_URL", posture_url_authority(t), "443")
+        return Some{e}
+    case _:
+      Fail{"MAILBEND_DOH_URL must be an HTTPS URL; value omitted"}
+
+def posture_last(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case h <> Nil{}:
+      h
+    case h <> t:
+      posture_last(t)
+
+def posture_proxy.rest(s: String) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  do Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+    e : T.PostureEndpoint <- posture_authority("HTTPS proxy",
+      posture_url_authority(posture_last(String.split(s, '@'))), "1080")
+    return Some{e}
+
+def posture_proxy.if(s: String, http: Bool, scheme: Bool) ->
+  Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match http scheme:
+    case True{} _:
+      posture_proxy.rest(String.drop(s, 7n))
+    case False{} True{}:
+      Fail{"the HTTPS proxy setting is not a supported http:// proxy URL"}
+    case False{} False{}:
+      posture_proxy.rest(s)
+
+def posture_proxy(+s: String) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match s:
+    case "":
+      Done{None{}}
+    case _:
+      posture_proxy.if(s, String.starts_with(String.to_lower(s), "http://"),
+        String.contains(s, "://"))
+
+def posture_trim_dot(s: String) -> String:
+  match s:
+    case SCon{'.', t}:
+      posture_trim_dot(t)
+    case _:
+      s
+
+def posture_trim_end_dot(s: String) -> String:
+  String.reverse(posture_trim_dot(String.reverse(s)))
+
+def posture_bypass(entries: List<&2, String>, +host: String) -> Bool:
+  match entries:
+    case Nil{}:
+      False{}
+    case h <> t:
+      +entry = String.trim(h)
+      +domain = posture_trim_dot(posture_trim_end_dot(String.to_lower(entry)))
+      String.eq(entry, "*") || String.eq(host, domain) ||
+        (Bool.not(String.is_empty(domain)) && String.ends_with(host, "." ++ domain)) ||
+        posture_bypass(t, host)
+
+def posture_proxied(proxy: Maybe<&2, T.PostureEndpoint>, host: String, bypass: String) -> Bool:
+  match proxy:
+    case None{}:
+      False{}
+    case Some{p}:
+      Bool.not(posture_bypass(String.split(bypass, ','),
+        posture_trim_end_dot(String.to_lower(host))))
+
+def posture_doh_proxied(doh: Maybe<&2, T.PostureEndpoint>, proxy: Maybe<&2, T.PostureEndpoint>,
+  bypass: String) -> Bool:
+  match doh:
+    case None{}:
+      False{}
+    case Some{T.PostureEndpoint{host, port}}:
+      posture_proxied(proxy, host, bypass)
+
+def posture_smtp_mode(r: Result<&1, &1, U32 & String, String>) ->
+  Result<&2, &2, String, String>:
+  match r:
+    case Fail{e}:
+      Done{"starttls_verified_tls"}
+    case Done{"starttls"}:
+      Done{"starttls_verified_tls"}
+    case Done{"implicit"}:
+      Done{"implicit_verified_tls"}
+    case _:
+      Fail{"MAILBEND_SMTP_TLS_MODE must be starttls or implicit"}
+
+def posture_first(a: String, b: String) -> String:
+  match a:
+    case SNil{}:
+      b
+    case _:
+      a
+
+def posture_ip_chars(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      +n = Char.to_u32(c)
+      ((U32.is_ge(n, 48) && U32.is_le(n, 57)) ||
+        (U32.is_ge(n, 65) && U32.is_le(n, 70)) ||
+        (U32.is_ge(n, 97) && U32.is_le(n, 102)) ||
+        U32.is_eq(n, 46) || U32.is_eq(n, 58)) && posture_ip_chars(t)
+
+def posture_ip.if(name: String, value: String, valid: Bool) ->
+  Result<&2, &2, String, Maybe<&2, String>>:
+  match valid:
+    case True{}:
+      Done{Some{value}}
+    case False{}:
+      Fail{name ++ " must be one numeric IPv4 or IPv6 address"}
+
+def posture_ip(name: String, +value: String) -> Result<&2, &2, String, Maybe<&2, String>>:
+  match value:
+    case SNil{}:
+      Done{None{}}
+    case _:
+      posture_ip.if(name, value, posture_ip_chars(value) &&
+        (String.contains(value, ".") || String.contains(value, ":")))
+
+def posture_proxy_required(c: Policy.Config, doh: Maybe<&2, T.PostureEndpoint>, +bypass: String) -> Bool:
+  match c:
+    case Policy.ConfigBad{msg}:
+      False{}
+    case Policy.Config{ro, drafts, jev, images}:
+      (Jev.is_on(jev) && Bool.not(posture_bypass(String.split(bypass, ','), "api.typesafe.ai"))) ||
+        posture_doh_proxied(doh, Some{T.PostureEndpoint{"", 0}}, bypass)
+
+def posture_proxy_checked(r: Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>,
+  needed: Bool) -> Result<&2, &2, String, Maybe<&2, T.PostureEndpoint>>:
+  match r needed:
+    case Fail{msg} False{}:
+      Done{None{}}
+    case _ _:
+      r
+
+def posture_env_present(r: Result<&1, &1, U32 & String, String>) -> Bool:
+  match r:
+    case Done{value}:
+      True{}
+    case Fail{error}:
+      False{}
+
+def posture_trust_dirs(entries: List<&2, String>) -> Bool:
+  match entries:
+    case Nil{}:
+      False{}
+    case h <> t:
+      Bool.not(String.is_empty(h)) || posture_trust_dirs(t)
+
+def posture_endpoints(c: Policy.Config) -> IO(Result<&2, &2, String, T.PostureEndpoints>):
+  do IO<Result<&2, &2, String, T.PostureEndpoints>>:
+    ih : String <- T.env_or("MAILBEND_IMAP_HOST", "imap.mail.me.com")
+    ip : String <- T.env_or("MAILBEND_IMAP_PORT", "993")
+    sh : String <- T.env_or("MAILBEND_SMTP_HOST", "smtp.mail.me.com")
+    sp : String <- T.env_or("MAILBEND_SMTP_PORT", "587")
+    mode : Result<&1, &1, U32 & String, String> <- IO.get_env("MAILBEND_SMTP_TLS_MODE")
+    doh : String <- T.env_or("MAILBEND_DOH_URL", "")
+    p1 : String <- T.env_or("https_proxy", "")
+    p2 : String <- T.env_or("HTTPS_PROXY", "")
+    p3 : String <- T.env_or("all_proxy", "")
+    p4 : String <- T.env_or("ALL_PROXY", "")
+    n1 : String <- T.env_or("no_proxy", "")
+    n2 : String <- T.env_or("NO_PROXY", "")
+    ii : String <- T.env_or("MAILBEND_IMAP_CONNECT_IP", "")
+    si : String <- T.env_or("MAILBEND_SMTP_CONNECT_IP", "")
+    a : String <- T.env_or("MAILBEND_ATTACH_DIR", "")
+    d : String <- T.env_or("MAILBEND_DOWNLOAD_DIR", "")
+    ca : String <- T.env_or("MAILBEND_CA_FILE", "")
+    cert_file : Result<&1, &1, U32 & String, String> <- IO.get_env("SSL_CERT_FILE")
+    cert_dirs : String <- T.env_or("SSL_CERT_DIR", "")
+    return do Result<&2, &2, String, T.PostureEndpoints>:
+      imap : T.PostureEndpoint <- posture_endpoint("MAILBEND_IMAP_HOST/PORT", ih, ip)
+      smtp : T.PostureEndpoint <- posture_endpoint("MAILBEND_SMTP_HOST/PORT", sh, sp)
+      tls : String <- posture_smtp_mode(mode)
+      +resolver : Maybe<&2, T.PostureEndpoint> <- posture_doh(doh)
+      imap_ip : Maybe<&2, String> <- posture_ip("MAILBEND_IMAP_CONNECT_IP", ii)
+      smtp_ip : Maybe<&2, String> <- posture_ip("MAILBEND_SMTP_CONNECT_IP", si)
+      +bypass : String = posture_first(n1, n2)
+      +proxy_value : String = posture_first(p1, posture_first(p2, posture_first(p3, p4)))
+      +proxy : Maybe<&2, T.PostureEndpoint> <- posture_proxy_checked(posture_proxy(proxy_value),
+        posture_proxy_required(c, resolver, bypass))
+      return T.PostureEndpoints{imap, smtp, tls, resolver, proxy,
+        Bool.not(String.is_empty(proxy_value)),
+        posture_doh_proxied(resolver, proxy, bypass),
+        posture_proxied(proxy, "api.typesafe.ai", bypass),
+        imap_ip, smtp_ip,
+        Bool.not(String.is_empty(a)), Bool.not(String.is_empty(d)),
+        T.posture_trust_source(Bool.not(String.is_empty(ca)), posture_env_present(cert_file),
+          posture_trust_dirs(String.split(cert_dirs, ':')))}
+
+def posture_result(c: Policy.Config, s: T.Sends(), endpoints:
+  Result<&2, &2, String, T.PostureEndpoints>) -> Policy.Out:
+  match c:
+    case Policy.ConfigBad{msg}:
+      Policy.Err{"configuration error: " ++ msg}
+    case Policy.Config{ro, drafts, jev, images}:
+      match s:
+        case Fail{+msg}:
+          Policy.Err{Bool.pick(String, String.starts_with(msg, "MAILBEND_ALLOWED_RECIPIENTS:"),
+            "MAILBEND_ALLOWED_RECIPIENTS contains an invalid entry; value omitted", msg)}
+        case Done{sending}:
+          match endpoints:
+            case Fail{msg}:
+              Policy.Err{msg}
+            case Done{e}:
+              T.posture(Policy.Config{ro, drafts, jev, images}, sending, e)
+
+def posture() -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    +c : Policy.Config <- T.config()
+    s : T.Sends() <- T.sending()
+    e : Result<&2, &2, String, T.PostureEndpoints> <- posture_endpoints(c)
+    return posture_result(c, s, e)

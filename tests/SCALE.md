@@ -84,7 +84,11 @@ has a separate concurrency group from ordinary CI, so it cannot cancel a
 push check on the same branch. Ordinary pull requests run only the fast
 contract controls.
 `record_scale` saves a candidate result without comparing it. The workflow
-uploads the JSON even when a scenario fails. The GitHub-hosted runner needs
+logs the full JSON and its SHA-256 hash even when a scenario fails. The JSON
+is between `SCALE_RESULT_JSON_BEGIN` and `SCALE_RESULT_JSON_END` markers.
+Retrieve it from the job log and verify the hash before using it. This uses
+no artifact or cache storage. A failed measurement still fails the job.
+The GitHub-hosted runner needs
 its own verified baseline; a local result cannot stand in for it.
 
 No Raspberry Pi or other ARM board measurements are implied. A future ARM

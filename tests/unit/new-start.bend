@@ -5,6 +5,7 @@ import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/ops.bend as Ops
 import ../../src/tools.bend as T
+import ../../src/policy.bend as Policy
 
 def json(s: String) -> J.Json:
   Maybe.default(&2, J.Json, J.parse(s), J.JNull{})
@@ -16,13 +17,13 @@ def request(r: Result<&2, &2, String, Unit>) -> String:
     case Fail{m}:
       m
 
-def result(o: T.Out) -> String:
+def result(o: Policy.Out) -> String:
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       J.show(j)
-    case T.Err{m}:
+    case Policy.Err{m}:
       m
-    case T.Partial{j}:
+    case Policy.Partial{j}:
       J.show(j)
 
 def checkpoint(codes: String) -> String:

@@ -101,3 +101,39 @@ vendor application compatibility has not been separately exercised.
 These MCP contracts are checked by unit and synthetic end-to-end tests. The
 existing `LAWS.bend` / `PROOF.bend` proofs cover mail safety invariants; they do
 not formally prove MCP interoperability, transport handling or metadata checks.
+
+## Message metadata
+
+`mail_search`, `mail_get_new`, `mail_get_thread`, and whole-message `mail_get`
+return the same metadata fields. Selected MIME-part reads keep their separate
+contract. Whole-message reads fetch the selected headers separately from the
+bounded body prefix, so `max_bytes` does not cut these fields.
+
+`list_id` and `auto_submitted` contain the first unfolded header value, or null
+when absent or empty. The values are untrusted and are not decoded as display names.
+`bulk` uses the first matching rule below. A missing signal produces null.
+
+1. A nonempty List-ID produces `list`.
+2. A valid Auto-Submitted token other than `no` produces `auto`. Comments and
+   optional parameters do not turn `no` into an automatic message.
+3. Precedence `bulk`, `list`, or `junk` produces `precedence-bulk`.
+
+`unsubscribe` contains nullable `mailto` and `https` strings, plus `one_click`.
+The strings are the first bracketed URI of each scheme in header order. The
+parser ignores bracket-internal whitespace and stops after malformed items.
+It does not open links, send mail, or unsubscribe.
+
+`one_click` is an unverified advertised signal. It requires exactly one HTTPS scheme item with a nonempty host,
+no userinfo in its authority, no HTTP item or malformed list suffix,
+one List-Unsubscribe header, and one
+List-Unsubscribe-Post header whose value
+is `List-Unsubscribe=One-Click`. It is not a complete URI validator, does not verify DKIM, and does not grant
+permission to use the endpoint. A URI with userinfo remains visible in `https`,
+but cannot set `one_click`. These fields cannot establish that a sender or link is safe.
+See [RFC 2369](https://www.rfc-editor.org/rfc/rfc2369.html) and
+[RFC 8058](https://www.rfc-editor.org/rfc/rfc8058.html).
+
+`answered` reflects `\Answered` and `forwarded` reflects `$Forwarded`, with
+case-insensitive flag comparisons. All metadata survives body projection and
+uses the existing response byte budget. An insufficient budget returns an
+error rather than dropping metadata or advancing an arrival checkpoint.

@@ -1,0 +1,338 @@
+{
+  "scope": "All native source and dependency changes require an explicit offline posture egress audit. A conservative change detector, not a proof of semantic coverage.",
+  "destinations": [
+    "configured IMAP and SMTP host/port; optional numeric connect IP override",
+    "api.typesafe.ai:443",
+    "configured DoH resolver; cloud launcher defaults cloudflare-dns.com:443",
+    "Cloudflare resolver bootstrap 1.1.1.1 and 1.0.0.1",
+    "configured HTTPS proxy endpoint",
+    "system DNS resolver"
+  ],
+  "route_environment": [
+    "MAILBEND_IMAP_HOST",
+    "MAILBEND_IMAP_PORT",
+    "MAILBEND_IMAP_CONNECT_IP",
+    "MAILBEND_SMTP_HOST",
+    "MAILBEND_SMTP_PORT",
+    "MAILBEND_SMTP_CONNECT_IP",
+    "MAILBEND_SMTP_TLS_MODE",
+    "MAILBEND_DOH_URL",
+    "https_proxy",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+    "no_proxy",
+    "NO_PROXY"
+  ],
+  "files": [
+    {
+      "path": "native/Cargo.lock",
+      "sha256": "532024ad960c5468477df849700d643704ed760daaa0630bf253107ebd222f08"
+    },
+    {
+      "path": "native/Cargo.toml",
+      "sha256": "c480e31c065bf755f88fca338c093734c5bc062b0660d384ff9a3b628f185684"
+    },
+    {
+      "path": "native/README.md",
+      "sha256": "13b6ef67de02f38f561bc75022e8d5c07618a2301e772bf34bcd3f64aaace90f"
+    },
+    {
+      "path": "native/clippy.toml",
+      "sha256": "2b0f9b93960971a28b1741a92c5d106c20d2c2b613cc1226b33f3c10af9e4442"
+    },
+    {
+      "path": "native/deny.toml",
+      "sha256": "8d674480e8f8caec7ea9d626447d64de984b1ece2604404ad8e0e6cbf8f2b9cc"
+    },
+    {
+      "path": "native/fuzz/.gitignore",
+      "sha256": "e005979318db417d742efd014c6d72a7405128832d26e586fff772c031fc3445"
+    },
+    {
+      "path": "native/fuzz/Cargo.lock",
+      "sha256": "660a165d5622fb57f1c2d44383f834706b8bd6224cf7b9b15247adaa849a63c9"
+    },
+    {
+      "path": "native/fuzz/Cargo.toml",
+      "sha256": "4dc42013f7727d6a9b9064c234f48094f23231f641a45af338d9b4cee4a74f6d"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/dns_answer.rs",
+      "sha256": "14e4ad91a5565335daddf52a7571b992777563c1caad5cd642f4c783759a7856"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/http_response.rs",
+      "sha256": "63781407b15b2b0e5a062d1b88559dae955b307fd2476b1a5a9d6392cfdd735e"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/imap_response.rs",
+      "sha256": "feeaffe665165b447ad32f03bd112242b95ce879b0294b56dc7696a591a631f3"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/imap_script.rs",
+      "sha256": "7981f45edfcd0ed2a88c88c1238d9bced30ceea9598ecb82262a57c72b81e23e"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/smtp_envelope.rs",
+      "sha256": "2f42f553bf77f592bee3987fa3cd8acbe9e7a73f7b96d9b8a9a2b5a3a33f0f8e"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/smtp_reply.rs",
+      "sha256": "48d52c9ce327cf4190739b32cf1ca670d975afe6ea4bb2f8bfa38066f64fbfc1"
+    },
+    {
+      "path": "native/fuzz/fuzz_targets/url_and_proxy.rs",
+      "sha256": "19ac3ee5fcd09d13424e010ab01f52cc85b9501105711eb84fa494570a945e55"
+    },
+    {
+      "path": "native/mailbend-attach/Cargo.toml",
+      "sha256": "d8f34cafdfd7971f53779f19bfa31b159aaac111515f75d062825de02ff18862"
+    },
+    {
+      "path": "native/mailbend-attach/src/check.rs",
+      "sha256": "03f00418636ec004c026d3d78edaf2eb9f6931b55815d4c59bece76fb34eb3e1"
+    },
+    {
+      "path": "native/mailbend-attach/src/count.rs",
+      "sha256": "7a5f8792b78140c580e6b831790acc58909f56a9056c0a39b11bf41d8a11c703"
+    },
+    {
+      "path": "native/mailbend-attach/src/dirs.rs",
+      "sha256": "2214afce27bc37b94bde12b95f2d6f4eb5fec689ee696b8c79fbacabd92e7d0f"
+    },
+    {
+      "path": "native/mailbend-attach/src/lib.rs",
+      "sha256": "11e616f1aa5ed2ab67f26aed9a07b9bd59bf97c211140538db91781ec7c2f441"
+    },
+    {
+      "path": "native/mailbend-attach/src/main.rs",
+      "sha256": "28676df02274f18e0c3542dd0676aa509e3c9423f3003f72a97f71220a3f6c94"
+    },
+    {
+      "path": "native/mailbend-attach/src/read.rs",
+      "sha256": "de5437764d066a83631c49a173a4901cd7beeaf07a6340cbb42df03be2fa20a0"
+    },
+    {
+      "path": "native/mailbend-attach/src/save.rs",
+      "sha256": "046931eecea91284519220d9f2c691af8fcc76e4994d77eb4550baec6aeac1c6"
+    },
+    {
+      "path": "native/mailbend-attach/tests/cli.rs",
+      "sha256": "61153c6de96034d666ec5df83827689eb84ba7c8b71dfdf15bc6afc2c2d3f065"
+    },
+    {
+      "path": "native/mailbend-io/Cargo.toml",
+      "sha256": "94dc314341b8ed40e41e4a89f9e198b1d86c37b5c9e1a97b98142db8bf26b4ca"
+    },
+    {
+      "path": "native/mailbend-io/src/core_bytes.rs",
+      "sha256": "e4e5a3091c3c39b555037cc94d2aaa7d61c42ab55d3f686aa65f6b8633e9f804"
+    },
+    {
+      "path": "native/mailbend-io/src/env.rs",
+      "sha256": "cc656bee2bbb1aa84710e13066bdeec398511318cc212bf7e222724dbec3598e"
+    },
+    {
+      "path": "native/mailbend-io/src/fs.rs",
+      "sha256": "feb41bdf8010ed7cb45265507fbf1200a1bb1893b20e355554e16454301fa329"
+    },
+    {
+      "path": "native/mailbend-io/src/lib.rs",
+      "sha256": "b0ee90a81d3e6cbc064680d075bbd45edc75659ae505204393ea16af4c3a1360"
+    },
+    {
+      "path": "native/mailbend-io/src/process.rs",
+      "sha256": "718c55d01617d4fe991e6a772d1238f3c1eb4e3976ae946a1adf36015187cece"
+    },
+    {
+      "path": "native/mailbend-io/src/report.rs",
+      "sha256": "2c97224af588074cdc6bd5f77c40bd9ec7cfce612d93d5e5173c0ad27a18896d"
+    },
+    {
+      "path": "native/mailbend-io/src/secret.rs",
+      "sha256": "a0f763c0241f62dfff8e65a4d664564d1c38cabb68ee19eabe35208a1c9a6ff7"
+    },
+    {
+      "path": "native/mailbend-io/tests/process.rs",
+      "sha256": "f3ca6595f968c4ef2a3290b3d5f9279c626f0c5b2443bc71a673d0800bbe8e71"
+    },
+    {
+      "path": "native/mailbend-net/Cargo.toml",
+      "sha256": "b09b356b7369fb03a5c09c9203546f86f408eac0b5769c5e34611226288e4e2c"
+    },
+    {
+      "path": "native/mailbend-net/src/connect.rs",
+      "sha256": "655faa37895cd168e16bb3938a64d824d98fe825e604323102385a686fd8a57d"
+    },
+    {
+      "path": "native/mailbend-net/src/dns.rs",
+      "sha256": "86f6bd8139d8ef2d8f557a5154fa5c8edf5a64ac0104b86d72a4cff8dda95baa"
+    },
+    {
+      "path": "native/mailbend-net/src/doh.rs",
+      "sha256": "af1f7008eb318eb1fe370f73af8965796e020b72a56a121bb239c074431b9cba"
+    },
+    {
+      "path": "native/mailbend-net/src/error.rs",
+      "sha256": "f75b2aac89f91347482a5dca76ed97b2bb192cf36c633a23b5723801db2c6691"
+    },
+    {
+      "path": "native/mailbend-net/src/http.rs",
+      "sha256": "26c780fa6844203b8f4b1f66c7f1410de2454755eab0d788fc406a5a09857182"
+    },
+    {
+      "path": "native/mailbend-net/src/lib.rs",
+      "sha256": "5b00e61ce386c760e385f9e6b99d65651db49dbed96ba572671b9d2f6058cd31"
+    },
+    {
+      "path": "native/mailbend-net/src/proxy.rs",
+      "sha256": "99296cc13c1d8f21a95fbdf9306c2e16ebac5604bb0d32deffe438ed4320d32a"
+    },
+    {
+      "path": "native/mailbend-net/src/tls.rs",
+      "sha256": "1b141c427b2db09b2c4f04ebbfd636130b512d69b04118f0302e39d78c5bac8e"
+    },
+    {
+      "path": "native/mailbend-net/src/url.rs",
+      "sha256": "35449a9eccd8727505f6780ff1031eb086f86fc435326783dbd890efae2702d3"
+    },
+    {
+      "path": "native/mailbend-stdio/Cargo.toml",
+      "sha256": "4cd22d7b42663aaaf45cdfb7015b5bd9d8d1dcdbdd5de61e9f447943acb66963"
+    },
+    {
+      "path": "native/mailbend-stdio/src/main.rs",
+      "sha256": "ae22ac64f8494bbbc9e828216c8d873b6556101e65717b78cb7011dea7decb21"
+    },
+    {
+      "path": "native/mailbend-stdio/src/relay.rs",
+      "sha256": "b51600ee21a2ae46fa8816b05a6d930574005ee9d6d2f767e226e0f42c9a0925"
+    },
+    {
+      "path": "native/mailbend-tls/Cargo.toml",
+      "sha256": "73bc662a8ab17dae4f772cc3819133fb2a8dbef55cc206c09ba3aeab4063635c"
+    },
+    {
+      "path": "native/mailbend-tls/src/connection.rs",
+      "sha256": "75ac32ef1d23211e3467e513500a3b88c9008dc584144360b700c0c9f9d60e4c"
+    },
+    {
+      "path": "native/mailbend-tls/src/credential_lifetime.rs",
+      "sha256": "b60e00215f2e0c46827ddec522c879a068a2a17bed251d65e7d73cbbb60cbd12"
+    },
+    {
+      "path": "native/mailbend-tls/src/creds.rs",
+      "sha256": "f4761e7e08982dac7b6e79177a68555c8c7f9847eda12b6e74d0d444356831be"
+    },
+    {
+      "path": "native/mailbend-tls/src/diagnostic.rs",
+      "sha256": "7712a8cbdc8d7e862187653bf61cbd8ce2c6c2b5f2ce135ffd5387b5d5dc6961"
+    },
+    {
+      "path": "native/mailbend-tls/src/exit.rs",
+      "sha256": "6a12867a527d0aea8f3a994369c0d91ff3f6855d01b92b262530b814354fbb65"
+    },
+    {
+      "path": "native/mailbend-tls/src/imap/response.rs",
+      "sha256": "648ef28ec35645a746ef316bf5d330ac9561e9abe101697013b1d6812e8a5195"
+    },
+    {
+      "path": "native/mailbend-tls/src/imap/script.rs",
+      "sha256": "8dee95612308f2dfd832fe311abaac4021be807bf79d4e2bfb99c87cc26c65f0"
+    },
+    {
+      "path": "native/mailbend-tls/src/imap/session.rs",
+      "sha256": "b6f4308feeb880063e6fb98b62da8a50ab60ae0208b63715e6080c233d56cdc3"
+    },
+    {
+      "path": "native/mailbend-tls/src/imap.rs",
+      "sha256": "96e04c50d746400c64960fe2be8195bb4ff140f56767f7ec27c2f032a4808224"
+    },
+    {
+      "path": "native/mailbend-tls/src/lib.rs",
+      "sha256": "fafb8c789950c5b928627a12d0b06b484610144f0a8315e6c8dccb9ea1eca027"
+    },
+    {
+      "path": "native/mailbend-tls/src/limits.rs",
+      "sha256": "ba186a1b5ddbe81b405971dbf096dabf391b8839f402476aa98e9490449e3539"
+    },
+    {
+      "path": "native/mailbend-tls/src/main.rs",
+      "sha256": "cf56f542f432a96f8af37963a9b545af9ff61140265c69c15e3b50a9124de3b3"
+    },
+    {
+      "path": "native/mailbend-tls/src/route.rs",
+      "sha256": "579bf05c8c28b0b4da0277ad06ea9796214dfe52034fe6f54c57ad7aeb35d70c"
+    },
+    {
+      "path": "native/mailbend-tls/src/settings.rs",
+      "sha256": "d025ba7f4d26b5b85ae43b5f8bb7e788c638e1339026382b092264a740f1370c"
+    },
+    {
+      "path": "native/mailbend-tls/src/smtp/envelope.rs",
+      "sha256": "d0a621615199bc710294b34cd6d884085a90a65f6f8c32299a7a9bc5d726ed17"
+    },
+    {
+      "path": "native/mailbend-tls/src/smtp/reply.rs",
+      "sha256": "23be45e962a49ffd03ad50c525087465d8d1ff12f088ef42372a1e30949c809a"
+    },
+    {
+      "path": "native/mailbend-tls/src/smtp/session.rs",
+      "sha256": "c961bff0fbd7bc0a137e626cd49c644a5323842f84a034bd947931fb7fba86ae"
+    },
+    {
+      "path": "native/mailbend-tls/src/smtp.rs",
+      "sha256": "ffb8ed056de62b9af6c6f8c0963cee8d1bf4b6a165b5f66e151701a3d802ee9a"
+    },
+    {
+      "path": "native/mailbend-tls/src/text.rs",
+      "sha256": "2347ab6f0724ad9e093babec97a2a61e13c38491449ffff2c8c98975130e6153"
+    },
+    {
+      "path": "native/mailbend-tls/tests/cli.rs",
+      "sha256": "1397e5ff2e89dfca8f07d1b42e72a350244b1a2a7a5112339347a150c8b5f9ae"
+    },
+    {
+      "path": "native/mailbend-typesafe/Cargo.toml",
+      "sha256": "74946eff8d7cb0ad03742a994b828800b308d8882bf87f07edace3de3ef0976a"
+    },
+    {
+      "path": "native/mailbend-typesafe/src/api.rs",
+      "sha256": "1fa6abc3422990047ae7b2913ba85f0702604b9ddc80bc056c7ea2456398ab9a"
+    },
+    {
+      "path": "native/mailbend-typesafe/src/environment.rs",
+      "sha256": "96a7df8440d84d4a1e24e3835eebff6a5af9e87c8d470c152266730eec6335e4"
+    },
+    {
+      "path": "native/mailbend-typesafe/src/exit.rs",
+      "sha256": "61fc84e3b0e6d7dd88a68d74db67a5e32aed70355b23aed93d0de5040efafac6"
+    },
+    {
+      "path": "native/mailbend-typesafe/src/main.rs",
+      "sha256": "68bf155d9e3b29095a3f4f368f0603cbeb7a010ffa6a6fbb5e1e887b674b3d08"
+    },
+    {
+      "path": "native/mailbend-typesafe/src/settings.rs",
+      "sha256": "a5045f86c4d9172d059be3bfd170d260e38a0c874ffd3376f8da710d44382600"
+    },
+    {
+      "path": "native/mailbend-typesafe/tests/cli.rs",
+      "sha256": "dabeeb1ad2f54126bba160b76e20c87756070ac3881bcc0f75371d56a0c2878b"
+    },
+    {
+      "path": "native/rust-toolchain.toml",
+      "sha256": "2662dc25620968c9ef2de41039cb005cd43f26598c57f499456492e223119b2e"
+    },
+    {
+      "path": "scripts/mailbend-cloud",
+      "sha256": "374aa89acb931602d4450b554dabf1a59eebe08f35be4a17a006053fecedf042"
+    }
+  ],
+  "trust_environment": [
+    "MAILBEND_CA_FILE",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR"
+  ]
+}

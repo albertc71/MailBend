@@ -57,7 +57,7 @@ class DriftChecks(unittest.TestCase):
         self.check()
 
     def test_stale_law_in_existing_architecture_table(self):
-        self.replace("docs/ARCHITECTURE.md", "read_only_tools_are_exactly_eight",
+        self.replace("docs/ARCHITECTURE.md", "read_only_tools_are_exactly_nine",
                      "read_only_tools_are_exactly_seven")
         self.check("unknown law read_only_tools_are_exactly_seven")
 
@@ -146,6 +146,16 @@ const LIVE: &str = "MAILBEND_AFTER_QUOTE";
     def test_launcher_omits_diagnose(self):
         self.replace("scripts/mailbend", " | diagnose [--imap] [--smtp]", "")
         self.check("Usage: missing CLI verb diagnose")
+
+    def test_stdin_form_requires_both_usage_texts(self):
+        self.replace("main.bend", "[json-arguments or -]", "[json-arguments]")
+        self.check("usage(): missing CLI stdin form")
+        self.replace("scripts/mailbend", "[json or -]", "[json]")
+        self.check("Usage: missing CLI stdin form")
+
+    def test_stdin_example_is_required(self):
+        self.replace("docs/CLI.md", "call mail_search -", "call mail_search")
+        self.check("CLI.md: missing CLI stdin example")
 
     def test_new_cli_verb_requires_both_usage_texts(self):
         self.replace("main.bend", '    case "version" <> Nil{}:', '    case "future-command_2" <> Nil{}:\n      IO.print("ok")\n    case "version" <> Nil{}:')
