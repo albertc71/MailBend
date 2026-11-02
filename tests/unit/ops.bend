@@ -268,8 +268,9 @@ def main() -> IO(Unit):
     IO.print(flag(Ops.peek_safe("")))
     IO.print("triage")
     IO.print(Ops.review_folder())
-    IO.print(wire(Ops.plan_sent_search("Sent Messages", ["ann@x.org", "bob@y.org"])))
-    IO.print(flag(I.any_writes(Ops.plan_sent_search("Sent", ["a@x"]))))
+    IO.print(wire(Ops.plan_contacts_search("Sent Messages", "")))
+    IO.print(flag(I.any_writes(Ops.plan_contacts_search("Sent", "1-Oct-2026"))))
+    IO.print(wire(Ops.plan_contact_candidates("Sent", "a@example.test")))
     IO.print(wire(Ops.plan_reread_flags("INBOX", [3, 5])))
     IO.print(flag(I.any_writes(Ops.plan_reread_flags("INBOX", [3]))))
     IO.print("[" ++ moves_text(Ops.triage_moves("INBOX", placements())) ++ "]")
@@ -314,6 +315,8 @@ def main() -> IO(Unit):
 #|mail_refresh ro=True destructive=False back=mail_refresh
 #|mail_get_thread ro=True destructive=False back=mail_get_thread
 #|mail_awaiting_reply ro=True destructive=False back=mail_awaiting_reply
+#|mail_contacts ro=True destructive=False back=mail_contacts
+#|mail_correspondents ro=True destructive=False back=mail_correspondents
 #|mail_classify ro=True destructive=False back=mail_classify
 #|mail_triage ro=False destructive=False back=mail_triage
 #|mail_get_attachment ro=False destructive=False back=mail_get_attachment
@@ -331,15 +334,15 @@ def main() -> IO(Unit):
 #|mail_send ro=False destructive=False back=mail_send
 #|mail_reply ro=False destructive=False back=mail_reply
 #|mail_forward ro=False destructive=False back=mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_classify
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_classify
 #|mail_get
 #|mail_forward
 #|none
 #|none
 #|mail_get_new,mail_search
 #|[]
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_classify
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_classify
 #|TrueFalseTrueFalse
 #|reads
 #|a1 CAPABILITY | a2 LIST "" "*"
@@ -453,8 +456,9 @@ def main() -> IO(Unit):
 #|False
 #|triage
 #|To Delete
-#|a1 EXAMINE "Sent Messages" | a2 UID SEARCH TO "ann@x.org" UNDELETED | a3 UID SEARCH CC "ann@x.org" UNDELETED | a4 UID SEARCH TO "bob@y.org" UNDELETED | a5 UID SEARCH CC "bob@y.org" UNDELETED
+#|a1 EXAMINE "Sent Messages" | a2 UID SEARCH UNDELETED
 #|False
+#|a1 EXAMINE "Sent" | a2 UID SEARCH OR TO "a@example.test" OR CC "a@example.test" HEADER "BCC" "a@example.test" UNDELETED
 #|a1 EXAMINE "INBOX" | a2 UID FETCH 3,5 (UID FLAGS)
 #|False
 #|[ News[9] Receipts[5,7] To Delete[3]]

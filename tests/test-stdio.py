@@ -28,7 +28,8 @@ ENV["MAILBEND_READ_ONLY"] = "1"
 ENV["MAILBEND_TYPESAFE"] = "0"
 ENV["BEND_NO_TELEMETRY"] = "1"
 READ_TOOLS = {"mail_probe", "mail_list_folders", "mail_search", "mail_get",
-              "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply"}
+              "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply",
+              "mail_contacts", "mail_correspondents"}
 # Without a compiled core, Bend checks and interprets main.bend before the first
 # reply: about 30 s on CI runners, 53-57 s on a 4-CPU dev container and 65-70 s
 # there with every CPU busy. The deadline leaves room for slower shared runners.

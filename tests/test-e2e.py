@@ -50,8 +50,8 @@ TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEN
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 23
-READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply"]
+TOOL_COUNT = 25
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents"]
 THREAD_MOVED = ("a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name "
                 "other messages: read the thread again")
 
@@ -649,6 +649,7 @@ def run_all(work, *, tool_scenarios_only=False):
     thread_classify_identity(work)
     threads(work)
     awaiting_replies(work)
+    live_contacts(work)
     flags_first_reads(work)
     dry_runs(work)
     jev(work)
@@ -3753,6 +3754,113 @@ def fetched_uids(line):
     return line.split(" UID FETCH ")[1].split(" ")[0].split(",")
 
 
+def live_contacts(work):
+    now = time.time()
+    def message(uid, recipients, sender="owner@example.test", days=1):
+        return {"uid": uid, "flags": [], "internaldate": time.strftime(
+            "%d-%b-%Y %H:%M:%S +0000", time.gmtime(now - days * 86400)),
+            "raw": f"From: {sender}\r\n{recipients}\r\nSubject: synthetic\r\n\r\nBody"}
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Sent Messages"]["messages"] = [
+        message(1, "To: sam.one@example.test\r\nCc: Sam One <sam.one@example.test>\r\nBcc: hidden@example.test"),
+        message(2, "To: Sam Two <sam.two@example.test>"),
+        message(3, "To: sam.one@example.test.extra"),
+        message(4, "To: old@example.test", days=90)]
+    fixture["mailboxes"]["INBOX"]["messages"] = [message(1, "To: owner@example.test", "sam.one@example.test")]
+    fixture["mailboxes"]["Archive"]["messages"] = [message(1, "To: owner@example.test", "sam.one@example.test")]
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        c, r = tool(srv, "mail_contacts", {"query": "Sam "}, MAILBEND_READ_ONLY="1")
+        check("contacts: every ambiguous name candidate, no implicit winner", c == 0 and r.get("complete") is True
+              and {x["address"] for x in r.get("contacts", [])} == {"sam.one@example.test", "sam.two@example.test"}, r)
+        check("contacts: human-only raw allowlist value", set(r.get("allowlist_suggestion", "").split(","))
+              == {"sam.one@example.test", "sam.two@example.test"}, r)
+        c, r = tool(srv, "mail_correspondents", {"addresses": ["sam.one@example.test", "hidden@example.test", "absent@example.test"]})
+        rows = {x["address"]: x for x in r.get("correspondents", [])}
+        check("contacts: exact mailbox matching and per-message To/Cc dedup", c == 0 and
+              rows.get("sam.one@example.test", {}).get("sent", {}).get("observed_count") == 1, r)
+        check("contacts: stored Bcc and bounded absence", rows.get("hidden@example.test", {}).get("sent", {}).get("observed_count") == 1
+              and rows.get("absent@example.test", {}).get("sent", {}).get("observed_count") == 0 and r.get("complete") is True, r)
+        check("contacts: received counts remain separate folder occurrences",
+              sorted(x["observed_count"] for x in rows.get("sam.one@example.test", {}).get("received", [])) == [1, 1], r)
+        c, r = tool(srv, "mail_contacts", {"limit": 1})
+        check("contacts: highest UID sample and explicit incomplete cap", c == 0 and r.get("complete") is False
+              and [x["address"] for x in r.get("contacts", [])] == ["sam.one@example.test.extra"], r)
+        check("contacts: no mailbox mutation", srv.st() == before)
+        check("contacts: PEEK and EXAMINE only", not any(any(x in line for x in MUTATING_COMMANDS)
+              or " SELECT " in line for line in srv.log_lines()))
+        for args in ({"addresses": []}, {"addresses": ["Name <a@example.test>"]},
+                     {"addresses": [1]}, {"addresses": ["a@example.test"] * 51},
+                     {"addresses": ["x" * 5000 + "@example.test"]},
+                     {"addresses": ["a@example.test"], "limit": 101}):
+            log_before = srv.log_lines()
+            c, r = tool(srv, "mail_correspondents", args)
+            check("contacts: malformed bounded input refused before network", c != 0 and srv.log_lines() == log_before, r)
+        log_before = srv.log_lines()
+        c, r = tool(srv, "mail_contacts", {"query": "x" * 5000})
+        check("contacts: oversized query refused before network", c != 0 and srv.log_lines() == log_before, r)
+    finally:
+        srv.stop()
+    for mode in ("missing_fetch", "oversized", "ignored_partial", "bad_address", "unclosed_quote", "unclosed_group", "bad_date"):
+        changed = copy.deepcopy(fixture)
+        msg = changed["mailboxes"]["Sent Messages"]["messages"][0]
+        if mode == "missing_fetch":
+            msg["omit_fetch_data"] = True
+        elif mode == "oversized":
+            msg["raw"] = "To: " + "x" * 5000 + " <a@example.test>\r\n\r\nBody"
+        elif mode == "ignored_partial":
+            msg["raw"] = "To: " + "x" * 200000 + " <a@example.test>\r\n\r\nBody"
+            msg["ignore_header_partial"] = True
+        elif mode == "bad_address":
+            msg["raw"] = "To: Bad <a@example.test> tail\r\n\r\nBody"
+        elif mode == "unclosed_quote":
+            msg["raw"] = 'To: "Sam <a@example.test>\r\n\r\nBody'
+        elif mode == "unclosed_group":
+            msg["raw"] = 'To: Group: a@example.test\r\n\r\nBody'
+        else:
+            msg["internaldate"] = time.strftime("%d-%b-%Y 99:00:00 +0000", time.gmtime(now))
+        srv = Server(work, fixture=changed)
+        try:
+            c, r = tool(srv, "mail_contacts", {"window_days": 3650})
+            check(f"contacts: {mode} cannot establish complete coverage", c == 0 and r.get("complete") is False, r)
+        finally:
+            srv.stop()
+
+    for mode in ("missing", "malformed", "duplicate"):
+        srv = Server(work, fixture=fixture, extra=("--search-response", mode))
+        try:
+            c, r = tool(srv, "mail_contacts")
+            check(f"contacts: {mode} SEARCH is incomplete", c == 0 and r.get("complete") is False, r)
+        finally:
+            srv.stop()
+    changed = copy.deepcopy(fixture)
+    changed["examine_changes"] = [{"at": 2, "uidvalidity": 99}]
+    srv = Server(work, fixture=changed)
+    try:
+        c, r = tool(srv, "mail_contacts")
+        check("contacts: changed folder identity is incomplete", c == 0 and r.get("complete") is False
+              and not r.get("contacts"), r)
+    finally:
+        srv.stop()
+
+    overflow = copy.deepcopy(fixture)
+    overflow["mailboxes"]["Sent Messages"]["messages"] = [
+        message(i + 1, "To: " + ",".join(f"person{j}@example.test" for j in range(i * 50, min((i + 1) * 50, 501))))
+        for i in range(11)]
+    srv = Server(work, fixture=overflow)
+    try:
+        c, r = tool(srv, "mail_correspondents", {"addresses": ["person0@example.test", "absent@example.test"]})
+        check("contacts: exactly 501 aggregate recipients keep bounded correspondent rows incomplete",
+              c == 0 and len(r.get("correspondents", [])) == 2 and r.get("complete") is False and
+              r.get("coverage", [{}])[0].get("complete") is False, r)
+        c, r = tool(srv, "mail_contacts")
+        check("contacts: aggregate overflow still refuses ambiguous contact selection", c != 0 and
+              "500 addresses" in r.get("error", ""), r)
+    finally:
+        srv.stop()
+
+
 def awaiting_replies(work):
     from email.utils import formatdate
     now = time.time()
@@ -4267,7 +4375,7 @@ def jev_switches(srv, work, key_file):
         names = listed_tools(srv, **jev_env(ts, key_file))
         check("jev on: every tool is listed, mail_classify and mail_triage after mail_get_thread",
               len(names) == TOOL_COUNT + 2
-              and names[names.index("mail_awaiting_reply") + 1:names.index("mail_awaiting_reply") + 3]
+              and names[names.index("mail_correspondents") + 1:names.index("mail_correspondents") + 3]
               == ["mail_classify", "mail_triage"], names)
         check("jev on, read-only: the read tools and mail_classify are listed, mail_triage is not",
               listed_tools(srv, MAILBEND_READ_ONLY="1", **jev_env(ts, key_file)) == READ_TOOLS + ["mail_classify"])
@@ -4988,8 +5096,105 @@ def triage(work):
     triage_failures(work, key_file)
     triage_no_review_folder(work, key_file)
     triage_senders(work, key_file)
+    triage_partial_contacts(work, key_file)
+    triage_candidate_contacts(work, key_file)
     triage_flagged_meanwhile(work, key_file)
     triage_protections(work, key_file)
+
+
+def triage_partial_contacts(work, key_file):
+    for mode in ("cap", "missing_fetch"):
+        fixture = triage_fixture()
+        sent = fixture["mailboxes"]["Sent Messages"]["messages"]
+        friend = copy.deepcopy(sent[-1])
+        friend["uid"] = 200
+        filler = copy.deepcopy(friend)
+        filler["raw"] = filler["raw"].replace(FRIEND, "news@example.com.extra")
+        if mode == "cap":
+            fixture["mailboxes"]["Sent Messages"]["messages"] = [
+                {**filler, "uid": u} for u in range(1, 102)] + [friend]
+        else:
+            filler["uid"] = 1
+            filler["omit_fetch_data"] = True
+            fixture["mailboxes"]["Sent Messages"]["messages"] = [filler, friend]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file, **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            check(f"triage: {mode} unknown correspondence cannot authorize review deletion", c == 0 and
+                  "whether the user has written to its sender cannot be told" in rows.get(SAFE, {}).get("vetoes", [])
+                  and rows.get(SAFE, {}).get("verdict") != "safe_to_delete"
+                  and not srv.st()["mailboxes"][REVIEW]["messages"], r)
+            check(f"triage: {mode} retains exact positive correspondent evidence",
+                  "the user has written to its sender" in rows.get(FRIENDLY, {}).get("vetoes", []), r)
+        finally:
+            ts.stop()
+            srv.stop()
+
+
+def triage_candidate_contacts(work, key_file):
+    for mode in ("large_unrelated", "old_bcc", "substring", "candidate_overflow", "bad_candidate"):
+        fixture = triage_fixture()
+        friend = copy.deepcopy(fixture["mailboxes"]["Sent Messages"]["messages"][-1])
+        filler = copy.deepcopy(friend)
+        filler["raw"] = filler["raw"].replace(FRIEND, "unrelated@example.test")
+        sent = [{**filler, "uid": u} for u in range(2, 10004)] if mode == "large_unrelated" else [
+            {**filler, "uid": u} for u in range(2, 104)]
+        if mode == "old_bcc":
+            friend["raw"] = friend["raw"].replace("To: " + FRIEND, "Bcc: " + FRIEND)
+        if mode in ("substring", "candidate_overflow", "bad_candidate"):
+            candidate = copy.deepcopy(friend)
+            candidate["raw"] = candidate["raw"].replace(FRIEND, "news@example.com.extra")
+            if mode == "bad_candidate":
+                candidate["raw"] = candidate["raw"].replace("To: news@example.com.extra", 'To: "Unclosed <news@example.com>')
+            sent = [{**candidate, "uid": u} for u in range(2, 10004 if mode == "candidate_overflow" else 3)]
+        # An unrelated Bcc-hidden stored message must not poison another sender.
+        empty = {**filler, "uid": 20000, "raw": "To: undisclosed-recipients:;\r\n\r\nbody"}
+        fixture["mailboxes"]["Sent Messages"]["messages"] = [friend] + sent + [empty]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file, [SAFE, FRIENDLY, FLAGGED_RECEIPT], **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            uncertain = mode in ("candidate_overflow", "bad_candidate")
+            check(f"triage candidates: {mode} preserves category filing", c == 0 and
+                  rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts", r)
+            check(f"triage candidates: {mode} older exact correspondent remains protected",
+                  "the user has written to its sender" in rows.get(FRIENDLY, {}).get("vetoes", []) and
+                  rows.get(FRIENDLY, {}).get("destination") is None, r)
+            check(f"triage candidates: {mode} exact absence or conservative unknown", c == 0 and
+                  ((rows.get(SAFE, {}).get("destination") is None and
+                    "whether the user has written to its sender cannot be told" in rows.get(SAFE, {}).get("vetoes", []))
+                   if uncertain else rows.get(SAFE, {}).get("destination") == REVIEW), r)
+        finally:
+            ts.stop()
+            srv.stop()
+    for mode in ("missing", "malformed", "duplicate"):
+        fixture = triage_fixture()
+        fixture["search_responses"] = {"Sent Messages": mode}
+        srv = Server(work, fixture=fixture)
+        ts = TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file, [SAFE, FLAGGED_RECEIPT], **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            check(f"triage candidates: {mode} SEARCH keeps uncertainty without blocking category filing", c == 0 and
+                  rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts" and
+                  rows.get(SAFE, {}).get("destination") is None and
+                  "whether the user has written to its sender cannot be told" in rows.get(SAFE, {}).get("vetoes", []), r)
+        finally:
+            ts.stop()
+            srv.stop()
+
+    changed = triage_fixture()
+    changed["examine_changes"] = [{"at": 3, "uidvalidity": 99}]
+    srv, ts = Server(work, fixture=changed), TypeSafe(work)
+    try:
+        c, r = triage_call(srv, ts, key_file, [SAFE, FRIENDLY], **BODY_MODE)
+        check("triage candidates: changed generation between senders aborts before Jev or filing", c != 0 and
+              "nothing was moved" in r.get("error", "") and not ts.requests() and
+              SAFE in msgs(srv.st(), "INBOX") and FRIENDLY in msgs(srv.st(), "INBOX"), r)
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def triage_body(work, key_file, caps):
@@ -5043,12 +5248,13 @@ def triage_body(work, key_file, caps):
               moving)
         check(tag + "no folder is created, and nothing is expunged but by UID",
               not any(any(t in line for t in FOLDER_COMMANDS) or line.split(" ", 1)[-1] == "EXPUNGE" for line in log), log)
-        searches = [line.split(" ", 1)[1] for line in log if " SEARCH TO " in line or " SEARCH CC " in line]
+        searches = [line.split(" ", 1)[1] for line in log if " SEARCH OR TO " in line]
         sent_open = [line.split(" ", 1)[1] for line in log if "Sent Messages" in line]
-        check(tag + "the Sent folder is examined and searched in To and in Cc once for each sender in question",
-              sent_open == ['EXAMINE "Sent Messages"'] and sorted(searches) == sorted(
-                  [f'UID SEARCH {key} "{a}" UNDELETED' for a in ("dana@example.com", FRIEND, "news@example.com")
-                   for key in ("TO", "CC")]),
+        expected_searches = [f'UID SEARCH OR TO "{a}" OR CC "{a}" HEADER "BCC" "{a}" UNDELETED'
+                             for a in ("news@example.com", "dana@example.com", FRIEND)]
+        check(tag + "Sent correspondence verifies per-sender candidates with bounded read-only headers",
+              sent_open == ['EXAMINE "Sent Messages"'] * 4 and sorted(searches) == sorted(expected_searches)
+              and any("HEADER.FIELDS (FROM TO CC BCC)]<0.4097>" in line for line in log),
               (sent_open, searches))
         reread = [line.split(" ", 1)[1] for line in log if line.endswith("(UID FLAGS)")]
         check(tag + "the flags of the messages bound for review are read again before they move",
@@ -5218,26 +5424,40 @@ def triage_flagged_meanwhile(work, key_file):
     """A message flagged while TypeSafe is still answering stays out of the
     review folder: its flags are read again just before the moves."""
     srv = Server(work, fixture=triage_fixture())
-    ts = TypeSafe(work, "slow:6")
+    gate = tempfile.TemporaryDirectory(dir=work)
+    release = pathlib.Path(gate.name) / "release"
+    waiting = pathlib.Path(str(release) + ".waiting")
+    ts = TypeSafe(work, f"hold-file:{release}")
+    out = {}
+    call = threading.Thread(target=lambda: out.update(r=triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)))
     try:
-        out = {}
-        call = threading.Thread(target=lambda: out.update(r=triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)))
         call.start()
-        deadline = time.time() + 60
-        while time.time() < deadline and not any(" SEARCH CC " in line for line in srv.log_lines()):
-            time.sleep(0.1)
-        fc, fr = tool(srv, "mail_flag", {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY})
-        call.join()
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and call.is_alive() and not waiting.exists():
+            time.sleep(0.05)
+        held = waiting.exists() and call.is_alive()
+        check("triage: Jev is awaiting release before the concurrent flag", held)
+        try:
+            fc, fr = tool(srv, "mail_flag", {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY}) if held else (None, {})
+        finally:
+            release.touch()
+        call.join(60)
         c, r = out.get("r", (None, {}))
         got = {m["uid"]: m for m in r.get("messages", [])}
         state = srv.st()
         check("triage: a message flagged while Jev is asked is kept and stays where it is",
-              fc == 0 and c == 0 and got.get(SAFE, {}).get("verdict") == "keep"
+              held and not call.is_alive() and fc == 0 and c == 0
+              and any(q.get("status") == 200 for q in ts.requests())
+              and got.get(SAFE, {}).get("verdict") == "keep"
               and "it is flagged" in got[SAFE].get("vetoes", []) and got[SAFE].get("destination") is None
               and SAFE in msgs(state, "INBOX") and not state["mailboxes"][REVIEW]["messages"], (fr, r))
     finally:
+        release.touch()
         ts.stop()
         srv.stop()
+        if call.ident is not None:
+            call.join(60)
+        gate.cleanup()
 
 
 def triage_protections(work, key_file):

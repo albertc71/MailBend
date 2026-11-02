@@ -65,6 +65,7 @@ type Item is Data:
   IDate{}
   ISize{}
   IHeaders{}
+  IContactHeaders{}
   IStructure{}
   IFull{max: U32}
   IPart{section: List<&2, U32>, max: U32}
@@ -638,6 +639,8 @@ def item_str(i: Item) -> String:
       "RFC822.SIZE"
     case IHeaders{}:
       "BODY.PEEK[HEADER.FIELDS (" ++ header_fields() ++ ")]"
+    case IContactHeaders{}:
+      "BODY.PEEK[HEADER.FIELDS (FROM TO CC BCC)]<0.4097>"
     case IStructure{}:
       "BODYSTRUCTURE"
     case IFull{max}:

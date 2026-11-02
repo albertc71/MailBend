@@ -59,6 +59,7 @@ Scenarios (--scenario):
     fail-after:<n>    answer the first <n> requests, then 422 to every other
     malformed         answer 200 with a body that is not TypeSafe's JSON
     slow[:<seconds>]  wait 30 (or <seconds>) seconds before answering
+    hold-file:<path>   create <path>.waiting, then wait up to 60s for <path>
     refuse-assets     answer 400 to every request that carries assets
     model:<id>        answer as the model <id> instead of the pinned one
     no-model          answer without a "model" field
@@ -356,6 +357,13 @@ class Fake:
         kind, _, arg = self.scenario.partition(":")
         if kind == "slow":
             time.sleep(float(arg or 30))
+        if kind == "hold-file":
+            Path(arg + ".waiting").touch()
+            deadline = time.monotonic() + 60
+            while not Path(arg).exists():
+                if time.monotonic() >= deadline:
+                    return 503, {"detail": "test reply gate was not released"}
+                time.sleep(0.05)
         if kind == "echo-key":
             return 401, {"detail": f"invalid key {auth}"}
         if auth != f"Bearer {self.key}":

@@ -216,6 +216,7 @@ class State:
         self.fetch_no_flags = set()
         self.fetch_bad_flags = set()
         self.search_response = "normal"
+        self.search_responses = fixture.get("search_responses", {})
         self.remove_after_fetch = set()
         self.measure_responses = False
         self.flags_first = False
@@ -705,7 +706,8 @@ def render_section(spec: bytes, m: dict):
         content = content[:-1]
     if start is not None:
         s = int(start)
-        content = content[s:s + int(count)] if count is not None else content[s:]
+        if not (m.get("ignore_header_partial") and inside_upper.startswith("HEADER.FIELDS")):
+            content = content[s:s + int(count)] if count is not None else content[s:]
         name = f'BODY[{inside}]<{s}>'
     else:
         name = f'BODY[{inside}]'
@@ -1045,11 +1047,12 @@ class IMAPSession:
                 return
             matched = sorted(m['uid'] for m in messages if all(p(m) for p in preds))
         response = '* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n'
-        if self.state.search_response == 'malformed':
+        mode = self.state.search_responses.get(mbox, self.state.search_response)
+        if mode == 'malformed':
             self.send('* SEARCH invalid\r\n')
-        elif self.state.search_response != 'missing':
+        elif mode != 'missing':
             self.send(response)
-            if self.state.search_response == 'duplicate':
+            if mode == 'duplicate':
                 self.send(response)
         self.send(f'{tag} OK SEARCH completed\r\n')
 
