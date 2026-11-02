@@ -5098,6 +5098,7 @@ def triage(work):
     triage_senders(work, key_file)
     triage_partial_contacts(work, key_file)
     triage_candidate_contacts(work, key_file)
+    triage_candidate_refusals(work, key_file)
     triage_flagged_meanwhile(work, key_file)
     triage_protections(work, key_file)
 
@@ -5195,6 +5196,44 @@ def triage_candidate_contacts(work, key_file):
     finally:
         ts.stop()
         srv.stop()
+
+
+def triage_candidate_refusals(work, key_file):
+    fixture = triage_fixture()
+    stranger = 40
+    fixture["mailboxes"]["INBOX"]["messages"].append(
+        triage_message(stranger, "[disposable] Other sender", sender="other-stranger@example.test"))
+    fixture["candidate_search_faults"] = {"news@example.com": "NO"}
+    srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+    try:
+        c, r = triage_call(srv, ts, key_file, [SAFE, FLAGGED_RECEIPT, FRIENDLY, stranger], **BODY_MODE)
+        rows = {m["uid"]: m for m in r.get("messages", [])}
+        check("triage candidate NO: only refused sender stays unverified", c == 0 and
+              "whether the user has written to its sender cannot be told" in rows.get(SAFE, {}).get("vetoes", []) and
+              rows.get(SAFE, {}).get("destination") is None and SAFE in msgs(srv.st(), "INBOX"), r)
+        check("triage candidate NO: category filing and other exact evidence still work", c == 0 and
+              rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts" and
+              rows.get(stranger, {}).get("destination") == REVIEW and
+              "the user has written to its sender" in rows.get(FRIENDLY, {}).get("vetoes", []), r)
+    finally:
+        ts.stop()
+        srv.stop()
+    for mode in ("BAD", "drop", "examine", "auth"):
+        failed = triage_fixture()
+        if mode in ("BAD", "drop"):
+            failed["candidate_search_faults"] = {"news@example.com": mode}
+        if mode == "auth":
+            failed["password"] = "different-synthetic-password"
+        extra = ("--reject", "EXAMINE#2") if mode == "examine" else ()
+        srv, ts = Server(work, fixture=failed, extra=extra), TypeSafe(work)
+        try:
+            before = srv.st()
+            c, r = triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)
+            check(f"triage candidate refusal: {mode} remains fatal before Jev or filing", c != 0 and
+                  not ts.requests() and srv.st() == before, r)
+        finally:
+            ts.stop()
+            srv.stop()
 
 
 def triage_body(work, key_file, caps):

@@ -216,6 +216,7 @@ class State:
         self.fetch_no_flags = set()
         self.fetch_bad_flags = set()
         self.search_response = "normal"
+        self.candidate_search_faults = fixture.get("candidate_search_faults", {})
         self.search_responses = fixture.get("search_responses", {})
         self.remove_after_fetch = set()
         self.measure_responses = False
@@ -1029,6 +1030,15 @@ class IMAPSession:
     def cmd_search(self, tag, args):
         mbox = self.require_selected(tag)
         if mbox is None:
+            return
+        candidate = len(args) >= 2 and args[0] == b'OR' and args[1] == b'TO'
+        needle = astring_val(args[2]).lower() if candidate and len(args) > 2 else ''
+        fault = self.state.candidate_search_faults.get(needle)
+        if fault:
+            if fault == 'drop':
+                self.done = True
+            else:
+                self.send(f'{tag} {fault} candidate search test refusal\r\n')
             return
         i = 0
         if len(args) >= 2 and isinstance(args[0], bytes) and args[0].upper() == b'CHARSET':

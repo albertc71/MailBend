@@ -1393,6 +1393,32 @@ def check_read_identity() -> IO(Unit):
     IO.print(Bool.show(read_identity_legacy(T.thread_plan(False{}, [I.CExamine{"Sent"}],
       [T.Found{"Sent", None{}, [7], []}]))))
 
+def contact_refusal.accepted(code: U32, out: String) -> String:
+  Bool.show(Maybe.is_some(&2, U32, T.contacts_candidates.no_uidv(Policy.ProcOk{code, out, ""})))
+
+def contact_refusal.selected() -> String:
+  "* OK [UIDVALIDITY 42] valid\r\na1 OK selected\r\n"
+
+def check_contact_refusal() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected() ++ "a2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(0, contact_refusal.selected() ++ "a2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(4, contact_refusal.selected() ++ "a2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected() ++ "a2 BAD refused\r\n"))
+    IO.print(contact_refusal.accepted(5, "* OK [UIDVALIDITY 42] valid\r\na1 NO refused\r\na2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(5, "a1 OK selected\r\na2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(5, "* OK [UIDVALIDITY 0] invalid\r\na1 OK selected\r\na2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected()))
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected() ++ "a2 OK done\r\na2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected() ++ "a2 NO refused\r\na2 BAD refused\r\n"))
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected() ++ "a1 NO refused\r\na2 NO refused\r\n"))
+    IO.print(contact_refusal.accepted(5, contact_refusal.selected() ++ "* 1 FETCH (BODY[] {15}\r\na2 NO refused\r\n)\r\n"))
+    IO.print(Bool.show(Maybe.is_some(&2, U32,
+      T.contacts_candidates.no_uidv(Policy.ProcFail{5, "a2 NO refused"}))))
+    IO.print(Bool.show(Maybe.is_some(&2, U32,
+      T.contacts_candidates.no_uidv(Policy.ProcRefused{"a2 NO refused"}))))
+
+
 def main() -> IO(Unit):
   do IO<Unit>:
     randomness_cases()
@@ -1421,6 +1447,8 @@ def main() -> IO(Unit):
     check_read_identity()
     IO.print(Bool.show(T.contacts_raw_small(I.Msg{1, [], "01-Oct-2026 09:00:00 +0000", 0,
       String.repeat("x", 4097n), "", I.VNil{}})))
+    check_contact_refusal()
+
 
 #|stamp first read refused
 #|stamp second read refused
@@ -1761,4 +1789,18 @@ def main() -> IO(Unit):
 #|True
 #|True
 
+#|False
+#|True
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
 #|False
