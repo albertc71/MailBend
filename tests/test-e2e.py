@@ -3350,8 +3350,8 @@ def awaiting_replies(work):
               any("OR HEADER" in l for l in lines) and not any(
                   v in l for l in lines for v in (" SELECT ", " STORE ", " APPEND ", " EXPUNGE")), lines)
         c, r = tool(srv, "mail_awaiting_reply", {"limit": 1})
-        check("awaiting: candidate cap cannot confirm absence", c == 0 and
-              r.get("complete") is False and r.get("messages", [{}])[0].get("status") == "unknown", r)
+        check("awaiting: candidate cap preserves complete per-item evidence", c == 0 and
+              r.get("complete") is False and r.get("messages", [{}])[0].get("status") == "awaiting", r)
     finally:
         srv.stop()
 
@@ -3375,7 +3375,7 @@ def awaiting_replies(work):
     finally:
         srv.stop()
 
-    for scenario in ("archive", "no_archive", "missing_fetch", "reply_cap", "invalid_age"):
+    for scenario in ("archive", "no_archive", "missing_fetch", "reply_cap", "invalid_age", "invalid_id", "invalid_reply", "sent_cap"):
         changed = copy.deepcopy(fixture)
         if scenario == "archive":
             changed["mailboxes"]["Archive"]["messages"] = [
@@ -3388,9 +3388,20 @@ def awaiting_replies(work):
             changed["mailboxes"]["INBOX"]["messages"] = [
                 message(uid, 1, f"answer-{uid}", "References: <second@example.test>\r\n")
                 for uid in range(1, 102)]
-        else:
+        elif scenario == "invalid_age":
             changed["mailboxes"]["Sent Messages"]["messages"][0]["internaldate"] = (
                 "31-Feb-2026 09:00:00 +0000")
+        elif scenario == "invalid_id":
+            changed["mailboxes"]["Sent Messages"]["messages"][0]["raw"] = (
+                changed["mailboxes"]["Sent Messages"]["messages"][0]["raw"].replace(
+                    "Message-ID: <first@example.test>", "Message-ID: <first@example.test> <bad@example.test>"))
+        elif scenario == "invalid_reply":
+            changed["mailboxes"]["INBOX"]["messages"][0]["internaldate"] = (
+                "31-Feb-2026 09:00:00 +0000")
+        elif scenario == "sent_cap":
+            changed["mailboxes"]["Sent Messages"]["messages"] = [
+                message(uid, 10, "second" if uid == 2 else f"sent-{uid}")
+                for uid in range(1, 61)]
         srv = Server(work, fixture=changed)
         try:
             c, r = tool(srv, "mail_awaiting_reply")
@@ -3400,10 +3411,17 @@ def awaiting_replies(work):
                 valid = r.get("complete") is True and by_uid[1]["status"] == "replied"
             elif scenario == "no_archive":
                 valid = r.get("complete") is True and r.get("archive_resolved") is False
-            else:
-                valid = r.get("complete") is False and not any(m["status"] == "awaiting" for m in messages)
+            elif scenario in ("invalid_age", "invalid_id"):
+                valid = (r.get("complete") is False and by_uid[1]["status"] == "unknown"
+                         and by_uid[3]["status"] == "awaiting")
                 if scenario == "invalid_age":
                     valid = valid and by_uid[1]["age_days"] is None
+            elif scenario == "sent_cap":
+                valid = (r.get("complete") is False and len(messages) == 50
+                         and sum(m["status"] == "awaiting" for m in messages) == 49
+                         and by_uid[2]["status"] == "replied")
+            else:
+                valid = r.get("complete") is False and not any(m["status"] == "awaiting" for m in messages)
             check(f"awaiting: {scenario} evidence", c == 0 and valid, r)
         finally:
             srv.stop()

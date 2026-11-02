@@ -4504,13 +4504,36 @@ def await_evidence.all(cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +tag: U32
     case +c <> t:
       await_evidence(c, lines, tag) && await_evidence.all(t, lines, I.next_tag(c, tag))
 
+def await_found.step(c: I.Cmd, rs: List<&2, I.RLine>, acc: List<&2, Found>)
+  -> List<&2, Found>:
+  match c acc:
+    case I.CSearch{_} Found{f, v, us, ms} <> t:
+      found = Maybe.default(&2, List<&2, U32>, Await.search(rs), [])
+      Found{f, v, Await.append(us, found), ms} <> t
+    case _ _:
+      thread_found.step(c, rs, acc)
+
+def await_found.go(cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +tag: U32,
+  acc: List<&2, Found>) -> List<&2, Found>:
+  match cs:
+    case Nil{}:
+      List.reverse(&2, Found, acc)
+    case +c <> t:
+      await_found.go(t, lines, I.next_tag(c, tag),
+        await_found.step(c, I.replies(lines, tag), acc))
+
 def await_session.if(valid: Bool, r: Run(), plan: List<&2, I.Cmd>, before: List<&2, Found>)
   -> Result<&2, &2, String, List<&2, Found>>:
   match valid:
     case False{}:
       Fail{"incomplete SEARCH or mailbox identity evidence"}
     case True{}:
-      session_found(r, plan, before)
+      match r:
+        case Fail{m}:
+          Fail{m}
+        case Done{lines}:
+          +fs = await_found.go(plan, lines, 1, [])
+          session_found.if(any_uidv_moved(fs, before), fs)
 
 def await_session(r: Run(), +plan: List<&2, I.Cmd>, before: List<&2, Found>)
   -> Result<&2, &2, String, List<&2, Found>>:
@@ -4541,14 +4564,14 @@ def await_wants(fs: List<&2, Found>, +cap: Nat) -> List<&2, Ops.FolderUids>:
     case Nil{}:
       []
     case Found{f, v, us, ms} <> t:
-      thread_wants.put(f, List.take(&2, U32, refresh_uids.go(asc(us), 0), cap), await_wants(t, cap))
+      thread_wants.put(f, List.take(&2, U32, Await.smallest(us), cap), await_wants(t, cap))
 
 def await_count(fs: List<&2, Found>) -> Nat:
   match fs:
     case Nil{}:
       0n
     case Found{f, v, us, ms} <> t:
-      (List.length(&2, U32, refresh_uids.go(asc(us), 0)) + await_count(t) : Nat)
+      (List.length(&2, U32, Await.smallest(us)) + await_count(t) : Nat)
 
 def await_fetch_complete(wants: List<&2, Ops.FolderUids>, +nodes: List<&2, T.Node>) -> Bool:
   match wants:
@@ -4653,7 +4676,8 @@ def await_out(
   AwaitRead{+rf, rc, rr} = replies
   +ns = List.sort(~T.Node, ~(a => b => T.no_later(a, b)),
     Await.candidates(found_nodes(sf), now, min_age))
-  +complete = sc && rc && Await.valid_candidates(ns) && Await.valid_dates(found_nodes(rf), now)
+  +reply_complete = rc && Await.valid_dates(found_nodes(rf), now)
+  +complete = sc && reply_complete && Await.valid_candidates(ns)
   ok_obj([
     J.kv("complete", J.bool(complete)),
     J.kv("reason", J.str(Bool.pick(String, complete, "",
@@ -4661,7 +4685,7 @@ def await_out(
     J.kv("searched", J.strs(folders)),
     J.kv("archive_resolved", J.bool(Maybe.is_some(&2, String, archive))),
     J.kv("as_of", J.num(now)),
-    J.kv("messages", J.arr(await_items(ns, found_nodes(rf), complete, now)))
+    J.kv("messages", J.arr(await_items(ns, found_nodes(rf), reply_complete, now)))
   ])
 
 def await_replies(+sent: AwaitRead, +folders: List<&2, String>, +archive: Maybe<&2, String>,

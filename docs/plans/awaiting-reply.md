@@ -26,7 +26,9 @@ resolved, the captured clock, and candidate messages. Each message includes
 `awaiting`, `replied`, or `unknown`, age, To/Cc header text and a thread anchor.
 Bcc is not fetched. Missing recipients are empty strings, not invented values.
 Unresolved Archive is explicitly reported and is outside the searched scope.
-Optional self, list and automatic-message exclusions are not implemented.
+Replied means a later exact reference, not a verified human or recipient answer.
+Self-follow-ups, auto-replies and bounces can qualify. Self, list, automatic-message
+and bounce exclusions remain follow-up work in #63.
 
 ## Coverage and bounds
 
@@ -38,10 +40,14 @@ transport failures and missing requested header data make coverage incomplete.
 Searches batch at most ten candidate IDs, each with References and In-Reply-To
 alternatives. Reply fetches are capped at 100 headers per folder, 200 total.
 Each helper response is capped at 256 KiB and 30 seconds. Candidate truncation
-also sets `complete:false`. Missing or multiple Message-IDs and invalid dates
-cannot establish absence. An exact valid positive reply remains `replied` even
-when another part of coverage is incomplete; no other candidate is confirmed
-`awaiting` until all required evidence is complete.
+also sets `complete:false`, but does not change a fully read candidate's status.
+A valid sampled candidate can be `awaiting` when reply-side coverage is complete,
+even if another candidate is invalid or the Sent sample is capped. Missing or
+multiple Message-IDs and invalid candidate dates make only that candidate unknown.
+Missing, capped or malformed reply evidence keeps absence unknown conservatively
+for all sampled candidates. Exact valid positive evidence remains `replied`.
+Each SEARCH record accepts at most 10,000 UIDs; larger records report incomplete
+coverage rather than truncating validation or confirming absence.
 
 ## Statechart
 
@@ -62,8 +68,10 @@ stateDiagram-v2
   s1 --> s3: evaluate exact reply evidence
 ```
 
-The bounded evidence model checks 17 states and 24 steps. NoFalseAbsence,
-PositiveNeedsIdentity and NoDeadlock hold. The chart hides eight terminal
+The model separates Sent-sample coverage from reply-side coverage. Its `replyComplete`
+variable represents reply-side evidence only, not the top-level result field.
+The bounded evidence model checks 33 states and 48 steps. NoFalseAbsence,
+PositiveNeedsIdentity and NoDeadlock hold. The chart hides sixteen terminal
 self-loops that leave the reader-visible state unchanged. This model abstracts
 SEARCH, FETCH, parsing, mailbox races and TLS; it does not prove the code.
 Read-plan laws cover command constructors, and fake-server tests cover evidence.

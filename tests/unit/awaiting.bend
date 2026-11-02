@@ -46,6 +46,7 @@ def main() -> IO(Unit):
     IO.print(search([I.RLine{"* SEARCH 0", []}]))
     IO.print(search([I.RLine{"* SEARCH", []}, I.RLine{"* SEARCH", []}]))
     IO.print(Bool.show(I.any_writes(Ops.plan_awaiting_sent("Sent", "1-Oct-2026"))))
+    IO.print(I.uid_set(A.smallest([9, 3, 3, 1])))
     IO.print(I.key_str(A.batch_key(["<a@x>", "<b@x>"])))
 
 #|awaiting
@@ -71,4 +72,5 @@ def main() -> IO(Unit):
 #|False
 #|False
 #|False
+#|1,3,9
 #|OR OR HEADER "References" "<a@x>" HEADER "In-Reply-To" "<a@x>" OR HEADER "References" "<b@x>" HEADER "In-Reply-To" "<b@x>"
