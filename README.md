@@ -620,6 +620,23 @@ envelope); expansion beyond it returns all UIDs unknown. The
 synthetic cost measurements and experiment decision are in
 [the refresh experiment](docs/REFRESH.md).
 
+## Privacy Policy
+
+MailBend runs on your machine and processes mail for the operations you request.
+It has no hosted MailBend mailbox service or application log files, but local
+configuration, explicit downloads and the optional send counter persist. Your
+client can capture results and share them with its own services. Mail providers,
+optional TypeSafe checks, DNS/proxy services and install hosts have separate
+processing and retention policies. Headers sent to Jev are still personal data;
+a zero-retention switch is your statement, not a verified contract.
+
+Read the [Privacy Policy and data-handling statement](https://github.com/albertc71/MailBend/blob/main/docs/PRIVACY.md)
+for collection, use, storage, sharing, retention, dated provider sources and
+regulated-use checks. Report suspected vulnerabilities through
+[private reporting](https://github.com/albertc71/MailBend/security/advisories/new);
+use [issues](https://github.com/albertc71/MailBend/issues) only for non-sensitive
+questions. Never post credentials or real mail.
+
 ## Safety
 
 - **TLS is always verified**: certificate chain and host name, TLS 1.2+, with

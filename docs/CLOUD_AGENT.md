@@ -138,6 +138,9 @@ server diagnostics, AUTH payloads, credentials or message content. Guidance is
 fixed text, never a server error. Keep credentials in secret settings, and share
 this result rather than environment dumps or raw helper transcripts.
 
+The [privacy and data-handling statement](PRIVACY.md) maps these destinations to
+data categories and retention responsibilities, including caller-side sharing.
+
 ## Offline posture
 
 Run `scripts/mailbend diagnose --posture` before giving an agent mail access.

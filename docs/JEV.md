@@ -5,6 +5,9 @@ on, MailBend asks Jev typed questions about messages, and MailBend's own code
 decides what the answers mean. The [README](../README.md#jev-optional) lists
 which tools ask Jev; with Jev off, no tool asks it and no result changes.
 
+Read the [privacy and data-handling statement](PRIVACY.md) before enabling Jev.
+It covers provider terms, retention statements and unresolved account checks.
+
 ## What Jev can and cannot do
 
 In every tool except `mail_classify` and `mail_triage`, Jev can only block an
