@@ -11,29 +11,41 @@ import ./jev.bend as Jev
 type Check is Data:
   Check{checks: List<&2, J.Json>, suggestions: List<&2, J.Json>}
 
-def guidance(stage: String) -> String:
-  match stage:
-    case "configuration":
+def guidance.choose(flags: Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool) -> String:
+  match flags:
+    case (True{}, _, _, _, _, _, _, _, _):
       "Check documented switches, host, port, connection IP and DoH settings."
-    case "credentials":
+    case (False{}, True{}, _, _, _, _, _, _, _):
       "Configure one password source and account; OAuth is unsupported. Never share secrets."
-    case "trust_store":
+    case (False{}, False{}, True{}, _, _, _, _, _, _):
       "Check system CAs, SSL_CERT_FILE, SSL_CERT_DIR or MAILBEND_CA_FILE; " ++
       "verification is mandatory."
-    case "helper":
+    case (False{}, False{}, False{}, True{}, _, _, _, _, _):
       "Rebuild with scripts/install.sh; use an absolute executable MAILBEND_TLS_HELPER path."
-    case "dns":
+    case (False{}, False{}, False{}, False{}, True{}, _, _, _, _):
       "Check DNS or DoH connectivity and resolver configuration."
-    case "connect":
+    case (False{}, False{}, False{}, False{}, False{}, True{}, _, _, _):
       "Check the configured port, firewall and provider connectivity."
-    case "tls":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, True{}, _, _):
       "Check the configured SMTP TLS mode and port; IMAP uses implicit verified TLS."
-    case "authentication":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, True{}, _):
       "Check provider password-login support and credentials; SMTP needs AUTH PLAIN or LOGIN."
-    case "folders":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}, True{}):
       "Inspect mail_probe locally; resolve each missing or ambiguous role with an existing folder."
     case _:
       "Check provider availability and protocol support; retry within the diagnostic deadline."
+
+def guidance(+stage: String) -> String:
+  guidance.choose((
+    String.eq(stage, "configuration"),
+    String.eq(stage, "credentials"),
+    String.eq(stage, "trust_store"),
+    String.eq(stage, "helper"),
+    String.eq(stage, "dns"),
+    String.eq(stage, "connect"),
+    String.eq(stage, "tls"),
+    String.eq(stage, "authentication"),
+    String.eq(stage, "folders")))
 
 def fact_guided(
   protocol: String, stage: String, status: String, reason: String, help: String
@@ -65,34 +77,54 @@ def platform_fact(+check: String, status: String, detail: String) -> J.Json:
 def platform_error(reason: String) -> J.Json:
   fact_guided("local", "platform", "failed", reason, platform_guidance("helper"))
 
-def platform_line(line: String) -> J.Json:
-  match line:
-    case "openat2 ok":
+def platform_line.choose(
+  flags: Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool & Bool
+) -> J.Json:
+  match flags:
+    case (True{}, _, _, _, _, _, _, _, _, _, _, _):
       platform_fact("openat2", "ok", "ok")
-    case "openat2 unsupported":
+    case (False{}, True{}, _, _, _, _, _, _, _, _, _, _):
       platform_fact("openat2", "failed", "unsupported")
-    case "attach_dir ok":
+    case (False{}, False{}, True{}, _, _, _, _, _, _, _, _, _):
       platform_fact("attach_dir", "ok", "ok")
-    case "attach_dir refused":
+    case (False{}, False{}, False{}, True{}, _, _, _, _, _, _, _, _):
       platform_fact("attach_dir", "failed", "refused")
-    case "attach_dir unset":
+    case (False{}, False{}, False{}, False{}, True{}, _, _, _, _, _, _, _):
       platform_fact("attach_dir", "skipped", "unset")
-    case "download_tmpfile ok":
+    case (False{}, False{}, False{}, False{}, False{}, True{}, _, _, _, _, _, _):
       platform_fact("download_tmpfile", "ok", "ok")
-    case "download_tmpfile unsupported":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, True{}, _, _, _, _, _):
       platform_fact("download_tmpfile", "failed", "unsupported")
-    case "download_tmpfile refused":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, True{}, _, _, _, _):
       platform_fact("download_tmpfile", "failed", "refused")
-    case "download_tmpfile unset":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}, True{}, _, _, _):
       platform_fact("download_tmpfile", "skipped", "unset")
-    case "arch x86_64":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{},
+      True{}, _, _):
       platform_fact("arch", "ok", "x86_64")
-    case "arch aarch64":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{},
+      False{}, True{}, _):
       platform_fact("arch", "ok", "aarch64")
-    case "arch other":
+    case (False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{},
+      False{}, False{}, True{}):
       platform_fact("arch", "ok", "other")
     case _:
       platform_error("invalid_diagnostic_response")
+
+def platform_line(+line: String) -> J.Json:
+  platform_line.choose((
+    String.eq(line, "openat2 ok"),
+    String.eq(line, "openat2 unsupported"),
+    String.eq(line, "attach_dir ok"),
+    String.eq(line, "attach_dir refused"),
+    String.eq(line, "attach_dir unset"),
+    String.eq(line, "download_tmpfile ok"),
+    String.eq(line, "download_tmpfile unsupported"),
+    String.eq(line, "download_tmpfile refused"),
+    String.eq(line, "download_tmpfile unset"),
+    String.eq(line, "arch x86_64"),
+    String.eq(line, "arch aarch64"),
+    String.eq(line, "arch other")))
 
 def platform_facts.if(
   open: String, attach: String, download: String, arch: String, valid: Bool
