@@ -1644,6 +1644,55 @@ def new_empty.uid(v: I.Value) -> Bool:
     case _:
       False{}
 
+# Match the requested field set, not one provider's order or quoting.
+# Every expected name must occur once, with no additional nonempty names.
+def new_empty.name(+s: String) -> String:
+  Bool.pick(String, String.starts_with(s, "\"") && String.ends_with(s, "\""),
+    String.reverse(String.drop(String.reverse(String.drop(s, 1n)), 1n)), s)
+
+def new_empty.words(parts: List<&2, String>) -> List<&2, String>:
+  match parts:
+    case Nil{}:
+      []
+    case +h <> t:
+      List.filter.put(String, new_empty.name(h), new_empty.words(t), Bool.not(String.is_empty(h)))
+
+def new_empty.count(+name: String, parts: List<&2, String>) -> Nat:
+  match parts:
+    case Nil{}:
+      0n
+    case h <> t:
+      Nat.add(Bool.pick(Nat, String.eq(name, h), 1n, 0n), new_empty.count(name, t))
+
+def new_empty.names(+parts: List<&2, String>, expected: List<&2, String>) -> Bool:
+  match expected:
+    case Nil{}:
+      True{}
+    case h <> t:
+      Nat.is_eq(new_empty.count(h, parts), 1n) && new_empty.names(parts, t)
+
+def new_empty.same_names(+parts: List<&2, String>, +expected: List<&2, String>) -> Bool:
+  Nat.is_eq(List.length(&2, String, parts), List.length(&2, String, expected)) &&
+    new_empty.names(parts, expected)
+
+def new_empty.section_list(+s: String) -> Bool:
+  String.starts_with(s, "(") && String.ends_with(s, ")]") &&
+    new_empty.same_names(new_empty.words(String.split(
+      String.reverse(String.drop(String.reverse(String.drop(s, 1n)), 2n)), ' ')),
+      String.split(I.header_fields(), ' '))
+
+def new_empty.section.if(bounded: Bool, +key: String) -> Bool:
+  match bounded:
+    case True{}:
+      String.starts_with(key, "BODY[HEADER.FIELDS ") &&
+        new_empty.section_list(String.trim_start(String.drop(key, 19n)))
+    case False{}:
+      False{}
+
+def new_empty.section(+key: String) -> Bool:
+  # Bound normalization even for a hostile, space-heavy raw section key.
+  new_empty.section.if(Nat.is_le(String.length(String.take(key, 1025n)), 1024n), key)
+
 def new_empty.pairs(
   vs: List<&2, I.Value>,
   +uid: Bool,
@@ -1658,7 +1707,7 @@ def new_empty.pairs(
       +is_header = String.starts_with(key, "BODY[HEADER")
       valid = Bool.pick(Bool, is_uid, Bool.not(uid) && new_empty.uid(v),
         Bool.not(is_header) || (Bool.not(header) && new_empty.value(v) &&
-          String.eq(key, "BODY[HEADER.FIELDS (" ++ I.header_fields() ++ ")]")))
+          new_empty.section(key)))
       valid && new_empty.pairs(rest, uid || is_uid, header || is_header)
     case _:
       False{}
