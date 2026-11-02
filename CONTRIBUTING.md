@@ -15,8 +15,9 @@ discuss larger changes before writing them.
   of that law contract: review changes to `admit_all`, `lengths_exact`,
   `Within` and the other observers as changes to the laws, and explain them
   in the pull request. Do not weaken an observer or premise to make a proof
-  pass. The budget mutation check fingerprints `tests/formal/budget-*.bend` and
-  `tests/formal/scalar-*.bend`, including these observer modules, to check that its run leaves the checkout
+  pass. The budget mutation check fingerprints `tests/formal/budget-*.bend`,
+  `tests/formal/scalar-*.bend` and `tests/formal/json-size-*.bend`, including
+  these observer modules, to check that its run leaves the checkout
   unchanged; this is not an approval gate for later contract changes.
 - Never put real credentials, account addresses or mail in code, tests,
   fixtures, issues or pull requests. Tests run against the local fake server

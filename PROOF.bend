@@ -13,6 +13,7 @@ import ./tests/formal/budget-proofs.bend as BudgetProof
 import ./tests/formal/budget-bind-observers.bend as BindBudget
 import ./tests/formal/budget-bind-proofs.bend as BindProof
 import ./tests/formal/scalar-escape-proofs.bend as ScalarProof
+import ./tests/formal/json-size-proofs.bend as JsonSize
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/codec.bend as C
@@ -2405,3 +2406,6 @@ def Laws.prefix_whole_when_room(s, left, extra, enough):
 
 def Laws.awaiting_disabled_filters_keep_candidate(n):
   {==}
+
+def Laws.json_serialized_bytes(j):
+  JsonSize.show_bytes(j)

@@ -849,13 +849,21 @@ fetches remain a tested boundary. The reference law pins the pure
 `Used` fate and joins the corpus; an unavailable token retries. This is not
 a separate global reference-uniqueness theorem.
 
-Complete JSON serialization correspondence, full result/list assembly,
-whole-response byte bounds, cursor paging, unchanged Jev inputs, native IO
-and final image request assembly remain tested rather than kernel-proven.
+The [json_serialized_bytes](LAWS.bend) law proves
+`C.utf8_len(J.show(j)) == Response.bytes(j)` for every `J.Json`, including
+embedded chains and object members. The proof follows the actual serializer,
+quotes, separators and UTF-8 accumulator. This is **U32 modular equality**:
+both counters may wrap above 2^32 - 1 bytes. It does not prove that every JSON
+value has a nonoverflowing natural byte size or fits a response budget.
+
+Full result/list assembly, whole-response byte bounds, cursor paging,
+unchanged Jev inputs, native IO and final image request assembly remain
+tested rather than kernel-proven.
 The budget mutation check rejects over-budget prefix retention, ignored
 image count, production room reset/refund, broken IO transition wiring,
-and omitted UTF-8 accumulation. Formal observers imported by the laws are
-part of the law contract, not disposable test fixtures.
+omitted UTF-8 accumulation, missing JSON delimiters, doubled separators,
+unescaped quotes and incorrect object byte accounting. Formal observers
+imported by the laws are part of the law contract, not disposable test fixtures.
 
 ## How it works
 

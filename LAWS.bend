@@ -1946,3 +1946,9 @@ law prefix_whole_when_room:
 law awaiting_disabled_filters_keep_candidate:
   for n: AwaitThread.Node
   {Await.excluded(n, Await.Filters{False{}, False{}}) == False{} : Bool}
+
+# This equality is modulo 2^32, like both production counters. It does not
+# establish that an arbitrary JSON value fits a natural byte allowance.
+law json_serialized_bytes:
+  for j: J.Json
+  {C.utf8_len(J.show(j)) == Response.bytes(j) : U32}
