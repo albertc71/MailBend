@@ -509,6 +509,10 @@ def parse_search_key(args, i, uids_sorted):
         return (lambda m, ps=preds: all(p(m) for p in ps)), i + 1
 
     word = t.decode('ascii', 'replace').upper() if isinstance(t, bytes) else ''
+    if word == 'OR':
+        left, j = parse_search_key(args, i + 1, uids_sorted)
+        right, j = parse_search_key(args, j, uids_sorted)
+        return (lambda m, a=left, b=right: a(m) or b(m)), j
     if word == 'ALL':
         return (lambda m: True), i + 1
     if word == 'UID':
@@ -554,12 +558,19 @@ def parse_search_key(args, i, uids_sorted):
             _, body = header_body_split(m['raw'])
             return nd in to_unicode(body).lower()
         return pred, i + 2
-    if word in ('SINCE', 'BEFORE', 'ON'):
+    if word in ('SINCE', 'SENTSINCE', 'BEFORE', 'ON'):
         d = parse_imap_date(astring_val(args[i + 1]))
 
         def pred(m, w=word, d=d):
-            md = msg_date(m)
-            if w == 'SINCE':
+            if w == 'SENTSINCE':
+                from email.utils import parsedate_to_datetime
+                try:
+                    md = parsedate_to_datetime(to_unicode(get_header_value(m['raw'], 'Date'))).date()
+                except (TypeError, ValueError, AttributeError):
+                    return False
+            else:
+                md = msg_date(m)
+            if w in ('SINCE', 'SENTSINCE'):
                 return md >= d
             if w == 'BEFORE':
                 return md < d
@@ -1055,6 +1066,8 @@ class IMAPSession:
                     structure = m.get('bodystructure') or body_structure(email.message_from_string(m['raw']))
                     parts.append('BODYSTRUCTURE ' + structure)
             else:
+                if m.get("omit_fetch_data"):
+                    continue
                 name, content, sets_seen = render_section(spec, m)
                 if m.get("measure_sections") and not name.startswith("BODY[HEADER"):
                     self.logger.log("imap-section-bytes", f"{name} {len(content)}")

@@ -26,7 +26,7 @@ use `scripts/mailbend diagnose --imap`, `--smtp`, or both. These flags
 explicitly request login checks. The SMTP check sends no message.
 
 The following rows cover every class in
-[`helper_cause`](../src/tools.bend) and common operational symptoms.
+[`helper_cause`](../src/policy.bend) and common operational symptoms.
 A helper exit code is not the CLI's exit code and is not proof that a write
 had no effect. Apply the SMTP rules below to every send.
 

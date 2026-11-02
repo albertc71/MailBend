@@ -206,12 +206,37 @@ def ew_bytes(b64: Bool, text: String) -> String:
     case False{}:
       C.qp_decode(text, True{})
 
+def ew_charset.language_tail(s: String, need_char: Bool) -> Bool:
+  match s:
+    case SNil{}:
+      Bool.not(need_char)
+    case SCon{'-', t}:
+      Bool.not(need_char) && ew_charset.language_tail(t, True{})
+    case SCon{+c, t}:
+      (Char.is_alpha(c) || Char.is_digit(c)) && ew_charset.language_tail(t, False{})
+
+def ew_charset.language(s: String) -> Bool:
+  match s:
+    case SCon{c, t}:
+      Char.is_alpha(c) && ew_charset.language_tail(t, False{})
+    case SNil{}:
+      False{}
+
+# RFC 2231 separates language metadata from the encoded word's charset.
+def ew_charset(ps: List<&2, String>, original: String) -> String:
+  match ps:
+    case +cs <> lang <> Nil{}:
+      Bool.pick(String, Bool.not(String.is_empty(cs)) && ew_charset.language(lang), cs, original)
+    case _:
+      original
+
 # "=?charset?enc?text?=" split at '?' to text; anything else is the raw
 # word read as UTF-8.
 def ew_parts(ps: List<&2, String>, word: String) -> String:
   match ps:
-    case "=" <> cs <> enc <> text <> "=" <> Nil{}:
-      C.charset_decode(cs, ew_bytes(String.eq(String.to_upper(enc), "B"), text))
+    case "=" <> +cs <> enc <> text <> "=" <> Nil{}:
+      C.charset_decode(ew_charset(String.split(cs, '*'), cs),
+        ew_bytes(String.eq(String.to_upper(enc), "B"), text))
     case _:
       C.utf8_decode(word)
 

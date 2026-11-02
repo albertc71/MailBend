@@ -26,7 +26,8 @@ def png_idat() -> String:
   C.bytes_str([0, 0, 0, 0, 73, 68, 65, 84, 0, 0, 0, 0])
 
 def png_of(w2: U32, w3: U32, h2: U32, h3: U32) -> String:
-  png_sig() ++ png_ihdr(w2, w3, h2, h3) ++ png_idat()
+  png_sig() ++ png_ihdr(w2, w3, h2, h3) ++ png_idat() ++
+    C.bytes_str([0, 0, 0, 0, 73, 69, 78, 68, 0, 0, 0, 0])
 
 # 280 by 280, with `pad` bytes between the dimensions and IDAT. A legal IHDR
 # length is 13. These lengths are not.
@@ -40,7 +41,7 @@ def png_anim() -> String:
 
 def jpeg_ok() -> String:
   C.bytes_str([255, 216, 255, 225, 0, 8, 0, 1, 0, 2, 0, 3, 255, 192, 0, 11, 8, 1, 24, 6, 32, 1,
-    1, 17, 0])
+    1, 17, 0, 255, 218, 0, 8, 1, 1, 0, 0, 63, 0, 0, 255, 217])
 
 def caps_line() -> String:
   +text = (Jev.request_limit() + Jev.overhead() : U32)
@@ -70,7 +71,7 @@ def show_pre(p: Image.Pre) -> String:
 
 def show_verdict(v: Image.Verdict) -> String:
   match v:
-    case Image.Keep{Image.Still{section, name, f, Image.Pixels{w, h}, data}}:
+    case Image.Keep{Image.Still{section, name, f, Image.Pixels{w, h}, data, removed}}:
       "keep " ++ Image.format_name(f) ++ " " ++ U32.show(w) ++ " " ++ U32.show(h)
     case Image.VDrop{section, name, r}:
       "drop " ++ Image.reason_name(r)
@@ -79,7 +80,7 @@ def judge(f: Image.Format, data: String) -> String:
   show_verdict(Image.judge([], "n", f, data))
 
 def keep_n(n: Nat) -> Image.Verdict:
-  Image.Keep{Image.Still{[], "a.png", Image.Png{}, Image.Pixels{280, 280}, many(n, "")}}
+  Image.Keep{Image.Still{[], "a.png", Image.Png{}, Image.Pixels{280, 280}, many(n, ""), 0}}
 
 def drop_fmt() -> Image.Verdict:
   Image.VDrop{[], "g.gif", Image.Format{}}
@@ -143,8 +144,8 @@ def show_ahead(m: Maybe<&2, Image.Reason>) -> String:
     case Some{r}:
       Image.reason_name(r)
 
-def ahead(count: U32, bytes: U32, fetches: U32, encoding: String, size: U32) -> String:
-  show_ahead(Image.ahead(Image.Quota{Image.Room{count, bytes}, fetches}, encoding, size))
+def ahead(count: U32, bytes: U32, fetches: U32) -> String:
+  show_ahead(Image.ahead(Image.Quota{Image.Room{count, bytes}, fetches}))
 
 def hyphens(s: String, n: U32) -> U32:
   match s:
@@ -171,7 +172,7 @@ def sample_ref() -> String:
   Image.ref_token(19088743, 2309737967, 0, 4294967295)
 
 def sample_sent() -> Image.Sent:
-  Image.Sent{Image.Still{[1, 2], "scan.png", Image.Png{}, Image.Pixels{1200, 800}, "abcd"},
+  Image.Sent{Image.Still{[1, 2], "scan.png", Image.Png{}, Image.Pixels{1200, 800}, "abcd", 0},
     Image.Ref{sample_ref()}}
 
 def show_assets(m: Maybe<&2, J.Json>) -> String:
@@ -213,13 +214,10 @@ def main() -> IO(Unit):
     IO.print("ihdr " ++ judge(Image.Png{}, png_len(0, 0, 0, 8, C.bytes_str([0, 0, 0, 0]))) ++ " " ++
       judge(Image.Png{}, png_len(255, 255, 255, 255, C.bytes_str([0]))))
     IO.print("fetch cap " ++ U32.show(Image.fetch_cap()))
-    IO.print("least " ++ U32.show(Image.least_bytes("base64", 2152312)) ++ " " ++
-      U32.show(Image.least_bytes("base64", 15)) ++ " " ++ U32.show(Image.least_bytes("8bit", 100)) ++
-      " " ++ U32.show(Image.least_bytes("quoted-printable", 100)))
-    IO.print("ahead " ++ ahead(4, 1572864, 8, "base64", 1000) ++ " " ++
-      ahead(4, 1572864, 0, "base64", 1000) ++ " " ++ ahead(0, 1572864, 8, "base64", 1000) ++ " " ++
-      ahead(4, 100, 8, "base64", 1000) ++ " " ++ ahead(4, 100, 8, "quoted-printable", 1000) ++ " " ++
-      ahead(4, 723, 8, "base64", 1000))
+    IO.print("ahead " ++ ahead(4, 1572864, 8) ++ " " ++
+      ahead(4, 1572864, 0) ++ " " ++ ahead(0, 1572864, 8) ++ " " ++
+      ahead(4, 0, 8) ++ " " ++ ahead(0, 0, 8) ++ " " ++
+      ahead(4, 1, 8))
     IO.print("agree " ++ agree(five_keeps()) ++ " " ++ agree(behind()) ++ " " ++ agree(budget()))
     IO.print("counts " ++ counts(Image.room_new(), five_keeps()))
     IO.print("behind " ++ counts(Image.room_new(), behind()))
@@ -235,7 +233,7 @@ def main() -> IO(Unit):
     IO.print("assets " ++ show_assets(Image.assets([])))
     IO.print("assets " ++ show_assets(Image.assets([sample_sent()])))
     bound : List<&2, Image.Fate> <- Image.bind_io([Image.Keep{Image.Still{[1], "scan.png",
-      Image.Png{}, Image.Pixels{280, 280}, "abcd"}}], "hello")
+      Image.Png{}, Image.Pixels{280, 280}, "abcd", 0}}], "hello")
     IO.print("bound " ++ show_bound(bound))
 
 #|caps 4 1572864 1572864 slot 187 framing 387 b64 2097152 slack 12 text 60128 max 2157679
@@ -246,15 +244,14 @@ def main() -> IO(Unit):
 #|ceiling 2162688 1572864
 #|ihdr drop unreadable drop unreadable
 #|fetch cap 8
-#|least 1565314 0 100 0
-#|ahead fetch over_count over_count over_budget fetch fetch
+#|ahead fetch over_count over_count over_budget over_count fetch
 #|agree t3t2t1t0over_count t3t2t1t0over_count formatformatformatformatt3 formatformatformatformatt3 t3over_budget t3over_budget
 #|counts t3t2t1t0over_count
 #|behind formatformatformatformatt3
 #|budget t3over_budget
 #|ref mbimg-01234567-89abcdef-00000000-ffffffff
 #|clear True False
-#|fate {"section":"1.2","name":"scan.png","fate":"used","format":"png","bytes":4,"width":1200,"height":800}
+#|fate {"section":"1.2","name":"scan.png","fate":"used","format":"png","bytes":4,"width":1200,"height":800,"metadata_removed_bytes":0}
 #|fate {"section":"2","name":"anim.png","fate":"skipped","reason":"animated"}
 #|refused {"section":"1.2","name":"scan.png","fate":"skipped","reason":"refused"}
 #|notice Image classification is experimental. Jev's answers on a message with a used image may depend on that image.

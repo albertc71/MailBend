@@ -276,8 +276,12 @@ def envelope_guard():
     workflow = (ROOT / '.github/workflows/ci.yml').read_text()
     heading = '      - name: The SMTP envelope comes only from the allowlist\n        run: |\n'
     require(workflow.count(heading) == 1, 'cannot find exact CI envelope guard')
-    block = workflow.split(heading, 1)[1].split('\n      #', 1)[0]
-    script = '\n'.join(line[10:] for line in block.splitlines() if line.startswith('          ')) + '\n'
+    lines = []
+    for line in workflow.split(heading, 1)[1].splitlines():
+        if line.strip() and not line.startswith('          '):
+            break
+        lines.append(line[10:])
+    script = '\n'.join(lines) + '\n'
     require('envelope' in script and 'exit 1' in script, 'incomplete CI guard')
     with tempfile.TemporaryDirectory(prefix='mailbend-envelope-') as tmp:
         path = Path(tmp)

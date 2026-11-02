@@ -53,6 +53,14 @@ explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp
 SMTP diagnostics authenticate without sending mail, including in read-only or
 drafts-only mode. See [setup diagnostics](docs/CLOUD_AGENT.md#redacted-setup-diagnostics).
 
+For a credential-free inventory of permissions and potential data routes, run
+`scripts/mailbend diagnose --posture`. It reads configuration only, not the mail
+password or TypeSafe key file, and opens no connection and starts no helper. The JSON shows
+send/draft restrictions, allowlist entry count, daily cap, Jev disclosures and
+redacted endpoints. It is not a delivery, remaining-quota or endpoint-validity
+check. Host names and ports are visible; account addresses, local paths, proxy
+credentials and allowlist entries are not. See [offline posture](docs/CLOUD_AGENT.md#offline-posture).
+
 ## What it can do
 
 The tools are listed below. "Changes mail" says what a call can change;
@@ -68,6 +76,7 @@ Jev off, no tool asks it.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
+| `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file | — |
@@ -305,6 +314,76 @@ without STARTTLS. This adds a protocol mode, not a provider compatibility
 claim. Any later live-provider test requires separately authorized accounts
 and explicit disposable recipients.
 
+### Print a provider configuration
+
+Run setup without credentials to print an environment block, an MCP `env`
+JSON block, provider prerequisites, and source links:
+
+List available providers with `mailbend setup --help`.
+
+```sh
+mailbend setup --provider gmail --email reader@example.com
+```
+
+Replace the example address with your account's primary login address.
+`setup` does not use configured account settings, connect to a server, prompt for
+a password, write a file, or apply settings. Both blocks clear `MAILBEND_LOGIN` so login uses the printed email address,
+and enable `MAILBEND_READ_ONLY=1`. Keep that restriction until you separately decide
+which mail changes to allow.
+
+The output uses `MAILBEND_PASSWORD_FILE`. Replace its absolute placeholder
+path in both blocks. MCP clients do not expand `$HOME` or `~` in JSON.
+The printed Bash instructions use a hidden prompt, `umask 077`, and
+no-clobber output. Run them yourself only after reviewing the path. They
+refuse to replace an existing file. The containing directories must exist
+and must not be symlinks. Remove any other password source from the
+environment before using the configuration. Never paste a password into
+the setup command, a chat, or configuration JSON.
+
+The reviewed table is static. It performs no domain lookup or provider
+autodiscovery. Each output identifies its support tier and review date.
+
+| Provider name | Scope and limitations |
+| --- | --- |
+| `icloud` | Existing default profile. Full primary address for both protocols. |
+| `gmail` | App password with eligible 2-Step Verification. Organization or protected accounts may not offer app passwords. |
+| `yahoo` | Full account address and a third-party app password. |
+| `aol` | AOL endpoints from Thunderbird ISPDB. Not the Verizon.net SMTP profile. Provider help was unreadable during review. |
+| `fastmail` | Primary username and an app password with mail access. Basic plans exclude IMAP and SMTP. |
+| `zoho` | Only the documented `.com` personal-account endpoint set. Compare it with your account's Server Configuration Details. Paid organizations and other datacenters differ. |
+| `gmx` | GMX.com endpoint set. Enable IMAP and use an application-specific password. |
+| `mailbox.org` | Main address. Use an email application password with two-factor authentication. |
+| `posteo` | Endpoints from Thunderbird ISPDB. Provider prerequisites could not be rechecked. Review app-password and additional account-protection requirements locally. |
+| `web.de` | Manual review only. ISPDB specifies a local-part login. The preset does not choose a login name; compatibility still needs review. No configuration is printed. |
+| `proton-bridge` | Manual review only. Local ports, connection mode, and trust in Bridge's self-signed certificate need an account-owner decision. No configuration is printed. |
+
+Unknown providers and OAuth-only names such as `outlook`, `hotmail`, and
+`office365` fail without guessed settings. See the
+[password-only authentication decision](https://github.com/albertc71/MailBend/issues/28).
+Do not weaken account protection or TLS verification to make a preset work.
+No provider was live-tested for this setup feature.
+
+The printed Sent-copy setting is `1` for the existing iCloud profile and
+`0` otherwise. Off avoids an extra IMAP APPEND. It is not a promise that
+the provider retains sent mail. Gmail and Zoho document automatic Sent
+filing. Review other providers' behavior before you enable sending.
+
+After applying settings yourself, run `mailbend setup --check`. This
+explicitly connects to both configured servers, as `diagnose --imap --smtp`
+does. It never uses or applies a preset. Its JSON marks the entire output
+`local_only` and nests the redacted diagnostics separately. For unresolved
+roles, it lists existing candidate overrides without selecting or applying
+one. Advertised roles take precedence over exact conventional names.
+Unselectable mailboxes and the review folder are excluded. Failed discovery
+or invalid overrides produce no suggestions. Empty candidate lists mean
+that no safe match was found. Inspect `mail_probe` locally rather than
+guessing or creating a folder. The fixed `INBOX` name has no override.
+
+**Do not share `setup --check` output.** It can contain private folder names.
+Use `mailbend diagnose --imap --smtp` for shareable JSON instead.
+
+### Role folder resolution
+
 The role folders are Drafts, Trash, Sent, Junk and Archive. Each role
 resolves independently, in this order: a nonempty explicit override, a
 unique selectable mailbox advertising the role, then a unique selectable
@@ -339,6 +418,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
+
+The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
+Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
 
 Check the connection first:
 
@@ -657,6 +739,11 @@ synthetic cost measurements and experiment decision are in
 
 ### What the proofs cover
 
+`PROOF.bend` imports the pure policy module rather than tool orchestration or the
+generated schema. CI separately kernel-checks `src/tools.bend` and the
+tool-layer laws in [`tests/formal/tool-laws.bend`](tests/formal/tool-laws.bend),
+so this separation does not reduce the previous tool-layer coverage.
+
 The bounded [SMTP TLS-ordering model](.agents/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
 It does not prove the Rust transport or cryptography.
@@ -673,6 +760,19 @@ from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Fold
 discovery, override validation and how each tool uses the resolved folder are
 covered by the end-to-end tests.
 
+The switch laws cover every operation and JSON argument value. Read-only calls
+that can write, drafts-only calls that send, and Jev-dependent calls with Jev off
+all return a non-empty refusal. The send classifier is fixed independently to the
+operation and `as_draft` field. Unrecognized Boolean switch strings produce a bad
+flag, and a bad flag in any of the five configuration positions rejects the whole
+configuration. Environment reads and tool dispatch remain end-to-end tested.
+
+Each mutating IMAP constructor has a law for its exact effect and write status,
+for every argument. A draft plan is exactly one APPEND with Draft and Seen flags.
+Every resolved role has a structural witness of its exact name and selectability
+in the original listing, with no bound on the list length. The policy mutation
+check rejects changed gates, classifiers, draft plans and invented role names.
+
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
@@ -686,8 +786,8 @@ makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome la
 for every exit code and transcript, and that confirmed acceptance survives a
 later process failure. Native progress production itself remains a tested IO
 boundary. The native
-helpers, TLS, MIME parsing, the agent's choices and the runtime
-configuration are covered by tests and review, not by proofs, and nothing
+helpers, TLS, MIME parsing, the agent's choices and environment
+loading are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)

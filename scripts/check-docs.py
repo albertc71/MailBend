@@ -120,6 +120,15 @@ def check(root):
         errors.extend(f"{label}: missing CLI verb {verb}" for verb in sorted(verbs - listed))
         errors.extend(f"{label}: unknown CLI verb {verb}" for verb in sorted(listed - verbs))
 
+    stdin_form = 'case "call" <> name <> "-" <> Nil{}:' in definition(main, "cli")
+    if stdin_form:
+        for label, text in [("main.bend usage()", usage), ("scripts/mailbend Usage", launcher[1])]:
+            if not re.search(r"call <tool> \[[^]]* or -\]", text):
+                errors.append(f"{label}: missing CLI stdin form")
+        cli_doc = root / "docs/CLI.md"
+        if not cli_doc.is_file() or "call mail_search -" not in cli_doc.read_text():
+            errors.append("docs/CLI.md: missing CLI stdin example")
+
     architecture = (root / "docs/ARCHITECTURE.md").read_text()
     layers = re.search(r"^## Layers\s*\n(.*?)(?=^## |\Z)", architecture, re.M | re.S)
     if not layers:
