@@ -252,7 +252,8 @@ class StartedPlanTests(unittest.TestCase):
                     finally:
                         server.resume.set()
                         if helper is not None and live(helper):
-                            os.kill(helper, signal.SIGKILL)
+                            with contextlib.suppress(ProcessLookupError):
+                                os.kill(helper, signal.SIGKILL)
                             wait_until(lambda: not live(helper))
 
     def stop_core(self, session, core):
