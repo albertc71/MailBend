@@ -157,8 +157,7 @@ def measure(command, env, work, timeout, control=None):
                     break
                 time.sleep(POLL_SECONDS)
         finally:
-            if proc.returncode is None:
-                kill_group(proc)
+            kill_group(proc)
     measured = None
     if usage_path.exists():
         fields = usage_path.read_text().strip().split()
@@ -247,18 +246,27 @@ def records(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+def verify_commands(kind, lines):
+    forbidden = (" SELECT ", " STORE ", " EXPUNGE", " COPY ", " MOVE ",
+                 " CREATE ", " DELETE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
+    for line in lines:
+        upper = line.upper()
+        if any(word in upper for word in forbidden) or ("BODY[" in upper and "FETCH" in upper):
+            raise ValueError("scenario issued a mutating command")
+        if " APPEND " in upper:
+            parts = line.split(maxsplit=2)
+            if (kind != "forward" or len(parts) != 3 or parts[1].upper() != "APPEND"
+                    or not parts[2].startswith('"Sent" ')):
+                raise ValueError("scenario appended outside the allowed Sent copy")
+
+
 def verify(scenario, data, result, logged, state, requests):
     if not isinstance(result, dict):
         raise ValueError("tool result is not an object")
     if "error" in result or result.get("partial"):
         raise ValueError("tool returned an error or partial outcome")
     lines = [row["line"] for row in logged if row["proto"] == "imap"]
-    if scenario.kind != "forward" and any(
-            any(word in line for word in (" SELECT ", " STORE ", " APPEND ", " EXPUNGE",
-                                         " COPY ", " MOVE ", " CREATE ", " DELETE ", " RENAME ",
-                                         " SUBSCRIBE ", " UNSUBSCRIBE "))
-            or ("BODY[" in line and "FETCH" in line) for line in lines):
-        raise ValueError("read issued a mutating command")
+    verify_commands(scenario.kind, lines)
     if scenario.kind != "forward" and state["mailboxes"] != {
             name: {**box, "special": box.get("special", []),
                    "uidnext": max((m["uid"] for m in box["messages"]), default=0) + 1}
@@ -392,13 +400,17 @@ def profile():
     return {"runner": os.environ.get("RUNNER_ENVIRONMENT", "local"),
             "os": platform.freedesktop_os_release().get("PRETTY_NAME", platform.system()),
             "arch": platform.machine(), "cpu": model, "logical_cpus": os.cpu_count(),
-            "bend": version, "rss_semantics": "gnu-time-child-max-process-kib-not-tree-sum",
+            "bend": version, "python_implementation": platform.python_implementation(),
+            "python_version": platform.python_version(), "rss_semantics": "gnu-time-child-max-process-kib-not-tree-sum",
             "gnu_time_sha256": digest(pathlib.Path(shutil.which("time"))),
             "gnu_time_version": subprocess.check_output(["time", "--version"], text=True, timeout=10).splitlines()[0],
             "sampled_group_rss_limit_kib": RSS_LIMIT_KIB, "poll_seconds": POLL_SECONDS,
             "call_limit_seconds": CALL_SECONDS,
             "repeats": REPEATS,
             "fixture_generator_sha256": digest(ROOT / "tests/scale_fixtures.py"),
+            "fixture_dependencies_sha256": {
+                name: digest(ROOT / "tests" / name) for name in
+                ("image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")},
             "measurement_sha256": digest(pathlib.Path(__file__))}
 
 

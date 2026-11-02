@@ -197,6 +197,99 @@ sys.exit(24)
             with self.subTest(result=result), self.assertRaisesRegex(ValueError, "not an object"):
                 scale.verify(SCENARIOS[0], {}, result, [], {}, [])
 
+    def test_profile_tracks_fixture_dependencies_and_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "tests").mkdir()
+            names = ("scale_fixtures.py", "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")
+            for name in names:
+                (root / "tests" / name).write_text(name)
+            timer = root / "time"
+            timer.write_text("synthetic timer")
+            with mock.patch.object(scale, "ROOT", root), \
+                    mock.patch.object(scale.shutil, "which", return_value=str(timer)), \
+                    mock.patch.object(scale.subprocess, "check_output", return_value="synthetic version"):
+                original = scale.profile()
+                self.assertEqual(original["python_version"], scale.platform.python_version())
+                self.assertEqual(original["python_implementation"], scale.platform.python_implementation())
+                before = report()
+                before["profile"] = original
+                for name in names:
+                    path = root / "tests" / name
+                    path.write_text(name + " changed")
+                    after = report()
+                    after["profile"] = scale.profile()
+                    self.assertIn("not comparable", scale.compare(before, after)[0], name)
+                    path.write_text(name)
+                with mock.patch.object(scale.platform, "python_version", return_value="different Python"):
+                    after = report()
+                    after["profile"] = scale.profile()
+                    self.assertIn("not comparable", scale.compare(before, after)[0])
+
+    def test_comparison_filter_covers_measured_dependencies(self):
+        workflow = (scale.ROOT / ".github/workflows/scale-compare.yml").read_text()
+        paths = {line.removeprefix("      - ") for line in workflow.splitlines()
+                 if line.startswith("      - ")}
+        self.assertEqual(paths, {
+            "tests/test-scale.py", "tests/scale_fixtures.py", "tests/image_fixtures.py",
+            "tests/fake_mail_server.py", "tests/fake_typesafe.py", "tests/scale-baseline.json",
+            ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml"})
+
+    def test_forward_command_guards_allow_only_sent_append(self):
+        safe = ['A1 EXAMINE "INBOX"', 'A2 UID FETCH 1 (BODY.PEEK[])',
+                'A3 APPEND "Sent" (\\Seen) {24}']
+        scale.verify_commands("forward", safe)
+        for line in ('A1 SELECT "INBOX"', 'A2 EXPUNGE', 'A3 UID EXPUNGE 1',
+                     'A4 UID FETCH 1 (BODY[])', 'A5 UID STORE 1 +FLAGS (\\Seen)',
+                     'A6 APPEND "INBOX" (\\Seen) {24}', 'A7 CREATE "Other"',
+                     'a8 select "INBOX"'):
+            with self.subTest(command=line), self.assertRaises(ValueError):
+                scale.verify(SCENARIOS[4], {}, {}, [{"proto": "imap", "line": line}], {}, [])
+        with self.assertRaises(ValueError):
+            scale.verify_commands("read", safe)
+
+    def test_normal_exit_stops_remaining_group_members(self):
+        for exit_code in (0, 17):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                work = pathlib.Path(directory)
+                record = work / "orphan.json"
+                command = ("import json,os,pathlib,subprocess,sys; "
+                           "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']); "
+                           f"pathlib.Path({str(record)!r}).write_text(json.dumps([child.pid,os.getpgrp()])); "
+                           f"sys.exit({exit_code})")
+                try:
+                    result = scale.measure([sys.executable, "-c", command], scale.clean_env(work), work, 5)
+                    self.assertEqual(result["exit_code"], exit_code)
+                    self.assertFalse(result["timed_out"])
+                    child, group = json.loads(record.read_text())
+                    self.assertNotEqual(group, os.getpgrp())
+                    deadline = time.monotonic() + 2
+                    while True:
+                        try:
+                            self.assert_group_stopped(group)
+                            break
+                        except AssertionError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(0.01)
+                finally:
+                    if record.exists():
+                        _, group = json.loads(record.read_text())
+                        if group != os.getpgrp():
+                            try:
+                                os.killpg(group, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            deadline = time.monotonic() + 2
+                            while True:
+                                try:
+                                    self.assert_group_stopped(group)
+                                    break
+                                except AssertionError:
+                                    if time.monotonic() >= deadline:
+                                        raise
+                                    time.sleep(0.01)
+
     def test_equal_baseline(self):
         self.assertEqual(scale.compare(report(), report()), [])
 

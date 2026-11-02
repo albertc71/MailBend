@@ -26,7 +26,10 @@ Each scenario needs five successful, independently verified calls. A fresh
 launcher and fresh fake server serve each call. The OS cache is not cleared.
 Fixture generation, TLS certificate setup and result validation are outside
 the measured interval. Fake-server work during the request, including Sent
-state persistence, remains in wall time. These are local fake-server costs,
+state persistence, remains in wall time. Every measured process group is swept after its leader exits, including
+normal and nonzero exits, before the next sample starts. Forward calls also
+reject SELECT, EXPUNGE, non-PEEK body reads and mutations other than the
+explicit Sent APPEND. These are local fake-server costs,
 not provider latency or a comparison between implementations.
 
 `peak_rss_kib` is GNU time’s Linux maximum RSS of an individual process in the
@@ -65,7 +68,9 @@ python3 tests/test-scale.py --baseline tests/scale-baseline.json --output build/
 ```
 
 The comparison requires the same runner, operating system, architecture,
-CPU model, logical CPU count, Bend version, limits and sample count. A different
+CPU model, logical CPU count, Bend version, Python implementation/version,
+limits and sample count. The profile also hashes the measurement harness,
+fixture generator, image generator and both fake servers. A different
 profile is incomparable and fails. Wall-time, maximum-process RSS or IMAP
 login medians more than 25% above the baseline fail. The fast contract tests
 include a deliberate 26% slowdown and reject invalid or incomplete samples.
@@ -84,10 +89,12 @@ workflow reaches the default branch. Scale runs have a separate concurrency
 group from ordinary CI, so they cannot cancel a push check on the same branch.
 Ordinary product pull requests run only the fast contract controls. A separate
 `Scale comparison` workflow runs when a pull request changes the measurement
-harness, fixtures, baseline or that comparison workflow itself. It reuses the
+harness, fixtures (including image generation and both fake servers), baseline
+or either workflow. Changes to the shared CI workflow trigger comparison
+because it also defines the scale environment. It reuses the
 same bounded scale job in comparison mode, checks out the exact PR head, and
 does not join the ordinary `checks` aggregate. Pull requests that change only documentation or unrelated
-product/CI files do not trigger it. No secrets or additional token permissions
+product files do not trigger it. No secrets or additional token permissions
 are passed to the reused workflow.
 `record_scale` saves a candidate result without comparing it. The workflow
 logs the full JSON and its SHA-256 hash even when a scenario fails. The JSON
@@ -108,6 +115,11 @@ GNU time output. The report then keeps only the sampled diagnostic peak.
 The timer binary hash and version are part of the comparable runner profile.
 
 ## Hosted baseline
+
+The retained baseline below predates the expanded dependency and Python
+profile. It is valid historical evidence, but deliberately fails comparison
+with the expanded profile until a complete new hosted candidate is reviewed
+and committed. No missing profile metadata is guessed or added to old samples.
 
 [Run 41379240425](https://github.com/albertc71/MailBend/actions/runs/41379240425)
 recorded all seven exact workloads with five verified samples each on source
