@@ -295,7 +295,7 @@ def imap_refusal(stale: Bool, +lines: List<&2, I.RLine>) -> String:
       stale_msg()
     case False{}:
       Bool.pick(String, I.overquota(lines),
-        "the mailbox is over its storage quota; free space, then retry the refused operation",
+        "the mailbox is over its storage quota; ask the account owner to free storage before retrying the refused operation",
         "the server rejected a command: " ++ String.trim(I.first_failure(lines)))
 
 # A session's reply lines, or why it failed: the helper exits with 5 when

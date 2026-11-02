@@ -56,7 +56,8 @@ exact ratio exceeds 90%, and `ok` otherwise. An unavailable observation gives
 No count, root, or server text reaches this diagnostic check.
 
 The first refused command's actual OVERQUOTA response code produces fixed
-free-space guidance. A prose mention or an unterminated response code does not.
+guidance to ask the account owner to free storage. A prose mention or an
+unterminated response code does not.
 This applies to refusals generally, including APPEND and COPY. The response
 parser does not claim command provenance. A stale UIDVALIDITY error takes
 precedence. SMTP acceptance remains accepted if saving the Sent copy fails.
@@ -75,12 +76,15 @@ stateDiagram-v2
   unknown --> [*]
 ```
 
-The bounded model in `storage-quota-model/Quota.tla` checks the extra-session
+The bounded model in `storage-quota-model/Quota.tla` is a design note, not a
+CI-gated check. It needs the external pstack `statechart` tool, which is not
+installed by this repository. CI does not detect drift between this model and
+the implementation. When run manually, it checks the extra-session
 budget and that known results require accepted evidence. It abstracts parsing,
 TLS, helper IO, and numeric validation. It does not prove those implementations.
 `Broken.cfg` bypasses the capability gate and must violate CapabilityBudget.
 
-Run from a scratch directory with the repository's pstack statechart tool:
+Run from a scratch directory with an external pstack statechart installation:
 
 ```sh
 statechart /path/to/MailBend/docs/plans/storage-quota-model/Quota.tla \

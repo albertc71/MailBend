@@ -733,7 +733,7 @@ def quota_reporting(work):
     fixture['quota_refusals'] = {'APPEND': '[OVERQUOTA] private-server-marker',
                                  'COPY': '[OVERQUOTA] private-server-marker'}
     srv = Server(work, caps="UIDPLUS", fixture=fixture)
-    guidance = "the mailbox is over its storage quota; free space, then retry the refused operation"
+    guidance = "the mailbox is over its storage quota; ask the account owner to free storage before retrying the refused operation"
     try:
         before = srv.st()['mailboxes']
         code, result = tool(srv, "mail_save_draft", {"body": "synthetic fixture"})
