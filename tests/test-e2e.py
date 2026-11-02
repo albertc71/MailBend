@@ -5253,26 +5253,40 @@ def triage_flagged_meanwhile(work, key_file):
     """A message flagged while TypeSafe is still answering stays out of the
     review folder: its flags are read again just before the moves."""
     srv = Server(work, fixture=triage_fixture())
-    ts = TypeSafe(work, "slow:6")
+    gate = tempfile.TemporaryDirectory(dir=work)
+    release = pathlib.Path(gate.name) / "release"
+    waiting = pathlib.Path(str(release) + ".waiting")
+    ts = TypeSafe(work, f"hold-file:{release}")
+    out = {}
+    call = threading.Thread(target=lambda: out.update(r=triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)))
     try:
-        out = {}
-        call = threading.Thread(target=lambda: out.update(r=triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)))
         call.start()
-        deadline = time.time() + 60
-        while time.time() < deadline and not any(" SEARCH CC " in line for line in srv.log_lines()):
-            time.sleep(0.1)
-        fc, fr = tool(srv, "mail_flag", {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY})
-        call.join()
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and call.is_alive() and not waiting.exists():
+            time.sleep(0.05)
+        held = waiting.exists() and call.is_alive()
+        check("triage: Jev is awaiting release before the concurrent flag", held)
+        try:
+            fc, fr = tool(srv, "mail_flag", {"uids": [SAFE], "uidvalidity": TRIAGE_VALIDITY}) if held else (None, {})
+        finally:
+            release.touch()
+        call.join(60)
         c, r = out.get("r", (None, {}))
         got = {m["uid"]: m for m in r.get("messages", [])}
         state = srv.st()
         check("triage: a message flagged while Jev is asked is kept and stays where it is",
-              fc == 0 and c == 0 and got.get(SAFE, {}).get("verdict") == "keep"
+              held and not call.is_alive() and fc == 0 and c == 0
+              and any(q.get("status") == 200 for q in ts.requests())
+              and got.get(SAFE, {}).get("verdict") == "keep"
               and "it is flagged" in got[SAFE].get("vetoes", []) and got[SAFE].get("destination") is None
               and SAFE in msgs(state, "INBOX") and not state["mailboxes"][REVIEW]["messages"], (fr, r))
     finally:
+        release.touch()
         ts.stop()
         srv.stop()
+        if call.ident is not None:
+            call.join(60)
+        gate.cleanup()
 
 
 def triage_protections(work, key_file):
