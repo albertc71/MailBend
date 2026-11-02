@@ -90,7 +90,20 @@ def law_references(text, path, root):
 
 def heading_slugs(text):
     slugs = set()
-    for heading in re.findall(r"^#+ (.+)$", text, re.M):
+    fence = None
+    for line in text.splitlines():
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+            continue
+        if marker and (marker[1][0] != "`" or "`" not in marker[2]):
+            fence = marker[1]
+            continue
+        match = re.match(r"^#+ (.+)$", line)
+        if not match:
+            continue
+        heading = match[1]
         base = re.sub(r"[^a-z0-9 _-]", "", heading.lower()).replace(" ", "-")
         slug = base
         suffix = 0
@@ -114,10 +127,13 @@ def skill_references(root):
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         raise ValueError(f"tools/gen-schema.py: cannot load schema ({type(error).__name__}: {error})") from error
-    tools = required({tool["name"]: set(tool["inputSchema"]["properties"])
-                      for tool in module.TOOLS}, "schema tools")
+    try:
+        tools = required({tool["name"]: set(tool["inputSchema"]["properties"])
+                          for tool in module.TOOLS}, "schema tools")
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"tools/gen-schema.py: invalid tool schema ({type(error).__name__}: {error})") from error
     tool_name = r"mail_[A-Za-z_0-9]+"
     signatures = re.compile(r"\b(" + tool_name + r")\(([^()\n]*)\)")
     listed = set()
@@ -129,7 +145,11 @@ def skill_references(root):
         arguments = set(re.findall(r"\b(" + tool_name + r")\.(" + NAME + r")\b", text))
         for match in signatures.finditer(text):
             name, raw = match.groups()
-            if path == directory / "references/tools.md":
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            index_entry = (path == directory / "references/tools.md"
+                           and text[line_start:match.start()] == "- `"
+                           and text[match.end():].startswith("`:"))
+            if index_entry:
                 listed.add(name)
             signature_arguments = set()
             for argument in raw.split(",") if raw.strip() else []:
@@ -139,7 +159,7 @@ def skill_references(root):
                 else:
                     arguments.add((name, argument))
                     signature_arguments.add(argument)
-            if path == directory / "references/tools.md" and name in tools:
+            if index_entry and name in tools:
                 errors.extend(f"{label}: missing argument {name}.{argument}"
                               for argument in sorted(tools[name] - signature_arguments))
         for name, argument in sorted(arguments):
