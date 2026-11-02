@@ -2,6 +2,7 @@
 """Check documented source names without compiling or connecting to a service."""
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -87,10 +88,68 @@ def law_references(text, path, root):
     return refs
 
 
-def check(root):
+
+def skill_references(root):
     errors = []
+    directory = root / "skills/mailbend"
+    for relative in ("SKILL.md", "references/tools.md", "references/cli.md"):
+        if not (directory / relative).is_file():
+            errors.append(f"skills/mailbend/{relative}: missing skill file")
+    if errors:
+        return errors
+
+    spec = importlib.util.spec_from_file_location("mailbend_documented_schema", root / "tools/gen-schema.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tools = required({tool["name"]: set(tool["inputSchema"]["properties"])
+                      for tool in module.TOOLS}, "schema tools")
+    tool_name = r"mail_[A-Za-z_0-9]+"
+    signatures = re.compile(r"\b(" + tool_name + r")\(([^()\n]*)\)")
+    listed = set()
+    for path in sorted(directory.rglob("*.md")):
+        text = path.read_text()
+        label = str(path.relative_to(root))
+        names = set(re.findall(r"\b" + tool_name + r"\b", text))
+        errors.extend(f"{label}: unknown tool {name}" for name in sorted(names - tools.keys()))
+        arguments = set(re.findall(r"\b(" + tool_name + r")\.(" + NAME + r")\b", text))
+        for match in signatures.finditer(text):
+            name, raw = match.groups()
+            if path == directory / "references/tools.md":
+                listed.add(name)
+            if not raw.strip():
+                continue
+            for argument in raw.split(","):
+                argument = argument.strip()
+                if not re.fullmatch(NAME, argument):
+                    errors.append(f"{label}: invalid argument notation {name}({raw})")
+                else:
+                    arguments.add((name, argument))
+        for name, argument in sorted(arguments):
+            if name in tools and argument not in tools[name]:
+                errors.append(f"{label}: unknown argument {name}.{argument}")
+        for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", text):
+            if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+                continue
+            relative, _, anchor = target.partition("#")
+            destination = (path.parent / relative).resolve() if relative else path
+            if not destination.is_file():
+                errors.append(f"{label}: missing linked file {target}")
+            elif anchor and destination.suffix == ".md":
+                headings = re.findall(r"^#+ (.+)$", destination.read_text(), re.M)
+                slugs = {re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
+                         for heading in headings}
+                if anchor not in slugs:
+                    errors.append(f"{label}: missing linked heading {target}")
+    errors.extend(f"skills/mailbend/references/tools.md: missing tool {name}"
+                  for name in sorted(tools.keys() - listed))
+    return errors
+
+
+def check(root):
+    errors = skill_references(root)
     laws = required(set(re.findall(r"^law (" + NAME + r")\s*:", (root / "LAWS.bend").read_text(), re.M)), "law declarations")
-    docs = sorted(root.glob("*.md")) + sorted((root / "docs").rglob("*.md"))
+    docs = (sorted(root.glob("*.md")) + sorted((root / "docs").rglob("*.md"))
+            + sorted((root / "skills/mailbend").rglob("*.md")))
     count = 0
     for path in docs:
         refs = law_references(path.read_text(), path, root)
@@ -151,7 +210,7 @@ def main():
     if errors:
         print("Documentation drift:\n" + "\n".join(errors), file=sys.stderr)
         return 1
-    print("Documentation names resolve: laws, environment, CLI usage, and source layers")
+    print("Documentation names resolve: laws, environment, CLI usage, source layers, and skill tools")
     return 0
 
 
