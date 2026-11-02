@@ -75,9 +75,12 @@ a failed job even if that command unexpectedly exits successfully. This is
 evidence capture, not a baseline or acceptance fallback. Selection is not
 acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
-The scale job pins CPython 3.13.18, like ordinary CI. The retained candidate
-records below used 3.12.3 and older fake servers; after main integration,
-they deliberately remain incomparable until fresh hosted evidence is reviewed.
+The scale job pins CPython 3.13.18, like ordinary CI. The 7763 baseline below
+uses that version and the current fake servers. The retained 9V45 record
+used 3.12.3 and older fake servers: selecting it must still fail full-profile
+comparison until fresh 9V45 evidence is independently reviewed. Intel 8573C
+has been observed but has no reviewed baseline; its evidence-only run cannot
+pass. CPU selection alone never makes a stale or unknown profile acceptable.
 
 The comparison requires the same runner, operating system, architecture,
 CPU model, logical CPU count, Bend version, Python implementation/version,
@@ -158,8 +161,20 @@ can pass the regression gate.
 
 ### Second supported hosted CPU
 
+The current 7763 baseline comes from
+[run 41402595457](https://github.com/albertc71/MailBend/actions/runs/41402595457),
+source `9e591fc86bfac81e61b9568d3463a34756955cf4`. All 35 exact samples passed
+in 706.85 seconds with CPython 3.13.18 and the main-integrated fixture hashes.
+Independent review verified all 26,864 bytes and JSON SHA-256
+`eafd9e0710bd713f45e9d4b954b6091ac8b4ad4ec3b8009cdf59b03a4076c2d8`.
+This run correctly failed against the old profile. It establishes the new
+7763 candidate, not a successful regression comparison. A later matching
+profile must pass the unchanged 25% gate before readiness.
+
+The previous 7763 candidate is retained in Git history and its hosted log:
+
 Standard public runners also assigned AMD EPYC 7763. Instead of replacing
-one CPU's baseline with another's, `scale-baseline-epyc7763.json` retains
+one CPU's baseline with another's, the original `scale-baseline-epyc7763.json` retained
 [run 41399173308](https://github.com/albertc71/MailBend/actions/runs/41399173308)
 unchanged: source `b9b583cdc4f2128b30d55c14cfb086e60d2626a3`, all 35 successful
 samples, 699.07 seconds. Independent review verified full JSON SHA-256
