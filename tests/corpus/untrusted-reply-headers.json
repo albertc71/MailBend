@@ -4,7 +4,7 @@
   "source": {
     "kind": "synthetic",
     "license": "MIT",
-    "description": "Decoded untrusted controls remain data in mail_get. Separate reply/forward assertions require that they cannot add an unquoted line."
+    "description": "Decoded untrusted controls and bidi marks remain data in mail_get. Reply assertions require line controls to become spaces and bidi marks to be removed, preserving text order."
   },
   "references": [
     "https://www.rfc-editor.org/rfc/rfc2045",
@@ -19,7 +19,7 @@
     "to": "reader@example.invalid",
     "cc": "",
     "reply_to": "Alice\t <alice@example.invalid>",
-    "subject": "Subject\r\nline",
+    "subject": "Subject\r\n\u202eline\u2069",
     "date": "Sat, 31 Oct 2026 12:00:00 +0000",
     "message_id": "<untrusted-reply-headers@corpus.invalid>",
     "in_reply_to": "",
