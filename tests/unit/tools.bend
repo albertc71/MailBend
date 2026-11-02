@@ -1565,7 +1565,7 @@ def main() -> IO(Unit):
 #|ok {"ok":true,"folder":"INBOX","destination":"Work","method":"UID MOVE","changed":[3],"missing":[]}
 #|ok {"ok":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","changed":[3],"missing":[]}
 #|partial {"ok":false,"partial":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","message":"the move was cut off and may have copied the messages to Work: they may now be in both INBOX and Work; check the destination before retrying (the server rejected a command: a5 NO cannot)"}
-#|err the mailbox is over its storage quota; free space, then retry the refused operation
+#|err the mailbox is over its storage quota; ask the account owner to free storage before retrying the refused operation
 #|partial {"ok":false,"partial":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","message":"the move was cut off and may have copied the messages to Work: they may now be in both INBOX and Work; check the destination before retrying (cannot run the TLS helper: timed out)"}
 #|err cannot run the TLS helper: not absolute
 #|[] "destination" must name a different folder | "destination" must name a different folder | "uidvalidity" is required: pass the value mail_search or mail_get returned with these UIDs, so stale UIDs can never change other messages
