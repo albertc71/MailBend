@@ -1591,6 +1591,7 @@ law prefix_conserves_scalar_allowance:
 
 # LAW: enough room for all scalar escapes preserves the entire text and
 # leaves exactly the unused natural-number allowance.
+# Intermediate scalar-cost contract; see prefix_whole_when_room for wire weight.
 law prefix_whole_when_scalar_room:
   for s: String
   for left: U32
