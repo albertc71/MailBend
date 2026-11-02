@@ -2402,3 +2402,6 @@ def Laws.image_bind_byte_cap(draws, vs, corpus, exact):
 
 def Laws.prefix_whole_when_room(s, left, extra, enough):
   ScalarProof.prefix_whole_when_wire_room(s, left, extra, enough)
+
+def Laws.awaiting_disabled_filters_keep_candidate(n):
+  {==}

@@ -6,6 +6,9 @@ import ./imap.bend as I
 import ./mime.bend as M
 import ./thread.bend as T
 
+type Filters is Data:
+  Filters{lists: Bool, automated: Bool}
+
 type Status is Data:
   Replied{}
   Awaiting{}
@@ -128,12 +131,118 @@ def eligible(+n: T.Node, +now: U32, min_age: U32) -> Bool:
   Bool.not(date_valid(n)) ||
     (U32.is_le(at, now) && U32.is_ge((now - at : U32), (min_age * 86400 : U32)))
 
-def candidates(ns: List<&2, T.Node>, +now: U32, +min_age: U32) -> List<&2, T.Node>:
+def list_word(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{+c, t}:
+      U32.is_lt(Char.to_u32(c), 128) &&
+        (Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '-')) && list_word(t)
+
+def list_label(+s: String) -> Bool:
+  Bool.not(String.is_empty(s)) && list_word(s) &&
+    Bool.not(String.starts_with(s, "-")) && Bool.not(String.ends_with(s, "-"))
+
+def list_labels(xs: List<&2, String>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case h <> t:
+      list_label(h) && list_labels(t)
+
+def list_display(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{+c, t}:
+      U32.is_lt(Char.to_u32(c), 128) &&
+        (Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '-') ||
+          Char.is_eq(c, ' ') || Char.is_eq(c, '\t')) && list_display(t)
+
+def list_value.parts(xs: List<&2, String>) -> Bool:
+  match xs:
+    case display <> +tail <> Nil{}:
+      +id = String.take(tail, Nat.sub(String.length(tail), 1n))
+      list_display(display) && String.ends_with(tail, ">") &&
+        String.contains(id, ".") && list_labels(String.split(id, '.'))
+    case _:
+      False{}
+
+def within(text: String, fuel: Nat) -> Bool:
+  match text fuel:
+    case SNil{} _:
+      True{}
+    case _ 0n:
+      False{}
+    case SCon{c, t} 1n+n:
+      within(t, n)
+
+def list_value.bounded(ok: Bool, value: String) -> Bool:
+  match ok:
+    case False{}:
+      False{}
+    case True{}:
+      list_value.parts(String.split(String.trim(value), '<'))
+
+def list_value(+value: String) -> Bool:
+  list_value.bounded(within(value, 998n), value)
+
+def auto_value(value: String) -> Bool:
+  +v = String.to_lower(String.trim(value))
+  String.eq(v, "auto-generated") || String.eq(v, "auto-replied")
+
+# The shared MIME parser recovers malformed field names. Such recovery must not
+# turn ambiguous metadata into positive evidence for hiding a candidate.
+def filter_header_line(+line: String, +name: String) -> Bool:
+  +key = String.to_lower(M.before_colon(line))
+  Bool.not(String.eq(String.trim(key), name) ||
+    (Bool.not(String.contains(line, ":")) && String.starts_with(String.to_lower(line), name))) ||
+    (String.contains(line, ":") && String.eq(key, name))
+
+def filter_header_lines(xs: List<&2, String>, +name: String) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case h <> t:
+      filter_header_line(M.strip_cr(h), name) && filter_header_lines(t, name)
+
+def excluded.headers(n: T.Node, filters: Filters) -> Bool:
+  T.Node{f, v, I.Msg{u, flags, date, size, +headers, body, st}, time, id, parents, refs} = n
+  Filters{lists, automated} = filters
+  +hs = M.headers(headers)
+  +lines = String.split(headers, '\n')
+  (lists && filter_header_lines(lines, "list-id") &&
+    Nat.is_eq(header_count(hs, "list-id"), 1n) && list_value(M.header(hs, "list-id"))) ||
+  (automated && filter_header_lines(lines, "auto-submitted") &&
+    Nat.is_eq(header_count(hs, "auto-submitted"), 1n) &&
+    auto_value(M.header(hs, "auto-submitted")))
+
+def excluded.bounded(ok: Bool, n: T.Node, filters: Filters) -> Bool:
+  match ok:
+    case False{}:
+      False{}
+    case True{}:
+      excluded.headers(n, filters)
+
+def excluded.within(+n: T.Node, filters: Filters) -> Bool:
+  T.Node{f, v, I.Msg{u, flags, date, size, headers, body, st}, time, id, parents, refs} = n
+  excluded.bounded(within(headers, 4096n), n, filters)
+
+def excluded(n: T.Node, filters: Filters) -> Bool:
+  match filters:
+    case Filters{False{}, False{}}:
+      False{}
+    case _:
+      excluded.within(n, filters)
+
+def candidates(ns: List<&2, T.Node>, +now: U32, +min_age: U32, +filters: Filters)
+  -> List<&2, T.Node>:
   match ns:
     case Nil{}:
       []
     case +n <> t:
-      List.filter.put(T.Node, n, candidates(t, now, min_age), eligible(n, now, min_age))
+      List.filter.put(T.Node, n, candidates(t, now, min_age, filters),
+        eligible(n, now, min_age) && Bool.not(excluded(n, filters)))
 
 def ids(ns: List<&2, T.Node>) -> List<&2, String>:
   match ns:

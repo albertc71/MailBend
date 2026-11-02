@@ -4701,12 +4701,12 @@ def await_bounded(out: Policy.Out, folders: List<&2, String>, archive: Bool, now
 
 def await_out(
   sent: AwaitRead, replies: AwaitRead, folders: List<&2, String>,
-  archive: Maybe<&2, String>, +now: U32, min_age: U32
+  archive: Maybe<&2, String>, +now: U32, min_age: U32, filters: Await.Filters
 ) -> Policy.Out:
   AwaitRead{sf, +sc, sr} = sent
   AwaitRead{+rf, rc, rr} = replies
   +ns = List.sort(~T.Node, ~(a => b => T.no_later(a, b)),
-    Await.candidates(found_nodes(sf), now, min_age))
+    Await.candidates(found_nodes(sf), now, min_age, filters))
   +reply_complete = rc && Await.valid_dates(found_nodes(rf), now)
   +complete = sc && reply_complete && Await.valid_candidates(ns)
   ok_obj([
@@ -4720,15 +4720,16 @@ def await_out(
   ])
 
 def await_replies(+sent: AwaitRead, +folders: List<&2, String>, +archive: Maybe<&2, String>,
-  +now: U32, +min_age: U32) -> IO(Policy.Out):
+  +now: U32, +min_age: U32, +filters: Await.Filters) -> IO(Policy.Out):
   AwaitRead{sf, sc, sr} = sent
-  keys = Await.batches(Await.ids(Await.candidates(found_nodes(sf), now, min_age)))
+  keys = Await.batches(Await.ids(Await.candidates(found_nodes(sf), now, min_age, filters)))
   do IO<Policy.Out>:
     replies : AwaitRead <- await_read(Ops.plan_thread_search(folders, keys), 100n)
-    return await_bounded(await_out(sent, replies, folders, archive, now, min_age),
+    return await_bounded(await_out(sent, replies, folders, archive, now, min_age, filters),
       folders, Maybe.is_some(&2, String, archive), now)
 
-def await_folders(f: Fs(), since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+def await_folders(f: Fs(), since: String, now: U32, min_age: U32, limit: U32,
+  filters: Await.Filters) -> IO(Policy.Out):
   match f:
     case Fail{m}:
       pure_out(Policy.Err{m})
@@ -4737,7 +4738,7 @@ def await_folders(f: Fs(), since: String, now: U32, min_age: U32, limit: U32) ->
     case Done{Policy.Folders{all, drafts, trash, Some{sent}, junk, +archive}}:
       do IO<Policy.Out>:
         r : AwaitRead <- await_read(Ops.plan_awaiting_sent(sent, since), U32.to_nat(limit))
-        await_replies(r, thread_folders.put(["INBOX"], archive), archive, now, min_age)
+        await_replies(r, thread_folders.put(["INBOX"], archive), archive, now, min_age, filters)
 
 def await_roles(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
   match ask:
@@ -4748,7 +4749,8 @@ def await_roles(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
         r : Run() <- await_raw(Ops.plan_roles())
         roles_of(r, fs)
 
-def await_probe(r: Run(), since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+def await_probe(r: Run(), since: String, now: U32, min_age: U32, limit: U32,
+  filters: Await.Filters) -> IO(Policy.Out):
   match r:
     case Fail{m}:
       pure_out(Policy.Err{m})
@@ -4756,17 +4758,18 @@ def await_probe(r: Run(), since: String, now: U32, min_age: U32, limit: U32) -> 
       do IO<Policy.Out>:
         fs : Fs() <- await_roles(I.has_cap(I.caps(lines), "SPECIAL-USE"),
           merge_folders(I.folders(lines), []))
-        await_folders(fs, since, now, min_age, limit)
+        await_folders(fs, since, now, min_age, limit, filters)
 
-def await_start(valid: Bool, since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+def await_start(valid: Bool, since: String, now: U32, min_age: U32, limit: U32,
+  filters: Await.Filters) -> IO(Policy.Out):
   match valid:
     case False{}:
       pure_out(Policy.Err{"invalid awaiting-reply bounds or clock: " ++
-        "window 1..3650, age 0..window, limit 1..50"})
+        "window 1..3650, age 0..window, limit 1..50; exclusions must be Boolean"})
     case True{}:
       do IO<Policy.Out>:
         r : Run() <- await_raw(Ops.plan_probe())
-        await_probe(r, since, now, min_age, limit)
+        await_probe(r, since, now, min_age, limit, filters)
 
 def await_arg_valid(v: Maybe<&2, J.Json>) -> Bool:
   match v:
@@ -4778,19 +4781,32 @@ def await_arg_valid(v: Maybe<&2, J.Json>) -> Bool:
     case _:
       False{}
 
+def await_bool_valid(v: Maybe<&2, J.Json>) -> Bool:
+  match v:
+    case None{}:
+      True{}
+    case Some{J.JBool{b}}:
+      True{}
+    case _:
+      False{}
+
 def t_awaiting(+args: J.Json) -> IO(Policy.Out):
   +window = u32_arg(args, "window_days", 30)
   +age = u32_arg(args, "min_age_days", 3)
   +limit = u32_arg(args, "limit", 50)
+  filters : Await.Filters = Await.Filters{Policy.bool_arg(args, "exclude_lists", False{}),
+    Policy.bool_arg(args, "exclude_automated", False{})}
   do IO<Policy.Out>:
     +now : U32 <- now_seconds()
     since : String = Maybe.default(&2, String,
       I.imap_date(M.iso_date((now - window * 86400 : U32))), "")
-    await_start(await_arg_valid(J.get(args, "window_days")) &&
+    await_start(await_bool_valid(J.get(args, "exclude_lists")) &&
+      await_bool_valid(J.get(args, "exclude_automated")) &&
+      await_arg_valid(J.get(args, "window_days")) &&
       await_arg_valid(J.get(args, "min_age_days")) && await_arg_valid(J.get(args, "limit")) &&
       U32.is_ge(window, 1) && U32.is_le(window, 3650) && U32.is_le(age, window) &&
       U32.is_ge(limit, 1) && U32.is_le(limit, 50) && U32.is_ge(now, (window * 86400 : U32)),
-      since, now, age, limit)
+      since, now, age, limit, filters)
 
 # Live stored-header contacts
 # ---------------------------
