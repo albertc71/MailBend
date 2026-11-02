@@ -651,6 +651,7 @@ def run_all(work, *, tool_scenarios_only=False):
     awaiting_replies(work)
     live_contacts(work)
     flags_first_reads(work)
+    new_fetch_coverage(work)
     dry_runs(work)
     jev(work)
     triage(work)
@@ -4026,6 +4027,34 @@ def listed_once(r):
     """Whether a listing shows each UID once, each with the size it fetched."""
     ms = r.get("messages", [])
     return ms and len({m["uid"] for m in ms}) == len(ms) and all(m.get("size") for m in ms)
+
+
+def new_fetch_coverage(work):
+    args = {"since_uid": 1, "uidvalidity": 1700000001, "limit": 3}
+    for missing in (2, 3, 4):
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"][missing - 1]["omit_fetch_data"] = True
+        srv = Server(work, fixture=fixture, extra=["--flags-first", "--noisy-store"])
+        try:
+            before = srv.st()
+            code, result = tool(srv, "mail_get_new", args, MAILBEND_READ_ONLY="1")
+            check(f"get_new: missing selected UID {missing} refuses a checkpoint",
+                  code != 0 and "retry the same checkpoint" in result.get("error", "")
+                  and "next_since_uid" not in result and "messages" not in result, result)
+            check("get_new: incomplete FETCH does not change mailbox state", srv.st() == before)
+            check("get_new: incomplete FETCH stays read-only", not any(
+                  " SELECT " in line or any(x in line for x in MUTATING_COMMANDS)
+                  for line in srv.log_lines()))
+        finally:
+            srv.stop()
+    srv = Server(work, fixture=copy.deepcopy(FIX), extra=["--flags-first", "--noisy-store"])
+    try:
+        code, result = tool(srv, "mail_get_new", args, MAILBEND_READ_ONLY="1")
+        check("get_new: retry old checkpoint recovers every selected UID once",
+              code == 0 and [m["uid"] for m in result.get("messages", [])] == [2, 3, 4]
+              and result.get("next_since_uid") == 4 and result.get("has_more") is True, result)
+    finally:
+        srv.stop()
 
 
 def flags_first_reads(work):
