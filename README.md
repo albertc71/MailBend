@@ -74,6 +74,7 @@ Jev off, no tool asks it.
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no | adds notes |
 | `mail_get` | Read one message: headers, text, HTML with link targets, attachment list | no | adds notes |
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
+| `mail_brief` | Bounded metadata groups, arrival checkpoint and stored-Sent contact evidence | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
 | `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Opt-in list and automated Sent-candidate exclusions; replied still includes self-follow-ups, auto-replies or bounces | no | no |
@@ -127,7 +128,7 @@ reported by the whole-message `mail_get`; it is not a section number.
 
 ### Compact read responses
 
-`mail_get`, `mail_search`, `mail_get_new` and `mail_get_thread` accept optional
+`mail_get`, `mail_search`, `mail_get_new`, `mail_brief` and `mail_get_thread` accept optional
 `projection` and `max_response_bytes`. With neither argument, their existing
 results stay unchanged, including `mail_get`'s decoded HTML.
 
@@ -1009,3 +1010,43 @@ claim that untrusted headers establish real-world identity.
 ## License
 
 MIT; see [LICENSE](LICENSE).
+
+
+### Deterministic metadata brief
+
+`mail_brief` answers a bounded metadata attention question in one call. With no
+`since_uid`, it selects unseen, undeleted messages oldest first. Pass `since_uid: 0`
+to start an arrival stream, or the prior `next_since_uid` and `uidvalidity` to
+continue it. The default page is 50 messages, with a maximum of 100. A checkpoint
+from an unseen page is an arrival checkpoint, not a cursor for later changes to
+read status. Use `mail_refresh` for known-message flag changes.
+
+Every returned message has one `group` and an independent `delivery` value.
+Groups are `people`, `lists`, `automated` and `unknown_people`. `groups` gives the
+counts, including separate raw List-Id keys, while `messages` contains each UID
+once in arrival order. Direct delivery means an exact To match to
+`MAILBEND_EMAIL`; `cc_only` means an exact Cc match without a To match. Aliases,
+Bcc and malformed addresses remain `other_or_unknown`.
+
+People means an exact recipient was observed in the newest 100 stored Sent
+headers within 30 days. At most 50 distinct selected senders are matched. A
+positive observation can survive partial coverage. A missing observation is
+always unknown, never proof of a first-time sender or complete correspondence
+history. `correspondence` exposes the folder identity, sample, caps and reason
+for incomplete evidence. Sent discovery or read failure does not hide the
+selected messages; it leaves contact classification unknown with that reason.
+List, automation, sender and delivery values are untrusted header signals.
+They do not authorize actions or prove identity.
+
+Missing selected FETCH data or changed UIDVALIDITY returns an error without a
+checkpoint. A too-small `max_response_bytes` also fails the entire result, just
+as for `mail_get_new`; it never removes an item and advances past it. Retry the
+same checkpoint with a smaller page or larger budget. Jev off makes no TypeSafe
+call. Jev on adds the existing header annotations without changing the groups.
+The scheduled morning-brief recipe now uses this tool; notification polling
+continues to use `mail_get_new`.
+
+Optional body previews, lifetime first-time classification, and #139's paid
+agent-quality comparison remain outside this metadata core. The synthetic
+persona check measures tool calls and metadata coverage, not agent quality.
+See [the design and state model](docs/plans/deterministic-brief.md).
