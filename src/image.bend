@@ -979,6 +979,21 @@ def bind_use(token: Maybe<&2, String>, left: Nat, +corpus: String, still: Still,
 def bind_fuel(n: Nat) -> Nat:
   Nat.add(Nat.mul(n, 12n), 2n)
 
+# The pure transition is shared by the IO runner and its budget laws. Only
+# a positive BMint state consumes the supplied draw; all other steps ignore it.
+def bind_next(b: Bind, draw: Maybe<&2, String>) -> Bind:
+  match b:
+    case BWalk{Nil{}, corpus, room, acc}:
+      BWalk{[], corpus, room, acc}
+    case BWalk{v <> rest, corpus, room, acc}:
+      bind_admit(rest, corpus, acc, admit(room, v))
+    case BMint{0n, corpus, still, room, rest, acc}:
+      BWalk{rest, corpus, room, skipped_ref(still) <> acc}
+    case BMint{1n+k, corpus, still, room, rest, acc}:
+      BUse{draw, k, corpus, still, room, rest, acc}
+    case BUse{token, left, corpus, still, room, rest, acc}:
+      bind_use(token, left, corpus, still, room, rest, acc)
+
 def bind_run(fuel: Nat, b: Bind) -> IO(List<&2, Fate>):
   match fuel b:
     case 0n _:
@@ -986,15 +1001,15 @@ def bind_run(fuel: Nat, b: Bind) -> IO(List<&2, Fate>):
     case 1n+f BWalk{Nil{}, corpus, room, acc}:
       IO.pure(List<&2, Fate>, List.reverse(&2, Fate, acc))
     case 1n+f BWalk{v <> rest, corpus, room, acc}:
-      bind_run(f, bind_admit(rest, corpus, acc, admit(room, v)))
+      bind_run(f, bind_next(BWalk{v <> rest, corpus, room, acc}, None{}))
     case 1n+f BMint{0n, corpus, still, room, rest, acc}:
-      bind_run(f, BWalk{rest, corpus, room, skipped_ref(still) <> acc})
+      bind_run(f, bind_next(BMint{0n, corpus, still, room, rest, acc}, None{}))
     case 1n+f BMint{1n+k, corpus, still, room, rest, acc}:
       do IO<List<&2, Fate>>:
         tok : Maybe<&2, String> <- draw_token()
-        bind_run(f, BUse{tok, k, corpus, still, room, rest, acc})
+        bind_run(f, bind_next(BMint{1n+k, corpus, still, room, rest, acc}, tok))
     case 1n+f BUse{token, left, corpus, still, room, rest, acc}:
-      bind_run(f, bind_use(token, left, corpus, still, room, rest, acc))
+      bind_run(f, bind_next(BUse{token, left, corpus, still, room, rest, acc}, None{}))
 
 def bind_io(+vs: List<&2, Verdict>, corpus: String) -> IO(List<&2, Fate>):
   bind_run(bind_fuel(List.length(&2, Verdict, vs)), BWalk{vs, corpus, room_new(), []})

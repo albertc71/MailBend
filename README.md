@@ -795,9 +795,45 @@ maps each rule to the code and checks that enforce it.
 
 Response projection laws also prove that the per-field selection predicate
 keeps non-body fields, and fitting one non-body field preserves its value and
-byte allowance. A separate law fixes the body classifier to exactly `text`, `html` and selected-part `content`, so safety fields cannot silently become shorten-able. Full result/list assembly, whole-response
-byte bounds, cursor paging and unchanged Jev inputs are tested; those are not
-claimed as universally quantified budget or IO proofs.
+byte allowance. A separate law fixes the body classifier to exactly `text`,
+`html` and selected-part `content`, so safety fields cannot silently become
+shorten-able. The prefix laws prove that every cut is a prefix of its input,
+that its scalar escape costs plus unused allowance equal the original
+allowance as natural numbers, and that sufficient room preserves the whole
+string and the exact remainder. The arithmetic proof follows the actual U32
+subtraction, not a separate Nat-only implementation.
+
+The serializer bridge proves that those scalar costs equal the unbounded
+UTF-8 weight of the actual `J.esc` output. The prefix allowance proves that
+its `C.utf8_len` additions cannot overflow; the serialized cut fits without
+an extra no-overflow premise. When the full escaped string fits, the text
+and exact unused allowance are preserved. The proof follows the production
+escape/reverse loops and machine-word addition, not a parallel serializer.
+
+Image admission laws retain the original `Budget.admit_all` cap proofs and
+also bound the production `Image.bind_next` state machine used by `bind_run`.
+For every draw history from its real empty-accumulator `room_new()` seed,
+used images plus any pending image plus remaining room stay within four
+images and 1,572,864 stripped bytes. Exhausting reference attempts discards
+the pending image without refunding room. The bound survives final list
+reversal. Kernel-checked wiring obligations pin each IO runner arm, its
+initial room, and its empty result when fuel runs out to these transitions.
+
+The image byte law retains an explicit premise: each used byte string's
+length must be represented exactly by its U32 byte counter. Arbitrary
+mathematical strings could otherwise wrap that counter; bounded native
+fetches remain a tested boundary. The reference law pins the pure
+`Image.bind_use` transition for a supplied token: a clear token adds a
+`Used` fate and joins the corpus; an unavailable token retries. This is not
+a separate global reference-uniqueness theorem.
+
+Complete JSON serialization correspondence, full result/list assembly,
+whole-response byte bounds, cursor paging, unchanged Jev inputs, native IO
+and final image request assembly remain tested rather than kernel-proven.
+The budget mutation check rejects over-budget prefix retention, ignored
+image count, production room reset/refund, broken IO transition wiring,
+and omitted UTF-8 accumulation. Formal observers imported by the laws are
+part of the law contract, not disposable test fixtures.
 
 ## How it works
 
