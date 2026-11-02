@@ -851,6 +851,13 @@ def first_uids(ms: List<&2, I.Msg>, +prev: U32, +body: Bool) -> List<&2, I.Msg>:
 def fetched_msgs(lines: List<&2, I.RLine>, uids: List<&2, U32>, body: Bool) -> List<&2, I.Msg>:
   first_uids(oldest_first(requested(I.fetched(lines), uids)), 0, body)
 
+def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      msg_uid(m) <> msg_uids(t)
+
 # The UIDs of `us` that are not in `seen`, each once, in order.
 def unseen(us: List<&2, U32>, +seen: List<&2, U32>) -> List<&2, U32>:
   match us:
@@ -1621,6 +1628,22 @@ def new_now(r: Run(), folder: String) -> Policy.Out:
     case Done{+lines}:
       new_now.codes(new_now.code(lines, "UIDNEXT"), new_now.code(lines, "UIDVALIDITY"), folder)
 
+# Incomplete FETCH data must not publish a cursor past an unreturned UID.
+# A retry searches again, so a message expunged between sessions cannot stall it.
+def new_headers.complete(
+  missing: List<&2, U32>,
+  +ms: List<&2, I.Msg>,
+  folder: String,
+  uidv: U32,
+  next: U32,
+  more: Bool
+) -> Shown:
+  match missing:
+    case Nil{}:
+      Listed{new_out(folder, uidv, False{}, next, more, summaries(ms)), ms}
+    case h <> t:
+      Listed{Policy.Err{"FETCH did not return every requested message; retry the same checkpoint"}, []}
+
 def new_headers.if(
   same: Bool,
   lines: List<&2, I.RLine>,
@@ -1629,12 +1652,12 @@ def new_headers.if(
   uidv: U32,
   next: U32,
   more: Bool,
-  uids: List<&2, U32>
+  +uids: List<&2, U32>
 ) -> Shown:
   match same:
     case True{}:
       +ms = fetched_msgs(lines, uids, False{})
-      Listed{new_out(folder, uidv, False{}, next, more, summaries(ms)), ms}
+      new_headers.complete(unseen(uids, msg_uids(ms)), ms, folder, uidv, next, more)
     case False{}:
       Listed{new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, []), []}
 
@@ -2473,12 +2496,6 @@ def jev_uids(tool: String, u: Uids()) -> Uids():
     case Done{+us}:
       jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
 
-def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
-  match ms:
-    case Nil{}:
-      []
-    case m <> t:
-      msg_uid(m) <> msg_uids(t)
 
 def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
   match ms:
