@@ -57,13 +57,15 @@ def check_rendered_text(tools):
     assert wire == json.dumps(tools, ensure_ascii=True, separators=(",", ":"))
     return rendered
 
-for index in (0, 9, 9999, 10000, 123456):
+valid_indices = (0, 9, 9999, 10000, 123456)
+invalid_calls = ("schema_fragment.p0000()", "schema_piece.p0()",
+                 "schema_piece.p00000()", "schema_piece.p-001()",
+                 "schema_piece.p0000", "schema_piece.p0000()suffix")
+for index in valid_indices:
     assert PIECE_CALL.fullmatch(f"schema_piece.p{index:04d}()")
-for invalid in ("schema_fragment.p0000()", "schema_piece.p0()",
-                "schema_piece.p00000()", "schema_piece.p-001()",
-                "schema_piece.p0000", "schema_piece.p0000()suffix"):
+for invalid in invalid_calls:
     assert not PIECE_CALL.fullmatch(invalid), invalid
-checks += 11
+checks += len(valid_indices) + len(invalid_calls)
 
 check_rendered_text(schema.TOOLS)
 fixture = [{"name": name, "description": ('quoted "value" \\ slash 雪 🌱 ' * 12),
