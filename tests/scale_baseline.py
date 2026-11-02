@@ -4,7 +4,6 @@ import pathlib
 import sys
 
 BASELINES = {
-    "AMD EPYC 9V45 96-Core Processor": "scale-baseline.json",
     "AMD EPYC 7763 64-Core Processor": "scale-baseline-epyc7763.json",
 }
 
