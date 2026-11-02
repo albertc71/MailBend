@@ -28,9 +28,9 @@ class DriftChecks(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         files = [*ROOT.glob("*.md"), ROOT / "LAWS.bend", ROOT / "main.bend",
-                 ROOT / ".env.example", ROOT / "scripts/mailbend",
+                 ROOT / ".env.example", ROOT / "scripts/mailbend", ROOT / "tools/gen-schema.py",
                  *ROOT.glob("src/*.bend"), *ROOT.glob("native/*/src/**/*.rs"),
-                 *ROOT.glob("docs/**/*.md")]
+                 *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md")]
         for source in files:
             target = self.root / source.relative_to(ROOT)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +55,54 @@ class DriftChecks(unittest.TestCase):
 
     def test_current_documentation(self):
         self.check()
+
+    def test_skill_unknown_tool(self):
+        for name in ("mail_missing", "mail_getWrong"):
+            with self.subTest(name=name):
+                self.append("skills/mailbend/SKILL.md", f"\nCall `{name}`.\n")
+                self.check(f"unknown tool {name}")
+
+    def test_skill_unknown_scoped_argument(self):
+        self.append("skills/mailbend/SKILL.md", "\nUse `mail_get.nonexistent`.\n")
+        self.check("unknown argument mail_get.nonexistent")
+
+    def test_skill_argument_must_belong_to_named_tool(self):
+        self.append("skills/mailbend/SKILL.md", "\nUse mail_probe.max_response_bytes.\n")
+        self.check("unknown argument mail_probe.max_response_bytes")
+
+    def test_skill_signature_arguments_are_scoped(self):
+        self.append("skills/mailbend/references/tools.md", "\nmail_probe(max_response_bytes)\n")
+        self.check("unknown argument mail_probe.max_response_bytes")
+
+    def test_skill_valid_scoped_arguments(self):
+        self.append("skills/mailbend/SKILL.md", "\nUse `mail_get.projection` or mail_get.max_response_bytes.\n")
+        self.append("skills/mailbend/references/tools.md", "\n`mail_get(folder, uid, projection, max_response_bytes)`\n")
+        self.check()
+
+    def test_skill_signature_rejects_unparsed_argument(self):
+        self.append("skills/mailbend/references/tools.md", "\n`mail_get(folder, bogus-field)`\n")
+        self.check("invalid argument notation mail_get(folder, bogus-field)")
+
+    def test_skill_tool_index_must_cover_current_schema(self):
+        path = self.root / "skills/mailbend/references/tools.md"
+        path.write_text(re.sub(r"\bmail_probe\([^()\n]*\)", "mail_probe", path.read_text()))
+        self.check("references/tools.md: missing tool mail_probe")
+
+    def test_missing_skill_reference_fails(self):
+        (self.root / "skills/mailbend/references/cli.md").unlink()
+        self.check("references/cli.md: missing skill file")
+
+    def test_skill_local_file_and_heading_links(self):
+        self.append("skills/mailbend/SKILL.md", "\n[Missing](references/not-there.md)\n")
+        self.check("missing linked file references/not-there.md")
+        self.append("skills/mailbend/SKILL.md", "\n[Missing](../../README.md#not-a-heading)\n")
+        self.check("missing linked heading ../../README.md#not-a-heading")
+
+    def test_skill_schema_import_does_not_regenerate(self):
+        generated = self.root / "src/schema.bend"
+        before = generated.read_bytes()
+        self.check()
+        self.assertEqual(generated.read_bytes(), before)
 
     def test_stale_law_in_existing_architecture_table(self):
         self.replace("docs/ARCHITECTURE.md", "read_only_tools_are_exactly_twelve",

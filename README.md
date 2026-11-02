@@ -422,6 +422,14 @@ roles. `mail_list_folders` retains actual advertised attributes and
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
 
+Install the optional [MailBend agent skill](skills/mailbend/SKILL.md) by copying
+the complete `skills/mailbend/` directory, including `references/`, into your
+client's supported skills directory. It teaches safe MCP and CLI workflows; it
+does not install or configure MailBend, grant tool access, or approve mail changes.
+Use your client's skill-loading instructions and verify that it loads the skill.
+Automatic `npx skills add` discovery and every client's loading behavior have not
+been verified.
+
 The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
 Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
 
