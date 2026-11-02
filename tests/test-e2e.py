@@ -6,9 +6,12 @@ Checks tool results and the server's recorded state and command log: reads
 never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
+Use --tool-scenarios-only for the second transport run after a complete run.
 """
+import argparse
 import base64
 import copy
+import fcntl
 from email import policy
 from email.parser import BytesParser
 import importlib.util
@@ -20,6 +23,7 @@ import quopri
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -40,8 +44,8 @@ TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEN
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 22
-READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread"]
+TOOL_COUNT = 23
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply"]
 THREAD_MOVED = ("a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name "
                 "other messages: read the thread again")
 
@@ -111,6 +115,7 @@ class Server:
         e.pop("MAILBEND_READ_ONLY", None)
         e.pop("MAILBEND_DRAFTS_ONLY", None)
         e.pop("MAILBEND_PASSWORD_FILE", None)
+        e.pop("MAILBEND_LOGIN", None)
         e["MAILBEND_SMTP_TLS_MODE"] = self.smtp_mode
         e.pop("MAILBEND_ATTACH_DIR", None)
         e.pop("MAILBEND_DOWNLOAD_DIR", None)
@@ -221,6 +226,56 @@ def setup_diagnostics(work):
         code, checks = diagnose(srv)
         check("diagnostics: default checks local setup without network", code == 0
               and not srv.log_lines() and diagnosed(checks, "smtp", "authentication", "skipped"))
+        check("diagnostics: trust source is a fixed token", all(
+            diagnosed(checks, protocol, "trust_store", "ok", "mailbend_ca_file")
+            for protocol in ("imap", "smtp")))
+        check("diagnostics: local platform facts include unset directories", all(
+            diagnosed(checks, "local", "platform", status, reason) for status, reason in
+            (("ok", "openat2_ok"), ("skipped", "attach_dir_unset"),
+             ("skipped", "download_tmpfile_unset"))))
+        attachments = pathlib.Path(work) / "private-server-marker-attachments"
+        downloads = pathlib.Path(work) / "private-server-marker-downloads"
+        attachments.mkdir()
+        downloads.mkdir()
+        (downloads / "existing").write_bytes(b"unchanged")
+        download_before = sorted(downloads.iterdir())
+        code, checks = diagnose(srv, MAILBEND_ATTACH_DIR=str(attachments),
+                                MAILBEND_DOWNLOAD_DIR=str(downloads))
+        check("diagnostics: platform probes are local and leave no named file", code == 0
+              and not srv.log_lines() and sorted(downloads.iterdir()) == download_before
+              and (downloads / "existing").read_bytes() == b"unchanged"
+              and diagnosed(checks, "local", "platform", "ok", "attach_dir_ok")
+              and diagnosed(checks, "local", "platform", "ok", "download_tmpfile_ok"))
+        code, checks = diagnose(srv, MAILBEND_ATTACH_DIR=str(attachments / "missing"),
+                                MAILBEND_DOWNLOAD_DIR=str(downloads / "missing"))
+        check("diagnostics: platform refusal paths are redacted", code != 0
+              and not srv.log_lines()
+              and diagnosed(checks, "local", "platform", "failed", "attach_dir_refused")
+              and diagnosed(checks, "local", "platform", "failed", "download_tmpfile_refused"))
+        for path in ("relative-helper", "/nonexistent/private-server-marker"):
+            code, checks = diagnose(srv, MAILBEND_ATTACH_HELPER=path)
+            check("diagnostics: unavailable attachment helper is redacted", code != 0
+                  and not srv.log_lines()
+                  and diagnosed(checks, "local", "platform", "failed", "unavailable"))
+        stub = pathlib.Path(work) / "private-server-marker-helper"
+        stub.write_text("#!/bin/sh\nprintf '%s\\n' 'openat2 ok' 'attach_dir unset' "
+                        "'download_tmpfile unset' 'arch other'\n")
+        stub.chmod(0o700)
+        code, checks = diagnose(srv, MAILBEND_ATTACH_HELPER=str(stub))
+        check("diagnostics: architecture is informational on a healthy platform", code == 0
+              and not srv.log_lines()
+              and diagnosed(checks, "local", "platform", "ok", "arch_other"))
+        for response, reason in (
+                ("openat2 ok\nattach_dir unset\ndownload_tmpfile unset\narch x86_64\n"
+                 "private-server-marker", "invalid_diagnostic_response"),
+                ("private-server-marker" * 300, "timeout_or_helper_failure")):
+            stub.write_text("#!/bin/sh\nprintf '%s\\n' '" + response + "'\n"
+                            "printf '%s\\n' private-server-marker >&2\n")
+            stub.chmod(0o700)
+            code, checks = diagnose(srv, MAILBEND_ATTACH_HELPER=str(stub))
+            check("diagnostics: malformed or excessive platform output is redacted", code != 0
+                  and not srv.log_lines()
+                  and diagnosed(checks, "local", "platform", "failed", reason))
         code, checks = diagnose(srv, "--imap", "--smtp", MAILBEND_READ_ONLY="1",
                                MAILBEND_DRAFTS_ONLY="1", MAILBEND_MAX_SENDS_PER_DAY="1",
                                MAILBEND_STATE_DIR=os.path.join(work, "diagnostic-counter"))
@@ -235,7 +290,8 @@ def setup_diagnostics(work):
                                 env=srv.env(), capture_output=True, text=True, timeout=35)
         outputs.extend([native.stdout, native.stderr])
         check("diagnostics: native output contains only fixed transport facts", native.returncode == 0
-              and not native.stderr and native.stdout.splitlines() == [stage + " ok" for stage in
+              and not native.stderr and native.stdout.splitlines() == [stage + " ok" +
+                  (" mailbend_ca_file" if stage == "trust_store" else "") for stage in
                   ("configuration", "credentials", "trust_store", "dns", "connect", "greeting",
                    "ehlo", "tls", "ehlo_tls", "authentication")], "unexpected native fact stream")
         check("diagnostics: direct native check still sends no message", srv.st() == before)
@@ -252,13 +308,23 @@ def setup_diagnostics(work):
         check("diagnostics: a silent greeting times out and leaves authentication skipped", code != 0
               and time.monotonic() - started < 10 and diagnosed(checks, "smtp", "greeting", "failed")
               and diagnosed(checks, "smtp", "authentication", "skipped"))
+        probe_marker = pathlib.Path(work) / "unexpected-platform-probe"
+        stub.write_text("#!/bin/sh\nprintf called > '" + str(probe_marker) + "'\n")
+        stub.chmod(0o700)
         for switch in ("MAILBEND_READ_ONLY", "MAILBEND_DRAFTS_ONLY", "MAILBEND_TYPESAFE",
                        "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_SAVE_SENT"):
             start = len(srv.log_lines())
-            code, checks = diagnose(srv, "--imap", "--smtp", **{switch: "private-server-marker"})
+            code, checks = diagnose(srv, "--imap", "--smtp",
+                                    MAILBEND_ATTACH_HELPER=str(stub),
+                                    **{switch: "private-server-marker"})
             check("diagnostics: malformed " + switch + " fails before network", code != 0
                   and len(srv.log_lines()) == start
                   and diagnosed(checks, "local", "configuration", "failed"))
+            check("diagnostics: malformed config omits unrun platform facts", not probe_marker.exists()
+                  and not any(f.get("protocol") == "local" and f.get("stage") == "platform"
+                              for f in checks))
+        subprocess.run([str(stub)], check=True, timeout=10)
+        check("diagnostics: platform probe marker detects helper invocation", probe_marker.exists())
         for path in ("relative-helper", "/nonexistent/private-server-marker"):
             code, checks = diagnose(srv, MAILBEND_TLS_HELPER=path)
             check("diagnostics: missing or relative helper is distinct", code != 0
@@ -304,12 +370,16 @@ def setup_diagnostics(work):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tool-scenarios-only", action="store_true",
+                        help="skip transport-fixed front-end checks already covered by a complete run")
+    args = parser.parse_args()
     work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
                             (str(ROOT / "build") if (ROOT / "build").exists() else None))
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
-        run_all(work)
+        run_all(work, tool_scenarios_only=args.tool_scenarios_only)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
@@ -319,25 +389,34 @@ def main():
     sys.exit(1 if failed else 0)
 
 
-def run_all(work):
-    mcp_headless()
-    setup_diagnostics(work)
+def run_all(work, *, tool_scenarios_only=False):
+    if not tool_scenarios_only:
+        mcp_headless()
+        posture = subprocess.run([sys.executable, str(ROOT / "tests/test-posture.py")],
+                                 text=True, capture_output=True)
+        check("offline posture: gate matrix, redaction and denied IO boundaries", posture.returncode == 0,
+              posture.stdout + posture.stderr)
+        setup_diagnostics(work)
     srv = Server(work)
     try:
         reads(srv)
         mutations(srv)
         compose(srv)
-        mcp(srv)
-        cli_front_end(srv)
+        if not tool_scenarios_only:
+            mcp(srv)
+            cli_front_end(srv)
         read_only(srv)
         failures(srv, work)
     finally:
         srv.stop()
     reply_quoting(work)
     reply_unicode_quoting(work)
+    authentication_login(work)
     latin1_quotes(work)
+    outgoing_hidden_unicode(work)
     fallback(work)
     generic_folders(work)
+    important_folders(work)
     folder_tools(work)
     flag_tools(work)
     send_safety(work)
@@ -347,6 +426,7 @@ def run_all(work):
     whole_read_identity(work)
     thread_classify_identity(work)
     threads(work)
+    awaiting_replies(work)
     flags_first_reads(work)
     dry_runs(work)
     jev(work)
@@ -356,7 +436,9 @@ def run_all(work):
     selected_parts(work)
     selected_parts_errors(work)
 
+    search_flags(work)
     search_pagination(work)
+    get_new_start_now(work)
     refresh_known(work)
     import importlib.util
     spec = importlib.util.spec_from_file_location("response_projection_cases",
@@ -364,6 +446,67 @@ def run_all(work):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("metadata_cases", ROOT / "tests/metadata-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
+
+
+def get_new_start_now(work):
+    uidv = FIX['mailboxes']['INBOX']['uidvalidity']
+    srv = Server(work)
+    try:
+        before = srv.st()['mailboxes']
+        c, checkpoint = tool(srv, 'mail_get_new', {'start': 'now'}, MAILBEND_READ_ONLY='1')
+        check('get_new start now: returns the current end without messages',
+              c == 0 and checkpoint == {'folder': 'INBOX', 'uidvalidity': uidv,
+                  'uidvalidity_changed': False, 'next_since_uid': 6,
+                  'has_more': False, 'messages': []}, checkpoint)
+        logged = srv.log_lines()
+        check('get_new start now: only EXAMINE, without SEARCH, FETCH, or writes',
+              sum(' EXAMINE ' in line for line in logged) == 1
+              and not any(any(command in line for command in
+                              MUTATING_COMMANDS + (' SELECT ', ' SEARCH ', ' FETCH '))
+                          for line in logged)
+              and before == srv.st()['mailboxes'], logged)
+        c, added = tool(srv, 'mail_save_draft', {'subject': 'Arrived after checkpoint',
+                       'body': 'New synthetic mail'}, MAILBEND_DRAFTS_FOLDER='INBOX')
+        check('get_new start now: fixture appends a message after the checkpoint',
+              c == 0 and 7 in msgs(srv.st(), 'INBOX'), added)
+        c, arrival = tool(srv, 'mail_get_new', {
+            'since_uid': checkpoint.get('next_since_uid', 0),
+            'uidvalidity': checkpoint.get('uidvalidity', 0)})
+        check('get_new start now: the checkpoint returns exactly the appended message',
+              c == 0 and [m['uid'] for m in arrival.get('messages', [])] == [7]
+              and arrival.get('next_since_uid') == 7, arrival)
+        n = len(srv.log_lines())
+        for args in ({'start': 'now', 'since_uid': 0},
+                     {'start': 'now', 'since_uid': 6, 'uidvalidity': uidv},
+                     {'start': ''}, {'start': 'later'}, {'start': 'NOW'},
+                     {'start': None}, {'start': 1}, {'start': True}):
+            c, r = tool(srv, 'mail_get_new', args)
+            check(f'get_new start now: invalid arguments fail before login {args!r}',
+                  c != 0 and 'start' in r.get('error', '')
+                  and ('since_uid' not in args or 'since_uid' in r.get('error', ''))
+                  and len(srv.log_lines()) == n, r)
+        c, empty = tool(srv, 'mail_get_new', {'folder': 'Archive', 'start': 'now'})
+        check('get_new start now: an empty folder starts at zero',
+              c == 0 and empty.get('next_since_uid') == 0
+              and empty.get('messages') == [] and not empty.get('has_more'), empty)
+    finally:
+        srv.stop()
+    for uidnext in (None, 'not-a-number', 0, 4294967296, '07',
+                    {'line': '* OK [UIDNEXT 7'}):
+        fixture = copy.deepcopy(FIX)
+        fixture['uidnext_response'] = {'INBOX': uidnext}
+        srv = Server(work, fixture=fixture)
+        try:
+            c, r = tool(srv, 'mail_get_new', {'start': 'now'})
+            check(f'get_new start now: invalid UIDNEXT {uidnext!r} cannot become a checkpoint',
+                  c != 0 and 'UIDNEXT' in r.get('error', '')
+                  and 'next_since_uid' not in r and 'messages' not in r, r)
+        finally:
+            srv.stop()
 
 
 def refresh_known(work):
@@ -514,6 +657,50 @@ def sign_in_html(work):
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
                 srv.stop()
+
+
+def search_flags(work):
+    srv = Server(work)
+    try:
+        before = srv.st()
+        for args, key, expected in (
+            ({"flagged": False}, "UNFLAGGED", [6, 4, 3, 2, 1]),
+            ({"seen": False}, "UNSEEN", [6, 4, 3, 2, 1]),
+            ({"unseen": False}, "SEEN", [5]),
+            ({"seen": True, "unseen": False}, "SEEN", [5]),
+            ({"seen": False, "unseen": True}, "UNSEEN", [6, 4, 3, 2, 1]),
+        ):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", args)
+            searches = [line.split(" UID SEARCH ", 1)[1].split()
+                        for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+            check(f"search flags {args}: exact matching messages", c == 0
+                  and [m["uid"] for m in r.get("messages", [])] == expected, r)
+            check(f"search flags {args}: exactly one {key} key", searches == [[key]], searches)
+        for value in (True, False):
+            start = len(srv.log_lines())
+            c, r = tool(srv, "mail_search", {"seen": value, "unseen": value})
+            check(f"search flags: contradictory {value} pair refused before login", c != 0
+                  and "seen" in r.get("error", "") and "unseen" in r.get("error", "")
+                  and len(srv.log_lines()) == start, r)
+        c, first = tool(srv, "mail_search", {"flagged": False, "limit": 1})
+        cursor = first.get("next_cursor")
+        check("search flags: negative criterion yields a continuation", c == 0
+              and isinstance(cursor, str), first)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"cursor": cursor, "limit": 1})
+        check("search flags: omitted negative criterion refuses cursor before login", c != 0
+              and "cursor" in r.get("error", "") and len(srv.log_lines()) == start, r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search")
+        check("search flags: omitted flags keep every message", c == 0
+              and [m["uid"] for m in r.get("messages", [])] == [6, 5, 4, 3, 2, 1], r)
+        searches = [line for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+        check("search flags: omitted flags still send ALL", len(searches) == 1
+              and searches[0].endswith(" UID SEARCH ALL"), searches)
+        check("search flags: message flags unchanged", srv.st() == before)
+    finally:
+        srv.stop()
 
 
 def search_pagination(work):
@@ -1126,7 +1313,8 @@ else:
 print('no controlling terminal', file=sys.stderr, flush=True)
 os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
 """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("MAILBEND_") and k not in {"SSL_CERT_FILE", "SSL_CERT_DIR"}}
     env["MAILBEND_READ_ONLY"] = "1"
     data = "".join(json.dumps(r) + "\n" for r in requests)
     for launcher in (pathlib.Path(LAUNCHER), ROOT / "scripts/mailbend-cloud"):
@@ -1516,7 +1704,7 @@ def cli(srv, *args):
     return p
 
 
-USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments]"
+USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -]"
 
 
 def cli_front_end(srv):
@@ -1536,6 +1724,119 @@ def cli_front_end(srv):
     p = cli(srv, "call", "mail_probe")
     check("cli: call without arguments runs the tool with none", p.returncode == 0
           and json.loads(p.stdout).get("ok") is True, (p.returncode, p.stdout))
+    cli_stdin(srv)
+
+
+def cli_stdin(srv):
+    def run(data, name="nope", source="pipe"):
+        command = [LAUNCHER, "call", name, "-"]
+        if source == "file":
+            with tempfile.TemporaryFile() as handle:
+                handle.write(data)
+                handle.seek(0)
+                result = subprocess.run(command, stdin=handle, capture_output=True,
+                                        env=srv.env(), timeout=120)
+        else:
+            result = subprocess.run(command, input=data, capture_output=True,
+                                    env=srv.env(), timeout=120)
+        outputs.extend([result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")])
+        return result
+
+    for source in ("pipe", "file"):
+        p = run(b'{\n "from": "alice", "limit": 1\n}\n', "mail_search", source)
+        expected = cli(srv, "call", "mail_search", '{"from":"alice","limit":1}')
+        check(f"cli stdin: {source} multiline JSON matches argv result",
+              p.returncode == expected.returncode == 0 and p.stdout.decode() == expected.stdout,
+              (p.returncode, p.stdout[:200], p.stderr))
+
+    args = {"to": "a@example.com", "subject": "Unicode é 雪", "body": "café 🌱 �", "dry_run": True}
+    p = run(json.dumps(args, ensure_ascii=False).encode(), "mail_save_draft")
+    expected = cli(srv, "call", "mail_save_draft", json.dumps(args, ensure_ascii=False))
+    check("cli stdin: UTF-8 result is byte-identical to argv", p.returncode == expected.returncode == 0
+          and p.stdout.decode() == expected.stdout, (p.returncode, p.stdout, p.stderr))
+    args["body"] = "x" * (1024 * 1024)
+    p = run(json.dumps(args).encode(), "mail_save_draft")
+    value = json.loads(p.stdout) if p.stdout else {}
+    check("cli stdin: 1 MiB body reaches dry-run composition", p.returncode == 0
+          and dry_run_preview(value, 'APPEND "Drafts"')
+          and any(int(n) > 1024 * 1024 for n in re.findall(r"<(\d+) bytes>", json.dumps(value))),
+          (p.returncode, p.stdout[:500], p.stderr))
+
+    before = len(srv.log_lines())
+    invalid = [b"", b" \n\t", b"{", b"{} {}", b"{}x", b"{}\x00",
+               b'{"x":"\xff"}', b'{"x":"\xc0\xaf"}', b'{"x":"\xed\xa0\x80"}',
+               b'{"x":"\xf4\x90\x80\x80"}', b'{"x":"\xe2\x82"}', b'{"x":"\xe2\x82',
+               b'{"x":"\xe0\x80\xaf"}', b'{"x":"\x80"}']
+    for index, raw in enumerate(invalid):
+        p = run(raw, "mail_probe")
+        check(f"cli stdin: invalid document {index} refuses before connecting",
+              p.returncode == 2 and p.stdout == b"" and p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+
+    cap = 8 * 1024 * 1024
+    for length in (cap - 1, cap):
+        p = run(b"{}" + b" " * (length - 2))
+        check(f"cli stdin: {length} bytes accepted", p.returncode == 1
+              and json.loads(p.stdout) == {"error": "unknown tool: nope"}, (p.returncode, p.stderr))
+    p = run(b"{}" + b" " * (cap - 1), "mail_probe")
+    check("cli stdin: cap plus one refused before connecting", p.returncode == 2
+          and p.stdout == b"" and b"longer than 8 MiB" in p.stderr
+          and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    for char in ("é", "雪", "🌱"):
+        split = b'{"pad":"' + b"x" * (65535 - len(b'{"pad":"')) + char.encode() + b'"}'
+        p = run(split, source="file")
+        check(f"cli stdin: UTF-8 {len(char.encode())}-byte sequence across reads remains valid",
+              p.returncode == 1 and json.loads(p.stdout) == {"error": "unknown tool: nope"},
+              (p.returncode, p.stderr))
+
+    proc = subprocess.Popen([LAUNCHER, "call", "mail_probe", "-"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=srv.env())
+    try:
+        write_errors = []
+        capacity = fcntl.fcntl(proc.stdin.fileno(), fcntl.F_GETPIPE_SZ)
+        def write_prefix():
+            try:
+                proc.stdin.write(b"{}" + b" " * (2 * capacity))
+                proc.stdin.flush()
+            except OSError as error:
+                write_errors.append(str(error))
+        writer = threading.Thread(target=write_prefix)
+        writer.start()
+        writer.join(30)
+        if writer.is_alive():
+            proc.kill()
+            writer.join(5)
+            raise AssertionError("stdin reader did not consume the bounded prefix")
+        check("cli stdin: complete JSON waits for EOF before dispatch", not write_errors
+              and proc.poll() is None and len(srv.log_lines()) == before, write_errors)
+        out, err = proc.communicate(b" trailing", timeout=30)
+        outputs.extend([out.decode(errors="replace"), err.decode(errors="replace")])
+        check("cli stdin: later trailing input cannot run earlier JSON", proc.returncode == 2
+              and out == b"" and len(srv.log_lines()) == before, (proc.returncode, out, err))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+
+    peer, inherited = socket.socketpair()
+    try:
+        p = subprocess.run([LAUNCHER, "call", "mail_probe", "-"], stdin=inherited,
+                           capture_output=True, env=srv.env(), timeout=30)
+        check("cli stdin: socket rejected with exit 6 and pipe/file guidance", p.returncode == 6
+              and p.stdout == b"" and b"pipe or file" in p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    finally:
+        peer.close()
+        inherited.close()
+    directory = os.open(srv.work, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        p = subprocess.run([LAUNCHER, "call", "mail_probe", "-"], stdin=directory,
+                           capture_output=True, env=srv.env(), timeout=30)
+        check("cli stdin: unreadable descriptor refuses before dispatch", p.returncode == 2
+              and p.stdout == b"" and b"stdin arguments" in p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    finally:
+        os.close(directory)
 
 
 MUTATING_CALLS = {
@@ -3138,6 +3439,113 @@ def fetched_uids(line):
     return line.split(" UID FETCH ")[1].split(" ")[0].split(",")
 
 
+def awaiting_replies(work):
+    from email.utils import formatdate
+    now = time.time()
+    def message(uid, days, mid, extra=""):
+        at = now - days * 86400
+        raw = (f"Date: {formatdate(at, usegmt=True)}\r\nMessage-ID: <{mid}@example.test>\r\n"
+               f"From: sender@example.test\r\nTo: receiver@example.test\r\nSubject: same\r\n"
+               f"{extra}\r\nSynthetic body")
+        return {"uid": uid, "flags": [], "internaldate": time.strftime(
+            "%d-%b-%Y %H:%M:%S +0000", time.gmtime(at)), "raw": raw}
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Sent Messages"]["messages"] = [
+        message(1, 10, "first"), message(2, 8, "second"), message(3, 6, "third")]
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        message(1, 1, "answer", "In-Reply-To: <second@example.test>\r\n"),
+        message(2, 1, "substring", "References: <first@example.test.extra>\r\n")]
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        c, r = tool(srv, "mail_awaiting_reply", {"window_days": 30, "min_age_days": 3},
+                    MAILBEND_READ_ONLY="1")
+        check("awaiting: exact reply, no subject or substring inference", c == 0 and
+              r.get("complete") is True and [m["status"] for m in r.get("messages", [])]
+              == ["awaiting", "replied", "awaiting"], r)
+        check("awaiting: read leaves synthetic mailbox unchanged", srv.st() == before)
+        lines = srv.log_lines()
+        check("awaiting: bounded read-only wire", any("SENTSINCE" in l for l in lines) and
+              any("OR HEADER" in l for l in lines) and not any(
+                  v in l for l in lines for v in (" SELECT ", " STORE ", " APPEND ", " EXPUNGE")), lines)
+        c, r = tool(srv, "mail_awaiting_reply", {"limit": 1})
+        check("awaiting: candidate cap preserves complete per-item evidence", c == 0 and
+              r.get("complete") is False and r.get("messages", [{}])[0].get("status") == "awaiting", r)
+    finally:
+        srv.stop()
+
+    for mode in ("missing", "malformed", "duplicate"):
+        srv = Server(work, fixture=fixture, extra=("--search-response", mode))
+        try:
+            c, r = tool(srv, "mail_awaiting_reply")
+            check(f"awaiting: {mode} SEARCH cannot confirm absence", c == 0 and
+                  r.get("complete") is False and not any(
+                      m["status"] == "awaiting" for m in r.get("messages", [])), r)
+        finally:
+            srv.stop()
+    changed = copy.deepcopy(fixture)
+    changed["examine_changes"] = [{"at": 2, "uidvalidity": 99}]
+    srv = Server(work, fixture=changed)
+    try:
+        c, r = tool(srv, "mail_awaiting_reply")
+        check("awaiting: changed Sent identity cannot confirm absence", c == 0 and
+              r.get("complete") is False and not any(
+                  m["status"] == "awaiting" for m in r.get("messages", [])), r)
+    finally:
+        srv.stop()
+
+    for scenario in ("archive", "no_archive", "missing_fetch", "reply_cap", "invalid_age", "invalid_id", "invalid_reply", "sent_cap"):
+        changed = copy.deepcopy(fixture)
+        if scenario == "archive":
+            changed["mailboxes"]["Archive"]["messages"] = [
+                message(1, 1, "archive-answer", "References: <first@example.test>\r\n")]
+        elif scenario == "no_archive":
+            del changed["mailboxes"]["Archive"]
+        elif scenario == "missing_fetch":
+            changed["mailboxes"]["INBOX"]["messages"][0]["omit_fetch_data"] = True
+        elif scenario == "reply_cap":
+            changed["mailboxes"]["INBOX"]["messages"] = [
+                message(uid, 1, f"answer-{uid}", "References: <second@example.test>\r\n")
+                for uid in range(1, 102)]
+        elif scenario == "invalid_age":
+            changed["mailboxes"]["Sent Messages"]["messages"][0]["internaldate"] = (
+                "31-Feb-2026 09:00:00 +0000")
+        elif scenario == "invalid_id":
+            changed["mailboxes"]["Sent Messages"]["messages"][0]["raw"] = (
+                changed["mailboxes"]["Sent Messages"]["messages"][0]["raw"].replace(
+                    "Message-ID: <first@example.test>", "Message-ID: <first@example.test> <bad@example.test>"))
+        elif scenario == "invalid_reply":
+            changed["mailboxes"]["INBOX"]["messages"][0]["internaldate"] = (
+                "31-Feb-2026 09:00:00 +0000")
+        elif scenario == "sent_cap":
+            changed["mailboxes"]["Sent Messages"]["messages"] = [
+                message(uid, 10, "second" if uid == 2 else f"sent-{uid}")
+                for uid in range(1, 61)]
+        srv = Server(work, fixture=changed)
+        try:
+            c, r = tool(srv, "mail_awaiting_reply")
+            messages = r.get("messages", [])
+            by_uid = {m["anchor"]["uid"]: m for m in messages}
+            if scenario == "archive":
+                valid = r.get("complete") is True and by_uid[1]["status"] == "replied"
+            elif scenario == "no_archive":
+                valid = r.get("complete") is True and r.get("archive_resolved") is False
+            elif scenario in ("invalid_age", "invalid_id"):
+                valid = (r.get("complete") is False and by_uid[1]["status"] == "unknown"
+                         and by_uid[3]["status"] == "awaiting")
+                if scenario == "invalid_age":
+                    valid = valid and by_uid[1]["age_days"] is None
+            elif scenario == "sent_cap":
+                valid = (r.get("complete") is False and len(messages) == 50
+                         and sum(m["status"] == "awaiting" for m in messages) == 49
+                         and by_uid[2]["status"] == "replied")
+            else:
+                valid = r.get("complete") is False and not any(m["status"] == "awaiting" for m in messages)
+            check(f"awaiting: {scenario} evidence", c == 0 and valid, r)
+        finally:
+            srv.stop()
+
+
 def threads(work):
     first = ("INBOX", 7, None)
     reply = ("Sent Messages", 1, "<trip1@example.com>")
@@ -3456,6 +3864,59 @@ def typesafe_key_file(work):
     return key_file
 
 
+def important_folders(work):
+    fixture = jev_fixture()
+    important = "[Gmail]/Important"
+    special = {"[Gmail]/All Mail": "\\All", "[Gmail]/Starred": "\\Flagged",
+               important: "\\Important"}
+    for name, attr in special.items():
+        fixture["mailboxes"][name] = empty_mailbox([attr])
+    fixture["mailboxes"][important + "/Existing"] = empty_mailbox()
+    fixture["mailboxes"]["Important"] = empty_mailbox()
+    srv = Server(work, fixture=fixture)
+    ts = TypeSafe(work)
+    key_file = typesafe_key_file(work)
+    try:
+        c, r = tool(srv, "mail_list_folders")
+        folders = {f["name"]: f for f in r.get("folders", [])}
+        check("Important: advertised role is reported without a name fallback", c == 0
+              and folders.get(important, {}).get("special_use") == "important"
+              and folders.get("Important", {}).get("special_use") is None, r)
+        for name, args in (
+            ("mail_classify", {"uids": [7]}),
+            ("mail_triage", {"uids": [7], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
+            ("mail_get", {"uid": 7}),
+        ):
+            before, start = srv.st(), len(ts.requests())
+            c, r = tool(srv, name, args, **jev_env(ts, key_file))
+            requests = ts.requests()[start:]
+            categories = [q["criteria"] for request in requests
+                          for key, q in request["body"].get("questions", {}).items()
+                          if key.endswith("_category") and q.get("type") == "choice"]
+            check(f"Important: {name} excludes special-use folders and their children", c == 0
+                  and categories and all("Work" in q and "Important" in q
+                      and not any(folder in q for folder in special)
+                      and important + "/Existing" not in q for q in categories), (r, categories))
+            check(f"Important: {name} leaves messages and flags unchanged", srv.st() == before)
+        c, r = tool(srv, "mail_move", {"uids": [2], "uidvalidity": INBOX_VALIDITY,
+                                       "destination": important})
+        check("Important: explicitly named move still works", c == 0
+              and 2 not in msgs(srv.st(), "INBOX")
+              and len(msgs(srv.st(), important)) == 1, r)
+        for name, args in (
+            ("mail_label", {"uids": [1], "uidvalidity": INBOX_VALIDITY, "label": important}),
+            ("mail_label", {"uids": [3], "uidvalidity": INBOX_VALIDITY,
+                            "label": important + "/Existing"}),
+            ("mail_create_folder", {"name": important + "/Child"}),
+            ("mail_rename_folder", {"from": "Work", "to": important + "/Renamed"}),
+            ("mail_rename_folder", {"from": important, "to": "Renamed"}),
+        ):
+            refused(srv, f"Important: {name} protects the reserved folder", name, args, "relies on")
+    finally:
+        ts.stop()
+        srv.stop()
+
+
 def jev(work):
     work = os.path.realpath(work)
     key_file = typesafe_key_file(work)
@@ -3492,7 +3953,7 @@ def jev_switches(srv, work, key_file):
         names = listed_tools(srv, **jev_env(ts, key_file))
         check("jev on: every tool is listed, mail_classify and mail_triage after mail_get_thread",
               len(names) == TOOL_COUNT + 2
-              and names[names.index("mail_get_thread") + 1:names.index("mail_get_thread") + 3]
+              and names[names.index("mail_awaiting_reply") + 1:names.index("mail_awaiting_reply") + 3]
               == ["mail_classify", "mail_triage"], names)
         check("jev on, read-only: the read tools and mail_classify are listed, mail_triage is not",
               listed_tools(srv, MAILBEND_READ_ONLY="1", **jev_env(ts, key_file)) == READ_TOOLS + ["mail_classify"])
@@ -3536,7 +3997,8 @@ def jev_headers(srv, work, key_file):
     try:
         before, log_start = srv.st(), len(srv.log_lines())
         c, r = classify(srv, ts, key_file, {"uids": [9, 7, 8, 7, 99, 1, 2, 3, 4, 5, 6, 10, 12]},
-                        MAILBEND_APP_PASSWORD=PASSWORD, MAILBEND_EMAIL=FIX["user"], UNRELATED_SETTING="x")
+                        MAILBEND_APP_PASSWORD=PASSWORD, MAILBEND_EMAIL=FIX["user"],
+                        MAILBEND_LOGIN=FIX["user"], UNRELATED_SETTING="x")
         got = {m["uid"]: m for m in r.get("messages", [])}
         check("jev headers: a result per message found, in UID order, and the missing UID",
               c == 0 and list(got) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12] and r.get("not_found") == [99], r)
@@ -3569,10 +4031,13 @@ def jev_headers(srv, work, key_file):
               all(q["body"]["model"] == "jev-1.14.0" and q["user_agent"] == "mailbend" for q in sent), sent[:1])
         check("jev headers: each request goes through CONNECT api.typesafe.ai:443",
               all(q["connect"] == "CONNECT api.typesafe.ai:443 HTTP/1.1" for q in ts.records()), ts.records()[:1])
-        envs = [names for q in sent for names in q["env_names"]]
-        check("jev headers: mailbend-typesafe runs without the mail password or any other setting",
-              envs and all("MAILBEND_TYPESAFE_KEY_FILE" in names and "MAILBEND_APP_PASSWORD" not in names
-                           and "MAILBEND_EMAIL" not in names and "UNRELATED_SETTING" not in names for names in envs), envs)
+        envs = [entry for q in sent for entry in q["env_names"]]
+        check("jev headers: each TypeSafe request has a protected or readable confined helper",
+              sent and all(q["env_names"] for q in sent) and all(
+                  entry == {"non_dumpable": True}
+                  or ("MAILBEND_TYPESAFE_KEY_FILE" in entry.get("names", [])
+                      and not {"MAILBEND_APP_PASSWORD", "MAILBEND_EMAIL", "MAILBEND_LOGIN", "UNRELATED_SETTING"}
+                      .intersection(entry["names"])) for entry in envs), envs)
         reported = r.get("requests", [])
         check("jev headers: requests report the UTF-8 bytes sent and TypeSafe's token count",
               [q["bytes"] for q in reported] == [q["bytes"] for q in sent]
@@ -5171,6 +5636,71 @@ def selected_parts_errors(work):
         srv.stop()
 
 
+def authentication_login(work):
+    login = "private-login-marker"
+    for mechanism in ("PLAIN", "LOGIN"):
+        for setting in (None, "", login):
+            fixture = copy.deepcopy(FIX)
+            fixture["user"] = setting or FIX["user"]
+            fixture["smtp_auth"] = mechanism
+            srv = Server(work, fixture=fixture, extra=("--echo-login",))
+            start = len(outputs)
+            try:
+                env = {"MAILBEND_LOGIN": setting}
+                label = f"login {mechanism} {('unset' if setting is None else 'empty' if setting == '' else 'override')}"
+                code, result = tool(srv, "mail_probe", {}, **env)
+                check(label + ": IMAP authentication preserves probe identity",
+                      code == 0 and result.get("account") == FIX["user"], result)
+                code, result = tool(srv, "mail_send", {
+                    "to": "friend@example.com", "subject": "Login identity", "body": "Synthetic message"}, **env)
+                sent = srv.st().get("sent", [])
+                message = BytesParser(policy=policy.default).parsebytes(
+                    sent[-1]["data"].encode("ascii")) if sent else None
+                check(label + ": SMTP authentication preserves envelope and From",
+                      code == 0 and sent and sent[-1]["mail_from"] == FIX["user"]
+                      and message["From"].addresses[0].addr_spec == FIX["user"], result)
+                if setting:
+                    code, result = tool(srv, "mail_reply", {
+                        "uid": 2, "uidvalidity": INBOX_VALIDITY, "body": "Synthetic reply", "reply_all": True}, **env)
+                    sent = srv.st().get("sent", [])
+                    check(label + ": reply excludes the email identity, not the login",
+                          code == 0 and sent[-1]["mail_from"] == FIX["user"]
+                          and sent[-1]["rcpt_to"] == ["jose@example.com"], result)
+                    count = len(sent)
+                    code, result = tool(srv, "mail_send", {
+                        "to": "outside@other.org", "subject": "Blocked", "body": "Synthetic"},
+                        MAILBEND_ALLOWED_RECIPIENTS="friend@example.com", **env)
+                    check(label + ": recipient allowlist still blocks unlisted recipients",
+                          code != 0 and "MAILBEND_ALLOWED_RECIPIENTS" in result.get("error", "")
+                          and len(srv.st().get("sent", [])) == count, result)
+                    code, checks = diagnose(srv, "--imap", "--smtp", **env)
+                    check(label + ": diagnostics authenticate both protocols",
+                          code == 0 and all(diagnosed(checks, protocol, "authentication", "ok")
+                                            for protocol in ("imap", "smtp")), checks)
+                    native = subprocess.run([str(ROOT / "bin" / "mailbend-tls"), "diagnose-smtp"],
+                                            env=srv.env(**env), capture_output=True, text=True, timeout=35)
+                    outputs.extend([native.stdout, native.stderr])
+                    check(label + ": native diagnostic facts report successful authentication",
+                          native.returncode == 0 and "authentication ok" in native.stdout
+                          and not native.stderr)
+                    code, result = tool(srv, "mail_search", {}, MAILBEND_LOGIN="wrong-private-login")
+                    check(label + ": failed authentication has useful fixed guidance",
+                          code != 0 and "MAILBEND_EMAIL (or MAILBEND_LOGIN)" in result.get("error", ""), result)
+                    for invalid in ("private login marker", "privaté-login"):
+                        code, result = tool(srv, "mail_probe", {}, MAILBEND_LOGIN=invalid)
+                        check(label + ": invalid login is a nondisclosing configuration error",
+                              code != 0 and "configuration error" in result.get("error", "")
+                              and "MAILBEND_LOGIN" in result.get("error", "")
+                              and invalid not in json.dumps(result, ensure_ascii=False), result)
+                        code, checks = diagnose(srv, MAILBEND_LOGIN=invalid)
+                        check(label + ": diagnostics refuse invalid login", code != 0, checks)
+                check(label + ": login never appears in output or diagnostics",
+                      not any(marker in output for output in outputs[start:]
+                              for marker in (login, "wrong-private-login", "private login marker", "privaté-login")))
+            finally:
+                srv.stop()
+
+
 def latin1_quotes(work):
     """Mislabelled CP1252 punctuation stays on its original quoted line."""
     fixture = copy.deepcopy(FIX)
@@ -5241,6 +5771,198 @@ def latin1_quotes(work):
               code == 0 and lines[3:] == ["> a", "> b"], (result, lines))
         check("Latin-1 quoting leaves original messages and flags unchanged",
               srv.st()["mailboxes"]["INBOX"] == original)
+    finally:
+        srv.stop()
+
+
+
+def outgoing_hidden_unicode(work):
+    """Outgoing hidden text is refused before delivery; inherited tags are removed."""
+    tag = "\U000e0061"
+    flags = ["\U0001f3f4" + "".join(chr(0xe0000 + ord(c)) for c in code) + "\U000e007f"
+             for code in ("gbeng", "gbsct", "gbwls", "usca", "gbukm", "001")]
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"][0]["raw"] = (
+        "From: =?UTF-8?B?" + base64.b64encode(("Alice" + tag).encode()).decode() +
+        "?= <alice@example.com>\r\nTo: " + FIX["user"] + "\r\n"
+        "Subject: =?UTF-8?B?" + base64.b64encode(("Original" + tag).encode()).decode() +
+        "?=\r\nDate: Monday\r\n"
+        "Message-ID: <hidden@example.com>\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: base64\r\n\r\n" +
+        base64.b64encode(("Original" + tag + " text").encode()).decode())
+    srv = Server(work, fixture=fixture)
+    attachment_dir = pathlib.Path(work) / "unicode-attachments"
+    attachment_dir.mkdir(exist_ok=True)
+    (attachment_dir / "data.txt").write_text("synthetic attachment")
+    try:
+        for name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
+            for dry in (False, True):
+                args = {"body": "caller" + tag, "dry_run": dry}
+                if name in ("mail_reply", "mail_forward"):
+                    args.update(uid=1, uidvalidity=INBOX_VALIDITY)
+                if name != "mail_reply":
+                    args["to"] = ["friend@example.com"]
+                before = srv.st()
+                start = len(srv.log_records())
+                code, result = tool(srv, name, args)
+                lines = [r["line"] for r in srv.log_records()[start:]]
+                check(f"hidden Unicode: {name} dry={dry} refuses caller tags without delivery",
+                      code != 0 and "body" in result.get("error", "")
+                      and tag not in json.dumps(result, ensure_ascii=False)
+                      and srv.st() == before
+                      and not lines,
+                      result)
+        called = pathlib.Path(work) / "hidden-helper-called"
+        helper = pathlib.Path(work) / "hidden-helper"
+        helper.write_text(f'#!/bin/sh\necho called >> "{called}"\nexit 1\n')
+        helper.chmod(0o755)
+        for name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
+            args = {"body": "caller" + tag, "attachments": [{"path": "missing.txt"}]}
+            if name in ("mail_reply", "mail_forward"):
+                args.update(uid=1, uidvalidity=INBOX_VALIDITY)
+            if name != "mail_reply":
+                args["to"] = ["friend@example.com"]
+            start = len(srv.log_records())
+            code, result = tool(srv, name, args, MAILBEND_ATTACH_DIR=str(attachment_dir),
+                MAILBEND_ATTACH_HELPER=str(helper), MAILBEND_TYPESAFE="1",
+                MAILBEND_TYPESAFE_KEY_FILE=str(pathlib.Path(work) / "not-read"),
+                MAILBEND_TYPESAFE_HELPER=str(helper))
+            check(f"hidden Unicode: {name} refuses before attachment, IMAP and Jev IO",
+                  code != 0 and "body" in result.get("error", "") and not called.exists()
+                  and len(srv.log_records()) == start, result)
+        for body, allowed in ((tag * 65536, False), ("\U0001f3f4visible" * 8192, True)):
+            replies, _ = mcp_session(srv, [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "mail_send", "arguments": {
+                    "to": ["a@example.com"], "body": body, "dry_run": True}}}])
+            response = replies[0]["result"]
+            result = response["structuredContent"]
+            check(f"hidden Unicode: large MCP input remains bounded allowed={allowed}",
+                  response["isError"] is (not allowed)
+                  and (result.get("hidden_unicode", {}).get("body") ==
+                       {"tag": 0, "bidi": 0, "zero_width": 0} if allowed else
+                       "body" in result.get("error", "")), result)
+        for field, value in (("subject", "topic" + tag),
+                             *((key, ["Alice" + tag + " <a@example.com>"])
+                               for key in ("to", "cc", "bcc"))):
+            code, result = tool(srv, "mail_send", {"to": ["a@example.com"], "body": "visible",
+                                                     field: value})
+            check(f"hidden Unicode: caller {field} tags are refused without echo",
+                  code != 0 and field in result.get("error", "")
+                  and tag not in json.dumps(result, ensure_ascii=False), result)
+        encoded_tag = "=?UTF-8?B?" + base64.b64encode(("payload" + tag + ".txt").encode()).decode() + "?="
+        encoded_bidi = "=?UTF-8?B?" + base64.b64encode("invoice\u202efdp.exe".encode()).decode() + "?="
+        for filename in ("invoice\u202efdp.exe", "payload" + tag + ".txt"):
+            before = srv.st()
+            code, result = tool(srv, "mail_save_draft", {"body": "visible", "attachments": [
+                {"path": "data.txt", "filename": filename}]}, MAILBEND_ATTACH_DIR=str(attachment_dir))
+            check("hidden Unicode: attachment filename refusal names only the field",
+                  code != 0 and "attachment" in result.get("error", "")
+                  and filename not in json.dumps(result, ensure_ascii=False) and srv.st() == before, result)
+        for args, env, field in [
+            ({"to": ["a@example.com"], "body": "visible"},
+             {"MAILBEND_EMAIL": "Sender" + tag + " <sender@example.com>"}, "from"),
+            ({"attachments": [{"path": "missing/hidden" + tag + ".txt"}]}, {}, "attachments")]:
+            start = len(srv.log_records())
+            code, result = tool(srv, "mail_save_draft", args, **env)
+            check(f"hidden Unicode: final sender or filename basename refuses {field}",
+                  code != 0 and field in result.get("error", "")
+                  and len(srv.log_records()) == start, result)
+        encoded_names = [encoded_tag, encoded_bidi, encoded_bidi + ".txt",
+                         "=?UTF-8?B?YQ==?=" + encoded_bidi, encoded_bidi + "é.txt",
+                         encoded_bidi + "a" * 210]
+        for charset in ("utf-16-be", "utf-32-be"):
+            for content in ("invoice\u202efdp.exe", "payload" + tag + ".txt"):
+                encoded_names.append("=?" + charset + "?B?" +
+                    base64.b64encode(content.encode(charset)).decode() + "?=")
+        for name in ("mail_send", "mail_save_draft"):
+            for filename in encoded_names:
+                code, result = tool(srv, name, {"to": ["friend@example.com"], "body": "visible",
+                    "attachments": [{"path": "data.txt", "filename": filename}]},
+                    MAILBEND_ATTACH_DIR=str(attachment_dir))
+                state = srv.st()
+                raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                             if m["uid"] == result.get("uid")), "") if name == "mail_save_draft" else
+                       state.get("sent", [{}])[-1].get("data", ""))
+                message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+                attachment = next(message.iter_attachments(), None)
+                check(f"hidden Unicode: {name} encoded-word-looking filename stays literal",
+                      code == 0 and attachment is not None and attachment.get_filename() == filename
+                      and result.get("hidden_unicode", {}).get("attachment_filenames") ==
+                          [{"tag": 0, "bidi": 0, "zero_width": 0}],
+                      (result, attachment.get_filename() if attachment else None))
+                check("hidden Unicode: encoded-looking filename has safe name and filename parameters",
+                      attachment is not None and attachment.get_param("name") == filename
+                      and re.search(r'(?:^|;\r\n )filename="attachment"', raw)
+                      and re.search(r'(?:^|;\r\n )name="attachment"', raw))
+        literal = "=?UTF-8?B?" + base64.b64encode(("topic" + tag).encode()).decode() + "?="
+        for name in ("mail_send", "mail_save_draft"):
+            code, result = tool(srv, name, {"to": [literal + " <a@example.com>"],
+                                          "subject": literal, "body": "visible"})
+            state = srv.st()
+            raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                         if m["uid"] == result.get("uid")), "") if name == "mail_save_draft" else
+                   state.get("sent", [{}])[-1].get("data", ""))
+            message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+            check(f"hidden Unicode: {name} encoded-word-looking headers remain visible literal text",
+                  code == 0 and str(message.get("Subject", "")) == literal
+                  and message["To"].addresses[0].display_name == literal
+                  and result.get("hidden_unicode", {}).get("subject", {}).get("tag") == 0,
+                  (result, str(message.get("Subject", "")), str(message.get("To", ""))))
+        visible = "العربية 日本語 café 👩\u200d💻 " + " ".join(flags) + "\u202aRTL\u202c"
+        for name in ("mail_send", "mail_save_draft"):
+            for dry in (False, True):
+                code, result = tool(srv, name, {"to": ["Zoë\u200b <a@example.com>"],
+                    "cc": ["عربي\u200f <c@example.com>"], "bcc": ["blind\u200c <b@example.com>"],
+                    "subject": "日本語",
+                    "body": visible, "dry_run": dry, "attachments": [
+                        {"path": "data.txt", "filename": "تقرير.txt"}]},
+                    MAILBEND_ATTACH_DIR=str(attachment_dir))
+                hidden = result.get("hidden_unicode", {})
+                check(f"hidden Unicode: {name} dry={dry} preserves visible text and counts flags",
+                      code == 0 and hidden.get("body") == {"tag": 33, "bidi": 2, "zero_width": 1}
+                      and hidden.get("subject") == {"tag": 0, "bidi": 0, "zero_width": 0}
+                      and hidden.get("to") == [{"tag": 0, "bidi": 0, "zero_width": 1}]
+                      and hidden.get("cc") == [{"tag": 0, "bidi": 1, "zero_width": 1}]
+                      and hidden.get("bcc") == [{"tag": 0, "bidi": 0, "zero_width": 1}]
+                      and hidden.get("attachment_filenames") == [{"tag": 0, "bidi": 0, "zero_width": 0}], result)
+        for name in ("mail_reply", "mail_forward"):
+            for draft in (False, True):
+                args = {"uid": 1, "uidvalidity": INBOX_VALIDITY,
+                        "body": "My visible answer", "as_draft": draft}
+                if name == "mail_forward":
+                    args["to"] = ["friend@example.com"]
+                code, result = tool(srv, name, args)
+                state = srv.st()
+                raw = (next((m["raw"] for m in state["mailboxes"]["Drafts"]["messages"]
+                             if m["uid"] == result.get("uid")), "") if draft else
+                       state.get("sent", [{}])[-1].get("data", ""))
+                message = BytesParser(policy=policy.default).parsebytes(raw.encode("ascii"))
+                body = message.get_body(preferencelist=("plain",))
+                text = body.get_content() if body else ""
+                removed = result.get("removed_tags", {})
+                check(f"hidden Unicode: {name} draft={draft} strips inherited tags and reports removal",
+                      code == 0 and tag not in text and tag not in str(message.get("Subject", ""))
+                      and "My visible answer" in text and removed.get("subject") == 1
+                      and removed.get("body") == 2
+                      and result.get("hidden_unicode", {}).get("body", {}).get("tag") == 0, result)
+                if name == "mail_forward":
+                    boundary = message.get_boundary()
+                    part = next((p for p in raw.split("--" + boundary)
+                                 if "filename=\"forwarded-message.eml\"" in p), "")
+                    attached = part.split("\r\n\r\n", 1)[1][:-2] if "\r\n\r\n" in part else ""
+                    check(f"hidden Unicode: forwarded original remains byte-identical draft={draft}",
+                          attached == fixture["mailboxes"]["INBOX"]["messages"][0]["raw"])
+        for name in ("mail_send", "mail_forward"):
+            args = {"to": ["lost-reply@example.com"], "body": "visible\u200b"}
+            if name == "mail_forward":
+                args.update(uid=1, uidvalidity=INBOX_VALIDITY)
+            code, result = tool(srv, name, args)
+            check(f"hidden Unicode: {name} keeps counts on uncertain SMTP outcome",
+                  code != 0 and result.get("smtp_outcome") == "unknown"
+                  and result.get("hidden_unicode", {}).get("body") ==
+                      {"tag": 0, "bidi": 0, "zero_width": 1}
+                  and (name == "mail_send" or result.get("removed_tags", {}).get("body") == 2), result)
     finally:
         srv.stop()
 

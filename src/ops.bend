@@ -17,6 +17,7 @@ type Op is Data:
   OGetNew{}
   ORefresh{}
   OGetThread{}
+  OAwaitingReply{}
   OClassify{}
   OTriage{}
   OGetAttachment{}
@@ -52,6 +53,8 @@ def is_read_only(op: Op) -> Bool:
       True{}
     case ORefresh{}:
       True{}
+    case OAwaitingReply{}:
+      True{}
     case OGetThread{}:
       True{}
     case OClassify{}:
@@ -82,6 +85,8 @@ def name(op: Op) -> String:
       "mail_get_new"
     case ORefresh{}:
       "mail_refresh"
+    case OAwaitingReply{}:
+      "mail_awaiting_reply"
     case OGetThread{}:
       "mail_get_thread"
     case OClassify{}:
@@ -129,6 +134,7 @@ def all_ops() -> List<&2, Op>:
     OGetNew{},
     ORefresh{},
     OGetThread{},
+    OAwaitingReply{},
     OClassify{},
     OTriage{},
     OGetAttachment{},
@@ -272,6 +278,9 @@ def plan_new.if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
 def plan_new(mbox: String, +since: U32) -> List<&2, I.Cmd>:
   plan_new.if(U32.is_eq(since, max_uid()), mbox, since)
 
+def plan_new_now(mbox: String) -> List<&2, I.Cmd>:
+  [I.CExamine{mbox}]
+
 # The summaries (flags, date, size, header fields) of `uids`.
 def plan_headers(mbox: String, uids: List<&2, U32>) -> List<&2, I.Cmd>:
   [
@@ -298,7 +307,7 @@ def plan_classify(mbox: String, uids: List<&2, U32>, body: Bool, max: U32) -> Li
 def plan_get(mbox: String, uid: U32, max: U32) -> List<&2, I.Cmd>:
   [
     I.CExamine{mbox},
-    I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}
+    I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IFull{max}]}
   ]
 
 # An optional mailbox identity is checked in the very session that fetches
@@ -310,7 +319,7 @@ def plan_get_checked(mbox: String, uid: U32, max: U32, uidv: Maybe<&2, U32>)
       plan_get(mbox, uid, max)
     case Some{v}:
       [I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
-        I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
+        I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IFull{max}]}]
 
 # Identities discovered for read-only multi-folder sessions. A generation
 # belongs only to its own folder, never to every folder in a thread.
@@ -399,6 +408,9 @@ def plan_thread_search(folders: List<&2, String>, +keys: List<&2, I.Key>) -> Lis
       []
     case mbox <> t:
       I.CExamine{mbox} <> thread_searches(keys, plan_thread_search(t, keys))
+
+def plan_awaiting_sent(sent: String, since: String) -> List<&2, I.Cmd>:
+  [I.CExamine{sent}, I.CSearch{[I.KSentSince{since}, I.KUndeleted{}]}]
 
 # The keys of mail the user wrote to each address: one in To, then one in
 # Cc. Bcc is not searched.

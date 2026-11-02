@@ -38,6 +38,13 @@ reaches a process that holds the mail password. On a cloud computer, see
 
 ## What leaves the machine
 
+Run `scripts/mailbend diagnose --posture` for the current configuration's
+redacted capability and destination inventory. No TypeSafe key file or network
+access is needed. The command distinguishes an image permission from active
+TypeSafe egress when Jev is off. Folder names and category options can accompany
+requests; headers mode is still data sharing. The protocol details below explain
+those reported categories.
+
 Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
 `mailbend-typesafe`, over verified TLS.
 
@@ -52,7 +59,9 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   do not. A part outside those rules is skipped and reported; it is not
   resized or re-encoded. MailBend removes JPEG APP1 through APP13, APP15,
   and COM segments locally before sending, including EXIF, XMP, and ICC
-  profiles. APP0 and APP14 remain. It copies the scan bytes unchanged and
+  profiles. APP0 and APP14 remain. APP0 is retained in full, including
+  JFIF/JFXX thumbnails, which can contain an uncropped version of the image.
+  It copies the scan bytes unchanged and
   drops bytes after EOI. JPEGs with metadata between scans or unsupported
   frame changes are skipped as `unreadable`.
   For PNG, it removes `tEXt`, `zTXt`, `iTXt`, `eXIf`, and `tIME` chunks
@@ -60,11 +69,12 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   A truncated walk, missing image terminator, or PNG with trailing bytes
   is skipped as `unreadable`, never sent unstripped. The request budget
   counts the stripped bytes. The original file and fetch caps still apply.
-  The pure admission fold's count and byte caps are kernel-proven. The byte
-  law requires each accepted string's length to fit its U32 counter exactly.
-  Bounded native fetches and complete request assembly remain tested IO
-  boundaries. Reference binding is proven to use only a token absent from
-  the request corpus, then add that token to the corpus.
+  The production Bind transitions' count and byte caps are kernel-proven,
+  including pending images, failed reference draws and final list reversal.
+  The IO runner's arms are pinned to those transitions. The byte law requires
+  each used string's length to fit its U32 counter exactly. Native fetches
+  and complete request assembly remain tested IO boundaries. The reference
+  law covers the supplied-token pure transition, not global uniqueness.
   These checks validate framing, not compressed pixels. TypeSafe still
   handles decoding failures.
   The request carries `TypeSafe-Danger-Zone-Images: true` only when an image is

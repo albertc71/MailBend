@@ -513,8 +513,20 @@ type Strip is Data:
   StripBroken{}
   StripMoving{}
 
+def strip_prefix.go(n: Nat, data: String, acc: String) -> String:
+  match n data:
+    case 0n _:
+      String.reverse(acc)
+    case _ SNil{}:
+      String.reverse(acc)
+    case 1n+p SCon{c, rest}:
+      strip_prefix.go(p, rest, SCon{c, acc})
+
+def strip_prefix(data: String, size: U32) -> String:
+  strip_prefix.go(U32.to_nat(size), data, "")
+
 type StripChunk is Data:
-  StripChunk{kind: String, length: U32, bytes: String, rest: String, left: U32}
+  StripChunk{kind: String, length: U32, source: String, size: U32, rest: String, left: U32}
 
 def strip_chunk.fit(ok: Bool, kind: String, length: U32, +size: U32, +data: String,
   left: U32) -> Maybe<&2, StripChunk>:
@@ -522,7 +534,7 @@ def strip_chunk.fit(ok: Bool, kind: String, length: U32, +size: U32, +data: Stri
     case False{}:
       None{}
     case True{}:
-      Some{StripChunk{kind, length, String.take(data, U32.to_nat(size)),
+      Some{StripChunk{kind, length, data, size,
         String.drop(data, U32.to_nat(size)), (left - size : U32)}}
 
 def strip_chunk.length(+length: U32, kind: String, data: String, +left: U32) ->
@@ -547,46 +559,46 @@ def png_metadata(+kind: String) -> Bool:
 def png_animation(+kind: String) -> Bool:
   String.eq(kind, "acTL") || String.eq(kind, "fcTL") || String.eq(kind, "fdAT")
 
-def strip_keep(drop: Bool, bytes: String, acc: List<&2, String>) -> List<&2, String>:
+def strip_keep(drop: Bool, source: String, size: U32, acc: List<&2, String>) -> List<&2, String>:
   match drop:
     case True{}:
       acc
     case False{}:
-      bytes <> acc
+      strip_prefix(source, size) <> acc
 
 type PngStrip is Data:
   PsWalk{rest: String, left: U32, first: Bool, data_seen: Bool, acc: List<&2, String>}
   PsEnd{result: Strip}
 
-def strip_png.end(ok: Bool, bytes: String, acc: List<&2, String>) -> PngStrip:
+def strip_png.end(ok: Bool, source: String, size: U32, acc: List<&2, String>) -> PngStrip:
   match ok:
     case False{}:
       PsEnd{StripBroken{}}
     case True{}:
-      PsEnd{Stripped{String.concat(List.reverse(&2, String, bytes <> acc))}}
+      PsEnd{Stripped{String.concat(List.reverse(&2, String, strip_prefix(source, size) <> acc))}}
 
 def strip_png.kind(bad: Bool, moving: Bool, end: Bool, +kind: String, length: U32,
-  bytes: String, rest: String, left: U32, seen: Bool, acc: List<&2, String>) -> PngStrip:
+  source: String, size: U32, rest: String, left: U32, seen: Bool, acc: List<&2, String>) -> PngStrip:
   match bad moving end:
     case True{} _ _:
       PsEnd{StripBroken{}}
     case False{} True{} _:
       PsEnd{StripMoving{}}
     case False{} False{} True{}:
-      strip_png.end(seen && U32.is_zero(length) && U32.is_zero(left), bytes, acc)
+      strip_png.end(seen && U32.is_zero(length) && U32.is_zero(left), source, size, acc)
     case False{} False{} False{}:
       PsWalk{rest, left, False{}, seen || String.eq(kind, "IDAT"),
-        strip_keep(png_metadata(kind), bytes, acc)}
+        strip_keep(png_metadata(kind), source, size, acc)}
 
 def strip_png.step(chunk: Maybe<&2, StripChunk>, +first: Bool, seen: Bool,
   acc: List<&2, String>) -> PngStrip:
   match chunk:
     case None{}:
       PsEnd{StripBroken{}}
-    case Some{StripChunk{+kind, length, bytes, rest, left}}:
+    case Some{StripChunk{+kind, length, source, size, rest, left}}:
       strip_png.kind((first && Bool.not(String.eq(kind, "IHDR"))) ||
         (Bool.not(first) && String.eq(kind, "IHDR")),
-        png_animation(kind), String.eq(kind, "IEND"), kind, length, bytes, rest, left, seen, acc)
+        png_animation(kind), String.eq(kind, "IEND"), kind, length, source, size, rest, left, seen, acc)
 
 def strip_png.go(fuel: Nat, state: PngStrip) -> Strip:
   match fuel state:
@@ -706,7 +718,7 @@ def strip_jpeg.tail(length: Maybe<&2, U32>, data: String, acc: List<&2, String>)
     case None{}:
       StripBroken{}
     case Some{n}:
-      Stripped{String.concat(List.reverse(&2, String, String.take(data, U32.to_nat(n)) <> acc))}
+      Stripped{String.concat(List.reverse(&2, String, strip_prefix(data, n) <> acc))}
 
 def jpeg_metadata(+code: U32) -> Bool:
   (U32.is_ge(code, 225) && U32.is_le(code, 237)) || U32.is_eq(code, 239) ||
@@ -725,8 +737,7 @@ def strip_jpeg.segment(length: Maybe<&2, U32>, +code: U32, prefix: U32, +origina
     case Some{n}:
       +size = (prefix + n : U32)
       JsWalk{String.drop(original, U32.to_nat(size)), (left - size : U32),
-        seen || is_sof(code), strip_keep(jpeg_metadata(code),
-          String.take(original, U32.to_nat(size)), acc)}
+        seen || is_sof(code), strip_keep(jpeg_metadata(code), original, size, acc)}
 
 def strip_jpeg.code(bad: Bool, scan: Bool, alone: Bool, code: U32, rest: String,
   +prefix: U32, original: String, +left: U32, seen: Bool, acc: List<&2, String>) -> JpegStrip:
@@ -737,7 +748,7 @@ def strip_jpeg.code(bad: Bool, scan: Bool, alone: Bool, code: U32, rest: String,
       JsScan{original, left, acc}
     case False{} False{} True{}:
       JsWalk{rest, (left - prefix : U32), seen,
-        String.take(original, U32.to_nat(prefix)) <> acc}
+        strip_prefix(original, prefix) <> acc}
     case False{} False{} False{}:
       strip_jpeg.segment(segment_length(rest, (left - prefix : U32), 2), code, prefix,
         original, left, seen, acc)
@@ -968,6 +979,21 @@ def bind_use(token: Maybe<&2, String>, left: Nat, +corpus: String, still: Still,
 def bind_fuel(n: Nat) -> Nat:
   Nat.add(Nat.mul(n, 12n), 2n)
 
+# The pure transition is shared by the IO runner and its budget laws. Only
+# a positive BMint state consumes the supplied draw; all other steps ignore it.
+def bind_next(b: Bind, draw: Maybe<&2, String>) -> Bind:
+  match b:
+    case BWalk{Nil{}, corpus, room, acc}:
+      BWalk{[], corpus, room, acc}
+    case BWalk{v <> rest, corpus, room, acc}:
+      bind_admit(rest, corpus, acc, admit(room, v))
+    case BMint{0n, corpus, still, room, rest, acc}:
+      BWalk{rest, corpus, room, skipped_ref(still) <> acc}
+    case BMint{1n+k, corpus, still, room, rest, acc}:
+      BUse{draw, k, corpus, still, room, rest, acc}
+    case BUse{token, left, corpus, still, room, rest, acc}:
+      bind_use(token, left, corpus, still, room, rest, acc)
+
 def bind_run(fuel: Nat, b: Bind) -> IO(List<&2, Fate>):
   match fuel b:
     case 0n _:
@@ -975,15 +1001,15 @@ def bind_run(fuel: Nat, b: Bind) -> IO(List<&2, Fate>):
     case 1n+f BWalk{Nil{}, corpus, room, acc}:
       IO.pure(List<&2, Fate>, List.reverse(&2, Fate, acc))
     case 1n+f BWalk{v <> rest, corpus, room, acc}:
-      bind_run(f, bind_admit(rest, corpus, acc, admit(room, v)))
+      bind_run(f, bind_next(BWalk{v <> rest, corpus, room, acc}, None{}))
     case 1n+f BMint{0n, corpus, still, room, rest, acc}:
-      bind_run(f, BWalk{rest, corpus, room, skipped_ref(still) <> acc})
+      bind_run(f, bind_next(BMint{0n, corpus, still, room, rest, acc}, None{}))
     case 1n+f BMint{1n+k, corpus, still, room, rest, acc}:
       do IO<List<&2, Fate>>:
         tok : Maybe<&2, String> <- draw_token()
-        bind_run(f, BUse{tok, k, corpus, still, room, rest, acc})
+        bind_run(f, bind_next(BMint{1n+k, corpus, still, room, rest, acc}, tok))
     case 1n+f BUse{token, left, corpus, still, room, rest, acc}:
-      bind_run(f, bind_use(token, left, corpus, still, room, rest, acc))
+      bind_run(f, bind_next(BUse{token, left, corpus, still, room, rest, acc}, None{}))
 
 def bind_io(+vs: List<&2, Verdict>, corpus: String) -> IO(List<&2, Fate>):
   bind_run(bind_fuel(List.length(&2, Verdict, vs)), BWalk{vs, corpus, room_new(), []})

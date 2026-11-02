@@ -1,4 +1,5 @@
-//! The mail credentials: MAILBEND_EMAIL with MAILBEND_APP_PASSWORD, or the
+//! The mail credentials: MAILBEND_LOGIN (falling back to MAILBEND_EMAIL)
+//! with MAILBEND_APP_PASSWORD, or the
 //! password from MAILBEND_PASSWORD_FILE. Only this helper reads them; they
 //! are sent only to the verified server and never written to stdout or
 //! stderr. Copies are kept in buffers wiped on drop.
@@ -14,15 +15,30 @@ use crate::Exit;
 pub struct Credentials {
     pub user: Zeroizing<Vec<u8>>,
     pub pass: Zeroizing<Vec<u8>>,
+    // Rust drops fields in order, so the witness follows both wiped buffers.
+    #[cfg(test)]
+    pub _drop_witness: Option<DropWitness>,
 }
 
 pub fn load() -> Result<Credentials, Exit> {
-    let user = env_bytes("MAILBEND_EMAIL");
+    let email = env_bytes("MAILBEND_EMAIL");
+    let login = env_bytes("MAILBEND_LOGIN");
     let mut pass = env_bytes("MAILBEND_APP_PASSWORD");
     let pass_file = env_bytes("MAILBEND_PASSWORD_FILE");
-    if user.is_empty() {
+    if email.is_empty() {
         return Err(Exit::usage("MAILBEND_EMAIL is not set"));
     }
+    let (user, user_error) = if login.is_empty() {
+        (
+            email,
+            "MAILBEND_EMAIL must be printable ASCII without spaces",
+        )
+    } else {
+        (
+            login,
+            "MAILBEND_LOGIN must be printable ASCII without spaces",
+        )
+    };
     if !pass_file.is_empty() {
         if !pass.is_empty() {
             return Err(Exit::usage(
@@ -38,21 +54,35 @@ pub fn load() -> Result<Credentials, Exit> {
         ));
     }
     if !user.iter().all(|b| (0x21..=0x7E).contains(b)) {
-        return Err(Exit::usage(
-            "MAILBEND_EMAIL must be printable ASCII without spaces",
-        ));
+        return Err(Exit::usage(user_error));
     }
     if !pass.iter().all(|b| (0x20..=0x7E).contains(b)) {
         return Err(Exit::usage("the mail password must be printable ASCII"));
     }
-    Ok(Credentials { user, pass })
+    Ok(Credentials {
+        user,
+        pass,
+        #[cfg(test)]
+        _drop_witness: None,
+    })
 }
 
-/// The variable's bytes, moved (not copied) into a buffer wiped on drop.
+/// A copy of the variable's bytes in a buffer wiped on drop. The original
+/// stays in the process environment. Use MAILBEND_PASSWORD_FILE to avoid it.
 fn env_bytes(name: &str) -> Zeroizing<Vec<u8>> {
     Zeroizing::new(
         std::env::var_os(name)
             .map(OsString::into_vec)
             .unwrap_or_default(),
     )
+}
+
+#[cfg(test)]
+pub struct DropWitness(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+#[cfg(test)]
+impl Drop for DropWitness {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }

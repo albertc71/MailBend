@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for a MailBend arrival batch every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00 UTC
+Persistent=false
+
+[Install]
+WantedBy=timers.target

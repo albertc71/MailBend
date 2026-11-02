@@ -1,0 +1,9 @@
+[Unit]
+Description=Save one queued MailBend follow-up each morning
+
+[Timer]
+OnCalendar=*-*-* 08:15:00 UTC
+Persistent=false
+
+[Install]
+WantedBy=timers.target

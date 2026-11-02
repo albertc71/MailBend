@@ -45,10 +45,21 @@ server](#use). Details of the install are [below](#install-linux).
 Limits: Linux only, password login only (no OAuth); see
 [Known limits](#known-limits).
 
+For a dated comparison with other email connectors, see
+[the connector comparison](docs/COMPARISON.md).
+
 For shareable setup checks, run `scripts/mailbend diagnose` (local only), or
 explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp`.
 SMTP diagnostics authenticate without sending mail, including in read-only or
 drafts-only mode. See [setup diagnostics](docs/CLOUD_AGENT.md#redacted-setup-diagnostics).
+
+For a credential-free inventory of permissions and potential data routes, run
+`scripts/mailbend diagnose --posture`. It reads configuration only, not the mail
+password or TypeSafe key file, and opens no connection and starts no helper. The JSON shows
+send/draft restrictions, allowlist entry count, daily cap, Jev disclosures and
+redacted endpoints. It is not a delivery, remaining-quota or endpoint-validity
+check. Host names and ports are visible; account addresses, local paths, proxy
+credentials and allowlist entries are not. See [offline posture](docs/CLOUD_AGENT.md#offline-posture).
 
 ## What it can do
 
@@ -65,6 +76,7 @@ Jev off, no tool asks it.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
+| `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file | — |
@@ -194,8 +206,8 @@ failed build, check, proof or compile leaves the installation as it was. A
 running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
-the pinned Bend to `~/.bend` after checking the archive's sha256; that
-release is Linux x64 only, so elsewhere install the same version yourself.
+the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
+pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -240,6 +252,22 @@ Attachments and downloads stay off until `MAILBEND_ATTACH_DIR` and
 `MAILBEND_DOWNLOAD_DIR` name dedicated directories (see [Safety](#safety)).
 Jev's settings are in [docs/JEV.md](docs/JEV.md#settings).
 
+Outgoing sends and drafts refuse hidden Unicode tag characters outside valid
+emoji tag sequences, and bidi controls in attachment filenames, before stamping
+or delivery. Validity follows UTS #51 Annex C with pinned CLDR 49 identifiers,
+including valid non-RGI subdivision and numeric region flags. Ordinary RTL text,
+bidi controls outside filenames, and zero-width emoji joiners remain allowed.
+The `hidden_unicode` result reports `{tag, bidi, zero_width}` for the subject,
+body, sender display name, positional To/Cc/Bcc display names and attachment
+filenames. Encoded-word-looking filenames use literal RFC 2231 parameters and
+a neutral ASCII fallback so tolerant readers cannot decode hidden text from
+them. This ambiguous-input case changes MIME bytes, not the literal filename.
+LRM and RLM count in both `bidi` and `zero_width`. Allowed flags still
+have nonzero `tag` counts. Replies and forwards remove invalid tags only from
+copied source text and display names, and report those removals as `removed_tags`.
+The forwarded original `.eml` attachment remains unchanged. Dry runs report the
+same counts without sending or saving anything.
+
 Sending (`mail_send`, and replies and forwards that are not drafts) has its
 own optional settings. A malformed value refuses every send, never reads as
 off, and leaves drafts and reads alone:
@@ -267,6 +295,13 @@ explicitly (commonly 465 for implicit TLS); the default remains 587 in both
 modes. Ports never select a mode, and failures never fall back to another mode
 or plaintext. Empty or unknown mode values are configuration errors.
 OAuth is unsupported.
+
+If the provider requires a login name different from your email address, set
+`MAILBEND_LOGIN`. A nonempty value is used only for IMAP LOGIN and SMTP AUTH
+PLAIN/LOGIN. Unset or empty uses `MAILBEND_EMAIL`, which remains required and
+continues to supply the From address and reply identity. The login name must
+be printable ASCII without spaces. This option does not change recipient
+allowlists or establish compatibility with an untested provider.
 
 | Profile | Transport | Validation |
 | --- | --- | --- |
@@ -311,6 +346,12 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 ## Use
 
+For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
+They keep passwords in private files and use the public launcher.
+
+The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
+Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
+
 Check the connection first:
 
 ```sh
@@ -322,6 +363,20 @@ scripts/mailbend tools        # the tool list with JSON schemas
 
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
+
+Stopping the server PID with INT, TERM, HUP or QUIT stops the core but allows
+an already-started helper plan to continue, with either pipe or socket stdin.
+The helper's per-operation timeouts still apply, but there is no total-plan
+deadline after the core exits. A plan can still stop on a server rejection or
+I/O failure. SMTP sends no message bytes if the core has exited before the
+helper writes its pre-body progress marker. Once that marker succeeds, the
+send may continue. SIGKILL remains the hard stop for the adapter and core,
+not a guarantee that every helper has stopped. Clients that terminate a
+broader process tree can also kill helpers.
+
+After the core exits there is no completion or partial result, and MailBend
+does not retry the plan. Check the mailbox or delivery outcome before retrying
+a change. See the [adapter lifecycle](native/README.md#mcp-stdin-adapter).
 
 Register the MCP server (stdio) with your agent, using the absolute path:
 
@@ -414,6 +469,10 @@ failures and costs, and the triage rules are in [docs/JEV.md](docs/JEV.md).
 
 ## Polling known messages
 
+For caller-owned systemd user timers, see the
+[read-only brief, notifier, and queued draft recipes](docs/RECIPES.md).
+MailBend itself remains daemon-free.
+
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
@@ -503,9 +562,11 @@ synthetic cost measurements and experiment decision are in
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as
-  `UID EXPUNGE` (proven).
+  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID
+  commands. Commands that take a UID list preserve its order. STORE preserves
+  the requested flag and add or remove operation (proven).
 - **Stale UIDs never touch other messages.** Every change is pinned to the
-  caller's UIDVALIDITY in the same IMAP session (proven for every plan): if
+  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
@@ -557,7 +618,7 @@ synthetic cost measurements and experiment decision are in
   `To Delete` or a category folder passed in, never into INBOX, a role
   folder or the folder it reads, and creates no folder (proven for every
   input).
-- **An interrupted move says so.** A move (`mail_move`, `mail_trash`,
+- **The running core reports interrupted changes.** A move (`mail_move`, `mail_trash`,
   `mail_label`) cut off when its COPY may have run fails with `partial: true`
   (the messages may be in both folders; `isError` over MCP, exit 1 on the
   CLI), never as an error that implies nothing changed. A refused or earlier
@@ -571,7 +632,8 @@ synthetic cost measurements and experiment decision are in
   A helper that never started (a relative `MAILBEND_TLS_HELPER`, or one that
   cannot be spawned) changed nothing, so it is an ordinary error; one that
   failed after starting or was killed by a signal may have, so these changes
-  count it as cut off.
+  count it as cut off. These results require the core to remain alive. Stopping
+  the core can leave a completed or partial change with no result to the client.
 - **Attachments stay inside one directory.** Attachments are read only from
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   the credential-free `mailbend-attach`, which refuses symlinks, `..`, hard
@@ -591,14 +653,26 @@ synthetic cost measurements and experiment decision are in
   directory in `PATH`). A saved file is still untrusted content. Mechanics:
   [native/README.md](native/README.md#contract).
 - **Jev sees only what you allow.** See [Jev](#jev-optional).
-- **`MAILBEND_CA_FILE` replaces the trust store.** It exists for the local
-  test server; whoever sets it decides which servers are trusted, so never
-  set it in production. `scripts/mailbend` prints a warning when it is set.
+- **Trust overrides replace the system trust store.** Both network helpers
+  honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, combining their certificates when
+  both are configured. No usable roots means failure, not platform fallback.
+  Empty directory entries are ignored, but an empty file value fails to load.
+  A nonempty `MAILBEND_CA_FILE` takes precedence and exists for local test
+  servers. Never set it in production. Whoever sets an override chooses
+  which servers are trusted. Certificate and hostname verification remain
+  mandatory. `scripts/mailbend` warns when an override is set.
+  `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
+  without the path. See the [native trust rule](native/README.md#contract).
 - **Commands run in lock-step.** They run one at a time and stop at the
   first rejection; message contents are framed as IMAP literals, so a
   message cannot spoof a server reply.
 
 ### What the proofs cover
+
+`PROOF.bend` imports the pure policy module rather than tool orchestration or the
+generated schema. CI separately kernel-checks `src/tools.bend` and the
+tool-layer laws in [`tests/formal/tool-laws.bend`](tests/formal/tool-laws.bend),
+so this separation does not reduce the previous tool-layer coverage.
 
 The bounded [SMTP TLS-ordering model](.agents/skills/smtp-tls-proofs/SKILL.md) separately
 checks authentication ordering in an explicit abstraction of both transport modes.
@@ -616,6 +690,19 @@ from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Fold
 discovery, override validation and how each tool uses the resolved folder are
 covered by the end-to-end tests.
 
+The switch laws cover every operation and JSON argument value. Read-only calls
+that can write, drafts-only calls that send, and Jev-dependent calls with Jev off
+all return a non-empty refusal. The send classifier is fixed independently to the
+operation and `as_draft` field. Unrecognized Boolean switch strings produce a bad
+flag, and a bad flag in any of the five configuration positions rejects the whole
+configuration. Environment reads and tool dispatch remain end-to-end tested.
+
+Each mutating IMAP constructor has a law for its exact effect and write status,
+for every argument. A draft plan is exactly one APPEND with Draft and Seen flags.
+Every resolved role has a structural witness of its exact name and selectability
+in the original listing, with no bound on the list length. The policy mutation
+check rejects changed gates, classifiers, draft plans and invented role names.
+
 The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
@@ -629,8 +716,8 @@ makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome la
 for every exit code and transcript, and that confirmed acceptance survives a
 later process failure. Native progress production itself remains a tested IO
 boundary. The native
-helpers, TLS, MIME parsing, the agent's choices and the runtime
-configuration are covered by tests and review, not by proofs, and nothing
+helpers, TLS, MIME parsing, the agent's choices and environment
+loading are covered by tests and review, not by proofs, and nothing
 checks that Jev's answers are right. Each law is stated in
 [LAWS.bend](LAWS.bend) with a one-line summary, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
@@ -646,29 +733,37 @@ allowance as natural numbers, and that sufficient room preserves the whole
 string and the exact remainder. The arithmetic proof follows the actual U32
 subtraction, not a separate Nat-only implementation.
 
-Image admission laws prove that `Budget.admit_all`, the observer fold in
-`tests/formal/budget-observers.bend` calling the production `Image.admit`
-step, takes at most four images when started at `Image.room_new()`. For that
-initial room, their byte theorem bounds the natural-number sum of accepted
-byte-string lengths by 1,572,864, with an explicit premise
-that each length is represented exactly by the U32 byte counter. Arbitrary
-mathematical strings could otherwise wrap that counter. These cap laws do
-not quantify over the production `bind_run`/`bind_io` walk or `quota_admit`.
-A proof connecting that walk's room threading and accumulated `Used` fates
-to the observer fold remains open.
+The serializer bridge proves that those scalar costs equal the unbounded
+UTF-8 weight of the actual `J.esc` output. The prefix allowance proves that
+its `C.utf8_len` additions cannot overflow; the serialized cut fits without
+an extra no-overflow premise. When the full escaped string fits, the text
+and exact unused allowance are preserved. The proof follows the production
+escape/reverse loops and machine-word addition, not a parallel serializer.
 
-The reference law pins the pure `Image.bind_use` transition for a supplied
-token: when `ref_clear(token, corpus)` is true it adds a `Used` fate and the
-token to the corpus; otherwise it returns the retry state. It does not prove
-this property for every `Used` fate returned by the complete `bind_run` walk.
+Image admission laws retain the original `Budget.admit_all` cap proofs and
+also bound the production `Image.bind_next` state machine used by `bind_run`.
+For every draw history from its real empty-accumulator `room_new()` seed,
+used images plus any pending image plus remaining room stay within four
+images and 1,572,864 stripped bytes. Exhausting reference attempts discards
+the pending image without refunding room. The bound survives final list
+reversal. Kernel-checked wiring obligations pin each IO runner arm, its
+initial room, and its empty result when fuel runs out to these transitions.
 
-The correspondence between these scalar costs and `C.utf8_len(J.esc(s))`
-remains unproven. Complete JSON serialization correspondence, full
-result/list assembly, whole-response byte bounds, cursor paging, unchanged
-Jev inputs, bounded native fetches and image request assembly remain tested.
-They are not claimed as universally quantified serialization or IO proofs. The budget mutation
-check rejects a cut that retains an over-budget scalar and admission that
-ignores the image count. It does not mutate production `Bind` room threading.
+The image byte law retains an explicit premise: each used byte string's
+length must be represented exactly by its U32 byte counter. Arbitrary
+mathematical strings could otherwise wrap that counter; bounded native
+fetches remain a tested boundary. The reference law pins the pure
+`Image.bind_use` transition for a supplied token: a clear token adds a
+`Used` fate and joins the corpus; an unavailable token retries. This is not
+a separate global reference-uniqueness theorem.
+
+Complete JSON serialization correspondence, full result/list assembly,
+whole-response byte bounds, cursor paging, unchanged Jev inputs, native IO
+and final image request assembly remain tested rather than kernel-proven.
+The budget mutation check rejects over-budget prefix retention, ignored
+image count, production room reset/refund, broken IO transition wiring,
+and omitted UTF-8 accumulation. Formal observers imported by the laws are
+part of the law contract, not disposable test fixtures.
 
 ## How it works
 
@@ -732,9 +827,16 @@ before relying on a complete link.
 
 ## Known limits
 
+For failed calls, provider limits, concurrency, upgrades, and rollback, use
+the [operator runbook](docs/OPERATIONS.md).
+
 - Linux only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
+- The compiled Bend core needs glibc 2.34 or newer. The installer checks this
+  before compilation. Downloads need `O_TMPFILE` support on the download
+  directory's file system, which WSL's `/mnt/c` can lack. `mailbend diagnose`
+  reports local platform prerequisites without paths or OS error text.
 - Only iCloud has been live-tested, with the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-record). Still unchecked
   there: IPv6, how folders and flag colours look in Apple Mail and on

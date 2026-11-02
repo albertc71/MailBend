@@ -5,6 +5,7 @@ import ../../src/codec.bend as C
 import ../../src/json.bend as J
 import ../../src/response.bend as R
 import ../../src/tools.bend as T
+import ../../src/policy.bend as Policy
 
 def fixture() -> J.Json:
   J.obj([
@@ -43,9 +44,9 @@ def protected(r: Result<&2, &2, String, J.Json>, original: J.Json) -> Bool:
 def say(name: String, ok: Bool) -> IO(Unit):
   IO.print(name ++ ": " ++ Bool.pick(String, ok, "true", "false"))
 
-def default_out(o: T.Out, original: J.Json) -> Bool:
+def default_out(o: Policy.Out, original: J.Json) -> Bool:
   match o:
-    case T.Ok{j}:
+    case Policy.Ok{j}:
       String.eq(J.show(j), J.show(original))
     case _:
       False{}
@@ -57,9 +58,9 @@ def budgets(n: Nat, +j: J.Json, +max: U32) -> Bool:
     case 1n+k:
       fits(R.apply(j, "full", max), max) && budgets(k, j, (max + 1 : U32))
 
-def error_unchanged(o: T.Out) -> Bool:
+def error_unchanged(o: Policy.Out) -> Bool:
   match o:
-    case T.Err{"original failure"}:
+    case Policy.Err{"original failure"}:
       True{}
     case _:
       False{}
@@ -81,17 +82,17 @@ def result(r: Result<&2, &2, String, J.Json>) -> J.Json:
 
 def selected_short(+j: J.Json, max: U32) -> Bool:
   +response = T.object_field(j, "response")
-  U32.is_le(C.utf8_len(J.show(j)), max) && T.bool_arg(j, "complete", False{}) &&
-    Bool.not(T.bool_arg(j, "message_complete", True{})) &&
-    T.bool_arg(response, "output_truncated", False{}) &&
-    Bool.not(T.bool_arg(response, "content_complete", True{})) &&
+  U32.is_le(C.utf8_len(J.show(j)), max) && Policy.bool_arg(j, "complete", False{}) &&
+    Bool.not(Policy.bool_arg(j, "message_complete", True{})) &&
+    Policy.bool_arg(response, "output_truncated", False{}) &&
+    Bool.not(Policy.bool_arg(response, "content_complete", True{})) &&
     String.eq(J.show(T.object_field(j, "jev")), "{\"status\":\"unchecked\"}")
 
 def binary_budget(+j: J.Json, +max: U32) -> Bool:
   +out = result(R.apply(j, "full", max))
-  +content = T.str_arg(out, "content", "?")
+  +content = Policy.str_arg(out, "content", "?")
   U32.is_le(C.utf8_len(J.show(out)), max) &&
-    (String.is_empty(content) || String.eq(content, T.str_arg(j, "content", "?"))) &&
+    (String.is_empty(content) || String.eq(content, Policy.str_arg(j, "content", "?"))) &&
     String.eq(C.b64_encode(C.b64_decode(content), False{}), content)
 
 def binary_budgets(n: Nat, +j: J.Json, +max: U32) -> Bool:
@@ -113,7 +114,7 @@ def main() -> IO(Unit):
   +metadata = result(R.apply(part, "metadata", 0))
   do IO<Unit>:
     say("exact escaped UTF-8 size", U32.is_eq(R.bytes(mixed), C.utf8_len(J.show(mixed))))
-    say("default untouched", default_out(T.projected.if(False{}, T.Ok{j}, J.obj([])), j))
+    say("default untouched", default_out(T.projected.if(False{}, Policy.Ok{j}, J.obj([])), j))
     say("text projection", Maybe.is_none(&2, J.Json, J.get(R.select(j, "text"), "html")))
     say("HTML projection", Maybe.is_none(&2, J.Json, J.get(R.select(j, "html"), "text")))
     say("metadata projection", Maybe.is_none(&2, J.Json,
@@ -125,7 +126,7 @@ def main() -> IO(Unit):
     say("protected fields", protected(R.apply(j, "full", 450), j))
     say("all byte boundaries", budgets(80n, j, 436))
     say("errors untouched", error_unchanged(T.projected.out(
-      T.Err{"original failure"}, "metadata", 1)))
+      Policy.Err{"original failure"}, "metadata", 1)))
     say("zero budget rejected", Bool.not(String.is_empty(T.call_problem(
       "mail_get", J.obj([J.kv("uid", J.num(1)),
         J.kv("max_response_bytes", J.num(0))])))))
@@ -133,8 +134,8 @@ def main() -> IO(Unit):
       "mail_get", J.obj([J.kv("uid", J.num(1)),
         J.kv("projection", J.str("jsonpath"))])))))
     say("selected metadata omits content", Maybe.is_none(&2, J.Json,
-      J.get(metadata, "content")) && Bool.not(T.bool_arg(T.object_field(metadata, "response"),
-        "content_complete", True{})) && Bool.not(T.bool_arg(T.object_field(metadata, "response"),
+      J.get(metadata, "content")) && Bool.not(Policy.bool_arg(T.object_field(metadata, "response"),
+        "content_complete", True{})) && Bool.not(Policy.bool_arg(T.object_field(metadata, "response"),
         "output_truncated", True{})))
     say("selected text projection", Maybe.is_some(&2, J.Json,
       J.get(R.select(part, "text"), "content")) &&
@@ -151,11 +152,11 @@ def main() -> IO(Unit):
     say("binary budgets preserve valid base64", binary_budgets(100n, binary, binary_small))
     say("selected text byte boundaries", budgets(80n, part, small))
     say("selected default untouched", default_out(T.projected.if(False{},
-      T.Ok{part}, J.obj([])), part))
-    say("binary full content complete", T.bool_arg(T.object_field(
+      Policy.Ok{part}, J.obj([])), part))
+    say("binary full content complete", Policy.bool_arg(T.object_field(
       result(R.apply(binary, "full", 65536)), "response"), "content_complete", False{}) &&
-      String.eq(T.str_arg(result(R.apply(binary, "full", 65536)), "content", "?"),
-        T.str_arg(binary, "content", "")))
+      String.eq(Policy.str_arg(result(R.apply(binary, "full", 65536)), "content", "?"),
+        Policy.str_arg(binary, "content", "")))
 
 #|exact escaped UTF-8 size: true
 #|default untouched: true

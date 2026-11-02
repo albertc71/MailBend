@@ -4,7 +4,7 @@
 import Base
 import ../../main.bend as Main
 import ../../src/json.bend as J
-import ../../src/tools.bend as T
+import ../../src/policy.bend as Policy
 
 def show_args(xs: List<&2, String>) -> String:
   String.join(xs, "|")
@@ -42,9 +42,9 @@ def main() -> IO(Unit):
     legacy_line("{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":{\"name\":\"nope\"}}")
     legacy_line("{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"tools/call\",\"params\":{\"name\":\"mail_get\",\"arguments\":{}}}")
     legacy_line("{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"tools/call\"}")
-    IO.print(J.show(Main.call_result(T.Ok{J.obj([J.kv("ok", J.bool(True{}))])})))
-    IO.print(J.show(Main.call_result(T.Err{"no"})))
-    IO.print(J.show(Main.call_result(T.Partial{J.obj([J.kv("partial", J.bool(True{}))])})))
+    IO.print(J.show(Main.call_result(Policy.Ok{J.obj([J.kv("ok", J.bool(True{}))])})))
+    IO.print(J.show(Main.call_result(Policy.Err{"no"})))
+    IO.print(J.show(Main.call_result(Policy.Partial{J.obj([J.kv("partial", J.bool(True{}))])})))
     IO.print(show_args(Main.command_args(["mailbend", "call", "mail_get", "{}"])))
     IO.print(show_args(Main.command_args(["mailbend"])))
     IO.print(show_args(Main.command_args([])))

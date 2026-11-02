@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check output contract variants at feature integration boundaries."""
 import copy
+from functools import cache
 import importlib.util
 from pathlib import Path
 from jsonschema import Draft202012Validator
@@ -12,20 +13,31 @@ spec.loader.exec_module(schema)
 checks = 0
 
 
-def check(name, value, valid=True):
-    global checks
+@cache
+def validator(name):
     contract = schema.output_schema(name)
     Draft202012Validator.check_schema(contract)
-    errors = list(Draft202012Validator(contract).iter_errors(value))
+    return Draft202012Validator(contract)
+
+
+def check(name, value, valid=True):
+    global checks
+    errors = list(validator(name).iter_errors(value))
     assert (not errors) == valid, (name, value, [e.message for e in errors])
     checks += 1
 
 
+hidden_count = dict(tag=0, bidi=0, zero_width=0)
+hidden = dict(subject=hidden_count, body=hidden_count, **{"from": hidden_count},
+              to=[hidden_count], cc=[], bcc=[], attachment_filenames=[])
 sent = dict(ok=True, sent=True, message_id='<fixture@example.test>', recipients=1,
             server_reply='250 accepted', smtp_outcome='accepted', smtp_phase='data_reply',
             smtp_reason='accepted_by_server', next_action='Do not resend.',
-            sent_copy='failed or unconfirmed')
+            sent_copy='failed or unconfirmed', hidden_unicode=hidden)
 check('mail_send', sent)
+check('mail_send', {k: v for k, v in sent.items() if k != 'hidden_unicode'}, False)
+check('mail_send', {**sent, 'hidden_unicode': {**hidden, 'body': {'tag': 0}}}, False)
+check('mail_send', {**sent, 'hidden_unicode': {**hidden, 'body': {**hidden_count, 'tag': -1}}}, False)
 check('mail_send', {**sent, 'smtp_outcome': 'unknown'}, False)
 for outcome, phase, reason in [('not_sent', 'before_smtp', 'local_refusal'),
                                ('not_sent', 'before_data', 'stopped_before_data'),
@@ -37,6 +49,18 @@ for outcome, phase, reason in [('not_sent', 'before_smtp', 'local_refusal'),
     for name in ('mail_send', 'mail_reply', 'mail_forward'):
         check(name, value)
         check(name, {**value, 'smtp_phase': 'accepted'}, False)
+removed = dict(subject=1, body=2, to=[1], cc=[])
+for name in ('mail_reply', 'mail_forward'):
+    failure = dict(error='fixture', smtp_outcome='unknown', smtp_phase='data_reply',
+                   smtp_reason='acceptance_unconfirmed', next_action='Inspect evidence.',
+                   hidden_unicode=hidden, removed_tags=removed)
+    check(name, failure)
+    check(name, {**failure, 'removed_tags': {**removed, 'subject': -1}}, False)
+    check(name, dict(error='early refusal'))
+check('mail_save_draft', dict(dry_run=True, imap=['APPEND redacted'], hidden_unicode=hidden))
+check('mail_send', dict(dry_run=True,
+      smtp={'from': 'sender@example.test', 'rcpt': ['a@example.test'], 'data': '<1 bytes>',
+            'sent_copy': False}, hidden_unicode=hidden))
 selected = dict(folder='INBOX', uid=1, uidvalidity=7, section='1',
                 content_type='text/plain', complete=True, scope='selected_part',
                 message_complete=False, content='fixture', content_encoding='text')
@@ -69,6 +93,27 @@ refresh = dict(folder='INBOX', uidvalidity=7, reset_required=False, complete=Fal
                present=[dict(uid=1, flags=[])], absent=[], unknown=[2], reason='incomplete')
 check('mail_refresh', refresh)
 check('mail_refresh', {**refresh, 'present': [dict(uid=1)]}, False)
+
+metadata = dict(list_id=None, auto_submitted=None, bulk=None,
+                unsubscribe=dict(mailto=None, https=None, one_click=False),
+                answered=False, forwarded=False)
+message = dict(date='', **{'from': ''}, to='', cc='', subject='', message_id='',
+               internal_date='', uid=1, size=0, flags=[], seen=False, flagged=False,
+               **metadata)
+check('mail_search', {**search, 'messages': [message]})
+for key in metadata:
+    check('mail_search', {**search, 'messages': [{k: v for k, v in message.items()
+                                                if k != key}]}, False)
+check('mail_search', {**search, 'messages': [{**message, 'bulk': 'guessed'}]}, False)
+check('mail_search', {**search, 'messages': [{**message, 'unsubscribe': {
+    'mailto': None, 'https': None, 'one_click': 'yes'}}]}, False)
+for key in ('list_id', 'auto_submitted'):
+    assert 'Untrusted sender-supplied' in schema.METADATA[key]['description']
+    checks += 1
+for key in ('mailto', 'https'):
+    assert 'Untrusted sender-supplied' in schema.METADATA['unsubscribe']['properties'][key]['description']
+    checks += 1
+
 image = dict(section='2', name='photo.jpg', fate='used', format='jpeg', bytes=120,
              width=280, height=280, metadata_removed_bytes=40)
 image_contract = Draft202012Validator(schema.IMAGE_USED)

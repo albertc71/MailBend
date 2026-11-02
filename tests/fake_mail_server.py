@@ -227,6 +227,7 @@ class State:
         self.seen = {}
         self.examine_count = 0
         self.examine_changes = fixture.get("examine_changes", [])
+        self.uidnext_response = fixture.get("uidnext_response", {})
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -499,6 +500,10 @@ def parse_search_key(args, i, uids_sorted):
         return (lambda m, ps=preds: all(p(m) for p in ps)), i + 1
 
     word = t.decode('ascii', 'replace').upper() if isinstance(t, bytes) else ''
+    if word == 'OR':
+        left, j = parse_search_key(args, i + 1, uids_sorted)
+        right, j = parse_search_key(args, j, uids_sorted)
+        return (lambda m, a=left, b=right: a(m) or b(m)), j
     if word == 'ALL':
         return (lambda m: True), i + 1
     if word == 'UID':
@@ -544,12 +549,19 @@ def parse_search_key(args, i, uids_sorted):
             _, body = header_body_split(m['raw'])
             return nd in to_unicode(body).lower()
         return pred, i + 2
-    if word in ('SINCE', 'BEFORE', 'ON'):
+    if word in ('SINCE', 'SENTSINCE', 'BEFORE', 'ON'):
         d = parse_imap_date(astring_val(args[i + 1]))
 
         def pred(m, w=word, d=d):
-            md = msg_date(m)
-            if w == 'SINCE':
+            if w == 'SENTSINCE':
+                from email.utils import parsedate_to_datetime
+                try:
+                    md = parsedate_to_datetime(to_unicode(get_header_value(m['raw'], 'Date'))).date()
+                except (TypeError, ValueError, AttributeError):
+                    return False
+            else:
+                md = msg_date(m)
+            if w in ('SINCE', 'SENTSINCE'):
                 return md >= d
             if w == 'BEFORE':
                 return md < d
@@ -978,7 +990,11 @@ class IMAPSession:
         self.send('* 0 RECENT\r\n')
         ok = '* ok [uidvalidity' if self.state.lowercase_codes else '* OK [UIDVALIDITY'
         self.send(f'{ok} {uidvalidity}] UIDs valid\r\n')
-        self.send(f'* OK [UIDNEXT {uidnext}] Predicted next UID\r\n')
+        uidnext = self.state.uidnext_response.get(name, uidnext)
+        if isinstance(uidnext, dict):
+            self.send(uidnext['line'] + '\r\n')
+        elif uidnext is not None:
+            self.send(f'* OK [UIDNEXT {uidnext}] Predicted next UID\r\n')
         if self.state.permanent_flags is not None:
             self.send(f'* OK [PERMANENTFLAGS ({" ".join(self.state.permanent_flags)})] Permanent flags\r\n')
         mode, verb_name = ('READ-ONLY', 'EXAMINE') if readonly else ('READ-WRITE', 'SELECT')
@@ -1039,6 +1055,8 @@ class IMAPSession:
                     structure = m.get('bodystructure') or body_structure(email.message_from_string(m['raw']))
                     parts.append('BODYSTRUCTURE ' + structure)
             else:
+                if m.get("omit_fetch_data"):
+                    continue
                 name, content, sets_seen = render_section(spec, m)
                 if m.get("measure_sections") and not name.startswith("BODY[HEADER"):
                     self.logger.log("imap-section-bytes", f"{name} {len(content)}")
@@ -1740,6 +1758,8 @@ def main():
                 conn, _ = sock.accept()
             except OSError:
                 break
+            # Small TLS replies must not wait for Nagle/delayed-ACK timers.
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             conn.settimeout(60)
             threading.Thread(target=handler, args=(conn,), daemon=True).start()
 
