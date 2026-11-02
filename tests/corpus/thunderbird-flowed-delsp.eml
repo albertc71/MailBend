@@ -1,0 +1,13 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: thunderbird-flowed-delsp
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <thunderbird-flowed-delsp@corpus.invalid>
+MIME-Version: 1.0
+User-Agent: Synthetic Thunderbird shape, not a client export
+Content-Type: text/plain; charset=utf-8; format=flowed; delsp=yes
+
+Joined 
+word.
+> quoted 
+> continuation.

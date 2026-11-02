@@ -1,0 +1,46 @@
+{
+  "status": "known_unsupported",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "MailBend does not apply DelSp or quote-depth flowed joining. This is a synthetic layout, not a client capture."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc3676"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/124"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "thunderbird-flowed-delsp",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<thunderbird-flowed-delsp@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Joinedword.\n> quotedcontinuation.",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "known_wrong": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "thunderbird-flowed-delsp",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<thunderbird-flowed-delsp@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Joined \nword.\n> quoted \n> continuation.",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "diagnostic": "MailBend does not apply DelSp or quote-depth flowed joining. This is a synthetic layout, not a client capture."
+}

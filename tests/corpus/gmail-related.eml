@@ -1,0 +1,34 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: gmail-related
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <gmail-related@corpus.invalid>
+MIME-Version: 1.0
+X-Mailer: Synthetic Gmail shape, not a client export
+Content-Type: multipart/related; boundary=gmail-related
+
+Synthetic preamble.
+--gmail-related
+Content-Type: multipart/alternative; boundary=gmail-alt
+
+Synthetic preamble.
+--gmail-alt
+Content-Type: text/plain; charset=utf-8
+
+Synthetic inline image.
+--gmail-alt
+Content-Type: text/html; charset=utf-8
+
+<p>Synthetic inline image.</p><img src="cid:logo@corpus.invalid">
+--gmail-alt--
+Synthetic epilogue.
+
+--gmail-related
+Content-Type: image/png; name=logo.png
+Content-Disposition: inline; filename=logo.png
+Content-ID: <logo@corpus.invalid>
+Content-Transfer-Encoding: base64
+
+AAEC/w==
+--gmail-related--
+Synthetic epilogue.

@@ -1,0 +1,17 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: qp-final-soft-break-complete
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <qp-final-soft-break-complete@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=qp
+
+Synthetic preamble.
+--qp
+Content-Type: text/plain
+Content-Transfer-Encoding: quoted-printable
+
+last=
+
+--qp--
+Synthetic epilogue.
