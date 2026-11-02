@@ -153,6 +153,56 @@ class DriftChecks(unittest.TestCase):
                 result = self.check(f"cannot load schema ({exception}:")
                 self.assertNotIn("Traceback", result.stderr)
 
+    def test_skill_schema_exit_is_a_clean_failure(self):
+        (self.root / "tools/gen-schema.py").write_text("raise SystemExit(0)\n")
+        result = self.check("cannot load schema (SystemExit: 0)")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_malformed_schema_is_a_clean_failure(self):
+        for content in ("pass\n", "TOOLS = [{'name': 'mail_probe'}]\n",
+                        "TOOLS = None\n", "TOOLS = [{'name': 'mail_probe', 'inputSchema': None}]\n"):
+            with self.subTest(content=content):
+                (self.root / "tools/gen-schema.py").write_text(content)
+                result = self.check("tools/gen-schema.py: invalid tool schema")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_index_prose_allows_partial_signatures(self):
+        self.append("skills/mailbend/references/tools.md",
+                    "\nFor example, call `mail_get(folder, uid)`.\n"
+                    "- Example: `mail_refresh(folder)` is a partial example.\n")
+        self.check()
+
+    def test_skill_prose_cannot_replace_index_entry(self):
+        self.replace("skills/mailbend/references/tools.md", "- `mail_probe()`:",
+                     "Example: `mail_probe()`:")
+        self.check("references/tools.md: missing tool mail_probe")
+
+    def test_skill_fenced_headings_do_not_create_anchors(self):
+        for fence in ("```", "~~~~"):
+            with self.subTest(fence=fence):
+                (self.root / "docs/fence-fixture.md").write_text(
+                    f"{fence}text\n# Only in code\n{fence}\n# Visible\n")
+                (self.root / "skills/mailbend/references/fence.md").write_text(
+                    "[Absent](../../../docs/fence-fixture.md#only-in-code)\n")
+                self.check("missing linked heading")
+
+    def test_skill_unclosed_and_mismatched_fences_stay_code(self):
+        for content in ("```\n~~~\n# Hidden\n", "~~~~\n~~~\n# Hidden\n",
+                        "```\n# Hidden\n"):
+            with self.subTest(content=content):
+                (self.root / "docs/fence-fixture.md").write_text(content)
+                (self.root / "skills/mailbend/references/fence.md").write_text(
+                    "[Absent](../../../docs/fence-fixture.md#hidden)\n")
+                self.check("missing linked heading")
+
+    def test_skill_fences_do_not_shift_duplicate_heading_anchors(self):
+        self.append("README.md", "\n````text\n# Fence title\n```\n# Fence title\n"
+                    "````\n   ~~~text\n# Fence title\n   ~~~~\n# Fence title\n")
+        self.append("skills/mailbend/SKILL.md", "\n[Real](../../README.md#fence-title)\n")
+        self.check()
+        self.append("skills/mailbend/SKILL.md", "\n[Absent](../../README.md#fence-title-1)\n")
+        self.check("missing linked heading ../../README.md#fence-title-1")
+
     def test_skill_schema_import_does_not_regenerate(self):
         generated = self.root / "src/schema.bend"
         before = generated.read_bytes()
