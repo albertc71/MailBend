@@ -53,6 +53,14 @@ explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp
 SMTP diagnostics authenticate without sending mail, including in read-only or
 drafts-only mode. See [setup diagnostics](docs/CLOUD_AGENT.md#redacted-setup-diagnostics).
 
+For a credential-free inventory of permissions and potential data routes, run
+`scripts/mailbend diagnose --posture`. It reads configuration only, not the mail
+password or TypeSafe key file, and opens no connection and starts no helper. The JSON shows
+send/draft restrictions, allowlist entry count, daily cap, Jev disclosures and
+redacted endpoints. It is not a delivery, remaining-quota or endpoint-validity
+check. Host names and ports are visible; account addresses, local paths, proxy
+credentials and allowlist entries are not. See [offline posture](docs/CLOUD_AGENT.md#offline-posture).
+
 ## What it can do
 
 The tools are listed below. "Changes mail" says what a call can change;
@@ -68,6 +76,7 @@ Jev off, no tool asks it.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
+| `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file | — |
@@ -409,6 +418,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
+
+The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
+Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
 
 Check the connection first:
 

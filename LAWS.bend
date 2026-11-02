@@ -23,13 +23,14 @@ import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 import ./src/policy.bend as Policy
+import ./src/awaiting.bend as Await
 
 import ./src/response.bend as Response
 
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly eight tools
+# Reading is read-only, and permanent deletion is not. Exactly nine tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
 # mail_classify only asks TypeSafe about messages; mail_triage asks it, then
@@ -55,11 +56,11 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these eight, in this order
-law read_only_tools_are_exactly_eight:
+# LAW: the read-only tools are exactly these nine, in this order
+law read_only_tools_are_exactly_nine:
   {Ops.read_only_names(Ops.all_ops()) ==
     ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-      "mail_get_thread", "mail_classify"]
+      "mail_get_thread", "mail_awaiting_reply", "mail_classify"]
     : List<&2, String>}
 
 # LAW: the tools each configuration lists: with Jev on, every tool; with it
@@ -70,34 +71,38 @@ law tools_listed_per_config:
   for drafts: Bool
   ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
+       "mail_get_thread", "mail_awaiting_reply", "mail_classify", "mail_triage",
+       "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
+       "mail_get_thread", "mail_awaiting_reply", "mail_get_attachment",
+       "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_send",
        "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_classify", "mail_triage", "mail_get_attachment",
+       "mail_get_thread", "mail_awaiting_reply", "mail_classify", "mail_triage",
+       "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_get_attachment", "mail_mark_read", "mail_mark_unread",
+       "mail_get_thread", "mail_awaiting_reply", "mail_get_attachment",
+       "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_reply",
        "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, True{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread", "mail_classify"] : List<&2, String>} &
+       "mail_get_thread", "mail_awaiting_reply", "mail_classify"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
       ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
-       "mail_get_thread"] : List<&2, String>})
+       "mail_get_thread", "mail_awaiting_reply"] : List<&2, String>})
 
 # LAW: every operation's tool name resolves back to that operation.
 law from_name_inverts_name:
@@ -207,7 +212,7 @@ law get_checked_pins_identity:
   for uidv: U32
   {Ops.plan_get_checked(mbox, uid, max, Some{uidv}) ==
     [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
-      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IFull{max}]}]
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IFull{max}]}]
     : List<&2, I.Cmd>}
 
 law get_checked_without_identity_unchanged:
@@ -262,6 +267,12 @@ law thread_plans_write_nothing:
   {Bool.or(
     I.any_writes(Ops.plan_thread_search(folders, keys)),
     I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
+
+# LAW: awaiting reply Sent selection never writes.
+law awaiting_sent_writes_nothing:
+  for sent: String
+  for since: String
+  {I.any_writes(Ops.plan_awaiting_sent(sent, since)) == False{} : Bool}
 
 # LAW: for every Sent folder and addresses, the search of Sent for mail to
 # them writes nothing
@@ -388,7 +399,8 @@ law fetch_items_never_set_seen:
 law search_headers_render_exactly:
   {I.item_str(I.IHeaders{}) ==
     "BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO " ++
-      "REFERENCES LIST-ID LIST-UNSUBSCRIBE AUTO-SUBMITTED PRECEDENCE)]" : String}
+      "REFERENCES LIST-ID LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST " ++
+      "AUTO-SUBMITTED PRECEDENCE)]" : String}
 
 # LAW: a full-message read renders exactly its caller's byte bound, with no suffix command.
 law full_fetch_renders_exactly:
@@ -1812,3 +1824,7 @@ law resolved_role_names_selectable_folder:
   resolved_in_listing(fs, Policy.resolved_role(fs, override, attr, a, b))
 
 # End policy and classifier soundness
+# LAW: incomplete evidence without a positive reply never confirms absence.
+law awaiting_incomplete_is_unknown:
+  for valid: Bool
+  {Await.classify.if(valid, False{}, False{}) == Await.Unknown{} : Await.Status}

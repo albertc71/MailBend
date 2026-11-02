@@ -138,6 +138,48 @@ server diagnostics, AUTH payloads, credentials or message content. Guidance is
 fixed text, never a server error. Keep credentials in secret settings, and share
 this result rather than environment dumps or raw helper transcripts.
 
+## Offline posture
+
+Run `scripts/mailbend diagnose --posture` before giving an agent mail access.
+For the cloud launcher's effective resolver setting, use
+`scripts/mailbend-cloud diagnose --posture`. Do not combine `--posture` with
+`--imap` or `--smtp`; those options authorize different, online checks.
+
+The report uses the real switch and send-setting parsers and the same send
+refusal gate. `send: "none"` covers both read-only and drafts-only mode; the
+separate `drafts` field distinguishes them. An allowlist is shown only by entry
+count, and the daily cap is the configured cap, not its remaining balance.
+Invalid send settings fail this report even though they do not prevent reads.
+A malformed allowlist diagnostic omits the entry rather than echoing private data.
+
+The egress inventory includes direct IMAP/SMTP endpoints, potential TypeSafe data
+categories, the configured DoH resolver, HTTPS proxy and system DNS/bootstrap
+paths. It follows proxy precedence and per-host bypass. Configured numeric
+connect-IP overrides are shown separately from the host used as the TLS
+identity. The report checks their printable numeric syntax, not IP validity.
+DoH paths/queries and proxy credentials are omitted. A malformed unused or
+bypassed proxy may be reported as set with its endpoint omitted.
+Endpoints describe configuration, not observed traffic. `smtp_send_permitted`
+is false in read-only and drafts-only modes. Jev tool lists are conservative
+lists before those restrictions, not the available-tools list. Draft-only
+reply and forward do not call Jev.
+
+This is an offline configuration inventory, not native transport validation,
+connection test, provider approval, quota reservation or security certification.
+Configured directories may not exist or be usable. `trust_source` reports
+`mailbend_ca_file` for nonempty `MAILBEND_CA_FILE`; otherwise `ssl_cert_env`
+for any set `SSL_CERT_FILE` or a nonempty colon-separated `SSL_CERT_DIR` entry;
+otherwise `system`. Empty `SSL_CERT_FILE` still selects the override. Empty
+or colon-only `SSL_CERT_DIR` does not. Trust paths are not shown, opened or
+validated. Read-only still permits private untrusted input and may
+share allowed content with TypeSafe. The permanent-delete confirmation word is
+not human approval. An unrestricted-send warning highlights unlisted recipients;
+it does not imply an allowlist eliminates all agent risk.
+
+Native source/dependency changes trip `tests/test-posture-inventory.py` until an
+explicit egress audit updates its hashes. This conservative gate can also flag
+harmless changes. It does not prove arbitrary native code has no hidden route.
+
 ## What survives an update
 
 Cursor distinguishes a software-only update, which keeps installed apps,

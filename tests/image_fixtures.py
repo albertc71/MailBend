@@ -35,7 +35,38 @@ def damaged_png():
         137, 80, 78, 71, 13, 10, 26, 10,
         0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 24, 0, 0, 1, 24, 8, 2, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 73, 68, 65, 84, 0, 0, 0, 0,
-    ])
+    ]) + png_chunk(b"IEND", b"")
+
+
+def gps_exif():
+    tiff = b"II\x2a\0\x08\0\0\0"
+    primary = struct.pack("<H", 1) + struct.pack("<HHII", 0x8825, 4, 1, 26) + bytes(4)
+    gps = (struct.pack("<H", 2)
+           + struct.pack("<HHI4s", 1, 2, 2, b"N\0\0\0")
+           + struct.pack("<HHII", 2, 5, 3, 56) + bytes(4)
+           + struct.pack("<IIIIII", 1, 1, 2, 1, 3, 1))
+    return b"Exif\0\0" + tiff + primary + gps
+
+
+def png_with_metadata(data, padding=0):
+    chunks = (png_chunk(b"tEXt", b"Location\0fixture GPS" + b"x" * padding)
+              + png_chunk(b"zTXt", b"Comment\0\0" + zlib.compress(b"fixture"))
+              + png_chunk(b"iTXt", b"XML:com.adobe.xmp\0\0\0\0\0<fixture/>")
+              + png_chunk(b"eXIf", gps_exif()[6:])
+              + png_chunk(b"tIME", struct.pack(">HBBBBB", 2026, 1, 2, 3, 4, 5)))
+    return data[:33] + chunks + data[33:-12] + chunks + data[-12:]
+
+
+def jpeg_segment(marker, body):
+    return bytes([0xFF, marker]) + struct.pack(">H", len(body) + 2) + body
+
+
+def jpeg_with_metadata(data):
+    scan = data.index(b"\xff\xda")
+    metadata = (jpeg_segment(0xE1, gps_exif())
+                + jpeg_segment(0xE1, b"http://ns.adobe.com/xap/1.0/\0<fixture/>")
+                + jpeg_segment(0xFE, b"fixture comment"))
+    return data[:scan] + metadata + data[scan:] + data
 
 
 def jpeg(width, height):

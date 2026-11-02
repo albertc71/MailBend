@@ -12,12 +12,14 @@ import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
+import ./awaiting.bend as Await
 import ./search-cursor.bend as SC
 import ./image.bend as Image
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 import ./response.bend as Response
 import ./policy.bend as Policy
+import ./message-metadata.bend as Metadata
 
 # The steps of a tool answer Base's Result: a value, or the message of the
 # tool's error.
@@ -761,7 +763,7 @@ def hdr_text(hs: List<&2, M.Hdr>, name: String) -> String:
 def summary_kvs(m: I.Msg) -> List<&2, J.Json>:
   I.Msg{uid, +flags, date, size, headers, body, _} = m
   +hs = M.headers(headers)
-  [
+  List.append(&2, J.Json, [
     J.kv("uid", J.num(uid)),
     J.kv("date", J.str(hdr_text(hs, "date"))),
     J.kv("from", J.str(hdr_text(hs, "from"))),
@@ -774,7 +776,7 @@ def summary_kvs(m: I.Msg) -> List<&2, J.Json>:
     J.kv("flags", J.strs(flags)),
     J.kv("seen", J.bool(I.has_attr(flags, "\\Seen"))),
     J.kv("flagged", J.bool(I.has_attr(flags, "\\Flagged")))
-  ]
+  ], Metadata.fields(hs, flags))
 
 def summary(m: I.Msg) -> J.Json:
   J.obj(summary_kvs(m))
@@ -824,8 +826,8 @@ def has_data(m: I.Msg, whole: Bool) -> Bool:
   I.Msg{uid, flags, date, size, headers, body, _} = m
   Bool.not(String.is_empty(Bool.pick(String, whole, body, headers)))
 
-# Whether a FETCH response carries what a Jev tool fetched: the header
-# fields, and with `body` the message too.
+# Whether a FETCH response carries the selected headers and, with `body`,
+# the message too.
 def has_facts(+m: I.Msg, body: Bool) -> Bool:
   has_data(m, False{}) && (Bool.not(body) || has_data(m, True{}))
 
@@ -1192,7 +1194,7 @@ def get_json(
 ) -> Policy.Out:
   I.Msg{uid, +flags, date, +size, headers, body, _} = m
   M.Parts{_, +html, atts} = p
-  ok_obj([
+  ok_obj(List.append(&2, J.Json, [
     J.kv("folder", J.str(folder)),
     J.kv("uid", J.num(uid)),
     J.kv("uidvalidity", maybe_num(uidv)),
@@ -1214,7 +1216,7 @@ def get_json(
     J.kv("html", J.str(html)),
     J.kv("html_available", J.bool(Bool.not(String.is_empty(html)))),
     J.kv("attachments", J.arr(atts_json(atts)))
-  ])
+  ], Metadata.fields(M.headers(headers), flags)))
 
 def msg_body(m: I.Msg) -> String:
   I.Msg{uid, flags, date, size, headers, body, _} = m
@@ -1256,7 +1258,7 @@ def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Shown:
     case Fail{m}:
       Listed{Policy.Err{m}, []}
     case Done{+lines}:
-      get_msg(with_uid(I.fetched(lines), uid, True{}), folder, uid,
+      get_msg(fetched_msgs(lines, [uid], True{}), folder, uid,
         I.ok_code(lines, "UIDVALIDITY"), max)
 
 # The one UID a tool that reads a single message is given.
@@ -4477,6 +4479,288 @@ def now_seconds() -> IO(U32):
       Process.run("/bin/date", ["+%s"], "", 64, 5000)
     return secs_of(Policy.proc_of(r))
 
+# Awaiting replies
+# ----------------
+
+type AwaitRead is Data:
+  AwaitRead{found: List<&2, Found>, complete: Bool, reason: String}
+
+def await_evidence(c: I.Cmd, +lines: List<&2, I.RLine>, +n: U32) -> Bool:
+  match c:
+    case I.CSearch{keys}:
+      ok_at(lines, n) && Maybe.is_some(&2, List<&2, U32>, Await.search(I.replies(lines, n)))
+    case I.CExamine{f}:
+      ok_at(lines, n) &&
+        Maybe.is_some(&2, U32, positive(I.ok_code(I.replies(lines, n), "UIDVALIDITY")))
+    case I.CExpect{line}:
+      True{}
+    case _:
+      ok_at(lines, n)
+
+def await_evidence.all(cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +tag: U32) -> Bool:
+  match cs:
+    case Nil{}:
+      True{}
+    case +c <> t:
+      await_evidence(c, lines, tag) && await_evidence.all(t, lines, I.next_tag(c, tag))
+
+def await_found.step(c: I.Cmd, rs: List<&2, I.RLine>, acc: List<&2, Found>)
+  -> List<&2, Found>:
+  match c acc:
+    case I.CSearch{_} Found{f, v, us, ms} <> t:
+      found = Maybe.default(&2, List<&2, U32>, Await.search(rs), [])
+      Found{f, v, Await.append(us, found), ms} <> t
+    case _ _:
+      thread_found.step(c, rs, acc)
+
+def await_found.go(cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +tag: U32,
+  acc: List<&2, Found>) -> List<&2, Found>:
+  match cs:
+    case Nil{}:
+      List.reverse(&2, Found, acc)
+    case +c <> t:
+      await_found.go(t, lines, I.next_tag(c, tag),
+        await_found.step(c, I.replies(lines, tag), acc))
+
+def await_session.if(valid: Bool, r: Run(), plan: List<&2, I.Cmd>, before: List<&2, Found>)
+  -> Result<&2, &2, String, List<&2, Found>>:
+  match valid:
+    case False{}:
+      Fail{"incomplete SEARCH or mailbox identity evidence"}
+    case True{}:
+      match r:
+        case Fail{m}:
+          Fail{m}
+        case Done{lines}:
+          +fs = await_found.go(plan, lines, 1, [])
+          session_found.if(any_uidv_moved(fs, before), fs)
+
+def await_session(r: Run(), +plan: List<&2, I.Cmd>, before: List<&2, Found>)
+  -> Result<&2, &2, String, List<&2, Found>>:
+  match r:
+    case Fail{m}:
+      Fail{m}
+    case Done{+lines}:
+      await_session.if(await_evidence.all(plan, lines, 1), Done{lines}, plan, before)
+
+def await_raw(plan: List<&2, I.Cmd>) -> IO(Run()):
+  do IO<Run()>:
+    path : String <- env_or("MAILBEND_TLS_HELPER", "")
+    p : Policy.Proc <- refresh_run.at(path, plan)
+    return imap_result(p)
+
+def await_run(p: Result<&2, &2, String, List<&2, I.Cmd>>, before: List<&2, Found>)
+  -> IO(Result<&2, &2, String, List<&2, Found>>):
+  match p:
+    case Fail{m}:
+      IO.pure(Result<&2, &2, String, List<&2, Found>>, Fail{m})
+    case Done{+plan}:
+      do IO<Result<&2, &2, String, List<&2, Found>>>:
+        r : Run() <- await_raw(plan)
+        return await_session(r, plan, before)
+
+def await_wants(fs: List<&2, Found>, +cap: Nat) -> List<&2, Ops.FolderUids>:
+  match fs:
+    case Nil{}:
+      []
+    case Found{f, v, us, ms} <> t:
+      thread_wants.put(f, List.take(&2, U32, Await.smallest(us), cap), await_wants(t, cap))
+
+def await_count(fs: List<&2, Found>) -> Nat:
+  match fs:
+    case Nil{}:
+      0n
+    case Found{f, v, us, ms} <> t:
+      (List.length(&2, U32, Await.smallest(us)) + await_count(t) : Nat)
+
+def await_fetch_complete(wants: List<&2, Ops.FolderUids>, +nodes: List<&2, T.Node>) -> Bool:
+  match wants:
+    case Nil{}:
+      True{}
+    case Ops.FolderUids{f, us} <> t:
+      Nat.is_eq(List.length(&2, U32, unseen(us, kept_uids(nodes, f))), 0n) &&
+        await_fetch_complete(t, nodes)
+
+def await_wanted_count(wants: List<&2, Ops.FolderUids>) -> Nat:
+  match wants:
+    case Nil{}:
+      0n
+    case Ops.FolderUids{f, us} <> t:
+      (List.length(&2, U32, us) + await_wanted_count(t) : Nat)
+
+def await_fetched(
+  r: Result<&2, &2, String, List<&2, Found>>,
+  +wants: List<&2, Ops.FolderUids>, count: Nat
+) -> AwaitRead:
+  match r:
+    case Fail{m}:
+      AwaitRead{[], False{}, m}
+    case Done{+fs}:
+      +complete = Nat.is_eq(await_wanted_count(wants), count) &&
+        await_fetch_complete(wants, found_nodes(fs))
+      AwaitRead{fs, complete, Bool.pick(String, complete, "", "header cap or missing FETCH data")}
+
+def await_fetch(+fs: List<&2, Found>, wants: List<&2, Ops.FolderUids>) -> IO(AwaitRead):
+  match wants:
+    case Nil{}:
+      IO.pure(AwaitRead, AwaitRead{fs, True{}, ""})
+    case +h <> +t:
+      do IO<AwaitRead>:
+        r : Result<&2, &2, String, List<&2, Found>> <- await_run(
+          thread_plan(True{}, Ops.plan_thread_headers(h <> t), fs), fs)
+        return await_fetched(r, h <> t, await_count(fs))
+
+def await_searched(r: Result<&2, &2, String, List<&2, Found>>, cap: Nat) -> IO(AwaitRead):
+  match r:
+    case Fail{m}:
+      IO.pure(AwaitRead, AwaitRead{[], False{}, m})
+    case Done{+fs}:
+      await_fetch(fs, await_wants(fs, cap))
+
+def await_read(plan: List<&2, I.Cmd>, cap: Nat) -> IO(AwaitRead):
+  do IO<AwaitRead>:
+    r : Result<&2, &2, String, List<&2, Found>> <- await_run(Done{plan}, [])
+    await_searched(r, cap)
+
+def await_item(+n: T.Node, status: Await.Status, +now: U32) -> J.Json:
+  T.Node{folder, uidv, I.Msg{uid, flags, date, size, headers, body, st}, +time,
+    id, parents, refs} = n
+  +hs = M.headers(headers)
+  J.obj([
+    J.kv("status", J.str(Await.status_name(status))),
+    J.kv("age_days", Bool.pick(J.Json, Await.date_valid(n) && U32.is_le(time, now),
+      J.num(((now - time) / 86400 : U32)), J.JNull{})),
+    J.kv("to", J.str(hdr_text(hs, "to"))),
+    J.kv("cc", J.str(hdr_text(hs, "cc"))),
+    J.kv("subject", J.str(hdr_text(hs, "subject"))),
+    J.kv("anchor", J.obj([
+      J.kv("folder", J.str(folder)), J.kv("uidvalidity", maybe_num(uidv)),
+      J.kv("uid", J.num(uid)), J.kv("message_id", parent_json(id))
+    ]))
+  ])
+
+def await_items(ns: List<&2, T.Node>, +replies: List<&2, T.Node>, +complete: Bool, +now: U32)
+  -> List<&2, J.Json>:
+  match ns:
+    case Nil{}:
+      []
+    case +n <> t:
+      await_item(n, Await.classify(n, replies, complete, now), now) <>
+        await_items(t, replies, complete, now)
+
+def await_bounded.if(over: Bool, j: J.Json, folders: List<&2, String>,
+  archive: Bool, now: U32) -> Policy.Out:
+  match over:
+    case False{}:
+      Policy.Ok{j}
+    case True{}:
+      ok_obj([
+        J.kv("complete", J.bool(False{})), J.kv("reason", J.str("result exceeds 256 KiB")),
+        J.kv("searched", J.strs(folders)), J.kv("archive_resolved", J.bool(archive)),
+        J.kv("as_of", J.num(now)), J.kv("messages", J.arr([]))
+      ])
+
+def await_bounded(out: Policy.Out, folders: List<&2, String>, archive: Bool, now: U32)
+  -> Policy.Out:
+  match out:
+    case Policy.Ok{+j}:
+      await_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), j, folders, archive, now)
+    case _:
+      out
+
+def await_out(
+  sent: AwaitRead, replies: AwaitRead, folders: List<&2, String>,
+  archive: Maybe<&2, String>, +now: U32, min_age: U32
+) -> Policy.Out:
+  AwaitRead{sf, +sc, sr} = sent
+  AwaitRead{+rf, rc, rr} = replies
+  +ns = List.sort(~T.Node, ~(a => b => T.no_later(a, b)),
+    Await.candidates(found_nodes(sf), now, min_age))
+  +reply_complete = rc && Await.valid_dates(found_nodes(rf), now)
+  +complete = sc && reply_complete && Await.valid_candidates(ns)
+  ok_obj([
+    J.kv("complete", J.bool(complete)),
+    J.kv("reason", J.str(Bool.pick(String, complete, "",
+      "incomplete candidate or reply evidence; " ++ sr ++ rr))),
+    J.kv("searched", J.strs(folders)),
+    J.kv("archive_resolved", J.bool(Maybe.is_some(&2, String, archive))),
+    J.kv("as_of", J.num(now)),
+    J.kv("messages", J.arr(await_items(ns, found_nodes(rf), reply_complete, now)))
+  ])
+
+def await_replies(+sent: AwaitRead, +folders: List<&2, String>, +archive: Maybe<&2, String>,
+  +now: U32, +min_age: U32) -> IO(Policy.Out):
+  AwaitRead{sf, sc, sr} = sent
+  keys = Await.batches(Await.ids(Await.candidates(found_nodes(sf), now, min_age)))
+  do IO<Policy.Out>:
+    replies : AwaitRead <- await_read(Ops.plan_thread_search(folders, keys), 100n)
+    return await_bounded(await_out(sent, replies, folders, archive, now, min_age),
+      folders, Maybe.is_some(&2, String, archive), now)
+
+def await_folders(f: Fs(), since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+  match f:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{Policy.Folders{all, drafts, trash, None{}, junk, archive}}:
+      pure_out(Policy.Err{"Sent folder is unresolved"})
+    case Done{Policy.Folders{all, drafts, trash, Some{sent}, junk, +archive}}:
+      do IO<Policy.Out>:
+        r : AwaitRead <- await_read(Ops.plan_awaiting_sent(sent, since), U32.to_nat(limit))
+        await_replies(r, thread_folders.put(["INBOX"], archive), archive, now, min_age)
+
+def await_roles(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
+  match ask:
+    case False{}:
+      folders_overrides(fs)
+    case True{}:
+      do IO<Fs()>:
+        r : Run() <- await_raw(Ops.plan_roles())
+        roles_of(r, fs)
+
+def await_probe(r: Run(), since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+  match r:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{+lines}:
+      do IO<Policy.Out>:
+        fs : Fs() <- await_roles(I.has_cap(I.caps(lines), "SPECIAL-USE"),
+          merge_folders(I.folders(lines), []))
+        await_folders(fs, since, now, min_age, limit)
+
+def await_start(valid: Bool, since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+  match valid:
+    case False{}:
+      pure_out(Policy.Err{"invalid awaiting-reply bounds or clock: " ++
+        "window 1..3650, age 0..window, limit 1..50"})
+    case True{}:
+      do IO<Policy.Out>:
+        r : Run() <- await_raw(Ops.plan_probe())
+        await_probe(r, since, now, min_age, limit)
+
+def await_arg_valid(v: Maybe<&2, J.Json>) -> Bool:
+  match v:
+    case None{}:
+      True{}
+    case Some{J.JNum{+raw}}:
+      Await.digits(raw) && Bool.not(String.is_empty(raw)) &&
+        Maybe.is_some(&2, U32, U32.read(raw))
+    case _:
+      False{}
+
+def t_awaiting(+args: J.Json) -> IO(Policy.Out):
+  +window = u32_arg(args, "window_days", 30)
+  +age = u32_arg(args, "min_age_days", 3)
+  +limit = u32_arg(args, "limit", 50)
+  do IO<Policy.Out>:
+    +now : U32 <- now_seconds()
+    since : String = Maybe.default(&2, String,
+      I.imap_date(M.iso_date((now - window * 86400 : U32))), "")
+    await_start(await_arg_valid(J.get(args, "window_days")) &&
+      await_arg_valid(J.get(args, "min_age_days")) && await_arg_valid(J.get(args, "limit")) &&
+      U32.is_ge(window, 1) && U32.is_le(window, 3650) && U32.is_le(age, window) &&
+      U32.is_ge(limit, 1) && U32.is_le(limit, 50) && U32.is_ge(now, (window * 86400 : U32)),
+      since, now, age, limit)
+
 def stamp() -> IO(Result<&2, &2, String, Stamp>):
   do IO<Result<&2, &2, String, Stamp>>:
     secs : U32 <- now_seconds()
@@ -6113,7 +6397,7 @@ def any_used(ns: List<&2, Image.Note>) -> Bool:
   match ns:
     case Nil{}:
       False{}
-    case Image.NoteUsed{section, name, format, bytes, px} <> t:
+    case Image.NoteUsed{section, name, format, bytes, px, removed} <> t:
       True{}
     case Image.NoteSkipped{section, name, reason} <> t:
       any_used(t)
@@ -6167,22 +6451,22 @@ def see_ahead(m: Maybe<&2, Image.Reason>, rest: List<&2, Part.Part>,
       SeeFetch{rest, acc, Image.quota_fetched(quota), p, format, max}
 
 def see_screen(pre: Image.Pre, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  +quota: Image.Quota, +p: Part.Part, name: String, encoding: String, size: U32) -> ImgSee:
+  +quota: Image.Quota, +p: Part.Part, name: String) -> ImgSee:
   match pre:
     case Image.Omit{reason}:
       SeeParts{rest, Image.VDrop{Part.path(p), name, reason} <> acc, quota}
     case Image.Fetch{format, max}:
-      see_ahead(Image.ahead(quota, encoding, size), rest, acc, quota, p, name, format, max)
+      see_ahead(Image.ahead(quota), rest, acc, quota, p, name, format, max)
 
 def see_part.image(yes: Bool, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, +encoding: String, +size: U32) ->
+  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, encoding: String, size: U32) ->
   ImgSee:
   match yes:
     case False{}:
       SeeParts{rest, acc, quota}
     case True{}:
       see_screen(Image.screen(image_typ(ct, cd), encoding, size), rest, acc, quota, p,
-        image_name(ct, cd), encoding, size)
+        image_name(ct, cd))
 
 def see_part(rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, quota: Image.Quota,
   +p: Part.Part) -> ImgSee:
@@ -7544,6 +7828,8 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
       t_refresh(args)
     case Ops.OGetThread{}:
       projected(args, jev, t_get_thread(args))
+    case Ops.OAwaitingReply{}:
+      t_awaiting(args)
     case Ops.OClassify{}:
       t_classify(args, jev, images)
     case Ops.OTriage{}:
@@ -7578,6 +7864,190 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
       t_respond(args, 0, jev)
     case Ops.OForward{}:
       t_respond(args, 1, jev)
+
+# A redacted routing snapshot. URL paths, credentials and local paths never enter it.
+type PostureEndpoint is Data:
+  PostureEndpoint{host: String, port: U32}
+
+type PostureTrustSource is Data:
+  PostureSystemTrust{}
+  PostureSslCertEnv{}
+  PostureMailbendCaFile{}
+
+def posture_trust_source(mailbend_ca: Bool, ssl_file: Bool, ssl_dirs: Bool) -> PostureTrustSource:
+  match mailbend_ca ssl_file ssl_dirs:
+    case True{} _ _:
+      PostureMailbendCaFile{}
+    case False{} False{} False{}:
+      PostureSystemTrust{}
+    case _ _ _:
+      PostureSslCertEnv{}
+
+def posture_trust_token(source: PostureTrustSource) -> String:
+  match source:
+    case PostureSystemTrust{}:
+      "system"
+    case PostureSslCertEnv{}:
+      "ssl_cert_env"
+    case PostureMailbendCaFile{}:
+      "mailbend_ca_file"
+
+type PostureEndpoints is Data:
+  PostureEndpoints{
+    imap: PostureEndpoint, smtp: PostureEndpoint, smtp_tls: String,
+    doh: Maybe<&2, PostureEndpoint>, proxy: Maybe<&2, PostureEndpoint>,
+    proxy_set: Bool, doh_proxy: Bool, typesafe_proxy: Bool,
+    imap_ip: Maybe<&2, String>, smtp_ip: Maybe<&2, String>,
+    attach: Bool, download: Bool, trust: PostureTrustSource
+  }
+
+def posture_send_allowed(ro: Bool, drafts: Bool, jev: Bool) -> Bool:
+  String.is_empty(Policy.refusal(Ops.OSend{}, J.obj([]), ro, drafts, jev))
+
+def posture_state_change(ro: Bool) -> Bool:
+  Bool.not(ro)
+
+def posture_body(s: Jev.Switch) -> Bool:
+  match s:
+    case Jev.On{Jev.Body{}}:
+      True{}
+    case _:
+      False{}
+
+def posture_images(m: Jev.ImageMode) -> Bool:
+  match m:
+    case Jev.ImagesOn{}:
+      True{}
+    case Jev.ImagesOff{}:
+      False{}
+
+def posture_endpoint(e: PostureEndpoint) -> J.Json:
+  PostureEndpoint{host, port} = e
+  J.obj([J.kv("host", J.str(host)), J.kv("port", J.num(port))])
+
+def posture_optional(e: Maybe<&2, PostureEndpoint>) -> J.Json:
+  match e:
+    case Some{endpoint}:
+      posture_endpoint(endpoint)
+    case None{}:
+      J.JNull{}
+
+def posture_send_kind(allowed: Bool, restricted: Bool) -> String:
+  match allowed:
+    case False{}:
+      "none"
+    case True{}:
+      Bool.pick(String, restricted, "allowlist", "unrestricted")
+
+def posture_jev_mode(s: Jev.Switch) -> String:
+  match s:
+    case Jev.Off{}:
+      "off"
+    case Jev.On{Jev.Headers{}}:
+      "headers"
+    case Jev.On{Jev.Body{}}:
+      "body"
+
+def posture_text_tools(s: Jev.Switch) -> List<&2, String>:
+  match s:
+    case Jev.On{Jev.Body{}}:
+      ["mail_get", "mail_classify", "mail_triage", "mail_delete", "mail_send", "mail_reply",
+        "mail_forward"]
+    case _:
+      []
+
+def posture_image_tools(images: Jev.ImageMode) -> List<&2, String>:
+  match images:
+    case Jev.ImagesOn{}:
+      ["mail_classify"]
+    case Jev.ImagesOff{}:
+      []
+
+def posture_typesafe(s: Jev.Switch, +images: Jev.ImageMode, proxied: Bool) -> J.Json:
+  match s:
+    case Jev.Off{}:
+      J.JNull{}
+    case Jev.On{+content}:
+      J.obj([J.kv("host", J.str("api.typesafe.ai")), J.kv("port", J.num(443)),
+        J.kv("tls", J.str("verified_https")), J.kv("proxied", J.bool(proxied)),
+        J.kv("tool_list_scope", J.str("Conservative possible paths before read-only and " ++
+          "drafts-only restrictions, not available tools. Saving drafts does not ask Jev.")),
+        J.kv("header_facts_and_attachment_names", J.strs(
+          ["mail_search", "mail_get_new", "mail_get_thread", "mail_get", "mail_classify",
+            "mail_triage", "mail_delete", "mail_send", "mail_reply", "mail_forward"])),
+        J.kv("message_text", J.strs(posture_text_tools(Jev.On{content}))),
+        J.kv("images", J.strs(posture_image_tools(images))),
+        J.kv("other_data", J.str("Existing folder names, prompts, category options, the account " ++
+          "identity and proposed recipients may accompany requests. " ++
+          "Headers mode is not private."))])
+
+def posture_ip_json(ip: Maybe<&2, String>) -> J.Json:
+  match ip:
+    case None{}:
+      J.JNull{}
+    case Some{address}:
+      J.str(address)
+
+def posture_mail(e: PostureEndpoint, tls: String, ip: Maybe<&2, String>) -> J.Json:
+  J.obj([J.kv("endpoint", posture_endpoint(e)), J.kv("tls", J.str(tls)),
+    J.kv("route", J.str("direct_never_proxied")),
+    J.kv("connect_ip_override", posture_ip_json(ip))])
+
+def posture(c: Policy.Config, sending: Sending, endpoints: PostureEndpoints) -> Policy.Out:
+  match c:
+    case Policy.ConfigBad{msg}:
+      Policy.Err{"configuration error: " ++ msg}
+    case Policy.Config{+ro, +drafts, +jev, +images}:
+      Sending{save_sent, +allow, +limit, state_dir} = sending
+      PostureEndpoints{imap, smtp, tls, doh, proxy, proxy_set, doh_proxy, typesafe_proxy,
+        imap_ip, smtp_ip, attach, download, trust} = endpoints
+      +on = Jev.is_on(jev)
+      +allowed = posture_send_allowed(ro, drafts, on)
+      +restricted = Bool.not(List.is_empty(&2, String, allow))
+      Policy.Ok{J.obj([J.kv("offline", J.bool(True{})), J.kv("redacted", J.bool(True{})),
+        J.kv("capabilities", J.obj([
+          J.kv("state_change", J.bool(posture_state_change(ro))),
+          J.kv("send", J.str(posture_send_kind(allowed, restricted))),
+          J.kv("drafts", J.str(Bool.pick(String, ro, "none",
+            Bool.pick(String, drafts, "drafts_only", "allowed")))),
+          J.kv("allowlist_entries", J.num(U32.from_nat(List.length(&2, String, allow)))),
+          J.kv("daily_cap", Bool.pick(J.Json, U32.is_zero(limit), J.JNull{}, J.num(limit))),
+          J.kv("save_sent", J.bool(save_sent)), J.kv("attachments_configured", J.bool(attach)),
+          J.kv("downloads_configured", J.bool(download)),
+          J.kv("jev", J.str(posture_jev_mode(jev))),
+          J.kv("body_permission", J.bool(posture_body(jev))),
+          J.kv("image_permission", J.bool(posture_images(images))),
+          J.kv("jev_required_tools", J.strs(["mail_classify", "mail_triage"])),
+          J.kv("jev_veto_tools", J.strs(Bool.pick(List<&2, String>, on,
+            ["mail_send", "mail_reply", "mail_forward", "mail_delete"], []))),
+          J.kv("unlisted_recipients_warning", J.bool(allowed && Bool.not(restricted))),
+          J.kv("permanent_delete_confirmation_is_human_approval", J.bool(False{}))])),
+        J.kv("egress", J.obj([
+          J.kv("imap", posture_mail(imap, "implicit_verified_tls", imap_ip)),
+          J.kv("smtp", posture_mail(smtp, tls, smtp_ip)),
+          J.kv("smtp_send_permitted", J.bool(allowed)),
+          J.kv("typesafe", posture_typesafe(jev, images, typesafe_proxy)),
+          J.kv("doh", posture_optional(doh)), J.kv("doh_proxied", J.bool(doh_proxy)),
+          J.kv("configured_https_proxy", posture_optional(proxy)),
+          J.kv("proxy_setting_set", J.bool(proxy_set)),
+          J.kv("proxy_endpoint_scope", J.str("Invalid proxy syntax is not parsed when no " ++
+            "configured HTTPS destination uses it; its endpoint is then omitted.")),
+          J.kv("proxy_observes", J.str("CONNECT destination host and port; optional proxy " ++
+            "authentication. Per-host no_proxy can bypass it. Mail TCP never uses it.")),
+          J.kv("dns_observes", J.str("Resolved hostnames. System DNS resolves direct mail " ++
+            "without DoH, proxy hosts and custom DoH hosts. Cloudflare :443 bootstrap uses " ++
+            "1.1.1.1 or 1.0.0.1. Connect-IP overrides and numeric IPs skip target lookup.")),
+          J.kv("trust_source", J.str(posture_trust_token(trust))),
+          J.kv("trust_source_scope", J.str("Configured source only; certificate files and " ++
+            "directories are not opened or validated."))])),
+        J.kv("scope", J.str("Configured permissions and potential routes. Endpoints are configuration, " ++
+          "not observed traffic. Tool lists conservatively name possible Jev paths before " ++
+          "read-only and drafts-only restrictions; they are not the available tools list. " ++
+          "Draft-only reply and forward do not ask Jev. Not a delivery, " ++
+          "quota, endpoint-validity or security guarantee. No connections, helper runs or " ++
+          "credential-file reads. Read-only still reads private untrusted mail and may " ++
+          "send permitted data to TypeSafe. All three Rule of Two properties hold when " ++
+          "state change or external communication is allowed."))])}
 
 def gated.if(problem: String, op: Ops.Op, args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
   IO(Policy.Out):

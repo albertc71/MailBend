@@ -6,9 +6,12 @@ Checks tool results and the server's recorded state and command log: reads
 never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
+Use --tool-scenarios-only for the second transport run after a complete run.
 """
+import argparse
 import base64
 import copy
+import fcntl
 from email import policy
 from email.parser import BytesParser
 import errno
@@ -24,6 +27,7 @@ import select
 import shutil
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -44,8 +48,8 @@ TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEN
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 22
-READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread"]
+TOOL_COUNT = 23
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply"]
 THREAD_MOVED = ("a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name "
                 "other messages: read the thread again")
 
@@ -573,12 +577,16 @@ def setup_diagnostics(work):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tool-scenarios-only", action="store_true",
+                        help="skip transport-fixed front-end checks already covered by a complete run")
+    args = parser.parse_args()
     work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
                             (str(ROOT / "build") if (ROOT / "build").exists() else None))
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
-        run_all(work)
+        run_all(work, tool_scenarios_only=args.tool_scenarios_only)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
@@ -588,18 +596,24 @@ def main():
     sys.exit(1 if failed else 0)
 
 
-def run_all(work):
-    mcp_headless()
-    setup_profiles(work)
-    setup_folder_suggestions(work)
-    setup_diagnostics(work)
+def run_all(work, *, tool_scenarios_only=False):
+    if not tool_scenarios_only:
+        mcp_headless()
+        posture = subprocess.run([sys.executable, str(ROOT / "tests/test-posture.py")],
+                                 text=True, capture_output=True)
+        check("offline posture: gate matrix, redaction and denied IO boundaries", posture.returncode == 0,
+              posture.stdout + posture.stderr)
+        setup_profiles(work)
+        setup_folder_suggestions(work)
+        setup_diagnostics(work)
     srv = Server(work)
     try:
         reads(srv)
         mutations(srv)
         compose(srv)
-        mcp(srv)
-        cli_front_end(srv)
+        if not tool_scenarios_only:
+            mcp(srv)
+            cli_front_end(srv)
         read_only(srv)
         failures(srv, work)
     finally:
@@ -621,6 +635,7 @@ def run_all(work):
     whole_read_identity(work)
     thread_classify_identity(work)
     threads(work)
+    awaiting_replies(work)
     flags_first_reads(work)
     dry_runs(work)
     jev(work)
@@ -637,6 +652,10 @@ def run_all(work):
     import importlib.util
     spec = importlib.util.spec_from_file_location("response_projection_cases",
                                                   ROOT / "tests" / "response-projection-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("metadata_cases", ROOT / "tests/metadata-cases.py")
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
@@ -1894,7 +1913,7 @@ def cli(srv, *args):
     return p
 
 
-USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments]"
+USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -]"
 
 
 def cli_front_end(srv):
@@ -1914,6 +1933,119 @@ def cli_front_end(srv):
     p = cli(srv, "call", "mail_probe")
     check("cli: call without arguments runs the tool with none", p.returncode == 0
           and json.loads(p.stdout).get("ok") is True, (p.returncode, p.stdout))
+    cli_stdin(srv)
+
+
+def cli_stdin(srv):
+    def run(data, name="nope", source="pipe"):
+        command = [LAUNCHER, "call", name, "-"]
+        if source == "file":
+            with tempfile.TemporaryFile() as handle:
+                handle.write(data)
+                handle.seek(0)
+                result = subprocess.run(command, stdin=handle, capture_output=True,
+                                        env=srv.env(), timeout=120)
+        else:
+            result = subprocess.run(command, input=data, capture_output=True,
+                                    env=srv.env(), timeout=120)
+        outputs.extend([result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")])
+        return result
+
+    for source in ("pipe", "file"):
+        p = run(b'{\n "from": "alice", "limit": 1\n}\n', "mail_search", source)
+        expected = cli(srv, "call", "mail_search", '{"from":"alice","limit":1}')
+        check(f"cli stdin: {source} multiline JSON matches argv result",
+              p.returncode == expected.returncode == 0 and p.stdout.decode() == expected.stdout,
+              (p.returncode, p.stdout[:200], p.stderr))
+
+    args = {"to": "a@example.com", "subject": "Unicode é 雪", "body": "café 🌱 �", "dry_run": True}
+    p = run(json.dumps(args, ensure_ascii=False).encode(), "mail_save_draft")
+    expected = cli(srv, "call", "mail_save_draft", json.dumps(args, ensure_ascii=False))
+    check("cli stdin: UTF-8 result is byte-identical to argv", p.returncode == expected.returncode == 0
+          and p.stdout.decode() == expected.stdout, (p.returncode, p.stdout, p.stderr))
+    args["body"] = "x" * (1024 * 1024)
+    p = run(json.dumps(args).encode(), "mail_save_draft")
+    value = json.loads(p.stdout) if p.stdout else {}
+    check("cli stdin: 1 MiB body reaches dry-run composition", p.returncode == 0
+          and dry_run_preview(value, 'APPEND "Drafts"')
+          and any(int(n) > 1024 * 1024 for n in re.findall(r"<(\d+) bytes>", json.dumps(value))),
+          (p.returncode, p.stdout[:500], p.stderr))
+
+    before = len(srv.log_lines())
+    invalid = [b"", b" \n\t", b"{", b"{} {}", b"{}x", b"{}\x00",
+               b'{"x":"\xff"}', b'{"x":"\xc0\xaf"}', b'{"x":"\xed\xa0\x80"}',
+               b'{"x":"\xf4\x90\x80\x80"}', b'{"x":"\xe2\x82"}', b'{"x":"\xe2\x82',
+               b'{"x":"\xe0\x80\xaf"}', b'{"x":"\x80"}']
+    for index, raw in enumerate(invalid):
+        p = run(raw, "mail_probe")
+        check(f"cli stdin: invalid document {index} refuses before connecting",
+              p.returncode == 2 and p.stdout == b"" and p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+
+    cap = 8 * 1024 * 1024
+    for length in (cap - 1, cap):
+        p = run(b"{}" + b" " * (length - 2))
+        check(f"cli stdin: {length} bytes accepted", p.returncode == 1
+              and json.loads(p.stdout) == {"error": "unknown tool: nope"}, (p.returncode, p.stderr))
+    p = run(b"{}" + b" " * (cap - 1), "mail_probe")
+    check("cli stdin: cap plus one refused before connecting", p.returncode == 2
+          and p.stdout == b"" and b"longer than 8 MiB" in p.stderr
+          and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    for char in ("é", "雪", "🌱"):
+        split = b'{"pad":"' + b"x" * (65535 - len(b'{"pad":"')) + char.encode() + b'"}'
+        p = run(split, source="file")
+        check(f"cli stdin: UTF-8 {len(char.encode())}-byte sequence across reads remains valid",
+              p.returncode == 1 and json.loads(p.stdout) == {"error": "unknown tool: nope"},
+              (p.returncode, p.stderr))
+
+    proc = subprocess.Popen([LAUNCHER, "call", "mail_probe", "-"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=srv.env())
+    try:
+        write_errors = []
+        capacity = fcntl.fcntl(proc.stdin.fileno(), fcntl.F_GETPIPE_SZ)
+        def write_prefix():
+            try:
+                proc.stdin.write(b"{}" + b" " * (2 * capacity))
+                proc.stdin.flush()
+            except OSError as error:
+                write_errors.append(str(error))
+        writer = threading.Thread(target=write_prefix)
+        writer.start()
+        writer.join(30)
+        if writer.is_alive():
+            proc.kill()
+            writer.join(5)
+            raise AssertionError("stdin reader did not consume the bounded prefix")
+        check("cli stdin: complete JSON waits for EOF before dispatch", not write_errors
+              and proc.poll() is None and len(srv.log_lines()) == before, write_errors)
+        out, err = proc.communicate(b" trailing", timeout=30)
+        outputs.extend([out.decode(errors="replace"), err.decode(errors="replace")])
+        check("cli stdin: later trailing input cannot run earlier JSON", proc.returncode == 2
+              and out == b"" and len(srv.log_lines()) == before, (proc.returncode, out, err))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+
+    peer, inherited = socket.socketpair()
+    try:
+        p = subprocess.run([LAUNCHER, "call", "mail_probe", "-"], stdin=inherited,
+                           capture_output=True, env=srv.env(), timeout=30)
+        check("cli stdin: socket rejected with exit 6 and pipe/file guidance", p.returncode == 6
+              and p.stdout == b"" and b"pipe or file" in p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    finally:
+        peer.close()
+        inherited.close()
+    directory = os.open(srv.work, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        p = subprocess.run([LAUNCHER, "call", "mail_probe", "-"], stdin=directory,
+                           capture_output=True, env=srv.env(), timeout=30)
+        check("cli stdin: unreadable descriptor refuses before dispatch", p.returncode == 2
+              and p.stdout == b"" and b"stdin arguments" in p.stderr
+              and len(srv.log_lines()) == before, (p.returncode, p.stdout, p.stderr))
+    finally:
+        os.close(directory)
 
 
 MUTATING_CALLS = {
@@ -3516,6 +3648,113 @@ def fetched_uids(line):
     return line.split(" UID FETCH ")[1].split(" ")[0].split(",")
 
 
+def awaiting_replies(work):
+    from email.utils import formatdate
+    now = time.time()
+    def message(uid, days, mid, extra=""):
+        at = now - days * 86400
+        raw = (f"Date: {formatdate(at, usegmt=True)}\r\nMessage-ID: <{mid}@example.test>\r\n"
+               f"From: sender@example.test\r\nTo: receiver@example.test\r\nSubject: same\r\n"
+               f"{extra}\r\nSynthetic body")
+        return {"uid": uid, "flags": [], "internaldate": time.strftime(
+            "%d-%b-%Y %H:%M:%S +0000", time.gmtime(at)), "raw": raw}
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["Sent Messages"]["messages"] = [
+        message(1, 10, "first"), message(2, 8, "second"), message(3, 6, "third")]
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        message(1, 1, "answer", "In-Reply-To: <second@example.test>\r\n"),
+        message(2, 1, "substring", "References: <first@example.test.extra>\r\n")]
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        c, r = tool(srv, "mail_awaiting_reply", {"window_days": 30, "min_age_days": 3},
+                    MAILBEND_READ_ONLY="1")
+        check("awaiting: exact reply, no subject or substring inference", c == 0 and
+              r.get("complete") is True and [m["status"] for m in r.get("messages", [])]
+              == ["awaiting", "replied", "awaiting"], r)
+        check("awaiting: read leaves synthetic mailbox unchanged", srv.st() == before)
+        lines = srv.log_lines()
+        check("awaiting: bounded read-only wire", any("SENTSINCE" in l for l in lines) and
+              any("OR HEADER" in l for l in lines) and not any(
+                  v in l for l in lines for v in (" SELECT ", " STORE ", " APPEND ", " EXPUNGE")), lines)
+        c, r = tool(srv, "mail_awaiting_reply", {"limit": 1})
+        check("awaiting: candidate cap preserves complete per-item evidence", c == 0 and
+              r.get("complete") is False and r.get("messages", [{}])[0].get("status") == "awaiting", r)
+    finally:
+        srv.stop()
+
+    for mode in ("missing", "malformed", "duplicate"):
+        srv = Server(work, fixture=fixture, extra=("--search-response", mode))
+        try:
+            c, r = tool(srv, "mail_awaiting_reply")
+            check(f"awaiting: {mode} SEARCH cannot confirm absence", c == 0 and
+                  r.get("complete") is False and not any(
+                      m["status"] == "awaiting" for m in r.get("messages", [])), r)
+        finally:
+            srv.stop()
+    changed = copy.deepcopy(fixture)
+    changed["examine_changes"] = [{"at": 2, "uidvalidity": 99}]
+    srv = Server(work, fixture=changed)
+    try:
+        c, r = tool(srv, "mail_awaiting_reply")
+        check("awaiting: changed Sent identity cannot confirm absence", c == 0 and
+              r.get("complete") is False and not any(
+                  m["status"] == "awaiting" for m in r.get("messages", [])), r)
+    finally:
+        srv.stop()
+
+    for scenario in ("archive", "no_archive", "missing_fetch", "reply_cap", "invalid_age", "invalid_id", "invalid_reply", "sent_cap"):
+        changed = copy.deepcopy(fixture)
+        if scenario == "archive":
+            changed["mailboxes"]["Archive"]["messages"] = [
+                message(1, 1, "archive-answer", "References: <first@example.test>\r\n")]
+        elif scenario == "no_archive":
+            del changed["mailboxes"]["Archive"]
+        elif scenario == "missing_fetch":
+            changed["mailboxes"]["INBOX"]["messages"][0]["omit_fetch_data"] = True
+        elif scenario == "reply_cap":
+            changed["mailboxes"]["INBOX"]["messages"] = [
+                message(uid, 1, f"answer-{uid}", "References: <second@example.test>\r\n")
+                for uid in range(1, 102)]
+        elif scenario == "invalid_age":
+            changed["mailboxes"]["Sent Messages"]["messages"][0]["internaldate"] = (
+                "31-Feb-2026 09:00:00 +0000")
+        elif scenario == "invalid_id":
+            changed["mailboxes"]["Sent Messages"]["messages"][0]["raw"] = (
+                changed["mailboxes"]["Sent Messages"]["messages"][0]["raw"].replace(
+                    "Message-ID: <first@example.test>", "Message-ID: <first@example.test> <bad@example.test>"))
+        elif scenario == "invalid_reply":
+            changed["mailboxes"]["INBOX"]["messages"][0]["internaldate"] = (
+                "31-Feb-2026 09:00:00 +0000")
+        elif scenario == "sent_cap":
+            changed["mailboxes"]["Sent Messages"]["messages"] = [
+                message(uid, 10, "second" if uid == 2 else f"sent-{uid}")
+                for uid in range(1, 61)]
+        srv = Server(work, fixture=changed)
+        try:
+            c, r = tool(srv, "mail_awaiting_reply")
+            messages = r.get("messages", [])
+            by_uid = {m["anchor"]["uid"]: m for m in messages}
+            if scenario == "archive":
+                valid = r.get("complete") is True and by_uid[1]["status"] == "replied"
+            elif scenario == "no_archive":
+                valid = r.get("complete") is True and r.get("archive_resolved") is False
+            elif scenario in ("invalid_age", "invalid_id"):
+                valid = (r.get("complete") is False and by_uid[1]["status"] == "unknown"
+                         and by_uid[3]["status"] == "awaiting")
+                if scenario == "invalid_age":
+                    valid = valid and by_uid[1]["age_days"] is None
+            elif scenario == "sent_cap":
+                valid = (r.get("complete") is False and len(messages) == 50
+                         and sum(m["status"] == "awaiting" for m in messages) == 49
+                         and by_uid[2]["status"] == "replied")
+            else:
+                valid = r.get("complete") is False and not any(m["status"] == "awaiting" for m in messages)
+            check(f"awaiting: {scenario} evidence", c == 0 and valid, r)
+        finally:
+            srv.stop()
+
+
 def threads(work):
     first = ("INBOX", 7, None)
     reply = ("Sent Messages", 1, "<trip1@example.com>")
@@ -3907,6 +4146,7 @@ def jev(work):
     jev_image_refusals(work, key_file)
     jev_image_quota(work, key_file)
     jev_image_kinds(work, key_file)
+    jev_image_metadata(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
     check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
 
@@ -3922,7 +4162,7 @@ def jev_switches(srv, work, key_file):
         names = listed_tools(srv, **jev_env(ts, key_file))
         check("jev on: every tool is listed, mail_classify and mail_triage after mail_get_thread",
               len(names) == TOOL_COUNT + 2
-              and names[names.index("mail_get_thread") + 1:names.index("mail_get_thread") + 3]
+              and names[names.index("mail_awaiting_reply") + 1:names.index("mail_awaiting_reply") + 3]
               == ["mail_classify", "mail_triage"], names)
         check("jev on, read-only: the read tools and mail_classify are listed, mail_triage is not",
               listed_tools(srv, MAILBEND_READ_ONLY="1", **jev_env(ts, key_file)) == READ_TOOLS + ["mail_classify"])
@@ -4181,7 +4421,7 @@ def part_fetches(lines):
 
 def jev_image_quota(work, key_file):
     """A batch fetches at most 8 image parts, and none once its request has
-    room for no more images or bytes; those parts are reported without a fetch."""
+    room for no more images or bytes. Otherwise the byte budget is checked after stripping."""
     on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
           "MAILBEND_TYPESAFE_IMAGES": "1"}
     small = IMAGES.png(100, 100)
@@ -4195,7 +4435,7 @@ def jev_image_quota(work, key_file):
         ("the byte budget, with a realistic still", [("big1.png", "image/png", big),
                                                      ("big2.png", "image/png", big),
                                                      ("ok.png", "image/png", png_still())],
-         ["used", "skipped:over_budget", "used"], 2),
+         ["used", "skipped:over_budget", "used"], 3),
     )
     for title, parts, fates, fetches in cases:
         fixture = copy.deepcopy(FIX)
@@ -4210,7 +4450,7 @@ def jev_image_quota(work, key_file):
             fetched = part_fetches(srv.log_lines()[log_start:])
             sent = ts.requests()
             assets = sent[0]["body"].get("assets", {}) if sent else {}
-            check(f"images quota, {title}: parts past it are reported without a fetch",
+            check(f"images quota, {title}: admission and fetch counts match",
                   c == 0 and seen == fates and len(fetched) == fetches
                   and len(assets) == fates.count("used") and srv.st() == before,
                   (r.get("error"), seen, len(fetched), len(assets)))
@@ -4243,7 +4483,7 @@ def jev_image_kinds(work, key_file):
               c == 0 and len(over) > 1572864 and images == [
                   {"section": "2", "name": "big.png", "fate": "skipped", "reason": "file_size"},
                   {"section": "3", "name": "photo.jpg", "fate": "used", "format": "jpeg",
-                   "bytes": len(jpeg), "width": 280, "height": 280}]
+                   "bytes": len(jpeg), "width": 280, "height": 280, "metadata_removed_bytes": 0}]
               and len(part_fetches(srv.log_lines()[log_start:])) == 2 and "image_notice" in r
               and [a["format"] for a in assets.values()] == ["jpeg"]
               and [base64.b64decode(a["data_base64"]) for a in assets.values()] == [jpeg]
@@ -4251,6 +4491,52 @@ def jev_image_kinds(work, key_file):
     finally:
         ts.stop()
         srv.stop()
+
+
+def jev_image_metadata(work, key_file):
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    png, jpeg = png_still(), IMAGES.jpeg(280, 280)
+    private_png, private_jpeg = IMAGES.png_with_metadata(png), IMAGES.jpeg_with_metadata(jpeg)
+    late_comment = jpeg[:-2] + IMAGES.jpeg_segment(0xFE, b"private") + jpeg[-2:]
+    big = IMAGES.png(600, 580, seed=7)
+    padded = IMAGES.png_with_metadata(png, padding=300000)
+    cases = (
+        ("metadata and malformed images", [
+            ("private.png", "image/png", private_png),
+            ("private.jpg", "image/jpeg", private_jpeg),
+            ("broken.png", "image/png", private_png[:-1]),
+            ("late.jpg", "image/jpeg", late_comment)],
+         [png, jpeg], [len(private_png) - len(png), len(private_jpeg) - len(jpeg)],
+         ["used", "used", "skipped:unreadable", "skipped:unreadable"]),
+        ("budget after metadata removal", [
+            ("big.png", "image/png", big), ("padded.png", "image/png", padded),
+            ("over.png", "image/png", big)],
+         [big, png], [0, len(padded) - len(png)], ["used", "used", "skipped:over_budget"]),
+    )
+    for title, parts, expected, removed, fates in cases:
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"] = [images_message(1, parts)]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            before = srv.st()
+            c, r = classify(srv, ts, key_file, {"uids": [1]}, **on)
+            notes = (r.get("messages") or [{}])[0].get("images") or []
+            seen = [n["fate"] + (":" + n["reason"] if "reason" in n else "") for n in notes]
+            used = [n for n in notes if n["fate"] == "used"]
+            requests = ts.requests()
+            assets = [a for q in requests for a in q["body"].get("assets", {}).values()]
+            wire = [base64.b64decode(a["data_base64"]) for a in assets]
+            check(f"images {title}: only stripped bytes reach TypeSafe",
+                  c == 0 and wire == expected and seen == fates
+                  and [n["bytes"] for n in used] == [len(data) for data in expected]
+                  and [n["metadata_removed_bytes"] for n in used] == removed
+                  and all(n["width"] >= 280 and n["height"] >= 280 for n in used)
+                  and len(requests) == 1 and srv.st() == before,
+                  (r.get("error"), seen, [(len(data), n) for data, n in zip(wire, used)]))
+        finally:
+            ts.stop()
+            srv.stop()
 
 
 def jev_image_batches(work, key_file):
@@ -4274,7 +4560,7 @@ def jev_image_batches(work, key_file):
             got = {m["uid"]: m for m in messages}
             expected = [
                 {"section": "2", "name": "scan.png", "fate": "used", "format": "png",
-                 "bytes": len(png_still()), "width": 280, "height": 280},
+                 "bytes": len(png_still()), "width": 280, "height": 280, "metadata_removed_bytes": 0},
                 {"section": "3", "name": "anim.gif", "fate": "skipped", "reason": "format"},
             ]
             label = "multiple requests" if split else "one request"
@@ -4391,7 +4677,8 @@ def jev_images(work, key_file):
                   c == 0 and r.get("image_notice") == notice and len(used) == 1 and len(skipped) == 1
                   and used[0].get("name") == "scan.png" and used[0].get("format") == "png"
                   and used[0].get("width") == 280 and used[0].get("height") == 280
-                  and used[0].get("bytes") == len(png_still()) and "ref" not in used[0]
+                  and used[0].get("bytes") == len(png_still())
+                  and used[0].get("metadata_removed_bytes") == 0 and "ref" not in used[0]
                   and skipped[0].get("name") == "anim.gif" and skipped[0].get("reason") == "format"
                   and "mbimg-" not in json.dumps(r), r)
             sent = ts.requests()

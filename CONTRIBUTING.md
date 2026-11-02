@@ -56,13 +56,30 @@ python3 tests/test-cloud-network.py
 python3 tests/test-stdio.py
 python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
+python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
+python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-e2e.py
-MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py       # same scenarios through structured MCP
+MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
+checks. The second repeats the tool scenarios through structured MCP without
+repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
+complete run, including when `MAILBEND_TEST_MCP=1` is set.
+
+CI runs source and proof checks, CLI, structured MCP and support suites on
+isolated standard Ubuntu runners. Each runtime runner builds its own binaries
+from the checked-out revision. This repeats build work to avoid shared-state
+races and artifact storage. Rust and fuzz checks remain separate. The final
+`checks` job requires every lane to succeed, including Rust and fuzz; skipped
+or cancelled lanes do not count as a pass.
+
+The goal is at most ten minutes of CI execution. This is a measurement target,
+not a timeout or permission to omit tests. Record queue time separately.
 
 The [bounded SMTP model](.agents/skills/smtp-tls-proofs/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
