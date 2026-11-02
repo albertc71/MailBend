@@ -76,7 +76,8 @@ evidence capture, not a baseline or acceptance fallback. Selection is not
 acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
 The scale job pins CPython 3.13.18, like ordinary CI. The 7763 baseline below
-uses that version and the current fake servers. The retained 9V45 record
+uses that version and the fixture hashes from its measured source. The
+current source must still match those hashes. The retained 9V45 record
 used 3.12.3 and older fake servers, so it is historical and is not selected.
 Both 9V45 and Intel 8573C take the explicit unreviewed-CPU evidence-only
 path and cannot pass until fresh matching evidence is independently reviewed. CPU selection alone never makes a stale or unknown profile acceptable.
