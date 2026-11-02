@@ -15,6 +15,7 @@ type Op is Data:
   OSearch{}
   OGet{}
   OGetNew{}
+  OBrief{}
   ORefresh{}
   OGetThread{}
   OAwaitingReply{}
@@ -53,6 +54,8 @@ def is_read_only(op: Op) -> Bool:
       True{}
     case OGetNew{}:
       True{}
+    case OBrief{}:
+      True{}
     case ORefresh{}:
       True{}
     case OContacts{}:
@@ -89,6 +92,8 @@ def name(op: Op) -> String:
       "mail_get"
     case OGetNew{}:
       "mail_get_new"
+    case OBrief{}:
+      "mail_brief"
     case ORefresh{}:
       "mail_refresh"
     case OContacts{}:
@@ -142,6 +147,7 @@ def all_ops() -> List<&2, Op>:
     OSearch{},
     OGet{},
     OGetNew{},
+    OBrief{},
     ORefresh{},
     OGetThread{},
     OAwaitingReply{},
@@ -292,6 +298,13 @@ def plan_new.if(at_end: Bool, mbox: String, since: U32) -> List<&2, I.Cmd>:
 # The UIDs in `mbox` above the checkpoint `since`.
 def plan_new(mbox: String, +since: U32) -> List<&2, I.Cmd>:
   plan_new.if(U32.is_eq(since, max_uid()), mbox, since)
+
+def plan_brief(folder: String, checkpoint: Bool, since: U32) -> List<&2, I.Cmd>:
+  match checkpoint:
+    case True{}:
+      plan_new(folder, since)
+    case False{}:
+      [I.CExamine{folder}, I.CSearch{[I.KUnseen{}, I.KUndeleted{}]}]
 
 def plan_new_now(mbox: String) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}]
