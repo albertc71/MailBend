@@ -235,6 +235,9 @@ def from_name(n: String) -> Maybe<&2, Op>:
 
 # Reads open folders with EXAMINE (read-only) and fetch only with PEEK.
 
+def plan_quota() -> List<&2, I.Cmd>:
+  [I.CGetQuotaRoot{"INBOX"}]
+
 # Capabilities and folders.
 def plan_probe() -> List<&2, I.Cmd>:
   [I.CCapability{}, I.CList{}]
@@ -424,10 +427,14 @@ def plan_thread_search(folders: List<&2, String>, +keys: List<&2, I.Key>) -> Lis
 def plan_awaiting_sent(sent: String, since: String) -> List<&2, I.Cmd>:
   [I.CExamine{sent}, I.CSearch{[I.KSentSince{since}, I.KUndeleted{}]}]
 
-# Empty since scans the whole stored folder for triage, still with a fetch cap.
+# Empty since scans the whole stored folder, still with a fetch cap.
 def plan_contacts_search(folder: String, +since: String) -> List<&2, I.Cmd>:
   [I.CExamine{folder}, I.CSearch{Bool.pick(List<&2, I.Key>, String.is_empty(since),
     [I.KUndeleted{}], [I.KSince{since}, I.KUndeleted{}])}]
+
+def plan_contact_candidates(folder: String, +address: String) -> List<&2, I.Cmd>:
+  [I.CExamine{folder}, I.CSearch{[I.KOr{I.KTo{address},
+    I.KOr{I.KCc{address}, I.KHeader{"BCC", address}}}, I.KUndeleted{}]}]
 
 def plan_contacts_headers(folder: String, uids: List<&2, U32>, uidv: U32) -> List<&2, I.Cmd>:
   [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)},

@@ -270,6 +270,7 @@ def main() -> IO(Unit):
     IO.print(Ops.review_folder())
     IO.print(wire(Ops.plan_contacts_search("Sent Messages", "")))
     IO.print(flag(I.any_writes(Ops.plan_contacts_search("Sent", "1-Oct-2026"))))
+    IO.print(wire(Ops.plan_contact_candidates("Sent", "a@example.test")))
     IO.print(wire(Ops.plan_reread_flags("INBOX", [3, 5])))
     IO.print(flag(I.any_writes(Ops.plan_reread_flags("INBOX", [3]))))
     IO.print("[" ++ moves_text(Ops.triage_moves("INBOX", placements())) ++ "]")
@@ -457,6 +458,7 @@ def main() -> IO(Unit):
 #|To Delete
 #|a1 EXAMINE "Sent Messages" | a2 UID SEARCH UNDELETED
 #|False
+#|a1 EXAMINE "Sent" | a2 UID SEARCH OR TO "a@example.test" OR CC "a@example.test" HEADER "BCC" "a@example.test" UNDELETED
 #|a1 EXAMINE "INBOX" | a2 UID FETCH 3,5 (UID FLAGS)
 #|False
 #|[ News[9] Receipts[5,7] To Delete[3]]

@@ -281,7 +281,7 @@ src/jev.bend         Jev (TypeSafe's model): message facts, questions, requests,
 src/secrets.bend     the local secret scan of an outgoing message
 src/thread.bend      which messages form a thread, and their order and parents
 src/awaiting.bend    exact later replies and complete absence evidence
-- `src/contacts.bend` owns bounded stored-header identities, occurrence aggregation and incomplete coverage.
+src/contacts.bend    bounded stored-header identities, occurrence aggregation and incomplete coverage
 src/ops.bend         operations and their IMAP command plans (the only way tools build commands)
 src/imap.bend        command model, wire rendering, transcript parsing, modified UTF-7
 src/mime.bend        message parsing (headers, RFC 2047/2231, multipart) and composition

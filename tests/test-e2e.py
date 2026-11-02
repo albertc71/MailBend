@@ -630,6 +630,7 @@ def run_all(work, *, tool_scenarios_only=False):
         failures(srv, work)
     finally:
         srv.stop()
+    quota_reporting(work)
     reply_quoting(work)
     reply_unicode_quoting(work)
     authentication_login(work)
@@ -672,6 +673,92 @@ def run_all(work, *, tool_scenarios_only=False):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+
+
+def quota_reporting(work):
+    normal = '* QUOTAROOT INBOX "private-server-marker"\r\n' + \
+             '* QUOTA "private-server-marker" (STORAGE 95001 100000)\r\n'
+    variants = [
+        ("QUOTA", normal, "OK", {"used_kib": 95001, "limit_kib": 100000, "percent": 95}),
+        ("QUOTA=RES-STORAGE", normal, "OK",
+         {"used_kib": 95001, "limit_kib": 100000, "percent": 95}),
+        ("", normal, "OK", "unknown"),
+        ("QUOTASET,QUOTA=RES-MESSAGE,XQUOTA,QUOTA=RES-STORAGE-X", normal, "OK", "unknown"),
+        ("QUOTA", "", "OK", "unknown"),
+        ("QUOTA", normal.replace('100000)', '100000'), "OK", "unknown"),
+        ("QUOTA", normal.replace('INBOX "', 'INBOX other "'), "OK", "unknown"),
+        ("QUOTA", normal, "NO", "unknown"),
+        ("QUOTA", normal.replace('95001 100000', '0 0'), "OK", "unknown"),
+        ("QUOTA", normal.replace('95001 100000', '4294967296 100000'), "OK", "unknown"),
+    ]
+    for caps, reply, status, expected in variants:
+        fixture = copy.deepcopy(FIX)
+        fixture.update(quota_reply=reply, quota_status=status)
+        srv = Server(work, caps=caps, fixture=fixture)
+        try:
+            before = srv.st()
+            code, result = tool(srv, "mail_probe", MAILBEND_READ_ONLY="1")
+            lines = srv.log_lines()
+            advertised = caps in ("QUOTA", "QUOTA=RES-STORAGE")
+            check(f"quota: {caps or 'absent'} {status} storage contract",
+                  code == 0 and result.get("storage") == expected, result)
+            check("quota: capability-gated exact session and command budget",
+                  sum(" LOGIN " in x for x in lines) == 1 + advertised
+                  and sum(' GETQUOTAROOT "INBOX"' in x for x in lines) == advertised, lines)
+            check("quota: probe does not select or change mail", before == srv.st()
+                  and not any(any(word in x for word in MUTATING_COMMANDS + (' SELECT ', ' EXAMINE '))
+                              for x in lines), lines)
+        finally:
+            srv.stop()
+
+    for used, limit, level in ((95001, 100000, "above_90_percent"),
+                               (901, 1000, "above_90_percent"), (90, 100, "ok"),
+                               (100, 100, "full"), (150, 100, "full"), (0, 0, "unknown")):
+        fixture = copy.deepcopy(FIX)
+        fixture['quota_reply'] = normal.replace('95001 100000', f'{used} {limit}')
+        srv = Server(work, caps="QUOTA", fixture=fixture)
+        try:
+            code, checks = diagnose(srv, "--imap")
+            storage = [c for c in checks if c.get("stage") == "storage"]
+            check("quota: diagnose exposes only a coarse storage level", code == 0 and storage ==
+                  [{"protocol": "imap", "stage": "storage", "level": level}], storage)
+            text = json.dumps(checks)
+            check("quota: diagnostic contains no storage counts, roots or server text",
+                  all(x not in text for x in ('used_kib', 'limit_kib', '"percent":',
+                                             'private-server-marker', 'quota fixture completed')))
+        finally:
+            srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    fixture['quota_refusals'] = {'APPEND': '[OVERQUOTA] private-server-marker',
+                                 'COPY': '[OVERQUOTA] private-server-marker'}
+    srv = Server(work, caps="UIDPLUS", fixture=fixture)
+    guidance = "the mailbox is over its storage quota; free space, then retry the refused operation"
+    try:
+        before = srv.st()['mailboxes']
+        code, result = tool(srv, "mail_save_draft", {"body": "synthetic fixture"})
+        check("quota: APPEND refusal is fixed guidance", code != 0
+              and guidance in result.get("error", "")
+              and "before saving again" in result.get("error", "")
+              and 'private-server-marker' not in json.dumps(result), result)
+        code, result = tool(srv, "mail_label", {"uids": [1], "uidvalidity": INBOX_VALIDITY,
+                                               "label": "Work/Projects"})
+        check("quota: COPY refusal is fixed guidance", code != 0
+              and guidance in result.get("error", "") and 'private-server-marker' not in json.dumps(result), result)
+        code, result = tool(srv, "mail_label", {"uids": [1], "uidvalidity": 99,
+                                               "label": "Work/Projects"})
+        check("quota: stale UIDVALIDITY retains precedence", code != 0
+              and "UIDVALIDITY changed" in result.get("error", "")
+              and guidance not in json.dumps(result), result)
+        check("quota: refused saves and copies leave mail unchanged", srv.st()['mailboxes'] == before)
+        code, result = tool(srv, "mail_send", {"to": ["friend@example.com"], "body": "synthetic fixture"},
+                            MAILBEND_SAVE_SENT="1")
+        check("quota: failed Sent copy never instructs resending accepted SMTP", code == 0
+              and result.get("smtp_outcome") == "accepted" and result.get("next_action") == "Do not resend. SMTP acceptance is not recipient delivery."
+              and guidance in result.get("sent_copy", "")
+              and "before saving again" in result.get("sent_copy", ""), result)
+    finally:
+        srv.stop()
 
 
 def get_new_start_now(work):
@@ -3757,6 +3844,22 @@ def live_contacts(work):
     finally:
         srv.stop()
 
+    overflow = copy.deepcopy(fixture)
+    overflow["mailboxes"]["Sent Messages"]["messages"] = [
+        message(i + 1, "To: " + ",".join(f"person{j}@example.test" for j in range(i * 50, min((i + 1) * 50, 501))))
+        for i in range(11)]
+    srv = Server(work, fixture=overflow)
+    try:
+        c, r = tool(srv, "mail_correspondents", {"addresses": ["person0@example.test", "absent@example.test"]})
+        check("contacts: exactly 501 aggregate recipients keep bounded correspondent rows incomplete",
+              c == 0 and len(r.get("correspondents", [])) == 2 and r.get("complete") is False and
+              r.get("coverage", [{}])[0].get("complete") is False, r)
+        c, r = tool(srv, "mail_contacts")
+        check("contacts: aggregate overflow still refuses ambiguous contact selection", c != 0 and
+              "500 addresses" in r.get("error", ""), r)
+    finally:
+        srv.stop()
+
 
 def awaiting_replies(work):
     from email.utils import formatdate
@@ -4994,6 +5097,7 @@ def triage(work):
     triage_no_review_folder(work, key_file)
     triage_senders(work, key_file)
     triage_partial_contacts(work, key_file)
+    triage_candidate_contacts(work, key_file)
     triage_flagged_meanwhile(work, key_file)
     triage_protections(work, key_file)
 
@@ -5005,7 +5109,7 @@ def triage_partial_contacts(work, key_file):
         friend = copy.deepcopy(sent[-1])
         friend["uid"] = 200
         filler = copy.deepcopy(friend)
-        filler["raw"] = filler["raw"].replace(FRIEND, "unrelated@example.test")
+        filler["raw"] = filler["raw"].replace(FRIEND, "news@example.com.extra")
         if mode == "cap":
             fixture["mailboxes"]["Sent Messages"]["messages"] = [
                 {**filler, "uid": u} for u in range(1, 102)] + [friend]
@@ -5026,6 +5130,71 @@ def triage_partial_contacts(work, key_file):
         finally:
             ts.stop()
             srv.stop()
+
+
+def triage_candidate_contacts(work, key_file):
+    for mode in ("large_unrelated", "old_bcc", "substring", "candidate_overflow", "bad_candidate"):
+        fixture = triage_fixture()
+        friend = copy.deepcopy(fixture["mailboxes"]["Sent Messages"]["messages"][-1])
+        filler = copy.deepcopy(friend)
+        filler["raw"] = filler["raw"].replace(FRIEND, "unrelated@example.test")
+        sent = [{**filler, "uid": u} for u in range(2, 10004)] if mode == "large_unrelated" else [
+            {**filler, "uid": u} for u in range(2, 104)]
+        if mode == "old_bcc":
+            friend["raw"] = friend["raw"].replace("To: " + FRIEND, "Bcc: " + FRIEND)
+        if mode in ("substring", "candidate_overflow", "bad_candidate"):
+            candidate = copy.deepcopy(friend)
+            candidate["raw"] = candidate["raw"].replace(FRIEND, "news@example.com.extra")
+            if mode == "bad_candidate":
+                candidate["raw"] = candidate["raw"].replace("To: news@example.com.extra", 'To: "Unclosed <news@example.com>')
+            sent = [{**candidate, "uid": u} for u in range(2, 10004 if mode == "candidate_overflow" else 3)]
+        # An unrelated Bcc-hidden stored message must not poison another sender.
+        empty = {**filler, "uid": 20000, "raw": "To: undisclosed-recipients:;\r\n\r\nbody"}
+        fixture["mailboxes"]["Sent Messages"]["messages"] = [friend] + sent + [empty]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file, [SAFE, FRIENDLY, FLAGGED_RECEIPT], **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            uncertain = mode in ("candidate_overflow", "bad_candidate")
+            check(f"triage candidates: {mode} preserves category filing", c == 0 and
+                  rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts", r)
+            check(f"triage candidates: {mode} older exact correspondent remains protected",
+                  "the user has written to its sender" in rows.get(FRIENDLY, {}).get("vetoes", []) and
+                  rows.get(FRIENDLY, {}).get("destination") is None, r)
+            check(f"triage candidates: {mode} exact absence or conservative unknown", c == 0 and
+                  ((rows.get(SAFE, {}).get("destination") is None and
+                    "whether the user has written to its sender cannot be told" in rows.get(SAFE, {}).get("vetoes", []))
+                   if uncertain else rows.get(SAFE, {}).get("destination") == REVIEW), r)
+        finally:
+            ts.stop()
+            srv.stop()
+    for mode in ("missing", "malformed", "duplicate"):
+        fixture = triage_fixture()
+        fixture["search_responses"] = {"Sent Messages": mode}
+        srv = Server(work, fixture=fixture)
+        ts = TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file, [SAFE, FLAGGED_RECEIPT], **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            check(f"triage candidates: {mode} SEARCH keeps uncertainty without blocking category filing", c == 0 and
+                  rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts" and
+                  rows.get(SAFE, {}).get("destination") is None and
+                  "whether the user has written to its sender cannot be told" in rows.get(SAFE, {}).get("vetoes", []), r)
+        finally:
+            ts.stop()
+            srv.stop()
+
+    changed = triage_fixture()
+    changed["examine_changes"] = [{"at": 3, "uidvalidity": 99}]
+    srv, ts = Server(work, fixture=changed), TypeSafe(work)
+    try:
+        c, r = triage_call(srv, ts, key_file, [SAFE, FRIENDLY], **BODY_MODE)
+        check("triage candidates: changed generation between senders aborts before Jev or filing", c != 0 and
+              "nothing was moved" in r.get("error", "") and not ts.requests() and
+              SAFE in msgs(srv.st(), "INBOX") and FRIENDLY in msgs(srv.st(), "INBOX"), r)
+    finally:
+        ts.stop()
+        srv.stop()
 
 
 def triage_body(work, key_file, caps):
@@ -5079,11 +5248,13 @@ def triage_body(work, key_file, caps):
               moving)
         check(tag + "no folder is created, and nothing is expunged but by UID",
               not any(any(t in line for t in FOLDER_COMMANDS) or line.split(" ", 1)[-1] == "EXPUNGE" for line in log), log)
-        searches = [line.split(" ", 1)[1] for line in log if " SEARCH TO " in line or " SEARCH CC " in line]
+        searches = [line.split(" ", 1)[1] for line in log if " SEARCH OR TO " in line]
         sent_open = [line.split(" ", 1)[1] for line in log if "Sent Messages" in line]
-        check(tag + "Sent correspondence uses bounded exact read-only headers, not substring hits",
-              sent_open == ['EXAMINE "Sent Messages"', 'EXAMINE "Sent Messages"']
-              and not searches and any("HEADER.FIELDS (FROM TO CC BCC)]<0.4097>" in line for line in log),
+        expected_searches = [f'UID SEARCH OR TO "{a}" OR CC "{a}" HEADER "BCC" "{a}" UNDELETED'
+                             for a in ("news@example.com", "dana@example.com", FRIEND)]
+        check(tag + "Sent correspondence verifies per-sender candidates with bounded read-only headers",
+              sent_open == ['EXAMINE "Sent Messages"'] * 4 and sorted(searches) == sorted(expected_searches)
+              and any("HEADER.FIELDS (FROM TO CC BCC)]<0.4097>" in line for line in log),
               (sent_open, searches))
         reread = [line.split(" ", 1)[1] for line in log if line.endswith("(UID FLAGS)")]
         check(tag + "the flags of the messages bound for review are read again before they move",

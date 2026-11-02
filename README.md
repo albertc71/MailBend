@@ -69,7 +69,7 @@ Jev off, no tool asks it.
 
 | Tool | What it does | Changes mail | Jev |
 | --- | --- | --- | --- |
-| `mail_probe` | Verified TLS login, server capabilities, role folders | no | — |
+| `mail_probe` | Verified TLS login, server capabilities, role folders, storage quota | no | — |
 | `mail_list_folders` | Mailboxes/folders with advertised special-use attributes | no | — |
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no | adds notes |
 | `mail_get` | Read one message: headers, text, HTML with link targets, attachment list | no | adds notes |
@@ -433,6 +433,26 @@ scripts/mailbend call mail_get '{"uid": 1234}'
 scripts/mailbend tools        # the tool list with JSON schemas
 ```
 
+`mail_probe.storage` is `"unknown"` or `{used_kib, limit_kib, percent}`.
+A successful post-login CAPABILITY with exact `QUOTA` or `QUOTA=RES-STORAGE`
+adds one read-only session for `GETQUOTAROOT "INBOX"`. Without either token,
+the existing login count stays unchanged. Storage counts are KiB and `percent`
+is the integer floor of `100 * used_kib / limit_kib`.
+Values above 100 are not clamped. A failed, missing, malformed, ambiguous,
+or out-of-range reply stays unknown without failing the probe.
+
+`mailbend diagnose --imap` reports only `ok`, `above_90_percent`, `full`, or
+`unknown` for storage. The warning threshold uses the exact ratio, not the
+rounded percentage. Diagnostics omit usage counts, quota roots, and server text.
+A refused `[OVERQUOTA]` operation gets fixed free-space guidance. An accepted
+SMTP send whose Sent copy fails still says `Do not resend.`
+
+This is generic IMAP storage information, not permission to send or proof of
+remaining delivery capacity. It does not validate iCloud's quota root or shared
+account storage. That authorized live check remains open in
+[issue #160](https://github.com/albertc71/MailBend/issues/160).
+See [storage quota limits and review notes](docs/plans/storage-quota.md).
+
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
 
@@ -620,7 +640,7 @@ synthetic cost measurements and experiment decision are in
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven).
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
-  every read plan (probe, folders, search, get, new mail, refresh, thread) contains
+  every read plan (probe, quota, folders, search, get, new mail, refresh, thread) contains
   no command that can change a mailbox, for every argument, and
   that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`.
 - **Nothing is lost by accident.** Move and trash never expunge before
@@ -920,7 +940,16 @@ the [operator runbook](docs/OPERATIONS.md).
   UIDs. The caller owns scheduling and state (see [polling](#polling-known-messages)).
 - Each character of a fetched message is a separate value in memory, so
   very large messages (the 16 MiB `mail_get` / 25 MiB forward caps) use a
-  lot of RAM.
+  lot of RAM. The [synthetic scale suite](tests/SCALE.md) measures those exact
+  inputs with per-call wall time and maximum-process RSS. Its committed
+  baseline states whether a complete measurement exists; an unmeasured or
+  different-runner baseline fails comparison. It does not establish a minimum
+  RAM requirement for small boards. The verified Ubuntu x86-64 hosted
+  baseline completes all five samples of the 16 MiB read and 25 MiB forward
+  with a matching Sent copy. Their median maximum-process RSS is 1,076,724
+  KiB (about 1.03 GiB) and 2,479,384 KiB (about 2.36 GiB), respectively;
+  fixture and validation memory are excluded. See the scale guide for the
+  runner profile, ranges and preserved earlier failed observations.
 - Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
@@ -950,15 +979,21 @@ FETCH data, changed UIDVALIDITY, invalid dates, unsupported headers or a sample 
 cannot establish absence. Even complete coverage is only for the stated stored-header
 window. Each header is capped at 4096 bytes, each SEARCH at 10000 UIDs, each message
 at 100 address tokens, aggregation at 500 addresses and output at 256 KiB.
+An aggregation overflow rejects `mail_contacts` rather than choosing candidates;
+`mail_correspondents` still returns its requested rows with incomplete coverage.
 
 `allowlist_suggestion` is a raw comma-separated value for a person to inspect before
 setting `MAILBEND_ALLOWED_RECIPIENTS`. It is not a shell command. Do not execute or
 interpolate it as shell code. Existing configuration is never changed. Persistent
 cache and optional vCard-directory access from #62 remain deferred owner decisions.
 
-Triage uses the same exact Sent scan without a date window. A positive observed
-match remains a correspondent. Missing observations veto deletion when coverage
-is capped or incomplete; substring SEARCH hits no longer establish correspondence.
+Triage searches all stored Sent To/Cc/Bcc headers separately for each sender, then
+verifies at most 100 matching candidate headers with the same exact parser. Unrelated
+Sent messages do not consume that candidate budget. Substring SEARCH hits are only
+candidates: a fully inspected no-match can establish a stranger, while an exact
+positive remains a correspondent even in a partial sample. Capped, malformed or
+missing candidate evidence vetoes deletion for that sender only; category filing
+can still proceed. Transport or mailbox-identity failures still abort the call.
 The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
 UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
 claim that untrusted headers establish real-world identity.

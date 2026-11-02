@@ -216,12 +216,16 @@ class State:
         self.fetch_no_flags = set()
         self.fetch_bad_flags = set()
         self.search_response = "normal"
+        self.search_responses = fixture.get("search_responses", {})
         self.remove_after_fetch = set()
         self.measure_responses = False
         self.flags_first = False
         self.cut_goodbye = False
         self.file_sent = None
         self.bodystructure = 'real'
+        self.quota_reply = fixture.get('quota_reply', '')
+        self.quota_status = fixture.get('quota_status', 'OK')
+        self.quota_refusals = fixture.get('quota_refusals', {})
         self.smtp_auth = fixture.get('smtp_auth', 'PLAIN LOGIN')
         self.smtp_greeting = fixture.get('smtp_greeting', 'fake ESMTP')
         self.seen = {}
@@ -772,6 +776,10 @@ class IMAPSession:
         if names & self.state.reject and tokens and isinstance(tokens[0], bytes):
             self.send(f'{tokens[0].decode("latin-1")} NO refused by the test server\r\n')
             return
+        if verb in self.state.quota_refusals:
+            self.send(f'{tokens[0].decode("latin-1")} NO '
+                      f'{self.state.quota_refusals[verb]}\r\n')
+            return
         self.muted = bool(names & self.state.drop_unanswered)
         self.dispatch(tokens)
         self.muted = False
@@ -891,6 +899,12 @@ class IMAPSession:
             self.cmd_logout(tag)
         elif verb == b'NOOP':
             self.send(f'{tag} OK NOOP completed\r\n')
+        elif verb == b'GETQUOTAROOT':
+            if len(args) != 1 or astring_val(args[0]).upper() != 'INBOX':
+                self.send(f'{tag} BAD expected INBOX\r\n')
+                return
+            self.send(self.state.quota_reply)
+            self.send(f'{tag} {self.state.quota_status} quota fixture completed\r\n')
         elif verb == b'LIST':
             self.cmd_list(tag, args)
         elif verb in (b'SELECT', b'EXAMINE'):
@@ -1033,11 +1047,12 @@ class IMAPSession:
                 return
             matched = sorted(m['uid'] for m in messages if all(p(m) for p in preds))
         response = '* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n'
-        if self.state.search_response == 'malformed':
+        mode = self.state.search_responses.get(mbox, self.state.search_response)
+        if mode == 'malformed':
             self.send('* SEARCH invalid\r\n')
-        elif self.state.search_response != 'missing':
+        elif mode != 'missing':
             self.send(response)
-            if self.state.search_response == 'duplicate':
+            if mode == 'duplicate':
                 self.send(response)
         self.send(f'{tag} OK SEARCH completed\r\n')
 

@@ -118,6 +118,10 @@ law from_name_inverts_name:
 # Read plans open mailboxes with EXAMINE, fetch with BODY.PEEK and never
 # change anything: for every mailbox, UID, size, key list and checkpoint.
 
+# LAW: the quota plan writes nothing
+law plan_quota_writes_nothing:
+  {I.any_writes(Ops.plan_quota()) == False{} : Bool}
+
 # LAW: the probe plan writes nothing
 law probe_writes_nothing:
   {I.any_writes(Ops.plan_probe()) == False{} : Bool}
@@ -1584,6 +1588,7 @@ law prefix_conserves_scalar_allowance:
 
 # LAW: enough room for all scalar escapes preserves the entire text and
 # leaves exactly the unused natural-number allowance.
+# Intermediate scalar-cost contract; see prefix_whole_when_room for wire weight.
 law prefix_whole_when_scalar_room:
   for s: String
   for left: U32
@@ -1886,9 +1891,11 @@ law awaiting_incomplete_is_unknown:
 law contact_plans:
   for folder: String
   for since: String
+  for address: String
   for uids: List<&2, U32>
   for uidv: U32
-  ({I.any_writes(Ops.plan_contacts_search(folder, since)) == False{} : Bool} &
+  ({I.any_writes(Ops.plan_contact_candidates(folder, address)) == False{} : Bool} &
+   {I.any_writes(Ops.plan_contacts_search(folder, since)) == False{} : Bool} &
    {I.any_writes(Ops.plan_contacts_headers(folder, uids, uidv)) == False{} : Bool} &
    {Ops.plan_contacts_headers(folder, uids, uidv) ==
     [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)},

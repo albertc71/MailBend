@@ -399,9 +399,9 @@ def check_roles() -> IO(Unit):
       T.invalid_override(folders(), "Notes", "MAILBEND_X") ++ "] " ++
       T.invalid_override(folders(), "Drafts", "MAILBEND_X"))
     IO.print(show_out(T.probe_fs(T.validate_overrides(folders(), "", "", "", "", ""),
-      I.frame("* CAPABILITY IMAP4rev1 MOVE IDLE\r\na1 OK\r\n"), "imap.example.com", "me@x")))
+      I.frame("* CAPABILITY IMAP4rev1 MOVE IDLE\r\na1 OK\r\n"), "imap.example.com", "me@x", I.StorageUnknown{})))
     IO.print(show_out(T.probe_fs(
-      T.validate_overrides(folders(), "Notes", "", "", "Junk", "Archive2"), [], "h", "me@x")))
+      T.validate_overrides(folders(), "Notes", "", "", "Junk", "Archive2"), [], "h", "me@x", I.StorageKnown{95, 100, 95})))
     IO.print(show_out(T.folders_fs(T.validate_overrides(folders(), "", "Nope", "", "Bad", ""))))
     IO.print(show_out(T.folders_fs(T.validate_overrides(folders(), "", "", "", "Spam", ""))))
     IO.print(show_out(T.folders_fs(T.validate_overrides(T.merge_folders(
@@ -1497,8 +1497,8 @@ def main() -> IO(Unit):
 #|Deleted Messages|Sent Messages|none|none|none
 #|Notes|none|INBOX|Deleted Messages
 #|[] [] MAILBEND_X must name one existing selectable mailbox
-#|ok {"ok":true,"account":"me@x","imap_host":"imap.example.com","tls_verified":true,"capabilities":["IMAP4REV1","MOVE","IDLE"],"idle":true,"move":true,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":null,"sent":"Sent Messages","trash":"Deleted Messages","junk":null,"archive":null},"folder_count":11}
-#|ok {"ok":true,"account":"me@x","imap_host":"h","tls_verified":true,"capabilities":[],"idle":false,"move":false,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":"Notes","sent":"Sent Messages","trash":"Deleted Messages","junk":"Junk","archive":"Archive2"},"folder_count":11}
+#|ok {"ok":true,"account":"me@x","imap_host":"imap.example.com","tls_verified":true,"capabilities":["IMAP4REV1","MOVE","IDLE"],"idle":true,"move":true,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":null,"sent":"Sent Messages","trash":"Deleted Messages","junk":null,"archive":null},"folder_count":11,"storage":"unknown"}
+#|ok {"ok":true,"account":"me@x","imap_host":"h","tls_verified":true,"capabilities":[],"idle":false,"move":false,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":"Notes","sent":"Sent Messages","trash":"Deleted Messages","junk":"Junk","archive":"Archive2"},"folder_count":11,"storage":{"used_kib":95,"limit_kib":100,"percent":95}}
 #|err MAILBEND_TRASH_FOLDER must name one existing selectable mailbox
 #|err MAILBEND_JUNK_FOLDER must name one existing selectable mailbox
 #|ok {"folders":[{"name":"INBOX","delimiter":"/","attributes":["\\HasNoChildren","\\Marked"],"special_use":null,"selectable":true},{"name":"Sent Messages","delimiter":"/","attributes":["\\Sent"],"special_use":"sent","selectable":true},{"name":"New","delimiter":".","attributes":["\\All"],"special_use":"all","selectable":true}]}
@@ -1567,7 +1567,7 @@ def main() -> IO(Unit):
 #|ok {"ok":true,"folder":"INBOX","destination":"Work","method":"UID MOVE","changed":[3],"missing":[]}
 #|ok {"ok":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","changed":[3],"missing":[]}
 #|partial {"ok":false,"partial":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","message":"the move was cut off and may have copied the messages to Work: they may now be in both INBOX and Work; check the destination before retrying (the server rejected a command: a5 NO cannot)"}
-#|err the server rejected a command: a4 NO [OVERQUOTA] full
+#|err the mailbox is over its storage quota; free space, then retry the refused operation
 #|partial {"ok":false,"partial":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","message":"the move was cut off and may have copied the messages to Work: they may now be in both INBOX and Work; check the destination before retrying (cannot run the TLS helper: timed out)"}
 #|err cannot run the TLS helper: not absolute
 #|[] "destination" must name a different folder | "destination" must name a different folder | "uidvalidity" is required: pass the value mail_search or mail_get returned with these UIDs, so stale UIDs can never change other messages

@@ -72,6 +72,7 @@ type Item is Data:
 
 type Cmd is Data:
   CCapability{}
+  CGetQuotaRoot{mbox: String}
   CList{}
   CListRoles{}
   CLsub{}
@@ -112,6 +113,8 @@ type Effect is Data:
 def effect(c: Cmd) -> Effect:
   match c:
     case CCapability{}:
+      ENone{}
+    case CGetQuotaRoot{m}:
       ENone{}
     case CList{}:
       ENone{}
@@ -666,6 +669,8 @@ def cmd_str(+c: Cmd) -> String:
   match c:
     case CCapability{}:
       "CAPABILITY"
+    case CGetQuotaRoot{m}:
+      "GETQUOTAROOT " ++ mailbox(m)
     case CList{}:
       "LIST \"\" \"*\""
     case CListRoles{}:
@@ -1876,3 +1881,296 @@ def listed_flags(vs: List<&2, Value>) -> List<&2, String>:
 def permanent_flags(lines: List<&2, RLine>) -> Maybe<&2, List<&2, String>>:
   Maybe.map(&2, String, List<&2, String>, v => listed_flags(tokens(v, [])),
     ok_code_text(lines, "PERMANENTFLAGS"))
+
+# Storage quota
+# -------------
+
+type Storage is Data:
+  StorageUnknown{}
+  StorageKnown{used_kib: U32, limit_kib: U32, percent: U32}
+
+# Quota strings need a strict lexer. The general IMAP tokenizer deliberately
+# recovers incomplete lists and strings, which cannot establish usage.
+type QuotaMode is Data:
+  QSpace{}
+  QAtom{}
+  QQuoted{}
+  QEscaped{}
+  QEnd{}
+
+type QuotaLex is Data:
+  QuotaLex{mode: QuotaMode, depth: U32, left: U32, valid: Bool}
+
+def quota_space(mode: QuotaMode) -> Bool:
+  match mode:
+    case QSpace{}:
+      True{}
+    case _:
+      False{}
+
+def quota_atom_mode(mode: QuotaMode) -> Bool:
+  match mode:
+    case QSpace{}:
+      True{}
+    case QAtom{}:
+      True{}
+    case _:
+      False{}
+
+def quota_finished(mode: QuotaMode) -> Bool:
+  match mode:
+    case QQuoted{}:
+      False{}
+    case QEscaped{}:
+      False{}
+    case _:
+      True{}
+
+def quota_atom(+c: Char) -> Bool:
+  C.between(C.u(c), 33, 126) &&
+    Bool.not(String.contains("(){}%*\"\\[]", SCon{c, SNil{}}))
+
+def quota_lex.step(c: Char, q: QuotaLex) -> QuotaLex:
+  match c q:
+    case +c QuotaLex{QQuoted{}, depth, left, valid}:
+      QuotaLex{Bool.pick(QuotaMode, Char.is_eq(c, '"'), QEnd{},
+        Bool.pick(QuotaMode, Char.is_eq(c, '\\'), QEscaped{}, QQuoted{})), depth, left,
+        valid && C.between(C.u(c), 32, 126)}
+    case +c QuotaLex{QEscaped{}, depth, left, valid}:
+      QuotaLex{QQuoted{}, depth, left,
+        valid && (Char.is_eq(c, '"') || Char.is_eq(c, '\\'))}
+    case ' ' QuotaLex{mode, depth, left, valid}:
+      QuotaLex{QSpace{}, depth, left, valid}
+    case '(' QuotaLex{mode, +depth, left, valid}:
+      QuotaLex{QSpace{}, (depth + 1 : U32), left,
+        valid && quota_space(mode) && U32.is_zero(depth)}
+    case ')' QuotaLex{mode, +depth, left, valid}:
+      QuotaLex{QEnd{}, (depth - 1 : U32), left, valid && Bool.not(U32.is_zero(depth))}
+    case '"' QuotaLex{mode, depth, left, valid}:
+      QuotaLex{QQuoted{}, depth, left, valid && quota_space(mode)}
+    case +c QuotaLex{+mode, depth, +left, valid}:
+      +literal = Char.is_eq(c, lit_mark())
+      QuotaLex{Bool.pick(QuotaMode, literal, QEnd{}, QAtom{}), depth,
+        Bool.pick(U32, literal, (left - 1 : U32), left),
+        valid && Bool.pick(Bool, literal, quota_space(mode) && U32.is_gt(left, 0),
+          quota_atom_mode(mode) && quota_atom(c))}
+
+def quota_lex.go(s: String, q: QuotaLex) -> Bool:
+  match s q:
+    case SNil{} QuotaLex{mode, depth, left, valid}:
+      valid && U32.is_zero(depth) && U32.is_zero(left) && quota_finished(mode)
+    case SCon{c, t} q:
+      quota_lex.go(t, quota_lex.step(c, q))
+
+def quota_tokens.if(valid: Bool, text: String, lits: List<&2, String>)
+  -> Maybe<&2, List<&2, Value>>:
+  match valid:
+    case True{}:
+      Some{tokens(text, lits)}
+    case False{}:
+      None{}
+
+def quota_text_bounded(s: String, fuel: U32) -> Bool:
+  match s fuel:
+    case SNil{} _:
+      True{}
+    case SCon{c, t} 0:
+      False{}
+    case SCon{c, t} fuel:
+      Bool.not(U32.is_zero(C.u(c))) && quota_text_bounded(t, (fuel - 1 : U32))
+
+def quota_literals_bounded(xs: List<&2, String>, fuel: U32) -> Bool:
+  match xs fuel:
+    case Nil{} _:
+      True{}
+    case s <> t 0:
+      False{}
+    case s <> t fuel:
+      quota_text_bounded(s, 4096) && quota_literals_bounded(t, (fuel - 1 : U32))
+
+def quota_tokens.bounded(ok: Bool, +text: String, +lits: List<&2, String>)
+  -> Maybe<&2, List<&2, Value>>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      quota_tokens.if(quota_lex.go(text,
+        QuotaLex{QSpace{}, 0, U32.from_nat(List.length(&2, String, lits)), True{}}), text, lits)
+
+def quota_tokens(+text: String, +lits: List<&2, String>) -> Maybe<&2, List<&2, Value>>:
+  quota_tokens.bounded(quota_text_bounded(text, 4096) &&
+    quota_literals_bounded(lits, 16), text, lits)
+
+def quota_string(v: Value) -> Maybe<&2, String>:
+  match v:
+    case VAtom{s}:
+      Some{s}
+    case VStr{s}:
+      Some{s}
+    case _:
+      None{}
+
+def quota_number.go(s: String, +n: U32, valid: Bool) -> Maybe<&2, U32>:
+  match s valid:
+    case SNil{} True{}:
+      Some{n}
+    case SCon{+c, t} True{}:
+      +digit = (C.u(c) - 48 : U32)
+      quota_number.go(t, (n * 10 + digit : U32), Char.is_digit(c) &&
+        (U32.is_lt(n, 429496729) || (U32.is_eq(n, 429496729) && U32.is_le(digit, 5))))
+    case _ False{}:
+      None{}
+
+def quota_number(v: Value) -> Maybe<&2, U32>:
+  match v:
+    case VAtom{+s}:
+      quota_number.go(s, 0, Bool.not(String.is_empty(s)))
+    case _:
+      None{}
+
+# floor(remainder * 100 / limit), without the overflowing multiplication.
+def quota_fraction(n: Nat, +part: U32, +limit: U32, +acc: U32, +count: U32) -> U32:
+  match n:
+    case 0n:
+      count
+    case 1n+p:
+      +carry = U32.is_ge(acc, (limit - part : U32))
+      quota_fraction(p, part, limit,
+        Bool.pick(U32, carry, (acc - (limit - part) : U32), (acc + part : U32)),
+        Bool.pick(U32, carry, (count + 1 : U32), count))
+
+def quota_known.if(valid: Bool, used: U32, limit: U32, percent: U32) -> Storage:
+  match valid:
+    case True{}:
+      StorageKnown{used, limit, percent}
+    case False{}:
+      StorageUnknown{}
+
+def quota_known(+used: U32, +limit: U32) -> Storage:
+  match limit:
+    case 0:
+      StorageUnknown{}
+    case _:
+      +whole = (used / limit : U32)
+      +fraction = quota_fraction(100n, (used % limit : U32), limit, 0, 0)
+      quota_known.if(U32.is_lt(whole, 42949672) ||
+        (U32.is_eq(whole, 42949672) && U32.is_le(fraction, 95)), used, limit,
+        (whole * 100 + fraction : U32))
+
+def quota_resources(xs: List<&2, Value>, found: Storage, +count: U32)
+  -> Maybe<&2, Storage>:
+  match xs:
+    case Nil{}:
+      Some{Bool.pick(Storage, U32.is_eq(count, 1), found, StorageUnknown{})}
+    case VAtom{name} <> used <> limit <> rest:
+      do Maybe<&2, Storage>:
+        u : U32 <- quota_number(used)
+        l : U32 <- quota_number(limit)
+        +storage : Bool = String.eq(String.to_upper(name), "STORAGE")
+        quota_resources(rest, Bool.pick(Storage, storage, quota_known(u, l), found),
+          Bool.pick(U32, storage, (count + 1 : U32), count))
+    case _:
+      None{}
+
+# A single root and a single corresponding QUOTA response. Never sum roots.
+type QuotaReplies is Data:
+  QuotaReplies{root: Maybe<&2, String>, quota: Maybe<&2, String>, storage: Storage}
+
+def quota_root.if(ok: Bool, root: String, quota: Maybe<&2, String>, storage: Storage)
+  -> Maybe<&2, QuotaReplies>:
+  match ok:
+    case True{}:
+      Some{QuotaReplies{Some{root}, quota, storage}}
+    case False{}:
+      None{}
+
+def quota_root(vs: List<&2, Value>, q: QuotaReplies) -> Maybe<&2, QuotaReplies>:
+  match vs q:
+    case box <> root <> Nil{} QuotaReplies{None{}, quota, storage}:
+      do Maybe<&2, QuotaReplies>:
+        b : String <- quota_string(box)
+        r : String <- quota_string(root)
+        quota_root.if(String.eq(String.to_upper(b), "INBOX"), r, quota, storage)
+    case _ _:
+      None{}
+
+def quota_reply(vs: List<&2, Value>, q: QuotaReplies) -> Maybe<&2, QuotaReplies>:
+  match vs q:
+    case root <> VList{xs} <> Nil{} QuotaReplies{box, None{}, _}:
+      do Maybe<&2, QuotaReplies>:
+        r : String <- quota_string(root)
+        storage : Storage <- quota_resources(xs, StorageUnknown{}, 0)
+        return QuotaReplies{box, Some{r}, storage}
+    case _ _:
+      None{}
+
+def quota_line(kind: String, text: String, lits: List<&2, String>, q: QuotaReplies)
+  -> Maybe<&2, QuotaReplies>:
+  match kind:
+    case "QUOTAROOT":
+      do Maybe<&2, QuotaReplies>:
+        vs : List<&2, Value> <- quota_tokens(text, lits)
+        quota_root(vs, q)
+    case "QUOTA":
+      do Maybe<&2, QuotaReplies>:
+        vs : List<&2, Value> <- quota_tokens(text, lits)
+        quota_reply(vs, q)
+    case _:
+      Some{q}
+
+def quota_line.bounded(ok: Bool, text: String, lits: List<&2, String>, q: QuotaReplies)
+  -> Maybe<&2, QuotaReplies>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      +body = after_space(text)
+      quota_line(String.to_upper(before_space(body)), after_space(body), lits, q)
+
+def quota_lines(lines: List<&2, RLine>, q: QuotaReplies) -> Maybe<&2, QuotaReplies>:
+  match lines:
+    case Nil{}:
+      Some{q}
+    case RLine{+text, lits} <> rest:
+      do Maybe<&2, QuotaReplies>:
+        next : QuotaReplies <- quota_line.bounded(quota_text_bounded(text, 4096),
+          text, lits, q)
+        quota_lines(rest, next)
+
+def storage.fin(q: Maybe<&2, QuotaReplies>) -> Storage:
+  match q:
+    case Some{QuotaReplies{Some{root}, Some{quota}, storage}}:
+      Bool.pick(Storage, String.eq(root, quota), storage, StorageUnknown{})
+    case _:
+      StorageUnknown{}
+
+def storage.bounded(ok: Bool, lines: List<&2, RLine>) -> Storage:
+  match ok:
+    case False{}:
+      StorageUnknown{}
+    case True{}:
+      storage.fin(quota_lines(lines, QuotaReplies{None{}, None{}, StorageUnknown{}}))
+
+def storage(+lines: List<&2, RLine>) -> Storage:
+  +scoped = replies(lines, 1)
+  storage.bounded(String.eq(status(lines, 1), "OK") &&
+    Nat.is_le(List.length(&2, RLine, scoped), 64n), scoped)
+
+def quota_advertised(+lines: List<&2, RLine>) -> Bool:
+  +cs = caps(replies(lines, 1))
+  String.eq(status(lines, 1), "OK") &&
+    (has_cap(cs, "QUOTA") || has_cap(cs, "QUOTA=RES-STORAGE"))
+
+def storage_level(s: Storage) -> String:
+  match s:
+    case StorageUnknown{}:
+      "unknown"
+    case StorageKnown{+used, +limit, _}:
+      threshold = ((limit / 10) * 9 + ((limit % 10) * 9) / 10 : U32)
+      Bool.pick(String, U32.is_ge(used, limit), "full",
+        Bool.pick(String, U32.is_gt(used, threshold), "above_90_percent", "ok"))
+
+# Only a response code immediately after the refused status is authoritative.
+def overquota(lines: List<&2, RLine>) -> Bool:
+  +text = String.to_upper(after_space(after_space(first_failure(lines))))
+  String.eq(text, "[OVERQUOTA]") || String.starts_with(text, "[OVERQUOTA] ")

@@ -289,12 +289,14 @@ def stale_msg() -> String:
 
 # Why the server refused a command: the folder's UIDVALIDITY changed
 # (`stale`), or the status line of the first command it refused.
-def imap_refusal(stale: Bool, lines: List<&2, I.RLine>) -> String:
+def imap_refusal(stale: Bool, +lines: List<&2, I.RLine>) -> String:
   match stale:
     case True{}:
       stale_msg()
     case False{}:
-      "the server rejected a command: " ++ String.trim(I.first_failure(lines))
+      Bool.pick(String, I.overquota(lines),
+        "the mailbox is over its storage quota; free space, then retry the refused operation",
+        "the server rejected a command: " ++ String.trim(I.first_failure(lines)))
 
 # A session's reply lines, or why it failed: the helper exits with 5 when
 # the server refused a command.
@@ -886,11 +888,36 @@ def uidv_missing() -> String:
 # mail_probe and mail_list_folders
 # --------------------------------
 
+def quota_result(r: Run()) -> I.Storage:
+  match r:
+    case Fail{m}:
+      I.StorageUnknown{}
+    case Done{lines}:
+      I.storage(lines)
+
+def probe_quota(advertised: Bool) -> IO(I.Storage):
+  match advertised:
+    case False{}:
+      IO.pure(I.Storage, I.StorageUnknown{})
+    case True{}:
+      do IO<I.Storage>:
+        r : Run() <- imap_run(Ops.plan_quota())
+        return quota_result(r)
+
+def storage_json(s: I.Storage) -> J.Json:
+  match s:
+    case I.StorageUnknown{}:
+      J.str("unknown")
+    case I.StorageKnown{used, limit, percent}:
+      J.obj([J.kv("used_kib", J.num(used)), J.kv("limit_kib", J.num(limit)),
+        J.kv("percent", J.num(percent))])
+
 def probe_json(
   lines: List<&2, I.RLine>,
   +f: Policy.Folders,
   host: String,
-  email: String
+  email: String,
+  storage: I.Storage
 ) -> Policy.Out:
   Policy.Folders{fs, drafts, trash, sent, junk, archive} = f
   +caps = I.caps(lines)
@@ -904,15 +931,17 @@ def probe_json(
     J.kv("move", J.bool(I.has_cap(caps, "MOVE"))),
     J.kv("uidplus", J.bool(I.has_cap(caps, "UIDPLUS"))),
     J.kv("special_use", special_json(f)),
-    J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs))))
+    J.kv("folder_count", J.num(U32.from_nat(List.length(&2, I.Folder, fs)))),
+    J.kv("storage", storage_json(storage))
   ])
 
-def probe_fs(f: Fs(), lines: List<&2, I.RLine>, host: String, email: String) -> Policy.Out:
+def probe_fs(f: Fs(), lines: List<&2, I.RLine>, host: String, email: String,
+  storage: I.Storage) -> Policy.Out:
   match f:
     case Fail{m}:
       Policy.Err{m}
     case Done{folders}:
-      probe_json(lines, folders, host, email)
+      probe_json(lines, folders, host, email, storage)
 
 def probe_out(r: Run(), host: String, email: String) -> IO(Policy.Out):
   match r:
@@ -921,7 +950,8 @@ def probe_out(r: Run(), host: String, email: String) -> IO(Policy.Out):
     case Done{+lines}:
       do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
-        return probe_fs(f, lines, host, email)
+        storage : I.Storage <- probe_quota(I.quota_advertised(lines))
+        return probe_fs(f, lines, host, email, storage)
 
 def t_probe(args: J.Json) -> IO(Policy.Out):
   do IO<Policy.Out>:
@@ -4774,9 +4804,10 @@ def contacts_failed(folder: String, reason: String) -> ContactScan:
 
 def contacts_observed(o: Contacts.Observed, folder: String, uidv: U32, sampled: U32)
   -> ContactScan:
-  Contacts.Observed{cs, +parsed} = o
-  ContactScan{folder, Some{uidv}, cs, sampled, parsed,
-    Bool.pick(String, parsed, "", "sample cap, missing FETCH or unsupported header/date evidence")}
+  Contacts.Observed{+cs, parsed} = o
+  +bounded = parsed && Nat.is_le(List.length(&2, Contacts.Contact, cs), 500n)
+  ContactScan{folder, Some{uidv}, cs, sampled, bounded,
+    Bool.pick(String, bounded, "", "sample/aggregation cap, missing FETCH or unsupported header/date evidence")}
 
 def contacts_header_bytes(short: Bool, hs: String) -> Bool:
   match short:
@@ -4855,6 +4886,36 @@ def contacts_scan(+folder: String, since: String, limit: U32, sent: Bool,
       Done{Ops.plan_contacts_search(folder, since)}, [])
     contacts_searched(r, folder, limit, sent, query, now)
 
+def contacts_candidates.parsed(us: Maybe<&2, List<&2, U32>>, +folder: String,
+  uidv: U32, now: U32) -> IO(ContactScan):
+  match us:
+    case None{}:
+      IO.pure(ContactScan, ContactScan{folder, Some{uidv}, [], 0, False{},
+        "candidate SEARCH exceeds the cap or is incomplete"})
+    case Some{xs}:
+      contacts_searched(Done{[Found{folder, Some{uidv}, xs, []}]}, folder, 100, True{}, "", now)
+
+def contacts_candidates.identity(valid: Bool, uidv: Maybe<&2, U32>,
+  lines: List<&2, I.RLine>, folder: String, now: U32) -> IO(ContactScan):
+  match valid uidv:
+    case True{} Some{v}:
+      contacts_candidates.parsed(Await.search(I.replies(lines, 2)), folder, v, now)
+    case _ _:
+      IO.pure(ContactScan, contacts_failed(folder, "candidate SEARCH or mailbox identity failed"))
+
+def contacts_candidates.reply(r: Run(), folder: String, now: U32) -> IO(ContactScan):
+  match r:
+    case Fail{m}:
+      IO.pure(ContactScan, contacts_failed(folder, m))
+    case Done{+lines}:
+      contacts_candidates.identity(ok_at(lines, 1) && ok_at(lines, 2),
+        positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY")), lines, folder, now)
+
+def contacts_candidates(+folder: String, address: String, now: U32) -> IO(ContactScan):
+  do IO<ContactScan>:
+    r : Run() <- await_raw(Ops.plan_contact_candidates(folder, address))
+    contacts_candidates.reply(r, folder, now)
+
 def contacts_received(folders: List<&2, String>, +since: String, +limit: U32, +now: U32)
   -> IO(List<&2, ContactScan>):
   match folders:
@@ -4932,7 +4993,7 @@ def contacts_bounded(valid: Bool, j: J.Json) -> Policy.Out:
     case False{}:
       Policy.Err{"contact result exceeds 500 addresses or 256 KiB; lower the header limit; no candidate selected"}
 
-def contacts_out(+sent: ContactScan, +received: List<&2, ContactScan>, contacts: Bool,
+def contacts_out(+sent: ContactScan, +received: List<&2, ContactScan>, +contacts: Bool,
   addrs: List<&2, String>, +since: String, +now: U32, +archive: Bool) -> Policy.Out:
   ContactScan{f, v, +cs, n, complete, reason} = sent
   +ranked = List.sort(~Contacts.Contact, ~(a => b => Contacts.before(a, b)), Contacts.matching(cs))
@@ -4946,7 +5007,7 @@ def contacts_out(+sent: ContactScan, +received: List<&2, ContactScan>, contacts:
     [J.kv("correspondents", J.arr(correspondents_items(addrs, cs, received)))])
   +j = J.obj(List.append(&2, J.Json, common, fields))
   contacts_bounded(U32.is_le(C.utf8_len(J.show(j)), 262144) &&
-    Nat.is_le(List.length(&2, Contacts.Contact, cs), 500n), j)
+    (Bool.not(contacts) || Nat.is_le(List.length(&2, Contacts.Contact, cs), 500n)), j)
 
 def contacts_folders(fs: Fs(), +contacts: Bool, addrs: List<&2, String>, query: String,
   +since: String, +limit: U32, +now: U32) -> IO(Policy.Out):
@@ -7760,26 +7821,67 @@ def triage_contact_state(+known: List<&2, String>, complete: Bool, p: Pending) -
         Some{known}, None{})
       settled.put(Some{a}, f, vetoes, state)
 
-def triage_contact_states(ps: List<&2, Pending>, +known: List<&2, String>, +complete: Bool)
-  -> List<&2, Pending>:
+def triage_candidate_state(+p: Pending, address: String, known: List<&2, String>,
+  complete: Bool) -> Pending:
+  match p:
+    case Pending{f, vetoes, Some{a}}:
+      Bool.pick(Pending, String.eq(a, address), triage_contact_state(known, complete, p), p)
+    case _:
+      p
+
+def triage_candidate_states(ps: List<&2, Pending>, +address: String,
+  +known: List<&2, String>, +complete: Bool) -> List<&2, Pending>:
   match ps:
     case Nil{}:
       []
     case p <> t:
-      triage_contact_state(known, complete, p) <> triage_contact_states(t, known, complete)
+      triage_candidate_state(p, address, known, complete) <>
+        triage_candidate_states(t, address, known, complete)
 
-def triage_contacts(scan: ContactScan, t: Triaging) -> Triaging:
+def triage_candidates_put(scan: ContactScan, address: String, t: Triaging) -> Triaging:
   ContactScan{f, v, cs, n, complete, reason} = scan
   Triaging{call, c, cats, opts, roles, caps, review, found, missing} = t
   Triaging{call, c, cats, opts, roles, caps, review,
-    triage_contact_states(found, Contacts.keys(cs), complete), missing}
+    triage_candidate_states(found, address, Contacts.keys(cs), complete), missing}
 
-def triage_contacts_ready(scan: ContactScan, t: Triaging) -> IO(Policy.Out):
+def triage_candidate_uidv(expected: Maybe<&2, U32>, uidv: U32) -> Bool:
+  match expected:
+    case None{}:
+      True{}
+    case Some{v}:
+      U32.is_eq(v, uidv)
+
+type CandidateState is Data:
+  CandidateState{uidv: Maybe<&2, U32>, triage: Triaging}
+
+def triage_candidates.accept(valid: Bool, scan: ContactScan, address: String,
+  uidv: U32, t: Triaging) -> Result<&2, &2, String, CandidateState>:
+  match valid:
+    case False{}:
+      Fail{"Sent UIDVALIDITY changed between candidate searches"}
+    case True{}:
+      Done{CandidateState{Some{uidv}, triage_candidates_put(scan, address, t)}}
+
+def triage_candidates.set(scan: ContactScan, address: String, expected: Maybe<&2, U32>,
+  t: Triaging) -> Result<&2, &2, String, CandidateState>:
   match scan:
     case ContactScan{f, None{}, cs, n, complete, reason}:
+      Fail{reason}
+    case ContactScan{f, Some{+v}, cs, n, complete, reason}:
+      triage_candidates.accept(triage_candidate_uidv(expected, v),
+        ContactScan{f, Some{v}, cs, n, complete, reason}, address, v, t)
+
+def triage_candidates(addrs: List<&2, String>,
+  state: Result<&2, &2, String, CandidateState>, +folder: String, +now: U32) -> IO(Policy.Out):
+  match addrs state:
+    case _ Fail{reason}:
       pure_out(Policy.Err{"cannot verify Sent correspondence (" ++ reason ++ "); nothing was moved"})
-    case ContactScan{f, Some{v}, cs, n, complete, reason}:
-      triage_ask(triage_contacts(ContactScan{f, Some{v}, cs, n, complete, reason}, t))
+    case Nil{} Done{CandidateState{expected, t}}:
+      triage_ask(t)
+    case +a <> rest Done{CandidateState{expected, t}}:
+      do IO<Policy.Out>:
+        scan : ContactScan <- contacts_candidates(folder, a, now)
+        triage_candidates(rest, triage_candidates.set(scan, a, expected, t), folder, now)
 
 def triage_sent.put(sent: Maybe<&2, String>, addrs: List<&2, String>,
   t: Triaging) -> IO(Policy.Out):
@@ -7789,8 +7891,7 @@ def triage_sent.put(sent: Maybe<&2, String>, addrs: List<&2, String>,
     case Some{box}:
       do IO<Policy.Out>:
         now : U32 <- now_seconds()
-        scan : ContactScan <- contacts_scan(box, "", 100, True{}, "", now)
-        triage_contacts_ready(scan, t)
+        triage_candidates(addrs, Done{CandidateState{None{}, t}}, box, now)
 
 def triage_sent.if(
   no_senders: Bool,

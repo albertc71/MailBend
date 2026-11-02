@@ -1,0 +1,16 @@
+name: Scale comparison
+on:
+  pull_request:
+    paths:
+      - tests/test-scale.py
+      - tests/scale_fixtures.py
+      - tests/scale-baseline.json
+      - .github/workflows/scale-compare.yml
+permissions:
+  contents: read
+jobs:
+  compare:
+    uses: ./.github/workflows/ci.yml
+    with:
+      scale: true
+      record_scale: false

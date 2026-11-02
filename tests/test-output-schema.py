@@ -57,13 +57,15 @@ def check_rendered_text(tools):
     assert wire == json.dumps(tools, ensure_ascii=True, separators=(",", ":"))
     return rendered
 
-for index in (0, 9, 9999, 10000, 123456):
+valid_indices = (0, 9, 9999, 10000, 123456)
+invalid_calls = ("schema_fragment.p0000()", "schema_piece.p0()",
+                 "schema_piece.p00000()", "schema_piece.p-001()",
+                 "schema_piece.p0000", "schema_piece.p0000()suffix")
+for index in valid_indices:
     assert PIECE_CALL.fullmatch(f"schema_piece.p{index:04d}()")
-for invalid in ("schema_fragment.p0000()", "schema_piece.p0()",
-                "schema_piece.p00000()", "schema_piece.p-001()",
-                "schema_piece.p0000", "schema_piece.p0000()suffix"):
+for invalid in invalid_calls:
     assert not PIECE_CALL.fullmatch(invalid), invalid
-checks += 11
+checks += len(valid_indices) + len(invalid_calls)
 
 check_rendered_text(schema.TOOLS)
 fixture = [{"name": name, "description": ('quoted "value" \\ slash 雪 🌱 ' * 12),
@@ -86,6 +88,19 @@ def check(name, value, valid=True):
     assert (not errors) == valid, (name, value, [e.message for e in errors])
     checks += 1
 
+
+probe = dict(ok=True, account="fixture@example.test", imap_host="localhost", tls_verified=True,
+             capabilities=[], idle=False, move=False, uidplus=False, folder_count=1,
+             special_use={k: None for k in ("inbox", "drafts", "sent", "trash", "junk", "archive")})
+for storage in ("unknown", dict(used_kib=95, limit_kib=100, percent=95),
+                dict(used_kib=150, limit_kib=100, percent=150)):
+    check("mail_probe", {**probe, "storage": storage})
+for storage in ({}, None, "unsupported", dict(used_kib=-1, limit_kib=100, percent=0),
+                dict(used_kib=0, limit_kib=0, percent=0),
+                dict(used_kib=4294967296, limit_kib=100, percent=95),
+                dict(used_kib=95, limit_kib=100, percent=95.5)):
+    check("mail_probe", {**probe, "storage": storage}, False)
+check("mail_probe", probe, False)
 
 hidden_count = dict(tag=0, bidi=0, zero_width=0)
 hidden = dict(subject=hidden_count, body=hidden_count, **{"from": hidden_count},

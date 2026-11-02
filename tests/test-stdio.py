@@ -30,6 +30,10 @@ ENV["BEND_NO_TELEMETRY"] = "1"
 READ_TOOLS = {"mail_probe", "mail_list_folders", "mail_search", "mail_get",
               "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply",
               "mail_contacts", "mail_correspondents"}
+# Without a compiled core, Bend checks and interprets main.bend before the first
+# reply: about 30 s on CI runners, 53-57 s on a 4-CPU dev container and 65-70 s
+# there with every CPU busy. The deadline leaves room for slower shared runners.
+INTERPRETER_STARTUP = 300
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 META = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {}}
@@ -58,10 +62,21 @@ def wait_until(predicate, timeout=10):
 
 
 def live(pid):
+    # Z is an unreaped zombie and X a task its reaper is releasing; both have
+    # exited, and kill() on an X task already fails with ESRCH.
     try:
-        return pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] != "Z"
+        return pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] not in "ZXx"
     except (FileNotFoundError, ProcessLookupError):
         return False
+
+
+def kill_if_live(pid):
+    # The process may exit on its own between the check and the signal; it
+    # being gone is the state this cleanup wants.
+    if live(pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    wait_until(lambda: not live(pid))
 
 
 def child_pid(pid):
@@ -105,8 +120,8 @@ class Session:
         else:
             self.proc.stdin.close()
 
-    def line(self):
-        deadline = time.monotonic() + 30
+    def line(self, timeout=30):
+        deadline = time.monotonic() + timeout
         while b"\n" not in self.pending:
             if not select.select([self.output], [], [], max(0, deadline - time.monotonic()))[0]:
                 raise AssertionError("MCP reply did not arrive while stdin remained open")
@@ -252,10 +267,8 @@ class StartedPlanTests(unittest.TestCase):
                         yield session, server, core, helper
                     finally:
                         server.resume.set()
-                        if helper is not None and live(helper):
-                            with contextlib.suppress(ProcessLookupError):
-                                os.kill(helper, signal.SIGKILL)
-                            wait_until(lambda: not live(helper))
+                        if helper is not None:
+                            kill_if_live(helper)
 
     def stop_core(self, session, core):
         session.proc.terminate()
@@ -356,11 +369,6 @@ else:
         core.chmod(0o755)
         return adapter
 
-    def stop_helper(self, pid):
-        if live(pid):
-            os.kill(pid, signal.SIGKILL)
-            wait_until(lambda: not live(pid))
-
     def test_ordinary_signals_allow_started_descendant_to_finish(self):
         for pipe in (False, True):
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
@@ -378,7 +386,7 @@ else:
                             self.assertTrue((pathlib.Path(directory) / "finished").exists(),
                                             "ordinary shutdown killed the started descendant")
                         finally:
-                            self.stop_helper(pids["helper"])
+                            kill_if_live(pids["helper"])
 
     def test_kill_still_stops_adapter_and_core(self):
         for pipe in (False, True):
@@ -391,7 +399,7 @@ else:
                         self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                         wait_until(lambda: not live(pids["core"]))
                     finally:
-                        self.stop_helper(pids["helper"])
+                        kill_if_live(pids["helper"])
 
     def test_adapter_failure_still_kills_core_group(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -417,7 +425,7 @@ else:
                         proc.kill()
                     proc.wait(timeout=10)
                     if pids is not None:
-                        self.stop_helper(pids["helper"])
+                        kill_if_live(pids["helper"])
                     proc.stdout.close()
                     proc.stderr.close()
 
@@ -721,9 +729,7 @@ class StdioTests(unittest.TestCase):
                 # distinguishes the death guard from orphan-group HUP/CONT + EOF.
                 wait_until(lambda: not live(core))
             finally:
-                if live(core):
-                    os.kill(core, signal.SIGKILL)
-                    wait_until(lambda: not live(core))
+                kill_if_live(core)
 
     def test_parent_death_guard_kills_input_independent_child(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -749,9 +755,7 @@ class StdioTests(unittest.TestCase):
                     # never reads EOF, so only the death guard can end it.
                     wait_until(lambda: not live(child))
                 finally:
-                    if live(child):
-                        os.kill(child, signal.SIGKILL)
-                        wait_until(lambda: not live(child))
+                    kill_if_live(child)
                     wait_until(lambda: not pathlib.Path(f"/proc/{child}").exists())
 
     def test_queued_input_survives_socket_hangup(self):
@@ -810,7 +814,7 @@ class StdioTests(unittest.TestCase):
             env = dict(ENV, PATH="/usr/bin:/bin")
             with Session(helper, env=env) as session:
                 session.peer.sendall(discovery())
-                self.assertEqual(session.line()["id"], 1)
+                self.assertEqual(session.line(timeout=INTERPRETER_STARTUP)["id"], 1)
                 session.peer.shutdown(socket.SHUT_WR)
                 self.assertEqual(session.proc.wait(timeout=30), 0)
                 self.assertEqual(session.proc.stderr.read(), b"")
@@ -826,7 +830,8 @@ class StdioTests(unittest.TestCase):
             payload = json.dumps({"body": "x" * (1024 * 1024),
                                   "unicode": "é 雪 🌱"}, ensure_ascii=False).encode()
             result = subprocess.run([str(launcher), "call", "nope", "-"], input=payload,
-                                    capture_output=True, env=ENV, cwd="/", timeout=120)
+                                    capture_output=True, env=ENV, cwd="/",
+                                    timeout=INTERPRETER_STARTUP)
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertEqual(json.loads(result.stdout), {"error": "unknown tool: nope"})
             self.assertEqual(result.stderr, b"mailbend: the tool failed\n")

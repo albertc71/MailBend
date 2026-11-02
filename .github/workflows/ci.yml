@@ -4,16 +4,37 @@ on:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_call:
+    inputs:
+      scale:
+        type: boolean
+        required: true
+      record_scale:
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      scale:
+        description: Run the synthetic scale suite instead of ordinary CI
+        type: boolean
+        default: false
+      record_scale:
+        description: Record a candidate baseline without comparing or replacing the committed baseline
+        type: boolean
+        default: false
+
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.scale) && 'scale' || 'ci' }}
   cancel-in-progress: true
 env:
   BEND_NO_TELEMETRY: '1'
 jobs:
   source-checks:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -30,7 +51,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq time
       - name: Install Python with the adjacent encoded-word parser fix
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -41,6 +62,8 @@ jobs:
         run: |
           sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Scale harness contracts
+        run: python3 tests/test-scale-contract.py
       - name: Offline posture native egress inventory
         run: python3 tests/test-posture-inventory.py
       - name: Generated schema is up to date
@@ -128,6 +151,7 @@ jobs:
           python3 tests/formal/search-pagination-model.py
           python3 tests/formal/check-search-contract-mutations.py
   runtime:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -196,6 +220,7 @@ jobs:
           python3 tests/test-integrated-results.py
           python3 tests/test-scheduled-recipes.py
   rust:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -244,6 +269,7 @@ jobs:
       - name: Dependency policy (cargo-deny)
         run: cargo deny --log-level warn --all-features check
   fuzz:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -270,7 +296,7 @@ jobs:
       - runtime
       - rust
       - fuzz
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'schedule' && !inputs.scale }}
     steps:
       - name: Every required lane passed
         env:
@@ -284,3 +310,44 @@ jobs:
           test "$RUNTIME_RESULT" = success
           test "$RUST_RESULT" = success
           test "$FUZZ_RESULT" = success
+
+  scale:
+    if: github.event_name == 'schedule' || inputs.scale
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl time
+          rustup toolchain install 1.99 --profile minimal
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Build the pinned compiled core
+        run: scripts/install.sh
+      - name: Measure only local synthetic workloads
+        timeout-minutes: 16
+        env:
+          RECORD_SCALE: ${{ inputs.record_scale }}
+        run: |
+          python3 tests/test-scale-contract.py
+          if [ "$RECORD_SCALE" = true ]; then
+            python3 tests/test-scale.py --record --output scale-results.json
+          else
+            python3 tests/test-scale.py --output scale-results.json
+          fi
+      - name: Log measurements, including failed and incomplete runs
+        if: always()
+        run: |
+          if [ -f scale-results.json ]; then
+            sha256sum scale-results.json
+            printf '%s\n' SCALE_RESULT_JSON_BEGIN
+            cat scale-results.json
+            printf '%s\n' SCALE_RESULT_JSON_END
+          else
+            echo "No scale result was produced."
+          fi
