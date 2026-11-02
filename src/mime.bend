@@ -556,15 +556,18 @@ def merge(+a: Parts, +b: Parts) -> Parts:
 def no_parts() -> Parts:
   Parts{"", "", []}
 
-# Normalizes line breaks to LF (for text handed to agents).
-def lf_lines(s: String) -> String:
+def lf_lines.go(s: String, out: String) -> String:
   match s:
     case SNil{}:
-      ""
+      String.reverse(out)
     case SCon{'\r', SCon{'\n', t}}:
-      "\n" ++ lf_lines(t)
+      lf_lines.go(t, SCon{'\n', out})
     case SCon{c, t}:
-      SCon{c, lf_lines(t)}
+      lf_lines.go(t, SCon{c, out})
+
+# Normalizes line breaks to LF (for text handed to agents).
+def lf_lines(s: String) -> String:
+  lf_lines.go(s, "")
 
 # The text of an inline part: decoded from its charset, with LF line breaks.
 def leaf.text(ct: String, bytes: String) -> String:
