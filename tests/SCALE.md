@@ -86,9 +86,9 @@ Version names alone never permit comparison. The initial byte identity and
 contract checks do not substitute for the complete 35-sample hosted run.
 
 The path and import migration changes the harness and generator hashes.
-Existing records remain historical evidence and intentionally fail against
-this new apparatus until genuine new samples are reviewed. No metadata may
-be copied onto old measurements to make the profiles match.
+Earlier records remain historical evidence and fail against this new
+apparatus. The current candidate below was measured on the new paths and
+independently reviewed. No metadata was copied onto old measurements.
 
 ## Compare a recorded baseline
 
@@ -104,13 +104,12 @@ a failed job even if that command unexpectedly exits successfully. This is
 evidence capture, not a baseline or acceptance fallback. Selection is not
 acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
-The scale job pins CPython 3.13.18, like ordinary CI. The selector still
-identifies the previous 9V45 record, which predates this snapshot-path
-migration and must fail full-profile comparison. No selected record yet
-validates the new apparatus. The retained 7763 record is also historical.
-Unselected CPUs take the explicit evidence-only path until fresh matching
-evidence is independently reviewed. CPU selection alone never makes a
-stale or unknown profile acceptable.
+The scale job pins CPython 3.13.18, like ordinary CI. The new 9V45 snapshot
+candidate below records the actual versioned dependency hashes. A matching
+comparison is still required. The retained 7763 record is historical.
+The 7763, Intel 8573C and EPYC 9V74 models take the explicit unreviewed-CPU
+evidence-only path until fresh matching evidence is independently reviewed.
+CPU selection alone never makes a stale or unknown profile acceptable.
 
 The comparison requires the same runner, operating system, architecture,
 CPU model, logical CPU count, Bend version, Python implementation/version,
@@ -164,6 +163,17 @@ A dirty-parent regression control verifies this separation. Missing or invalid
 resource output cannot pass; a group killed by the safety stop may have no
 GNU time output. The report then keeps only the sampled diagnostic peak.
 The timer binary hash and version are part of the comparable runner profile.
+
+## Current snapshot candidate
+
+[Run 41414114062](https://github.com/albertc71/MailBend/actions/runs/41414114062)
+completed all 35 exact samples in 547.06 seconds on source
+`8ae04b1b3c773d14dea78e167e0047adab1e7cb5`, using EPYC 9V45 and CPython
+3.13.18. Independent review matched all 26,941 logged JSON bytes and SHA-256
+`92832bc6e9b864dfc2665d5b191b15bb3852c2ddd4b79660d342801f3887e746`.
+This exact report is the selected baseline. The run correctly failed
+comparison against the old apparatus profile; it is not a regression pass.
+A subsequent matching-profile comparison must pass the unchanged gates.
 
 ## Previous hosted 9V45 candidate
 
@@ -238,7 +248,8 @@ samples, 699.07 seconds. Independent review verified full JSON SHA-256
 Its profile differs from the 9V45 candidate only in CPU model. This run also
 failed comparison correctly against the other CPU, not workload validation.
 These earlier candidate runs were not successful regression comparisons;
-the later passing run for the active profile is linked above.
+the later passing run for the historical 7763 profile is linked above.
+The active 9V45 profile has no passing comparison yet.
 
 ### Previous hosted baseline
 
