@@ -65,7 +65,7 @@ jobs:
       - name: Scale harness contracts
         run: |
           python3 tests/test-scale-contract.py
-          python3 tests/test-scale-pair.py
+          python3 -I tests/test-scale-pair.py
       - name: Selected scale baselines match source
         run: python3 tests/test-scale-baseline.py
       - name: Offline posture native egress inventory
@@ -348,8 +348,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential clang openssl time
           rustup toolchain install 1.99 --profile minimal
-          sh candidate/scripts/install-bend.sh
-          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Install the pinned scale Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -362,25 +360,37 @@ jobs:
       - name: Validate paired sources and immutable apparatus before building
         if: ${{ !inputs.record_scale }}
         run: |
-          python3 candidate/tests/scale_pair.py preflight --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+          python3 -I candidate/tests/scale_pair.py preflight --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+      - name: Install the verified pinned Bend toolchain
+        env:
+          RECORD_SCALE: ${{ inputs.record_scale }}
+        run: |
+          if [ "$RECORD_SCALE" = true ]; then
+            sh candidate/scripts/install-bend.sh
+          else
+            sh reference/scripts/install-bend.sh
+          fi
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Build the reference in its own tree
         if: ${{ !inputs.record_scale }}
         run: reference/scripts/install.sh
       - name: Build the candidate in its own tree
         run: candidate/scripts/install.sh
       - name: Check contracts and capture exact paired build identities
+        env:
+          RECORD_SCALE: ${{ inputs.record_scale }}
         run: |
           python3 candidate/tests/test-scale-contract.py
-          python3 candidate/tests/test-scale-pair.py
+          python3 -I candidate/tests/test-scale-pair.py
           mkdir -p scale-results
-          if [ "${{ inputs.record_scale }}" != true ]; then
-            python3 candidate/tests/scale_pair.py identities --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+          if [ "$RECORD_SCALE" != true ]; then
+            python3 -I candidate/tests/scale_pair.py identities --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
           fi
       - name: Interleave fixed-reference and candidate sample pairs
         if: ${{ !inputs.record_scale }}
         timeout-minutes: 31
         run: |
-          python3 candidate/tests/scale_pair.py run --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+          python3 -I candidate/tests/scale_pair.py run --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
       - name: Manual evidence recording only (not a comparison)
         if: ${{ inputs.record_scale && github.event_name == 'workflow_dispatch' }}
         timeout-minutes: 16

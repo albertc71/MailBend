@@ -160,7 +160,7 @@ def unchanged(roots, candidate_sha, output):
     return recorded
 
 
-ADAPTER_VERSION = "abab-five-pairs-v1"
+ADAPTER_VERSION = "alternating-leaders-five-pairs-v2"
 SIDES = ("reference", "candidate")
 # New absolute per-sample limits, floor(1.25 * fixed-reference baseline logins).
 # Provenance: hosted run 41414114062, baseline SHA256 below; not an old harness limit.
@@ -234,6 +234,11 @@ def absolute_sample(harness, scenario, sample):
             f"{scenario.name}: absolute per-sample login cap exceeded")
 
 
+def pair_order(index):
+    """Alternate the leader, without changing candidate/reference ratio direction."""
+    return SIDES if index % 2 == 0 else tuple(reversed(SIDES))
+
+
 def ratio_gate(harness, reports, order):
     """Validate full reports, then use medians of paired ratios, not ratios of medians."""
     for side in SIDES:
@@ -242,8 +247,8 @@ def ratio_gate(harness, reports, order):
     require(reports["reference"]["profile"] == reports["candidate"]["profile"],
             "full profiles differ")
     expected = [{"scenario": s.name, "pair": i + 1, "side": side}
-                for s in harness.SCENARIOS for i in range(5) for side in SIDES]
-    require(order == expected, "missing or out-of-order ABAB samples")
+                for s in harness.SCENARIOS for i in range(5) for side in pair_order(i)]
+    require(order == expected, "missing or out-of-order alternating-leader samples")
     gates = {}
     for scenario in harness.SCENARIOS:
         left = reports["reference"]["scenarios"][scenario.name]["samples"]
@@ -266,7 +271,7 @@ def collect(harness, roots, identity, output, outer):
     reports = {side: {"format": 1, "status": "incomplete", "scenarios": {},
                      "source_commit": identity["checkouts"][side]["source_sha"],
                      "core_sha256": identity["checkouts"][side]["files"]["bin/mailbend-core"]["sha256"],
-                     "measurement": "cold launcher, warm OS cache; ABAB paired samples",
+                     "measurement": "cold launcher, warm OS cache; alternating-leader paired samples",
                      "load_average_start": os.getloadavg()}
                for side in SIDES}
     result = {"status": "failed", "order": [], "adapter_version": ADAPTER_VERSION,
@@ -297,7 +302,8 @@ def collect(harness, roots, identity, output, outer):
             for scenario in harness.SCENARIOS:
                 samples = {side: [] for side in SIDES}
                 for index in range(5):
-                    for side, checkout in zip(SIDES, roots):
+                    for side in pair_order(index):
+                        checkout = roots[SIDES.index(side)]
                         work = root / f"{scenario.name}-{index}-{side}"
                         sample = {"status": "failed", "reason": "sample did not complete"}
                         result["order"].append({"scenario": scenario.name, "pair": index + 1, "side": side})

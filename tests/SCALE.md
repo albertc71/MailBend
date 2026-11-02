@@ -118,13 +118,26 @@ timeout, control object and all measurement/verification functions. The
 adapter/orchestrator has its own recorded hash: the old harness digest alone
 does not describe the new paired orchestration.
 
-For each scenario the order is A1,B1,A2,B2,...,A5,B5, where A is reference
-and B is candidate. Each side gets fresh fixture state and fake servers.
+The adapter and acceptance gate are candidate-side code, reviewed in this
+PR, not hash-pinned against an older trusted copy. Their recorded hash is
+provenance, not independent enforcement. Like the candidate-owned workflow,
+changes to this gate require review; the path filter makes them visible to
+the paired check. Only the measurement harness and apparatus are frozen.
+The verifier starts with Python isolated mode (`-I`) before its own imports;
+its boundary checks remain necessary for the frozen subprocess servers.
+Paired preflight runs before the shared Bend toolchain is installed, then
+installation uses the verified reference script. Explicit manual evidence
+mode still uses its candidate installer and does not claim a paired pass.
+
+For each scenario the order is A1,B1,B2,A2,A3,B3,B4,A4,A5,B5, where A is
+reference and B is candidate. Pair leaders alternate deterministically; five
+pairs leave a 3:2 leader imbalance, so this reduces but does not eliminate
+order bias. Each side gets fresh fixture state and fake servers.
 All 35 pairs (70 samples) must pass, with no discarded or replacement pairs.
 For each metric and scenario compute all five B/A ratios, then gate their
 median at 1.25. This is deliberately **not** the ratio of two medians.
-Adjacent pairing reduces time-varying noise but does not eliminate host load
-or fixed-order warm-up bias. If insufficiently stable, review more pairs
+Adjacent pairing and alternating leaders reduce time-varying noise but do
+not eliminate host load or warm-up bias. If insufficiently stable, review more pairs
 within the time budget rather than raising the regression threshold.
 
 Missing or failed reference samples, altered apparatus, changed build

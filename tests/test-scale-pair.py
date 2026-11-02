@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -38,7 +39,8 @@ class PairTests(unittest.TestCase):
 
     def order(self):
         return [{"scenario": s.name, "pair": i + 1, "side": side}
-                for s in self.h.SCENARIOS for i in range(5) for side in pair.SIDES]
+                for s in self.h.SCENARIOS for i in range(5)
+                for side in (("reference", "candidate") if i in (0, 2, 4) else ("candidate", "reference"))]
 
     def test_paired_ratios_not_ratio_of_medians(self):
         reports = self.reports()
@@ -53,6 +55,25 @@ class PairTests(unittest.TestCase):
             reports[side]["scenarios"][name] = self.h.summarize([sample(100000, x) for x in values])
         self.assertFalse(pair.ratio_gate(self.h, reports, self.order())[name]["wall_seconds"]["passed"])
         self.assertFalse(self.h.compare(reports["reference"], reports["candidate"]))
+
+    def test_ratio_boundary_passes_at_125_percent_and_fails_at_126(self):
+        for ratio, expected in ((1.25, True), (1.26, False)):
+            with self.subTest(ratio=ratio):
+                reports = self.reports()
+                for scenario in self.h.SCENARIOS:
+                    for side in pair.SIDES:
+                        samples = reports[side]["scenarios"][scenario.name]["samples"]
+                        for row in samples:
+                            factor = ratio if side == "candidate" else 1
+                            row["wall_seconds"] = 10 * factor
+                            row["peak_rss_kib"] = 100000 * factor
+                        reports[side]["scenarios"][scenario.name] = self.h.summarize(samples)
+                gates = pair.ratio_gate(self.h, reports, self.order())
+                for metrics in gates.values():
+                    for key in ("wall_seconds", "peak_rss_kib"):
+                        self.assertEqual(metrics[key]["median_ratio"], ratio)
+                        self.assertEqual(metrics[key]["passed"], expected)
+                    self.assertTrue(metrics["imap_logins"]["passed"])
 
     def test_invalid_or_incomplete_evidence_cannot_pass(self):
         for change in ("missing", "failed", "profile", "samples", "order", "login", "nan"):
@@ -137,7 +158,7 @@ class PairTests(unittest.TestCase):
         self.assertEqual(control.used(), 901)
         self.assertIsNone(control.started)
 
-    def test_all_seventy_samples_are_abab_and_failures_retain_partial_evidence(self):
+    def test_all_seventy_samples_alternate_leaders_and_retain_partial_failures(self):
         for fail in (False, True):
             with self.subTest(fail=fail), tempfile.TemporaryDirectory() as temp:
                 out = pathlib.Path(temp)
@@ -154,7 +175,9 @@ class PairTests(unittest.TestCase):
                 self.h.measure = measure
                 def run_sample(scenario, work, certs, control):
                     self.h.measure([str(ROOT / "scripts/mailbend"), "call"], {}, work, 90, control)
-                    row = sample(scenario.count)
+                    pair_number = ((len(calls) - 1) % 10) // 2 + 1
+                    factor = 1.25 if calls[-1] == str(roots[1] / "scripts/mailbend") else 1
+                    row = sample(scenario.count, pair_number * factor)
                     if fail and len(calls) == 3:
                         row["status"] = "failed"
                         row["reason"] = "synthetic failure"
@@ -168,13 +191,16 @@ class PairTests(unittest.TestCase):
                         result = pair.collect(self.h, roots, identity, out, outer)
                         self.assertEqual(result["order"], self.order())
                         self.assertEqual(len(calls), 70)
-                        self.assertEqual(calls, [str(root / "scripts/mailbend") for _ in range(35) for root in roots])
+                        self.assertEqual(calls, [str(roots[side] / "scripts/mailbend")
+                                                 for _ in range(7) for side in (0, 1, 1, 0, 0, 1, 1, 0, 0, 1)])
                         self.assertEqual(result["status"], "measurements-passed-identity-check-pending")
+                        for metrics in result["gates"].values():
+                            self.assertEqual(metrics["wall_seconds"]["ratios"], [1.25] * 5)
                 if fail:
                     result = pair.load_json(out / "paired-result.json")
                     self.assertEqual(result["status"], "failed")
                     self.assertEqual(len(result["order"]), 3)
-                    report = pair.load_json(out / "reference-results.json")
+                    report = pair.load_json(out / "candidate-results.json")
                     self.assertEqual(report["scenarios"][self.h.SCENARIOS[0].name]["samples"][-1]["reason"], "synthetic failure")
 
     def test_identity_tamper_and_hardlink_rejected(self):
@@ -197,6 +223,26 @@ class PairTests(unittest.TestCase):
         with mock.patch.object(pair, "git", return_value=b"wrong\n"):
             with self.assertRaisesRegex(ValueError, "wrong source SHA"):
                 pair.preflight(ROOT, ROOT.parent / "other", "a" * 40)
+
+    def test_isolated_cli_ignores_ambient_imports_before_preflight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            sentinel = root / "ambient-import-ran"
+            attack = f"from pathlib import Path\nPath({str(sentinel)!r}).touch()\nraise RuntimeError('ambient module executed')\n"
+            for name in ("json.py", "argparse.py"):
+                (root / name).write_text(attack)
+            command = [sys.executable, "-I", str(ROOT / "tests/scale_pair.py"), "--help"]
+            result = subprocess.run(command, cwd=root, env={**os.environ, "PYTHONPATH": str(root)},
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("preflight", result.stdout)
+            self.assertFalse(sentinel.exists())
+            # The fixture must actually intercept an unisolated invocation.
+            result = subprocess.run([sys.executable, "-c", "import json"], cwd=root,
+                                    env={**os.environ, "PYTHONPATH": str(root)},
+                                    capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(sentinel.exists())
 
     def test_actual_workflow_record_guard_and_candidate_only_report_rejected(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
