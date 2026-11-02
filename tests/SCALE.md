@@ -77,12 +77,12 @@ including successful work checks and sample variation, before copying it to
 `tests/scale-baseline.json`. Do not copy results between runner profiles.
 An unmeasured baseline remains a failing gate, not a guessed budget.
 
-The CI workflow runs scale tests only on manual dispatch with `scale` enabled.
-The weekly schedule is deferred until a complete reviewed hosted-runner
-baseline exists and all exact workloads pass within the limits. Scale dispatch
-has a separate concurrency group from ordinary CI, so it cannot cancel a
-push check on the same branch. Ordinary pull requests run only the fast
-contract controls.
+The CI workflow runs scale tests on manual dispatch with `scale` enabled and
+on Mondays at 04:17 UTC. The weekly job compares against the committed
+hosted baseline; it does not replace it. The schedule starts only after this
+workflow reaches the default branch. Scale runs have a separate concurrency
+group from ordinary CI, so they cannot cancel a push check on the same branch.
+Ordinary pull requests run only the fast contract controls.
 `record_scale` saves a candidate result without comparing it. The workflow
 logs the full JSON and its SHA-256 hash even when a scenario fails. The JSON
 is between `SCALE_RESULT_JSON_BEGIN` and `SCALE_RESULT_JSON_END` markers.
@@ -100,6 +100,37 @@ A dirty-parent regression control verifies this separation. Missing or invalid
 resource output cannot pass; a group killed by the safety stop may have no
 GNU time output. The report then keeps only the sampled diagnostic peak.
 The timer binary hash and version are part of the comparable runner profile.
+
+## Hosted baseline
+
+[Run 41379240425](https://github.com/albertc71/MailBend/actions/runs/41379240425)
+recorded all seven exact workloads with five verified samples each on source
+`a13504b703175f5b9ae9c1bdb9fcbcf3aca496f2`. The suite completed in 661.03
+seconds, inside the unchanged cooperative 900-second limit. The 90-second
+call limit and sampled 3 GiB process-group RSS stop remain unchanged.
+
+Profile: GitHub-hosted Ubuntu 24.04.5 LTS, x86-64, AMD EPYC 7763, four visible
+logical CPUs, Bend 2.0.35. The full report records exact timer, fixture and
+measurement hashes. Its JSON SHA-256, verified against the job log, is
+`69eb0a9ca61e195848cdfbec39ea1561389a3d17e5b33ad151ee9e70591842ea`.
+
+| Workload | Median seconds | Seconds range | Median max-process RSS (KiB) | Median IMAP logins |
+| --- | ---: | ---: | ---: | ---: |
+| search-100000 | 0.33 | 0.32–0.37 | 53,068 | 2 |
+| folders-1000 | 2.39 | 2.37–2.42 | 39,280 | 2 |
+| folders-5000 | 52.82 | 52.36–52.95 | 42,164 | 2 |
+| read-16mib | 3.59 | 3.58–3.60 | 1,076,724 | 1 |
+| forward-25mib | 12.95 | 12.84–13.03 | 2,479,384 | 5 |
+| thread-1000 | 55.90 | 55.64–56.22 | 86,480 | 6 |
+| classify-images-50 | 0.38 | 0.37–0.38 | 39,272 | 14 |
+
+These are cold-launcher, warm-cache observations on local synthetic servers,
+not provider latency or minimum machine RAM. Peak RSS excludes the fixtures
+and validation process. The exact 16 MiB read and 25 MiB forward (including
+a matching Sent copy) now complete; the earlier failed observation below is
+retained, not treated as a baseline. A record run is not a comparison pass.
+Only matching runner profiles are comparable; changed hosts or toolchains
+need separately reviewed measurements, not relaxed comparison gates.
 
 ## Local observation, not a baseline
 

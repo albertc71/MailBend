@@ -886,10 +886,12 @@ the [operator runbook](docs/OPERATIONS.md).
   inputs with per-call wall time and maximum-process RSS. Its committed
   baseline states whether a complete measurement exists; an unmeasured or
   different-runner baseline fails comparison. It does not establish a minimum
-  RAM requirement for small boards. In the recorded local observation, the
-  16 MiB read failed with a Bend memory fault at about 2.76 GiB maximum
-  process RSS; the 25 MiB forward was stopped above the 3 GiB sampled
-  process-group threshold. Neither is a successful capacity measurement.
+  RAM requirement for small boards. The verified Ubuntu x86-64 hosted
+  baseline completes all five samples of the 16 MiB read and 25 MiB forward
+  with a matching Sent copy. Their median maximum-process RSS is 1,076,724
+  KiB (about 1.03 GiB) and 2,479,384 KiB (about 2.36 GiB), respectively;
+  fixture and validation memory are excluded. See the scale guide for the
+  runner profile, ranges and preserved earlier failed observations.
 - Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
