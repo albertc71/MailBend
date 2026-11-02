@@ -76,6 +76,7 @@ Jev off, no tool asks it.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
+| `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file | — |

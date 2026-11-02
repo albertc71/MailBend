@@ -258,6 +258,12 @@ def output_schema(name):
                          "parent": NS}, ANNOTATION)
         variants += [record({"folder": S, "uid": N, "searched": STRINGS,
                              "messages": array(placed)})]
+    elif name == "mail_awaiting_reply":
+        anchor = record({"folder": S, "uidvalidity": NN, "uid": N, "message_id": NS})
+        item = record({"status": param("string", enum=["awaiting", "replied", "unknown"]),
+                       "age_days": NN, "to": S, "cc": S, "subject": S, "anchor": anchor})
+        variants += [record({"complete": B, "reason": S, "searched": STRINGS,
+                             "archive_resolved": B, "as_of": N, "messages": array(item)})]
     elif name == "mail_classify":
         variants += [record({"folder": S, "uidvalidity": NN, "content": CONTENT,
                              "categories": STRINGS, "candidates": STRINGS,
@@ -622,6 +628,21 @@ TOOLS = [
          ANNOTATED_READS,
          {"folder": FOLDER, "uid": UID, "uidvalidity": SEED_UIDVALIDITY},
          ["uid"]),
+    tool("mail_awaiting_reply",
+         "Read-only exact-ID reply tracker. Select at most limit Sent candidates by UID "
+         "within a SENTSINCE Date-header window; age and later replies use INTERNALDATE. "
+         "Search INBOX and the resolved Archive for exact In-Reply-To or References tokens. "
+         "Results are oldest first within sampled candidates, with replied, awaiting or "
+         "unknown status. Top-level complete describes the whole Sent sample; a capped sample "
+         "can contain awaiting items whose reply evidence is complete. Incomplete reply "
+         "search or header evidence never confirms absence. Each SEARCH is capped at 10000 UIDs. "
+         "Replied means a later exact reference, including self-follow-ups, auto-replies or bounces; "
+         "it does not prove a human or recipient answer. Exclusions are deferred. "
+         "No subject matching, Jev calls, flags, drafts or sends. Scheduling belongs to the agent.",
+         hints(read_only=True, idempotent=True),
+         {"window_days": param("integer", minimum=1, maximum=3650, default=30),
+          "min_age_days": param("integer", minimum=0, maximum=3650, default=3),
+          "limit": param("integer", minimum=1, maximum=50, default=50)}),
     tool("mail_classify",
          "Ask Jev (TypeSafe's model) about messages, changing nothing (they stay "
          "unread): for each UID, the existing folder it belongs in "

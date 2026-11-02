@@ -12,6 +12,7 @@ import ./smtp.bend as S
 import ./ops.bend as Ops
 import ./schema.bend as Schema
 import ./thread.bend as T
+import ./awaiting.bend as Await
 import ./search-cursor.bend as SC
 import ./image.bend as Image
 import ./jev.bend as Jev
@@ -4478,6 +4479,288 @@ def now_seconds() -> IO(U32):
       Process.run("/bin/date", ["+%s"], "", 64, 5000)
     return secs_of(Policy.proc_of(r))
 
+# Awaiting replies
+# ----------------
+
+type AwaitRead is Data:
+  AwaitRead{found: List<&2, Found>, complete: Bool, reason: String}
+
+def await_evidence(c: I.Cmd, +lines: List<&2, I.RLine>, +n: U32) -> Bool:
+  match c:
+    case I.CSearch{keys}:
+      ok_at(lines, n) && Maybe.is_some(&2, List<&2, U32>, Await.search(I.replies(lines, n)))
+    case I.CExamine{f}:
+      ok_at(lines, n) &&
+        Maybe.is_some(&2, U32, positive(I.ok_code(I.replies(lines, n), "UIDVALIDITY")))
+    case I.CExpect{line}:
+      True{}
+    case _:
+      ok_at(lines, n)
+
+def await_evidence.all(cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +tag: U32) -> Bool:
+  match cs:
+    case Nil{}:
+      True{}
+    case +c <> t:
+      await_evidence(c, lines, tag) && await_evidence.all(t, lines, I.next_tag(c, tag))
+
+def await_found.step(c: I.Cmd, rs: List<&2, I.RLine>, acc: List<&2, Found>)
+  -> List<&2, Found>:
+  match c acc:
+    case I.CSearch{_} Found{f, v, us, ms} <> t:
+      found = Maybe.default(&2, List<&2, U32>, Await.search(rs), [])
+      Found{f, v, Await.append(us, found), ms} <> t
+    case _ _:
+      thread_found.step(c, rs, acc)
+
+def await_found.go(cs: List<&2, I.Cmd>, +lines: List<&2, I.RLine>, +tag: U32,
+  acc: List<&2, Found>) -> List<&2, Found>:
+  match cs:
+    case Nil{}:
+      List.reverse(&2, Found, acc)
+    case +c <> t:
+      await_found.go(t, lines, I.next_tag(c, tag),
+        await_found.step(c, I.replies(lines, tag), acc))
+
+def await_session.if(valid: Bool, r: Run(), plan: List<&2, I.Cmd>, before: List<&2, Found>)
+  -> Result<&2, &2, String, List<&2, Found>>:
+  match valid:
+    case False{}:
+      Fail{"incomplete SEARCH or mailbox identity evidence"}
+    case True{}:
+      match r:
+        case Fail{m}:
+          Fail{m}
+        case Done{lines}:
+          +fs = await_found.go(plan, lines, 1, [])
+          session_found.if(any_uidv_moved(fs, before), fs)
+
+def await_session(r: Run(), +plan: List<&2, I.Cmd>, before: List<&2, Found>)
+  -> Result<&2, &2, String, List<&2, Found>>:
+  match r:
+    case Fail{m}:
+      Fail{m}
+    case Done{+lines}:
+      await_session.if(await_evidence.all(plan, lines, 1), Done{lines}, plan, before)
+
+def await_raw(plan: List<&2, I.Cmd>) -> IO(Run()):
+  do IO<Run()>:
+    path : String <- env_or("MAILBEND_TLS_HELPER", "")
+    p : Policy.Proc <- refresh_run.at(path, plan)
+    return imap_result(p)
+
+def await_run(p: Result<&2, &2, String, List<&2, I.Cmd>>, before: List<&2, Found>)
+  -> IO(Result<&2, &2, String, List<&2, Found>>):
+  match p:
+    case Fail{m}:
+      IO.pure(Result<&2, &2, String, List<&2, Found>>, Fail{m})
+    case Done{+plan}:
+      do IO<Result<&2, &2, String, List<&2, Found>>>:
+        r : Run() <- await_raw(plan)
+        return await_session(r, plan, before)
+
+def await_wants(fs: List<&2, Found>, +cap: Nat) -> List<&2, Ops.FolderUids>:
+  match fs:
+    case Nil{}:
+      []
+    case Found{f, v, us, ms} <> t:
+      thread_wants.put(f, List.take(&2, U32, Await.smallest(us), cap), await_wants(t, cap))
+
+def await_count(fs: List<&2, Found>) -> Nat:
+  match fs:
+    case Nil{}:
+      0n
+    case Found{f, v, us, ms} <> t:
+      (List.length(&2, U32, Await.smallest(us)) + await_count(t) : Nat)
+
+def await_fetch_complete(wants: List<&2, Ops.FolderUids>, +nodes: List<&2, T.Node>) -> Bool:
+  match wants:
+    case Nil{}:
+      True{}
+    case Ops.FolderUids{f, us} <> t:
+      Nat.is_eq(List.length(&2, U32, unseen(us, kept_uids(nodes, f))), 0n) &&
+        await_fetch_complete(t, nodes)
+
+def await_wanted_count(wants: List<&2, Ops.FolderUids>) -> Nat:
+  match wants:
+    case Nil{}:
+      0n
+    case Ops.FolderUids{f, us} <> t:
+      (List.length(&2, U32, us) + await_wanted_count(t) : Nat)
+
+def await_fetched(
+  r: Result<&2, &2, String, List<&2, Found>>,
+  +wants: List<&2, Ops.FolderUids>, count: Nat
+) -> AwaitRead:
+  match r:
+    case Fail{m}:
+      AwaitRead{[], False{}, m}
+    case Done{+fs}:
+      +complete = Nat.is_eq(await_wanted_count(wants), count) &&
+        await_fetch_complete(wants, found_nodes(fs))
+      AwaitRead{fs, complete, Bool.pick(String, complete, "", "header cap or missing FETCH data")}
+
+def await_fetch(+fs: List<&2, Found>, wants: List<&2, Ops.FolderUids>) -> IO(AwaitRead):
+  match wants:
+    case Nil{}:
+      IO.pure(AwaitRead, AwaitRead{fs, True{}, ""})
+    case +h <> +t:
+      do IO<AwaitRead>:
+        r : Result<&2, &2, String, List<&2, Found>> <- await_run(
+          thread_plan(True{}, Ops.plan_thread_headers(h <> t), fs), fs)
+        return await_fetched(r, h <> t, await_count(fs))
+
+def await_searched(r: Result<&2, &2, String, List<&2, Found>>, cap: Nat) -> IO(AwaitRead):
+  match r:
+    case Fail{m}:
+      IO.pure(AwaitRead, AwaitRead{[], False{}, m})
+    case Done{+fs}:
+      await_fetch(fs, await_wants(fs, cap))
+
+def await_read(plan: List<&2, I.Cmd>, cap: Nat) -> IO(AwaitRead):
+  do IO<AwaitRead>:
+    r : Result<&2, &2, String, List<&2, Found>> <- await_run(Done{plan}, [])
+    await_searched(r, cap)
+
+def await_item(+n: T.Node, status: Await.Status, +now: U32) -> J.Json:
+  T.Node{folder, uidv, I.Msg{uid, flags, date, size, headers, body, st}, +time,
+    id, parents, refs} = n
+  +hs = M.headers(headers)
+  J.obj([
+    J.kv("status", J.str(Await.status_name(status))),
+    J.kv("age_days", Bool.pick(J.Json, Await.date_valid(n) && U32.is_le(time, now),
+      J.num(((now - time) / 86400 : U32)), J.JNull{})),
+    J.kv("to", J.str(hdr_text(hs, "to"))),
+    J.kv("cc", J.str(hdr_text(hs, "cc"))),
+    J.kv("subject", J.str(hdr_text(hs, "subject"))),
+    J.kv("anchor", J.obj([
+      J.kv("folder", J.str(folder)), J.kv("uidvalidity", maybe_num(uidv)),
+      J.kv("uid", J.num(uid)), J.kv("message_id", parent_json(id))
+    ]))
+  ])
+
+def await_items(ns: List<&2, T.Node>, +replies: List<&2, T.Node>, +complete: Bool, +now: U32)
+  -> List<&2, J.Json>:
+  match ns:
+    case Nil{}:
+      []
+    case +n <> t:
+      await_item(n, Await.classify(n, replies, complete, now), now) <>
+        await_items(t, replies, complete, now)
+
+def await_bounded.if(over: Bool, j: J.Json, folders: List<&2, String>,
+  archive: Bool, now: U32) -> Policy.Out:
+  match over:
+    case False{}:
+      Policy.Ok{j}
+    case True{}:
+      ok_obj([
+        J.kv("complete", J.bool(False{})), J.kv("reason", J.str("result exceeds 256 KiB")),
+        J.kv("searched", J.strs(folders)), J.kv("archive_resolved", J.bool(archive)),
+        J.kv("as_of", J.num(now)), J.kv("messages", J.arr([]))
+      ])
+
+def await_bounded(out: Policy.Out, folders: List<&2, String>, archive: Bool, now: U32)
+  -> Policy.Out:
+  match out:
+    case Policy.Ok{+j}:
+      await_bounded.if(U32.is_gt(C.utf8_len(J.show(j)), 262144), j, folders, archive, now)
+    case _:
+      out
+
+def await_out(
+  sent: AwaitRead, replies: AwaitRead, folders: List<&2, String>,
+  archive: Maybe<&2, String>, +now: U32, min_age: U32
+) -> Policy.Out:
+  AwaitRead{sf, +sc, sr} = sent
+  AwaitRead{+rf, rc, rr} = replies
+  +ns = List.sort(~T.Node, ~(a => b => T.no_later(a, b)),
+    Await.candidates(found_nodes(sf), now, min_age))
+  +reply_complete = rc && Await.valid_dates(found_nodes(rf), now)
+  +complete = sc && reply_complete && Await.valid_candidates(ns)
+  ok_obj([
+    J.kv("complete", J.bool(complete)),
+    J.kv("reason", J.str(Bool.pick(String, complete, "",
+      "incomplete candidate or reply evidence; " ++ sr ++ rr))),
+    J.kv("searched", J.strs(folders)),
+    J.kv("archive_resolved", J.bool(Maybe.is_some(&2, String, archive))),
+    J.kv("as_of", J.num(now)),
+    J.kv("messages", J.arr(await_items(ns, found_nodes(rf), reply_complete, now)))
+  ])
+
+def await_replies(+sent: AwaitRead, +folders: List<&2, String>, +archive: Maybe<&2, String>,
+  +now: U32, +min_age: U32) -> IO(Policy.Out):
+  AwaitRead{sf, sc, sr} = sent
+  keys = Await.batches(Await.ids(Await.candidates(found_nodes(sf), now, min_age)))
+  do IO<Policy.Out>:
+    replies : AwaitRead <- await_read(Ops.plan_thread_search(folders, keys), 100n)
+    return await_bounded(await_out(sent, replies, folders, archive, now, min_age),
+      folders, Maybe.is_some(&2, String, archive), now)
+
+def await_folders(f: Fs(), since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+  match f:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{Policy.Folders{all, drafts, trash, None{}, junk, archive}}:
+      pure_out(Policy.Err{"Sent folder is unresolved"})
+    case Done{Policy.Folders{all, drafts, trash, Some{sent}, junk, +archive}}:
+      do IO<Policy.Out>:
+        r : AwaitRead <- await_read(Ops.plan_awaiting_sent(sent, since), U32.to_nat(limit))
+        await_replies(r, thread_folders.put(["INBOX"], archive), archive, now, min_age)
+
+def await_roles(ask: Bool, fs: List<&2, I.Folder>) -> IO(Fs()):
+  match ask:
+    case False{}:
+      folders_overrides(fs)
+    case True{}:
+      do IO<Fs()>:
+        r : Run() <- await_raw(Ops.plan_roles())
+        roles_of(r, fs)
+
+def await_probe(r: Run(), since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+  match r:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{+lines}:
+      do IO<Policy.Out>:
+        fs : Fs() <- await_roles(I.has_cap(I.caps(lines), "SPECIAL-USE"),
+          merge_folders(I.folders(lines), []))
+        await_folders(fs, since, now, min_age, limit)
+
+def await_start(valid: Bool, since: String, now: U32, min_age: U32, limit: U32) -> IO(Policy.Out):
+  match valid:
+    case False{}:
+      pure_out(Policy.Err{"invalid awaiting-reply bounds or clock: " ++
+        "window 1..3650, age 0..window, limit 1..50"})
+    case True{}:
+      do IO<Policy.Out>:
+        r : Run() <- await_raw(Ops.plan_probe())
+        await_probe(r, since, now, min_age, limit)
+
+def await_arg_valid(v: Maybe<&2, J.Json>) -> Bool:
+  match v:
+    case None{}:
+      True{}
+    case Some{J.JNum{+raw}}:
+      Await.digits(raw) && Bool.not(String.is_empty(raw)) &&
+        Maybe.is_some(&2, U32, U32.read(raw))
+    case _:
+      False{}
+
+def t_awaiting(+args: J.Json) -> IO(Policy.Out):
+  +window = u32_arg(args, "window_days", 30)
+  +age = u32_arg(args, "min_age_days", 3)
+  +limit = u32_arg(args, "limit", 50)
+  do IO<Policy.Out>:
+    +now : U32 <- now_seconds()
+    since : String = Maybe.default(&2, String,
+      I.imap_date(M.iso_date((now - window * 86400 : U32))), "")
+    await_start(await_arg_valid(J.get(args, "window_days")) &&
+      await_arg_valid(J.get(args, "min_age_days")) && await_arg_valid(J.get(args, "limit")) &&
+      U32.is_ge(window, 1) && U32.is_le(window, 3650) && U32.is_le(age, window) &&
+      U32.is_ge(limit, 1) && U32.is_le(limit, 50) && U32.is_ge(now, (window * 86400 : U32)),
+      since, now, age, limit)
+
 def stamp() -> IO(Result<&2, &2, String, Stamp>):
   do IO<Result<&2, &2, String, Stamp>>:
     secs : U32 <- now_seconds()
@@ -7545,6 +7828,8 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
       t_refresh(args)
     case Ops.OGetThread{}:
       projected(args, jev, t_get_thread(args))
+    case Ops.OAwaitingReply{}:
+      t_awaiting(args)
     case Ops.OClassify{}:
       t_classify(args, jev, images)
     case Ops.OTriage{}:

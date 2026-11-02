@@ -42,7 +42,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_eight():
+def Laws.read_only_tools_are_exactly_nine():
   {==}
 
 def Laws.tools_listed_per_config(drafts):
@@ -67,6 +67,8 @@ def Laws.from_name_inverts_name(op):
     case Ops.ORefresh{}:
       {==}
     case Ops.OGetThread{}:
+      {==}
+    case Ops.OAwaitingReply{}:
       {==}
     case Ops.OClassify{}:
       {==}
@@ -226,6 +228,9 @@ def Laws.thread_plans_write_nothing(folders, keys, found):
     thread_search_writes_nothing(folders, keys)) :
     {Bool.or(_, I.any_writes(Ops.plan_thread_headers(found))) == False{} : Bool}
   thread_headers_write_nothing(found)
+
+def Laws.awaiting_sent_writes_nothing(sent, since):
+  {==}
 
 def Laws.sent_search_writes_nothing(sent, addrs):
   thread_search_writes_nothing([sent], Ops.sent_keys(addrs))
@@ -1841,6 +1846,8 @@ def Laws.sending_calls_are_exact(op, args):
       {==}
     case Ops.OGetThread{}:
       {==}
+    case Ops.OAwaitingReply{}:
+      {==}
     case Ops.OClassify{}:
       {==}
     case Ops.OTriage{}:
@@ -2262,3 +2269,9 @@ def Laws.resolved_role_names_selectable_folder(fs, override, attr, a, b):
   resolved_role_membership.if(String.is_empty(override), fs, override, attr, a, b)
 
 # End policy and classifier soundness
+def Laws.awaiting_incomplete_is_unknown(valid):
+  match valid:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
