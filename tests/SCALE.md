@@ -82,7 +82,13 @@ on Mondays at 04:17 UTC. The weekly job compares against the committed
 hosted baseline; it does not replace it. The schedule starts only after this
 workflow reaches the default branch. Scale runs have a separate concurrency
 group from ordinary CI, so they cannot cancel a push check on the same branch.
-Ordinary pull requests run only the fast contract controls.
+Ordinary product pull requests run only the fast contract controls. A separate
+`Scale comparison` workflow runs when a pull request changes the measurement
+harness, fixtures, baseline or that comparison workflow itself. It reuses the
+same bounded scale job in comparison mode, checks out the exact PR head, and
+does not join the ordinary `checks` aggregate. Pull requests that change only documentation or unrelated
+product/CI files do not trigger it. No secrets or additional token permissions
+are passed to the reused workflow.
 `record_scale` saves a candidate result without comparing it. The workflow
 logs the full JSON and its SHA-256 hash even when a scenario fails. The JSON
 is between `SCALE_RESULT_JSON_BEGIN` and `SCALE_RESULT_JSON_END` markers.
