@@ -399,9 +399,9 @@ def check_roles() -> IO(Unit):
       T.invalid_override(folders(), "Notes", "MAILBEND_X") ++ "] " ++
       T.invalid_override(folders(), "Drafts", "MAILBEND_X"))
     IO.print(show_out(T.probe_fs(T.validate_overrides(folders(), "", "", "", "", ""),
-      I.frame("* CAPABILITY IMAP4rev1 MOVE IDLE\r\na1 OK\r\n"), "imap.example.com", "me@x")))
+      I.frame("* CAPABILITY IMAP4rev1 MOVE IDLE\r\na1 OK\r\n"), "imap.example.com", "me@x", I.StorageUnknown{})))
     IO.print(show_out(T.probe_fs(
-      T.validate_overrides(folders(), "Notes", "", "", "Junk", "Archive2"), [], "h", "me@x")))
+      T.validate_overrides(folders(), "Notes", "", "", "Junk", "Archive2"), [], "h", "me@x", I.StorageKnown{95, 100, 95})))
     IO.print(show_out(T.folders_fs(T.validate_overrides(folders(), "", "Nope", "", "Bad", ""))))
     IO.print(show_out(T.folders_fs(T.validate_overrides(folders(), "", "", "", "Spam", ""))))
     IO.print(show_out(T.folders_fs(T.validate_overrides(T.merge_folders(
@@ -1338,10 +1338,10 @@ def check_triage() -> IO(Unit):
       sender_line(T.sender_in(["a@x.org, b@y.org"])) ++ " " ++ sender_line(T.sender_in([])))
     IO.print(String.join(T.senders([pending(1, Some{"a@x"}), pending(2, None{}),
       pending(3, Some{"b@y"}), pending(4, Some{"a@x"})], []), ","))
-    IO.print(String.join(T.written_to(["a@x", "b@y", "c@z"],
-      I.frame("a1 OK\r\n* SEARCH\r\na2 OK\r\n* SEARCH 4 9\r\na3 OK\r\n* SEARCH\r\n" ++
-        "a4 OK\r\n* SEARCH\r\na5 OK\r\n* SEARCH\r\na6 OK\r\n* SEARCH 2\r\na7 OK\r\n"), 2),
-      ","))
+    IO.print(Bool.show(C.is_in("whether the user has written to its sender cannot be told",
+      T.vetoes_of([T.triage_contact_state([], False{}, pending(1, Some{"a@x"}))], 1))) ++ " " ++
+      Bool.show(C.is_in("the user has written to its sender",
+        T.vetoes_of([T.triage_contact_state(["a@x"], False{}, pending(1, Some{"a@x"}))], 1))))
     IO.print(vetoes_line(T.rechecked([pending(1, None{}), pending(2, None{})], reread())) ++
       " " ++ vetoes_line(T.rechecked([pending(2, None{})], [])))
     IO.print(vetoes_line(T.rechecked([pending(2, None{})], I.flag_fetches(I.frame(
@@ -1419,6 +1419,8 @@ def main() -> IO(Unit):
     check_classify()
     check_triage()
     check_read_identity()
+    IO.print(Bool.show(T.contacts_raw_small(I.Msg{1, [], "01-Oct-2026 09:00:00 +0000", 0,
+      String.repeat("x", 4097n), "", I.VNil{}})))
 
 #|stamp first read refused
 #|stamp second read refused
@@ -1495,8 +1497,8 @@ def main() -> IO(Unit):
 #|Deleted Messages|Sent Messages|none|none|none
 #|Notes|none|INBOX|Deleted Messages
 #|[] [] MAILBEND_X must name one existing selectable mailbox
-#|ok {"ok":true,"account":"me@x","imap_host":"imap.example.com","tls_verified":true,"capabilities":["IMAP4REV1","MOVE","IDLE"],"idle":true,"move":true,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":null,"sent":"Sent Messages","trash":"Deleted Messages","junk":null,"archive":null},"folder_count":11}
-#|ok {"ok":true,"account":"me@x","imap_host":"h","tls_verified":true,"capabilities":[],"idle":false,"move":false,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":"Notes","sent":"Sent Messages","trash":"Deleted Messages","junk":"Junk","archive":"Archive2"},"folder_count":11}
+#|ok {"ok":true,"account":"me@x","imap_host":"imap.example.com","tls_verified":true,"capabilities":["IMAP4REV1","MOVE","IDLE"],"idle":true,"move":true,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":null,"sent":"Sent Messages","trash":"Deleted Messages","junk":null,"archive":null},"folder_count":11,"storage":"unknown"}
+#|ok {"ok":true,"account":"me@x","imap_host":"h","tls_verified":true,"capabilities":[],"idle":false,"move":false,"uidplus":false,"special_use":{"inbox":"INBOX","drafts":"Notes","sent":"Sent Messages","trash":"Deleted Messages","junk":"Junk","archive":"Archive2"},"folder_count":11,"storage":{"used_kib":95,"limit_kib":100,"percent":95}}
 #|err MAILBEND_TRASH_FOLDER must name one existing selectable mailbox
 #|err MAILBEND_JUNK_FOLDER must name one existing selectable mailbox
 #|ok {"folders":[{"name":"INBOX","delimiter":"/","attributes":["\\HasNoChildren","\\Marked"],"special_use":null,"selectable":true},{"name":"Sent Messages","delimiter":"/","attributes":["\\Sent"],"special_use":"sent","selectable":true},{"name":"New","delimiter":".","attributes":["\\All"],"special_use":"all","selectable":true}]}
@@ -1565,7 +1567,7 @@ def main() -> IO(Unit):
 #|ok {"ok":true,"folder":"INBOX","destination":"Work","method":"UID MOVE","changed":[3],"missing":[]}
 #|ok {"ok":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","changed":[3],"missing":[]}
 #|partial {"ok":false,"partial":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","message":"the move was cut off and may have copied the messages to Work: they may now be in both INBOX and Work; check the destination before retrying (the server rejected a command: a5 NO cannot)"}
-#|err the server rejected a command: a4 NO [OVERQUOTA] full
+#|err the mailbox is over its storage quota; free space, then retry the refused operation
 #|partial {"ok":false,"partial":true,"folder":"INBOX","destination":"Work","method":"UID COPY + UID EXPUNGE","message":"the move was cut off and may have copied the messages to Work: they may now be in both INBOX and Work; check the destination before retrying (cannot run the TLS helper: timed out)"}
 #|err cannot run the TLS helper: not absolute
 #|[] "destination" must name a different folder | "destination" must name a different folder | "uidvalidity" is required: pass the value mail_search or mail_get returned with these UIDs, so stale UIDs can never change other messages
@@ -1647,13 +1649,13 @@ def main() -> IO(Unit):
 #|[][mail_trash is disabled: MAILBEND_READ_ONLY is set][mail_forward would send mail, which MAILBEND_DRAFTS_ONLY forbids: use mail_save_draft, or as_draft for a reply or forward][][mail_send is disabled: MAILBEND_READ_ONLY is set]
 #|[mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off][]
 #|True False False True False True False True False
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents
 #|"x"
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_classify,mail_triage,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
-#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_classify
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_classify,mail_triage,mail_get_attachment,mail_mark_read,mail_mark_unread,mail_flag,mail_unflag,mail_move,mail_label,mail_trash,mail_delete,mail_create_folder,mail_rename_folder,mail_save_draft,mail_send,mail_reply,mail_forward
+#|mail_probe,mail_list_folders,mail_search,mail_get,mail_get_new,mail_refresh,mail_get_thread,mail_awaiting_reply,mail_contacts,mail_correspondents,mail_classify
 #|True True False True False False
 #|True True False True True True False True False True False
 #|true or false|an integer|a string|an object|a string or an array of strings|an array of objects
@@ -1742,7 +1744,7 @@ def main() -> IO(Unit):
 #|a@x,b@y
 #|a@x.org none none none
 #|a@x,b@y
-#|a@x,c@z
+#|True True
 #|[][it has been answered] []
 #|[it is flagged]
 #|whether the user has written to its sender cannot be told|the user has written to its sender|
@@ -1758,3 +1760,5 @@ def main() -> IO(Unit):
 
 #|True
 #|True
+
+#|False

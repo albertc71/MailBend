@@ -69,9 +69,15 @@ python3 tests/test-scale.py --baseline "$baseline" --output build/scale-results.
 ```
 
 The selector accepts exactly the two reviewed CPU model names and chooses a
-fixed baseline file. An unknown CPU fails without fallback. Selection is not
+fixed baseline file. An unknown CPU fails selection. CI still collects a
+bounded candidate using the unchanged full-profile comparison, then forces
+a failed job even if that command unexpectedly exits successfully. This is
+evidence capture, not a baseline or acceptance fallback. Selection is not
 acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
+The scale job pins CPython 3.13.18, like ordinary CI. The retained candidate
+records below used 3.12.3 and older fake servers; after main integration,
+they deliberately remain incomparable until fresh hosted evidence is reviewed.
 
 The comparison requires the same runner, operating system, architecture,
 CPU model, logical CPU count, Bend version, Python implementation/version,

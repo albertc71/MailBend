@@ -301,17 +301,20 @@ def header_line.clean.put(drop: Bool, c: Char, rest: String) -> String:
     case False{}:
       SCon{c, rest}
 
-def header_line.clean(s: String) -> String:
+def header_line.clean.go(s: String, out: String) -> String:
   match s:
     case SNil{}:
-      ""
+      String.reverse(out)
     case SCon{+c, t}:
       +u = C.u(c)
       control = U32.is_lt(u, 32) || C.between(u, 127, 159)
         || U32.is_eq(u, 8232) || U32.is_eq(u, 8233)
       bidi = U32.is_eq(u, 1564) || C.between(u, 8206, 8207) || C.between(u, 8234, 8238)
         || C.between(u, 8294, 8297)
-      header_line.clean.put(bidi, Bool.pick(Char, control, ' ', c), header_line.clean(t))
+      header_line.clean.go(t, header_line.clean.put(bidi, Bool.pick(Char, control, ' ', c), out))
+
+def header_line.clean(s: String) -> String:
+  header_line.clean.go(s, "")
 
 def header_line.text(s: String) -> String:
   String.take(String.trim(header_line.clean(s)), 998n)

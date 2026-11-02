@@ -69,7 +69,7 @@ Jev off, no tool asks it.
 
 | Tool | What it does | Changes mail | Jev |
 | --- | --- | --- | --- |
-| `mail_probe` | Verified TLS login, server capabilities, role folders | no | — |
+| `mail_probe` | Verified TLS login, server capabilities, role folders, storage quota | no | — |
 | `mail_list_folders` | Mailboxes/folders with advertised special-use attributes | no | — |
 | `mail_search` | Search by from/to/cc/subject/body/text/dates/flags, newest first | no | adds notes |
 | `mail_get` | Read one message: headers, text, HTML with link targets, attachment list | no | adds notes |
@@ -77,6 +77,8 @@ Jev off, no tool asks it.
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
 | `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
+| `mail_contacts` | Bounded Sent contact candidates and a human-reviewed allowlist value. Ambiguous names return every sampled match | no | no |
+| `mail_correspondents` | Exact observed Sent recipient and per-folder received counts within an explicit window | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |
 | `mail_triage` | File up to 50 messages, each at most once: into the folder Jev chose with high confidence, or into `To Delete` for you to [review](docs/JEV.md#mail_triage-and-the-to-delete-folder) | yes | decides (listed only with Jev on) |
 | `mail_get_attachment` | Save one attachment of a message as a new file in `MAILBEND_DOWNLOAD_DIR` (the message stays unread) | writes a file | — |
@@ -431,6 +433,26 @@ scripts/mailbend call mail_get '{"uid": 1234}'
 scripts/mailbend tools        # the tool list with JSON schemas
 ```
 
+`mail_probe.storage` is `"unknown"` or `{used_kib, limit_kib, percent}`.
+A successful post-login CAPABILITY with exact `QUOTA` or `QUOTA=RES-STORAGE`
+adds one read-only session for `GETQUOTAROOT "INBOX"`. Without either token,
+the existing login count stays unchanged. Storage counts are KiB and `percent`
+is the integer floor of `100 * used_kib / limit_kib`.
+Values above 100 are not clamped. A failed, missing, malformed, ambiguous,
+or out-of-range reply stays unknown without failing the probe.
+
+`mailbend diagnose --imap` reports only `ok`, `above_90_percent`, `full`, or
+`unknown` for storage. The warning threshold uses the exact ratio, not the
+rounded percentage. Diagnostics omit usage counts, quota roots, and server text.
+A refused `[OVERQUOTA]` operation gets fixed free-space guidance. An accepted
+SMTP send whose Sent copy fails still says `Do not resend.`
+
+This is generic IMAP storage information, not permission to send or proof of
+remaining delivery capacity. It does not validate iCloud's quota root or shared
+account storage. That authorized live check remains open in
+[issue #160](https://github.com/albertc71/MailBend/issues/160).
+See [storage quota limits and review notes](docs/plans/storage-quota.md).
+
 Use `scripts/mailbend mcp` or `scripts/mailbend-cloud mcp`. Do not register
 `bin/mailbend-core` directly; socket-backed stdin needs the public launcher.
 
@@ -618,7 +640,7 @@ synthetic cost measurements and experiment decision are in
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven).
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
-  every read plan (probe, folders, search, get, new mail, refresh, thread) contains
+  every read plan (probe, quota, folders, search, get, new mail, refresh, thread) contains
   no command that can change a mailbox, for every argument, and
   that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`.
 - **Nothing is lost by accident.** Move and trash never expunge before
@@ -931,6 +953,51 @@ the [operator runbook](docs/OPERATIONS.md).
 - Retrying a send whose `smtp_outcome` is `unknown` may send the message twice.
 - A small `max_bytes` can truncate a fetched message before its body,
   leaving the returned body empty; increase the budget when needed.
+
+### Live contacts and correspondent observations
+
+`mail_contacts` scans stored Sent To/Cc/Bcc headers. `mail_correspondents` uses the
+same scan for up to 50 bare addresses and also scans INBOX and the resolved Archive.
+Both are read-only. They do not call Jev, write files, change configuration or add a cache.
+
+The default is a 30-day IMAP `SINCE` calendar-day window and at most 100 highest
+UIDs per folder. `window_days` accepts 1–3650 and `limit` accepts 1–100. Highest UIDs
+mean recently appended messages, not necessarily the newest Date headers. Recency
+is validated INTERNALDATE. Counts describe observed stored headers, not lifetime
+history or SMTP envelope recipients. A server may strip Bcc. Received counts stay
+separate by folder because Gmail labels and copies can expose the same message twice.
+
+Each address counts once per Sent message even when repeated in To/Cc/Bcc. Keys use
+MailBend's lowercased ASCII addr-spec convention; this is not a universal RFC mailbox
+equivalence claim. Unsupported or malformed address forms make coverage incomplete.
+Display names are untrusted hints and do not establish identity. `query` matches
+address or display-name text, and every matching address in the sample is returned.
+There is no automatic choice when a name is ambiguous.
+
+`coverage` gives each folder's identity, inspected count and completeness. Missing
+FETCH data, changed UIDVALIDITY, invalid dates, unsupported headers or a sample cap
+cannot establish absence. Even complete coverage is only for the stated stored-header
+window. Each header is capped at 4096 bytes, each SEARCH at 10000 UIDs, each message
+at 100 address tokens, aggregation at 500 addresses and output at 256 KiB.
+An aggregation overflow rejects `mail_contacts` rather than choosing candidates;
+`mail_correspondents` still returns its requested rows with incomplete coverage.
+
+`allowlist_suggestion` is a raw comma-separated value for a person to inspect before
+setting `MAILBEND_ALLOWED_RECIPIENTS`. It is not a shell command. Do not execute or
+interpolate it as shell code. Existing configuration is never changed. Persistent
+cache and optional vCard-directory access from #62 remain deferred owner decisions.
+
+Triage searches all stored Sent To/Cc/Bcc headers separately for each sender, then
+verifies at most 100 matching candidate headers with the same exact parser. Unrelated
+Sent messages do not consume that candidate budget. Substring SEARCH hits are only
+candidates: a fully inspected no-match can establish a stranger, while an exact
+positive remains a correspondent even in a partial sample. Capped, malformed or
+missing candidate evidence vetoes deletion for that sender only; category filing
+can still proceed. Transport or mailbox-identity failures still abort the call.
+The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
+UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
+claim that untrusted headers establish real-world identity.
+
 
 ## License
 

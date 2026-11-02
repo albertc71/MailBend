@@ -48,7 +48,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_nine():
+def Laws.read_only_tools_are_exactly_eleven():
   {==}
 
 def Laws.tools_listed_per_config(drafts):
@@ -75,6 +75,10 @@ def Laws.from_name_inverts_name(op):
     case Ops.OGetThread{}:
       {==}
     case Ops.OAwaitingReply{}:
+      {==}
+    case Ops.OContacts{}:
+      {==}
+    case Ops.OCorrespondents{}:
       {==}
     case Ops.OClassify{}:
       {==}
@@ -113,6 +117,9 @@ def Laws.from_name_inverts_name(op):
 
 # Read plans
 # ----------
+
+def Laws.plan_quota_writes_nothing():
+  {==}
 
 def Laws.probe_writes_nothing():
   {==}
@@ -238,9 +245,6 @@ def Laws.thread_plans_write_nothing(folders, keys, found):
 def Laws.awaiting_sent_writes_nothing(sent, since):
   {==}
 
-def Laws.sent_search_writes_nothing(sent, addrs):
-  thread_search_writes_nothing([sent], Ops.sent_keys(addrs))
-
 def Laws.reread_flags_writes_nothing(mbox, uids):
   {==}
 
@@ -280,6 +284,8 @@ def Laws.checked_read_preserves_writes(cs, ids):
     case Nil{}:
       {==}
     case I.CCapability{} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CGetQuotaRoot{m} <> t:
       Laws.checked_read_preserves_writes(t, ids)
     case I.CList{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
@@ -329,6 +335,9 @@ def Laws.checked_read_without_identities_unchanged(cs):
       {==}
     case I.CCapability{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CCapability{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CGetQuotaRoot{m} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CGetQuotaRoot{m} <> x,
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CList{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CList{} <> x,
@@ -423,6 +432,8 @@ def Laws.fetch_items_never_set_seen(item):
     case I.ISize{}:
       {==}
     case I.IHeaders{}:
+      {==}
+    case I.IContactHeaders{}:
       {==}
     case I.IStructure{}:
       {==}
@@ -1938,6 +1949,10 @@ def Laws.sending_calls_are_exact(op, args):
       {==}
     case Ops.OAwaitingReply{}:
       {==}
+    case Ops.OContacts{}:
+      {==}
+    case Ops.OCorrespondents{}:
+      {==}
     case Ops.OClassify{}:
       {==}
     case Ops.OTriage{}:
@@ -2365,6 +2380,9 @@ def Laws.awaiting_incomplete_is_unknown(valid):
       {==}
     case False{}:
       {==}
+
+def Laws.contact_plans(folder, since, address, uids, uidv):
+  ({==}, ({==}, ({==}, {==})))
 
 def Laws.prefix_fits_allowance(s, left):
   ScalarProof.prefix_fits_allowance(s, left)
