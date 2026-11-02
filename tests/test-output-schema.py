@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check output contract variants at feature integration boundaries."""
 import copy
+import json
+import re
 from functools import cache
 import importlib.util
 from pathlib import Path
@@ -11,6 +13,53 @@ spec = importlib.util.spec_from_file_location('schema', ROOT / 'tools/gen-schema
 schema = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(schema)
 checks = 0
+
+
+def check_rendered_text(tools):
+    """Decode generated defs and the final aggregator, not generator internals."""
+    rendered = schema.render(tools)
+    assert rendered == schema.render(tools), "generation must be deterministic"
+    declarations = re.findall(
+        r'^def ([a-zA-Z0-9_.]+)\(\) -> String:\n(.*?)(?=^def |\Z)', rendered, re.M | re.S)
+    all_names = re.findall(r'^def ([a-zA-Z0-9_.]+)\(', rendered, re.M)
+    assert [name for name, _ in declarations] == all_names
+    assert len(set(all_names)) == len(all_names)
+    values, wire = {}, None
+    for name, body in declarations:
+        body = "\n".join(line for line in body.splitlines()
+                         if not line.startswith("#")).strip()
+        if name == "tool_defs":
+            match = re.fullmatch(r'"\[" \+\+ String.join\(\[\s*(.*?)\], ","\) \+\+ "\]"', body, re.S)
+            assert match, body
+            calls = [term.strip() for term in match.group(1).split(",") if term.strip()]
+            assert all(re.fullmatch(r'tool_defs\.[a-zA-Z0-9_]+\(\)', call) for call in calls)
+            wire = "[" + ",".join(values[call[:-2]] for call in calls) + "]"
+            continue
+        match = re.fullmatch(r'String.concat\(\[\n(.*?)\]\)', body, re.S)
+        if match:
+            pieces = []
+            for line in match.group(1).splitlines():
+                term = line.strip().removesuffix(",")
+                if term.startswith('"'):
+                    pieces.append(json.loads(term))
+                else:
+                    assert re.fullmatch(r'schema_(?:piece|fragment)\.p[0-9]+\(\)', term), term
+                    pieces.append(values[term[:-2]])
+            values[name] = "".join(pieces)
+        else:
+            values[name] = json.loads(body)
+    for entry in tools:
+        assert values['tool_defs.' + entry['name']] == json.dumps(
+            entry, ensure_ascii=True, separators=(",", ":"))
+    assert wire == json.dumps(tools, ensure_ascii=True, separators=(",", ":"))
+    return rendered
+
+check_rendered_text(schema.TOOLS)
+fixture = [{"name": name, "description": ('quoted "value" \\ slash 雪 🌱 ' * 12),
+            "empty": "", "control": "\n\t\u0000"} for name in ("first", "second")]
+assert "schema_piece.p0000()" in check_rendered_text(fixture)
+check_rendered_text([])
+checks += 3
 
 
 @cache
