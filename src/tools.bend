@@ -1628,6 +1628,85 @@ def new_now(r: Run(), folder: String) -> Policy.Out:
     case Done{+lines}:
       new_now.codes(new_now.code(lines, "UIDNEXT"), new_now.code(lines, "UIDVALIDITY"), folder)
 
+# An explicit empty string is fetched data; NIL is absent data (RFC 9051 4.5).
+# Keep this compatibility path separate from the normal nonempty FETCH path.
+def new_empty.value(v: I.Value) -> Bool:
+  match v:
+    case I.VStr{s}:
+      String.is_empty(s)
+    case _:
+      False{}
+
+def new_empty.uid(v: I.Value) -> Bool:
+  match v:
+    case I.VAtom{+s}:
+      Maybe.is_some(&2, U32, new_now.code.number(U32.read(s), s))
+    case _:
+      False{}
+
+def new_empty.pairs(
+  vs: List<&2, I.Value>,
+  +uid: Bool,
+  +header: Bool
+) -> Bool:
+  match vs:
+    case Nil{}:
+      uid && header
+    case I.VAtom{k} <> +v <> rest:
+      +key = String.to_upper(k)
+      +is_uid = String.eq(key, "UID")
+      +is_header = String.starts_with(key, "BODY[HEADER")
+      valid = Bool.pick(Bool, is_uid, Bool.not(uid) && new_empty.uid(v),
+        Bool.not(is_header) || (Bool.not(header) && new_empty.value(v) &&
+          String.eq(key, "BODY[HEADER.FIELDS (" ++ I.header_fields() ++ ")]")))
+      valid && new_empty.pairs(rest, uid || is_uid, header || is_header)
+    case _:
+      False{}
+
+def new_empty.msg(vs: List<&2, I.Value>) -> List<&2, I.Msg>:
+  match vs:
+    case I.VAtom{+n} <> I.VAtom{f} <> I.VList{+items} <> Nil{}:
+      I.msg_of.if(String.eq(String.to_upper(f), "FETCH") &&
+        Maybe.is_some(&2, U32, new_now.code.number(U32.read(n), n)) &&
+        new_empty.pairs(items, False{}, False{}), items)
+    case _:
+      []
+
+def new_empty.tokens(t: I.Tokenizer) -> List<&2, I.Msg>:
+  match t:
+    case I.Tokenizer{I.TPlain{}, vs <> Nil{}, Nil{}}:
+      new_empty.msg(List.reverse(&2, I.Value, vs))
+    case _:
+      []
+
+def new_empty.line(untagged: Bool, text: String, lits: List<&2, String>) -> List<&2, I.Msg>:
+  match untagged:
+    case True{}:
+      new_empty.tokens(I.tokens.go(String.drop(text, 2n), I.Tokenizer{I.TPlain{}, [[]], lits}))
+    case False{}:
+      []
+
+def new_empty.lines(lines: List<&2, I.RLine>) -> List<&2, I.Msg>:
+  match lines:
+    case Nil{}:
+      []
+    case I.RLine{+text, lits} <> t:
+      List.append(&2, I.Msg, new_empty.line(String.starts_with(text, "* "), text, lits),
+        new_empty.lines(t))
+
+def new_empty.unique(ms: List<&2, I.Msg>, +seen: List<&2, U32>) -> List<&2, I.Msg>:
+  match ms:
+    case Nil{}:
+      []
+    case +m <> t:
+      +u = msg_uid(m)
+      List.filter.put(I.Msg, m, new_empty.unique(t, u <> seen), Bool.not(uid_in(u, seen)))
+
+def new_messages(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
+  +ms = fetched_msgs(lines, uids, False{})
+  oldest_first(List.append(&2, I.Msg, ms,
+    new_empty.unique(requested(new_empty.lines(lines), uids), msg_uids(ms))))
+
 # Incomplete FETCH data must not publish a cursor past an unreturned UID.
 # A retry searches again, so a message expunged between sessions cannot stall it.
 def new_headers.complete(
@@ -1656,7 +1735,7 @@ def new_headers.if(
 ) -> Shown:
   match same:
     case True{}:
-      +ms = fetched_msgs(lines, uids, False{})
+      +ms = new_messages(lines, uids)
       new_headers.complete(unseen(uids, msg_uids(ms)), ms, folder, uidv, next, more)
     case False{}:
       Listed{new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, []), []}
@@ -2495,7 +2574,6 @@ def jev_uids(tool: String, u: Uids()) -> Uids():
       Fail{m}
     case Done{+us}:
       jev_uids.if(Nat.is_gt(List.length(&2, U32, us), U32.to_nat(jev_limit())), tool, us)
-
 
 def fetched_list(ms: List<&2, I.Msg>, +max: U32) -> List<&2, Jev.Fetched>:
   match ms:

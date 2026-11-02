@@ -4103,6 +4103,9 @@ def new_fetch_coverage(work):
             check(f"get_new: missing selected UID {missing} refuses a checkpoint",
                   code != 0 and "retry the same checkpoint" in result.get("error", "")
                   and "next_since_uid" not in result and "messages" not in result, result)
+            retry_code, retry = tool(srv, "mail_get_new", args, MAILBEND_READ_ONLY="1")
+            check("get_new: persistent omission still withholds the checkpoint",
+                  retry_code != 0 and "next_since_uid" not in retry and "messages" not in retry, retry)
             check("get_new: incomplete FETCH does not change mailbox state", srv.st() == before)
             check("get_new: incomplete FETCH stays read-only", not any(
                   " SELECT " in line or any(x in line for x in MUTATING_COMMANDS)
@@ -4117,6 +4120,40 @@ def new_fetch_coverage(work):
               and result.get("next_since_uid") == 4 and result.get("has_more") is True, result)
     finally:
         srv.stop()
+    gone = copy.deepcopy(FIX)
+    gone["mailboxes"]["INBOX"]["messages"] = [
+        m for m in gone["mailboxes"]["INBOX"]["messages"] if m["uid"] != 3]
+    srv = Server(work, fixture=gone)
+    try:
+        code, result = tool(srv, "mail_get_new", args, MAILBEND_READ_ONLY="1")
+        check("get_new: expunged UID is not selected on retry of original cursor",
+              code == 0 and [m["uid"] for m in result.get("messages", [])] == [2, 4, 5]
+              and result.get("next_since_uid") == 5 and result.get("has_more") is True, result)
+    finally:
+        srv.stop()
+    for mode in ("empty-literal", "empty-quoted", "nil"):
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"][2].update(
+            raw="X-Unrequested: synthetic", header_fetch_value=mode)
+        srv = Server(work, fixture=fixture, extra=["--flags-first", "--noisy-store"])
+        try:
+            before = srv.st()
+            for attempt in range(2):
+                code, result = tool(srv, "mail_get_new", args, MAILBEND_READ_ONLY="1")
+                if mode == "nil":
+                    check("get_new: persistent NIL is not an empty header string",
+                          code != 0 and "next_since_uid" not in result and "messages" not in result, result)
+                else:
+                    messages = result.get("messages", [])
+                    check(f"get_new: {mode} is represented on attempt {attempt}",
+                          code == 0 and [m["uid"] for m in messages] == [2, 3, 4]
+                          and messages[1].get("subject") == "" and messages[1].get("from") == ""
+                          and result.get("next_since_uid") == 4 and result.get("has_more") is True, result)
+            check("get_new: empty or NIL header reads do not mutate", srv.st() == before
+                  and not any(" SELECT " in line or any(x in line for x in MUTATING_COMMANDS)
+                              for line in srv.log_lines()))
+        finally:
+            srv.stop()
 
 
 def flags_first_reads(work):

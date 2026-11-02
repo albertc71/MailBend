@@ -567,6 +567,20 @@ MailBend itself remains daemon-free.
 
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
+
+Save a new arrival cursor only after a successful result. If FETCH omits a
+selected message or returns NIL header data, `mail_get_new` returns an error
+without messages or `next_since_uid`. Retry with the same saved cursor and
+UIDVALIDITY. The retry searches again, so a UID expunged between SEARCH and
+FETCH is no longer selected. An explicit empty header string is represented
+as a message with empty selected fields and does not block the cursor.
+
+A server that persistently omits a still-present UID or returns NIL still
+blocks polling at that gap. Retry cannot repair unavailable server data.
+Do not switch to `start: "now"` to hide this error unless you intend to skip
+the backlog. NIL is absent data, not the empty string
+([RFC 9051 section 4.5](https://www.rfc-editor.org/rfc/rfc9051.html#section-4.5)).
+
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
 1–100 `uids` to refresh the cache. Duplicates count toward the input limit and
 are returned once, sorted. UIDs and UIDVALIDITY must be in 1–4294967295; empty
