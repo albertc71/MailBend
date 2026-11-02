@@ -37,8 +37,11 @@ Run these before opening a pull request. CI runs the same on Linux x64,
 plus `cargo deny check`, a fuzz smoke run and the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
 need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
-schema checks need Python `jsonschema` (`sudo apt-get install python3-jsonschema`
-on Ubuntu).
+schema checks need Python `jsonschema` (`python3 -m pip install jsonschema==4.26.0`).
+Use Python 3.13.18 (the CI pin), or a runtime containing the
+[CPython #128110 fix](https://github.com/python/cpython/issues/128110). The MIME oracle
+checks this capability: older `email.policy.default` incorrectly inserts whitespace
+between adjacent encoded words in display names.
 The scheduled recipe test also needs `jq` and `flock` from util-linux.
 
 ```sh
@@ -69,6 +72,7 @@ python3 tests/test-posture-inventory.py           # native egress changes need a
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
+python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
@@ -119,6 +123,15 @@ in force.
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in
 `tests/unit/schema.bend`.
+
+## MIME and charset regressions
+
+Every MIME or charset fix adds or deliberately updates a synthetic message and its
+expected JSON in [`tests/corpus/`](tests/corpus/README.md). Preserve raw fixture bytes.
+Record provenance and license, distinguish malformed-input recovery from valid mail,
+and link known-wrong pins to an issue. Never update expected results from the tested
+parser automatically. The corpus runner and the existing end-to-end suites also parse
+composed messages with Python `email.policy.default`; a disagreement fails the check.
 
 ## Adding a tool
 

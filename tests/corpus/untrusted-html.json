@@ -1,0 +1,30 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Synthetic hostile HTML is returned unchanged as untrusted data. Tests never render it or access its URLs."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc5322"
+  ],
+  "issues": [],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "untrusted-html",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<untrusted-html@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Safe plain alternative.",
+    "html": "<script>fetch(\"https://never-fetch.example.invalid/\")</script><img src=\"https://never-fetch.example.invalid/x\" onerror=\"alert(1)\"><p>Untrusted.</p>",
+    "html_available": true,
+    "attachments": []
+  }
+}

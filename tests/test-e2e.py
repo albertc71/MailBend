@@ -14,14 +14,18 @@ import copy
 import fcntl
 from email import policy
 from email.parser import BytesParser
+import errno
 import importlib.util
 import json
 import os
 import pwd
+import pty
 import pathlib
 import quopri
 import re
+import select
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
@@ -31,6 +35,8 @@ import threading
 import time
 
 from jsonschema import Draft202012Validator
+
+import mime_oracle
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
@@ -72,6 +78,7 @@ def validate_output(name, value):
 
 
 results = []
+composed_messages = []
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
 
 
@@ -86,6 +93,7 @@ class Server:
         self.smtp_mode = "implicit" if "--smtp-implicit" in extra else "starttls"
         self.state = os.path.join(work, "state.json")
         self.log = os.path.join(work, "log.jsonl")
+        self.composed = os.path.join(work, "composed.jsonl")
         for f in (self.state, self.log):
             if os.path.exists(f):
                 os.remove(f)
@@ -94,7 +102,8 @@ class Server:
             fixture_path = pathlib.Path(work) / "scenario-fixture.json"
             fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
         cmd = [sys.executable, str(ROOT / "tests" / "fake_mail_server.py"), "--certdir", os.path.join(work, "certs"),
-               "--fixture", str(fixture_path), "--state", self.state, "--log", self.log, *extra]
+               "--fixture", str(fixture_path), "--state", self.state, "--log", self.log,
+               "--composed", self.composed, *extra]
         if caps is not None:
             cmd += ["--caps", caps]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
@@ -150,6 +159,7 @@ class Server:
             self.proc.kill()
             self.proc.wait()
         self.proc.stdout.close()
+        composed_messages.extend(json.loads(line) for line in pathlib.Path(self.composed).read_text().splitlines())
 
 
 def tool(srv, name, args=None, **env):
@@ -215,6 +225,209 @@ def diagnose(srv, *flags, **env):
 def diagnosed(checks, protocol, stage, status, reason=None):
     return any(c["protocol"] == protocol and c["stage"] == stage and c["status"] == status
                and (reason is None or c["reason"] == reason) for c in checks)
+
+
+def setup_password_prompt(commands, password, directory):
+    child, terminal = pty.fork()
+    if child == 0:
+        try:
+            os.chdir(directory)
+            os.execvpe("bash", ["bash", "--noprofile", "--norc", "-x", "-c", commands],
+                       {"PATH": os.defpath, "HOME": str(directory), "LANG": "C", "TERM": "dumb"})
+        finally:
+            os._exit(127)
+    output = bytearray()
+    status, sent, eof = None, False, False
+    try:
+        deadline = time.monotonic() + 10
+        while status is None or not eof:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("printed password instructions did not finish")
+            if not eof and select.select([terminal], [], [], 0.1)[0]:
+                try:
+                    chunk = os.read(terminal, 4096)
+                except OSError as error:
+                    if error.errno != errno.EIO:
+                        raise
+                    chunk = b""
+                eof = not chunk
+                output.extend(chunk)
+                if len(output) > 65536:
+                    raise AssertionError("printed password instructions exceeded the output limit")
+                if not sent and b"App password: " in output:
+                    os.write(terminal, password.encode() + b"\n")
+                    sent = True
+            if eof:
+                time.sleep(0.01)
+            if status is None:
+                finished, result = os.waitpid(child, os.WNOHANG)
+                if finished:
+                    status = result
+        return os.waitstatus_to_exitcode(status), bytes(output)
+    finally:
+        os.close(terminal)
+        if status is None:
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os.waitpid(child, 0)
+
+
+def setup_password_file(commands, work):
+    directory = pathlib.Path(work) / "setup-password-instructions"
+    directory.mkdir()
+    destination = directory / "synthetic-password"
+    commands = commands.replace("/absolute/path/to/mailbend-password", str(destination))
+    original = "synthetic password '$`\\ with spaces"
+    for value, expected in ((original, 0), ("replacement-must-not-be-written", 1)):
+        code, transcript = setup_password_prompt(commands, value, directory)
+        check("setup: printed Bash creates once and refuses to overwrite", code == expected
+              and destination.read_bytes() == original.encode()
+              and destination.stat().st_mode & 0o777 == 0o600)
+        check("setup: printed Bash never echoes or traces the synthetic password",
+              value.encode() not in transcript and value.split()[0].encode() not in transcript)
+
+
+def setup_profiles(work):
+    directory = pathlib.Path(work) / "offline-setup"
+    directory.mkdir()
+    marker = directory / "helper-called"
+    helper = directory / "tripwire"
+    helper.write_text("#!/bin/sh\nprintf called > " + shlex.quote(str(marker)) + "\nexit 99\n")
+    helper.chmod(0o700)
+    password = directory / "unread-password-fifo"
+    os.mkfifo(password, 0o600)
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("MAILBEND_")}
+    env = {**clean, "MAILBEND_TLS_HELPER": str(helper), "MAILBEND_ATTACH_HELPER": str(helper),
+           "MAILBEND_TYPESAFE_HELPER": str(helper), "MAILBEND_APP_PASSWORD": "inherited-secret-marker",
+           "MAILBEND_PASSWORD_FILE": str(password), "MAILBEND_READ_ONLY": "invalid",
+           "MAILBEND_TYPESAFE": "invalid", "MAILBEND_EMAIL": "inherited@example.com", "MAILBEND_LOGIN": "stale-inherited-login",
+           "MAILBEND_CA_FILE": "/missing/inherited-private-trust-path",
+           "SSL_CERT_FILE": "/missing/inherited-system-trust-path", "SSL_CERT_DIR": ""}
+    initial = sorted(p.name for p in directory.iterdir())
+    providers = ("icloud", "gmail", "yahoo", "aol", "fastmail", "zoho", "gmx", "mailbox.org", "posteo")
+    for provider in providers:
+        p = subprocess.run([LAUNCHER, "setup", "--provider", provider, "--email", "reader@example.com"],
+                           env=env, capture_output=True, text=True, timeout=10, cwd=directory)
+        outputs.extend([p.stdout, p.stderr])
+        block = re.search(r"```json\n(.*?)\n```", p.stdout, re.S)
+        config = json.loads(block.group(1))["env"] if block else {}
+        check("setup: " + provider + " prints a safe offline configuration", p.returncode == 0
+              and p.stderr == ""
+              and config.get("MAILBEND_READ_ONLY") == "1"
+              and config.get("MAILBEND_EMAIL") == "reader@example.com"
+              and config.get("MAILBEND_LOGIN") == ""
+              and config.get("MAILBEND_PASSWORD_FILE") == "/absolute/path/to/mailbend-password"
+              and not any(s in p.stdout + p.stderr for s in
+                          ("MAILBEND_APP_PASSWORD", "MAILBEND_CA_FILE", "inherited-secret-marker",
+                           "inherited@example.com", "stale-inherited-login", "inherited-private-trust-path"))
+              and "Tier:" in p.stdout and "Sources:" in p.stdout)
+        shell = re.search(r"```sh\n(.*?)```", p.stdout, re.S)
+        got = subprocess.run(["sh", "-c", shell.group(1) +
+                              "python3 -c 'import os,json; print(json.dumps(dict(os.environ)))'"],
+                             env={**clean, "MAILBEND_LOGIN": "stale-inherited-login"},
+                             capture_output=True, text=True, check=True, cwd=directory)
+        values = json.loads(got.stdout)
+        check("setup: " + provider + " shell and MCP settings agree",
+              all(values.get(k) == v for k, v in config.items()))
+        commands = re.search(r"```bash\n(.*?)```", p.stdout, re.S).group(1)
+        syntax = subprocess.run(["bash", "-n"], input=commands, capture_output=True, text=True)
+        check("setup: password instruction syntax is valid Bash with safe defaults",
+              syntax.returncode == 0 and "set +x" in commands and "umask 077" in commands
+              and "set -o noclobber" in commands and "read -rs" in commands)
+    email = "o'hara+$`touch${IFS}shell-injection`@example.com"
+    p = subprocess.run([LAUNCHER, "setup", "--email", email, "--provider", "GMAIL"],
+                       env=env, capture_output=True, text=True, timeout=10)
+    shell = re.search(r"```sh\n(.*?)```", p.stdout, re.S).group(1)
+    got = subprocess.run(["sh", "-c", shell + "printf '%s' \"$MAILBEND_EMAIL\""],
+                         env=clean, capture_output=True, text=True, cwd=directory, check=True)
+    check("setup: shell metacharacters round-trip as inert address text", p.returncode == 0
+          and got.stdout == email and not (directory / "shell-injection").exists())
+    for provider in ("unknown", "outlook", "hotmail", "office365", "web.de", "proton-bridge"):
+        p = subprocess.run([LAUNCHER, "setup", "--provider", provider, "--email", "reader@example.com"],
+                           env=env, capture_output=True, text=True, timeout=10)
+        check("setup: " + provider + " refuses without guessed configuration", p.returncode == 2
+              and not p.stdout and "MAILBEND_EMAIL=" not in p.stderr and "```json" not in p.stderr)
+        if provider in ("unknown", "outlook", "hotmail", "office365"):
+            check("setup: unsupported provider points to authentication policy", "/issues/28" in p.stderr)
+    invalid = ("reader@example.com\nexport BAD=1", "reader@example.com\r", "a\x1b@example.com",
+               "Name <reader@example.com>", "reader@example.com (comment)", " reader@example.com",
+               "missing-at", "@example.com", "a@", "a@@example.com", "é@example.com", "a" * 250 + "@example.com")
+    for email in invalid:
+        p = subprocess.run([LAUNCHER, "setup", "--provider", "gmail", "--email", email],
+                           env=env, capture_output=True, text=True, timeout=10)
+        check("setup: malformed address is refused before output", p.returncode == 2 and not p.stdout)
+    for args in ([], ["--provider", "gmail"], ["--check", "--provider", "gmail"],
+                 ["--provider", "gmail", "--email", "reader@example.com", "--check"],
+                 ["--provider", "gmail", "--email", "reader@example.com", "--unknown"]):
+        p = subprocess.run([LAUNCHER, "setup", *args], env=env,
+                           capture_output=True, text=True, timeout=10)
+        check("setup: only exact argument shapes are accepted", p.returncode == 2 and not p.stdout)
+    check("setup: print-only never invokes a helper or creates a file", not marker.exists()
+          and sorted(p.name for p in directory.iterdir()) == initial)
+    setup_password_file(commands, work)
+
+
+def setup_folder_suggestions(work):
+    srv = Server(work)
+    try:
+        before = srv.st()
+        p = subprocess.run([LAUNCHER, "setup", "--check"], env=srv.env(MAILBEND_READ_ONLY="1"),
+                           capture_output=True, text=True, timeout=135)
+        outputs.extend([p.stdout, p.stderr])
+        local = json.loads(p.stdout)
+        check("setup check: resolved roles succeed without suggestions", p.returncode == 0
+              and local.get("local_only") is True and local["diagnostics"].get("redacted") is True
+              and local["suggestions"] == [])
+        check("setup check: successful read-only check never mutates mail", srv.st() == before
+              and not any(cmd in line for line in srv.log_lines() for cmd in
+                          MUTATING_COMMANDS + (" SELECT ", "MAIL FROM:", "RCPT TO:", "DATA")))
+    finally:
+        srv.stop()
+    fixture = copy.deepcopy(FIX)
+    private = 'Private "Drafts" $(not-a-command)'
+    fixture["mailboxes"][private] = empty_mailbox(["\\Drafts"])
+    for extra, changes, smtp_auth in (([], {}, None), (["--special-return-fails"], {}, None),
+                                     ([], {"MAILBEND_DRAFTS_FOLDER": "missing-folder"}, None),
+                                     ([], {"MAILBEND_READ_ONLY": "invalid"}, None),
+                                     ([], {"MAILBEND_APP_PASSWORD": "wrong-fixture-password"}, None),
+                                     ([], {}, "XOAUTH2")):
+        current = copy.deepcopy(fixture)
+        if smtp_auth:
+            current["smtp_auth"] = smtp_auth
+        srv = Server(work, fixture=current, extra=extra)
+        try:
+            before = srv.st()
+            p = subprocess.run([LAUNCHER, "setup", "--check"], env=srv.env(**changes),
+                               capture_output=True, text=True, timeout=135)
+            outputs.extend([p.stdout, p.stderr])
+            local = json.loads(p.stdout)
+            check("setup check: local report is labelled and keeps diagnostics redacted",
+                  local.get("local_only") is True and local["diagnostics"].get("redacted") is True
+                  and "Private" not in json.dumps(local["diagnostics"])
+                  and PASSWORD not in p.stdout + p.stderr)
+            suggestions = local["suggestions"]
+            if not extra and not changes:
+                check("setup check: ambiguous drafts suggest existing candidates without choosing",
+                      p.returncode == 1 and any(s["role"] == "drafts" and private in s["candidates"]
+                                              and s["status"] == "suggestions_only" for s in suggestions))
+                if smtp_auth:
+                    check("setup check: SMTP failure still permits authenticated IMAP suggestions",
+                          diagnosed(local["diagnostics"]["checks"], "smtp", "authentication", "failed"))
+                d = subprocess.run([LAUNCHER, "diagnose", "--imap", "--smtp"], env=srv.env(),
+                                   capture_output=True, text=True, timeout=135)
+                check("setup check: shareable diagnose remains the same redacted contract",
+                      json.loads(d.stdout) == local["diagnostics"] and "Private" not in d.stdout)
+            else:
+                check("setup check: failed discovery, overrides, policy or auth give no suggestions",
+                      p.returncode != 0 and suggestions == [])
+            lines = srv.log_lines()
+            check("setup check: no mail mutation, envelope, send or folder creation", srv.st() == before
+                  and not any(cmd in line for line in lines for cmd in
+                              MUTATING_COMMANDS + (" SELECT ", "MAIL FROM:", "RCPT TO:", "DATA")))
+        finally:
+            srv.stop()
 
 
 def setup_diagnostics(work):
@@ -379,7 +592,13 @@ def main():
     try:
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
-        run_all(work, tool_scenarios_only=args.tool_scenarios_only)
+        try:
+            run_all(work, tool_scenarios_only=args.tool_scenarios_only)
+        finally:
+            try:
+                mime_oracle.check_captured(composed_messages, check)
+            except Exception as error:
+                check("received composition audit completed", False, repr(error))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
@@ -396,6 +615,8 @@ def run_all(work, *, tool_scenarios_only=False):
                                  text=True, capture_output=True)
         check("offline posture: gate matrix, redaction and denied IO boundaries", posture.returncode == 0,
               posture.stdout + posture.stderr)
+        setup_profiles(work)
+        setup_folder_suggestions(work)
         setup_diagnostics(work)
     srv = Server(work)
     try:
@@ -1061,6 +1282,12 @@ def compose(srv):
     check("non-ASCII attachment names use RFC 2231 and read back", "filename*0*=utf-8''rapport%20%C3%A9.txt" in raw
           and "=?UTF-8?" not in raw.split("filename", 1)[-1].split("\r\n\r\n", 1)[0]
           and any(a["filename"] == "rapport é.txt" for a in r.get("attachments", [])), [a["filename"] for a in r.get("attachments", [])])
+    part = next((part for part in mime_oracle.terminal_parts(mime_oracle.parse(raw.encode('latin-1')))
+                 if part.get_filename() == "rapport é.txt"), None)
+    check("saved Unicode filename agrees with independent parser before ASCII fallback",
+          part is not None and part.get_param('name') == "rapport é.txt"
+          and "name*0*=utf-8''rapport%20%C3%A9.txt;\r\n name=\"rapport _.txt\"" in raw
+          and "filename*0*=utf-8''rapport%20%C3%A9.txt;\r\n filename=\"rapport _.txt\"" in raw)
 
     c, r = tool(srv, "mail_send", {"to": "friend@example.com", "cc": ["Carol <carol@example.com>"], "bcc": ["hidden@example.com"],
                                    "subject": "Hello ✓", "body": "Hi there\n.dot line\n"})

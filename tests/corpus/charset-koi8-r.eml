@@ -1,0 +1,22 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: =?KOI8-R?B?8NLJ18XU?=
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <charset-koi8-r@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=legacy
+
+Synthetic preamble.
+--legacy
+Content-Type: text/plain; charset=KOI8-R
+Content-Transfer-Encoding: base64
+
+8NLJ18XU
+--legacy
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename*=KOI8-R''%F0%D2%C9%D7%C5%D4.txt
+Content-Transfer-Encoding: base64
+
+AA==
+--legacy--
+Synthetic epilogue.

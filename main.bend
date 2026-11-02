@@ -5,6 +5,9 @@
 #   mailbend call <tool> [json or -] run one tool and print its JSON result
 #   mailbend version               print the version
 #   mailbend diagnose [--imap] [--smtp]   redacted setup checks; network is opt-in
+#   mailbend setup --provider <name> --email <address>   print configuration only
+#   mailbend setup --help          list providers and setup usage
+#   mailbend setup --check         check applied settings; local folder suggestions
 
 import Base
 import ./src/codec.bend as C
@@ -15,6 +18,7 @@ import ./src/schema.bend as Schema
 import ./src/mcp-protocol.bend as MCP
 import ./src/ops.bend as Ops
 import ./src/diagnostics.bend as Diagnostics
+import ./src/providers.bend as Providers
 
 def version() -> String:
   "0.1.0"
@@ -577,7 +581,9 @@ def mcp() -> IO(Unit):
 
 def usage() -> String:
   "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -] | " ++
-    "mailbend diagnose [--imap] [--smtp] | mailbend diagnose --posture | mailbend version"
+    "mailbend diagnose [--imap] [--smtp] | mailbend diagnose --posture | " ++
+    "mailbend setup --provider <name> --email <address> | mailbend setup --check | " ++
+    "mailbend setup --help | mailbend version"
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -746,6 +752,13 @@ def diagnose_cli(imap: Bool, smtp: Bool) -> IO(Unit):
     o : Policy.Out <- Diagnostics.run(imap, smtp)
     print_out(o)
 
+def setup_print(r: Result<&2, &2, String, String>) -> IO(Unit):
+  match r:
+    case Done{text}:
+      IO.print(text)
+    case Fail{reason}:
+      IO.die(Unit, 2, reason)
+
 def posture_cli() -> IO(Unit):
   do IO<Unit>:
     o : Policy.Out <- Diagnostics.posture()
@@ -755,6 +768,17 @@ def cli(args: List<&2, String>) -> IO(Unit):
   match args:
     case "diagnose" <> "--posture" <> Nil{}:
       posture_cli()
+    case "setup" <> "--check" <> Nil{}:
+      do IO<Unit>:
+        o : Policy.Out <- Diagnostics.setup()
+        print_out(o)
+    case "setup" <> "--provider" <> provider <> "--email" <> email <> Nil{}:
+      setup_print(Providers.render(provider, email))
+    case "setup" <> "--email" <> email <> "--provider" <> provider <> Nil{}:
+      setup_print(Providers.render(provider, email))
+    case "setup" <> "--help" <> Nil{}:
+      IO.print(usage() ++ "\nProviders: " ++
+        String.join(Providers.names(Providers.presets()), ", "))
     case "diagnose" <> Nil{}:
       diagnose_cli(False{}, False{})
     case "diagnose" <> "--imap" <> Nil{}:
