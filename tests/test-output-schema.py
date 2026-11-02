@@ -14,6 +14,9 @@ schema = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(schema)
 checks = 0
 
+# :04d pads small indices but does not truncate indices above 9999.
+PIECE_CALL = re.compile(r'schema_piece\.p(?:[0-9]{4}|[1-9][0-9]{4,})\(\)')
+
 
 def check_rendered_text(tools):
     """Decode generated defs and the final aggregator, not generator internals."""
@@ -43,7 +46,7 @@ def check_rendered_text(tools):
                 if term.startswith('"'):
                     pieces.append(json.loads(term))
                 else:
-                    assert re.fullmatch(r'schema_(?:piece|fragment)\.p[0-9]+\(\)', term), term
+                    assert PIECE_CALL.fullmatch(term), term
                     pieces.append(values[term[:-2]])
             values[name] = "".join(pieces)
         else:
@@ -53,6 +56,14 @@ def check_rendered_text(tools):
             entry, ensure_ascii=True, separators=(",", ":"))
     assert wire == json.dumps(tools, ensure_ascii=True, separators=(",", ":"))
     return rendered
+
+for index in (0, 9, 9999, 10000, 123456):
+    assert PIECE_CALL.fullmatch(f"schema_piece.p{index:04d}()")
+for invalid in ("schema_fragment.p0000()", "schema_piece.p0()",
+                "schema_piece.p00000()", "schema_piece.p-001()",
+                "schema_piece.p0000", "schema_piece.p0000()suffix"):
+    assert not PIECE_CALL.fullmatch(invalid), invalid
+checks += 11
 
 check_rendered_text(schema.TOOLS)
 fixture = [{"name": name, "description": ('quoted "value" \\ slash 雪 🌱 ' * 12),
