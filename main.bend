@@ -2,7 +2,7 @@
 #
 #   mailbend mcp                   MCP server on stdin/stdout (JSON-RPC lines)
 #   mailbend tools                 print the tool list as JSON
-#   mailbend call <tool> [json]    run one tool and print its JSON result
+#   mailbend call <tool> [json or -] run one tool and print its JSON result
 #   mailbend version               print the version
 #   mailbend diagnose [--imap] [--smtp]   redacted setup checks; network is opt-in
 
@@ -576,8 +576,8 @@ def mcp() -> IO(Unit):
 # ===
 
 def usage() -> String:
-  "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments] | " ++
-    "mailbend diagnose [--imap] [--smtp] | mailbend version"
+  "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -] | " ++
+    "mailbend diagnose [--imap] [--smtp] | mailbend diagnose --posture | mailbend version"
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -607,6 +607,124 @@ def call_parsed(name: String, parsed: Maybe<&2, J.Json>) -> IO(Unit):
 def call_cli(name: String, raw: String) -> IO(Unit):
   call_parsed(name, J.parse(raw))
 
+# The decoder keeps only reversed text and an unfinished UTF-8 sequence.
+# Its byte count includes whitespace, so splitting input cannot evade the cap.
+type CallInput is Data:
+  CallInput{bytes: U32, decoder: C.Utf8State}
+
+def call_stdin.utf8_ok(st: C.Utf8State, +b: U32) -> Bool:
+  C.Utf8State{cp, need, min, _} = st
+  match need:
+    case 0:
+      U32.is_lt(C.utf8_decode.need(b), 4)
+    case 1:
+      +next = ((cp << 6n) .|. (b .&. 63) : U32)
+      C.between(b, 128, 191) && U32.is_ge(next, min)
+        && U32.is_le(next, 1114111) && Bool.not(C.between(next, 55296, 57343))
+    case _:
+      C.between(b, 128, 191)
+
+def call_stdin.byte.if(ok: Bool, st: C.Utf8State, b: U32) -> Maybe<&2, C.Utf8State>:
+  match ok:
+    case True{}:
+      Some{C.utf8_decode.step(st, b)}
+    case False{}:
+      None{}
+
+def call_stdin.byte(+st: C.Utf8State, +b: U32) -> Maybe<&2, C.Utf8State>:
+  call_stdin.byte.if(call_stdin.utf8_ok(st, b), st, b)
+
+def call_stdin.step.put(
+  n: U32, r: Maybe<&2, C.Utf8State>
+) -> Result<&2, &2, String, CallInput>:
+  match r:
+    case None{}:
+      Fail{"mailbend: stdin arguments are not valid UTF-8"}
+    case Some{next}:
+      Done{CallInput{(n + 1 : U32), next}}
+
+def call_stdin.step.if(
+  over: Bool, n: U32, st: C.Utf8State, b: U32
+) -> Result<&2, &2, String, CallInput>:
+  match over:
+    case True{}:
+      Fail{"mailbend: stdin arguments are longer than 8 MiB"}
+    case False{}:
+      call_stdin.step.put(n, call_stdin.byte(st, b))
+
+def call_stdin.chunk(
+  xs: List<&2, U32>, r: Result<&2, &2, String, CallInput>
+) -> Result<&2, &2, String, CallInput>:
+  match xs r:
+    case _ Fail{message}:
+      Fail{message}
+    case Nil{} Done{input}:
+      Done{input}
+    case b <> rest Done{CallInput{+n, st}}:
+      call_stdin.chunk(rest, call_stdin.step.if(U32.is_ge(n, line_cap()), n, st, b))
+
+def call_stdin.finish(name: String, +st: C.Utf8State) -> IO(Unit):
+  C.Utf8State{_, need, _, _} = st
+  match need:
+    case 0:
+      call_cli(name, C.utf8_decode.fin(st))
+    case _:
+      IO.die(Unit, 2, "mailbend: stdin arguments are not valid UTF-8")
+
+@unsafe
+def call_stdin.read(f: File, name: String, n: U32, st: C.Utf8State) -> IO(Unit):
+  do IO<Unit>:
+    m : StdinRead() <- File.read_bytes(f, 65536)
+    call_stdin.read.result(m, name, n, st)
+
+@unsafe
+def call_stdin.read.result(
+  m: StdinRead(), name: String, n: U32, st: C.Utf8State
+) -> IO(Unit):
+  (f, r) = m
+  match r:
+    case Fail{_}:
+      do IO<Unit>:
+        File.close(f)
+        IO.die(Unit, 2, "mailbend: cannot read stdin arguments")
+    case Done{xs}:
+      match xs:
+        case Nil{}:
+          do IO<Unit>:
+            File.close(f)
+            call_stdin.finish(name, st)
+        case b <> rest:
+          call_stdin.read.next(f, name, call_stdin.chunk(b <> rest, Done{CallInput{n, st}}))
+
+@unsafe
+def call_stdin.read.next(
+  f: File, name: String, r: Result<&2, &2, String, CallInput>
+) -> IO(Unit):
+  match r:
+    case Fail{message}:
+      do IO<Unit>:
+        File.close(f)
+        IO.die(Unit, 2, message)
+    case Done{CallInput{count, next}}:
+      call_stdin.read(f, name, count, next)
+
+def call_stdin.opened(name: String, r: Result<&1, &1, U32 & String, File>) -> IO(Unit):
+  match r:
+    case Done{f}:
+      call_stdin.read(f, name, 0, C.Utf8State{0, 0, 0, ""})
+    case Fail{e}:
+      (code, _) = e
+      match code:
+        case 6:
+          IO.die(Unit, 6, "mailbend: cannot open socket stdin; use a pipe or file for call")
+        case _:
+          IO.die(Unit, 2, "mailbend: cannot open stdin arguments")
+
+def call_stdin(name: String) -> IO(Unit):
+  do IO<Unit>:
+    r : Result<&1, &1, U32 & String, File> <- File.open("/dev/stdin", "r")
+    call_stdin.opened(name, r)
+
 # Copies the arguments into a reusable list for the dispatch below.
 def share(xs: List<String>) -> List<&2, String>:
   match xs:
@@ -628,8 +746,15 @@ def diagnose_cli(imap: Bool, smtp: Bool) -> IO(Unit):
     o : Policy.Out <- Diagnostics.run(imap, smtp)
     print_out(o)
 
+def posture_cli() -> IO(Unit):
+  do IO<Unit>:
+    o : Policy.Out <- Diagnostics.posture()
+    print_out(o)
+
 def cli(args: List<&2, String>) -> IO(Unit):
   match args:
+    case "diagnose" <> "--posture" <> Nil{}:
+      posture_cli()
     case "diagnose" <> Nil{}:
       diagnose_cli(False{}, False{})
     case "diagnose" <> "--imap" <> Nil{}:
@@ -648,6 +773,8 @@ def cli(args: List<&2, String>) -> IO(Unit):
         IO.print(J.show(tools_for(False{}, ts)))
     case "call" <> name <> Nil{}:
       call_cli(name, "{}")
+    case "call" <> name <> "-" <> Nil{}:
+      call_stdin(name)
     case "call" <> name <> raw <> Nil{}:
       call_cli(name, raw)
     case "version" <> Nil{}:

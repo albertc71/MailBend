@@ -147,6 +147,16 @@ const LIVE: &str = "MAILBEND_AFTER_QUOTE";
         self.replace("scripts/mailbend", " | diagnose [--imap] [--smtp]", "")
         self.check("Usage: missing CLI verb diagnose")
 
+    def test_stdin_form_requires_both_usage_texts(self):
+        self.replace("main.bend", "[json-arguments or -]", "[json-arguments]")
+        self.check("usage(): missing CLI stdin form")
+        self.replace("scripts/mailbend", "[json or -]", "[json]")
+        self.check("Usage: missing CLI stdin form")
+
+    def test_stdin_example_is_required(self):
+        self.replace("docs/CLI.md", "call mail_search -", "call mail_search")
+        self.check("CLI.md: missing CLI stdin example")
+
     def test_new_cli_verb_requires_both_usage_texts(self):
         self.replace("main.bend", '    case "version" <> Nil{}:', '    case "future-command_2" <> Nil{}:\n      IO.print("ok")\n    case "version" <> Nil{}:')
         self.check("usage(): missing CLI verb future-command_2")

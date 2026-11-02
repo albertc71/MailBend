@@ -53,6 +53,14 @@ explicitly opt into network checks with `scripts/mailbend diagnose --imap --smtp
 SMTP diagnostics authenticate without sending mail, including in read-only or
 drafts-only mode. See [setup diagnostics](docs/CLOUD_AGENT.md#redacted-setup-diagnostics).
 
+For a credential-free inventory of permissions and potential data routes, run
+`scripts/mailbend diagnose --posture`. It reads configuration only, not the mail
+password or TypeSafe key file, and opens no connection and starts no helper. The JSON shows
+send/draft restrictions, allowlist entry count, daily cap, Jev disclosures and
+redacted endpoints. It is not a delivery, remaining-quota or endpoint-validity
+check. Host names and ports are visible; account addresses, local paths, proxy
+credentials and allowlist entries are not. See [offline posture](docs/CLOUD_AGENT.md#offline-posture).
+
 ## What it can do
 
 The tools are listed below. "Changes mail" says what a call can change;
@@ -340,6 +348,9 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
+
+The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
+Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
 
 Check the connection first:
 
