@@ -63,6 +63,8 @@ python3 tests/formal/check-writing-laws.py         # compile the guide and rejec
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
 python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
+python3 tests/test-scale-baseline.py               # historical selected baselines match apparatus
+python3 tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
 bash tests/test-transport.sh

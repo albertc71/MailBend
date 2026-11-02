@@ -90,69 +90,130 @@ Earlier records remain historical evidence and fail against this new
 apparatus. The current candidate below was measured on the new paths and
 independently reviewed. No metadata was copied onto old measurements.
 
-## Compare a recorded baseline
+## Paired comparison on one runner
+
+The automated regression gate compares a fixed reviewed product reference
+against the exact candidate on the **same** standard Ubuntu runner. The
+immutable reference is `8ae04b1b3c773d14dea78e167e0047adab1e7cb5`; it is not
+a moving main revision or a value chosen by the candidate. The descriptive
+`scale-reference-v1` tag must resolve to that exact SHA; a moved tag fails.
+The reference is
+a performance anchor, not a claim that every product feature at that revision
+was complete. Changing it requires explicit review, never automatic promotion.
+
+Both checkouts are clean, separate directories with independent in-tree
+builds. `tests/scale_pair.py` verifies the source identities and immutable
+apparatus before any measurement. The harness, generator and three snapshot
+files must match the reviewed hashes in both trees. The launcher must match
+the fixed reference, whose helper defaults point inside its own tree; the
+harness removes inherited helper overrides. Core, launcher and all four
+native helper paths must be regular, executable, tree-local files, not
+symlinked or shared outputs. Their hashes are recorded and checked again
+before acceptance. Both reports must name the expected source and core hash.
+
+One frozen reference harness and snapshot serve **both** builds. A narrow
+adapter substitutes only the validated public launcher path for the selected
+side; it preserves the command arguments, environment, work directory,
+timeout, control object and all measurement/verification functions. The
+adapter/orchestrator has its own recorded hash: the old harness digest alone
+does not describe the new paired orchestration.
+
+For each scenario the order is A1,B1,A2,B2,...,A5,B5, where A is reference
+and B is candidate. Each side gets fresh fixture state and fake servers.
+All 35 pairs (70 samples) must pass, with no discarded or replacement pairs.
+For each metric and scenario compute all five B/A ratios, then gate their
+median at 1.25. This is deliberately **not** the ratio of two medians.
+Adjacent pairing reduces time-varying noise but does not eliminate host load
+or fixed-order warm-up bias. If insufficiently stable, review more pairs
+within the time budget rather than raising the regression threshold.
+
+Missing or failed reference samples, altered apparatus, changed build
+identities, incomplete pairs, wrong source IDs or unequal profiles fail
+closed. Neither product is its own baseline. No committed record is replaced.
+Apparatus or launcher changes require a separately reviewed migration;
+copying a new hash into an old result is not permitted.
+
+Full profile equality remains mandatory, including CPU, operating system,
+Bend, Python, GNU time and all apparatus hashes. An unfamiliar CPU can pass
+only because both real measurements ran on that same host with equal full
+profiles, not because its model was normalized or ignored. All 21 median-of-pair-ratio
+checks retain the 25% budget. The 16 MiB read, 25 MiB forward, 90-second call
+limit, 3 GiB sampled stop and 15-minute deadline **per suite** are unchanged.
+
+New explicit per-sample login ceilings strengthen the former median-only
+login guard. They apply to both sides, independently of the paired login
+ratio, and use floor(reference count * 1.25) from reviewed snapshot evidence:
+
+| Scenario | Reference logins | Per-sample maximum |
+| --- | ---: | ---: |
+| search-100000 | 2 | 2 |
+| folders-1000 | 2 | 2 |
+| folders-5000 | 2 | 2 |
+| read-16mib | 1 | 1 |
+| forward-25mib | 5 | 6 |
+| thread-1000 | 6 | 7 |
+| classify-images-50 | 14 | 17 |
+
+This is 70 real samples, not 35, and two fresh builds. Each side retains
+its own 900-second cumulative active budget, including fixture generation,
+startup, validation, cleanup and failed samples. Shared profile/certificate
+setup is charged to both sides. Time spent waiting while the other side
+runs does not consume its active budget; a separate 1800-second combined
+watchdog bounds the whole sequence. Budget checks also occur after cleanup
+before accepting a sample. Cancellation/cleanup semantics are unchanged.
+The paired workflow step allows 31 minutes for this bounded sequence and
+cleanup; the separate job allows 60 minutes including both builds.
+
+Recent single-suite times were about 9–11 minutes, but no duration is
+promised. No reference-build cache is used initially. Ordinary CI retains
+its separate lanes and limits, with only fast paired-contract checks added.
+The report retains its cold-launcher/warm-OS-cache definition and load data.
+A 25% threshold is a budget rule, not proof of statistical significance.
+
+On a matching 9V45 profile, reference-only results are also compared against
+the committed historical snapshot timings and published as an informational
+cross-check. Other profiles are explicitly incomparable. That result never
+passes or fails the paired gate and cannot excuse a paired regression.
+
+### Workflow and evidence
+
+Manual dispatch with `scale` enabled, the Monday 04:17 UTC schedule and the
+narrow `Scale comparison` PR workflow use the paired gate. The scale
+concurrency group is separate from ordinary CI. The PR path filter covers
+actual apparatus, the paired verifier and its tests, historical baseline
+files/selector and both workflows. General E2E fixture additions are not
+measurement inputs. Normal product-only changes are covered by the weekly
+scale run rather than forcing a long scale job on every PR.
+
+Explicit manual `record_scale` remains available for historical evidence
+collection only. It cannot be selected by a PR or scheduled paired gate,
+does not establish a comparison pass and never replaces a committed record.
+No paid runner tier, additional permissions, secrets or artifact storage is
+used. These are standard public runners; more computation is still consumed.
+
+The job logs complete `reference-results.json`, `candidate-results.json`,
+`paired-identities.json` and `paired-result.json` when available, including
+failures. Each file has a SHA-256 line and named `SCALE_<name>_JSON_BEGIN` /
+`SCALE_<name>_JSON_END` delimiters. Verify exact bytes and hashes when reading
+logs. Oversized output fails rather than being silently truncated; an
+always-run evidence step does not clear a failed measurement exit.
+
+### Historical per-CPU comparison
+
+The older direct command remains useful only for a matching recorded profile:
 
 ```sh
 baseline=$(python3 tests/scale_baseline.py)
 python3 tests/test-scale.py --baseline "$baseline" --output build/scale-results.json
 ```
 
-The selector accepts only `AMD EPYC 9V45 96-Core Processor` and chooses
-`scale-baseline.json`. Other CPU models fail selection. CI still collects a
-bounded candidate using the unchanged full-profile comparison, then forces
-a failed job even if that command unexpectedly exits successfully. This is
-evidence capture, not a baseline or acceptance fallback. Selection is not
-acceptance: the unchanged harness still requires the same full profile.
-It never combines measurements or records a replacement automatically.
-The scale job pins CPython 3.13.18, like ordinary CI. The new 9V45 snapshot
-candidate below records the actual versioned dependency hashes. A matching
-comparison is still required. The retained 7763 record is historical.
-The 7763, Intel 8573C, EPYC 9V74 and Intel 6973P-C models take the explicit unreviewed-CPU
-evidence-only path until fresh matching evidence is independently reviewed.
-CPU selection alone never makes a stale or unknown profile acceptable.
-
-The comparison requires the same runner, operating system, architecture,
-CPU model, logical CPU count, Bend version, Python implementation/version,
-limits and sample count. The profile also hashes the measurement harness,
-fixture generator, image generator and both fake servers. A different
-profile is incomparable and fails. Changing any versioned scale-support
-file or the scale fixture generator requires re-recording every selected
-baseline. Ordinary CI checks those source hashes with
-`python3 tests/test-scale-baseline.py`. This check is separate from the
-measurement job so a stale record blocks ordinary CI without preventing
-collection of a replacement candidate. The measurement job still cannot
-pass an incomparable profile. Wall-time, maximum-process RSS or IMAP
-login medians more than 25% above the baseline fail. The fast contract tests
-include a deliberate 26% slowdown and reject invalid or incomplete samples.
-This threshold detects a budget breach; it does not by itself establish a
-statistically significant regression. Inspect the ranges and host load.
-
-`--record` never updates the committed baseline. Review a complete result,
-including successful work checks and sample variation, before copying it to
-the matching reviewed baseline file. Do not copy results between runner profiles.
-An unmeasured baseline remains a failing gate, not a guessed budget.
-
-The CI workflow runs scale tests on manual dispatch with `scale` enabled and
-on Mondays at 04:17 UTC. The weekly job compares against the committed
-hosted baseline; it does not replace it. The schedule starts only after this
-workflow reaches the default branch. Scale runs have a separate concurrency
-group from ordinary CI, so they cannot cancel a push check on the same branch.
-Ordinary product pull requests run only the fast contract controls. A separate
-`Scale comparison` workflow runs when a pull request changes the measurement
-harness, scale fixture generator, versioned scale-support directory, either
-baseline, the selector or either workflow. Changes to the shared CI workflow trigger comparison
-because it also defines the scale environment. It reuses the
-same bounded scale job in comparison mode, checks out the exact PR head, and
-does not join the ordinary `checks` aggregate. Pull requests that change only documentation or unrelated
-product files do not trigger it. No secrets or additional token permissions
-are passed to the reused workflow.
-`record_scale` saves a candidate result without comparing it. The workflow
-logs the full JSON and its SHA-256 hash even when a scenario fails. The JSON
-is between `SCALE_RESULT_JSON_BEGIN` and `SCALE_RESULT_JSON_END` markers.
-Retrieve it from the job log and verify the hash before using it. This uses
-no artifact or cache storage. A failed measurement still fails the job.
-The GitHub-hosted runner needs
-its own verified baseline; a local result cannot stand in for it.
+That selector accepts the reviewed 9V45 record; other CPUs still fail it.
+It is not used to choose hardware or to bypass the paired gate. Historical
+7763 records remain unselected. `tests/test-scale-baseline.py` checks every
+selected historical record against the actual current apparatus hashes.
+Changing apparatus therefore still requires deliberate record maintenance,
+not silent relabeling. Earlier hosted results below describe their actual
+strategy and source; they are not evidence of a completed paired run.
 
 No Raspberry Pi or other ARM board measurements are implied. A future ARM
 baseline needs that board, a supported build, and the same work checks.
@@ -245,7 +306,7 @@ can pass the regression gate.
 
 ## Earlier 7763 measurement
 
-The previous 7763 candidate is retained in Git history and its hosted log:
+The previous 7763 candidate is retained in Git history and its hosted log.
 
 Standard public runners also assigned AMD EPYC 7763. Instead of replacing
 one CPU's baseline with another's, the original `scale-baseline-epyc7763.json` retained
@@ -253,11 +314,11 @@ one CPU's baseline with another's, the original `scale-baseline-epyc7763.json` r
 unchanged: source `b9b583cdc4f2128b30d55c14cfb086e60d2626a3`, all 35 successful
 samples, 699.07 seconds. Independent review verified full JSON SHA-256
 `a1b82bac473aefa91f1c5768039e4d2666d94754cc620fb8d7b1555f84eed5b4`.
-Its profile differs from the 9V45 candidate only in CPU model. This run also
+Its profile differs from the earlier `e0494f2` 9V45 candidate only in CPU model. This run also
 failed comparison correctly against the other CPU, not workload validation.
 These earlier candidate runs were not successful regression comparisons;
 the later passing run for the historical 7763 profile is linked above.
-The active 9V45 profile has no passing comparison yet.
+These historical runs do not establish a pass for the new paired strategy.
 
 ### Previous hosted baseline
 

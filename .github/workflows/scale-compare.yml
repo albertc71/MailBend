@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - tests/test-scale.py
+      - tests/scale_pair.py
+      - tests/test-scale-pair.py
       - tests/scale_fixtures.py
       - tests/scale_support/**
       - tests/scale-baseline.json
