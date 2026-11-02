@@ -116,10 +116,38 @@ The timer binary hash and version are part of the comparable runner profile.
 
 ## Hosted baseline
 
-The retained baseline below predates the expanded dependency and Python
-profile. It is valid historical evidence, but deliberately fails comparison
-with the expanded profile until a complete new hosted candidate is reviewed
-and committed. No missing profile metadata is guessed or added to old samples.
+[Run 41397060015](https://github.com/albertc71/MailBend/actions/runs/41397060015)
+measured all 35 samples on source `e0494f20a891b59bb96fc4426be32233e1ee0968`
+in 526.76 seconds. Its comparison correctly failed against the old profile;
+the complete candidate was independently reviewed before being committed
+unchanged as the current baseline. Its verified JSON SHA-256 is
+`e06ec29924bcd8e27b86f26e69a4c972eb9ca29fc455e5e347c8be8442b6ef2f`.
+A subsequent matching-profile comparison is still required; this candidate
+run is not a comparison pass.
+
+The expanded profile records GitHub-hosted Ubuntu 24.04.5 LTS, x86-64,
+AMD EPYC 9V45, four logical CPUs, Bend 2.0.35 and CPython 3.12.3, plus the
+actual harness, fixture dependencies and timer hashes. Workloads, sample
+counts and limits are unchanged. No metadata was guessed onto old samples.
+
+| Workload | Median seconds | Seconds range | Median max-process RSS (KiB) | Median IMAP logins |
+| --- | ---: | ---: | ---: | ---: |
+| search-100000 | 0.23 | 0.23–0.24 | 53,032 | 2 |
+| folders-1000 | 1.78 | 1.77–1.79 | 39,220 | 2 |
+| folders-5000 | 39.81 | 39.77–39.99 | 42,180 | 2 |
+| read-16mib | 2.57 | 2.55–2.62 | 1,076,656 | 1 |
+| forward-25mib | 11.09 | 10.99–11.39 | 2,479,428 | 5 |
+| thread-1000 | 47.14 | 47.04–47.30 | 86,388 | 6 |
+| classify-images-50 | 0.26 | 0.25–0.27 | 39,216 | 14 |
+
+The older CPU was different, so timing differences do not prove a speedup.
+RSS and IMAP-login medians are close, but only matching complete profiles
+can pass the regression gate.
+
+### Previous hosted baseline
+
+The original report remains in Git history and the linked hosted log. It is
+historical evidence, not the current expanded-profile comparison baseline.
 
 [Run 41379240425](https://github.com/albertc71/MailBend/actions/runs/41379240425)
 recorded all seven exact workloads with five verified samples each on source
