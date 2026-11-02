@@ -1,0 +1,35 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture written for MailBend. No personal mail or third-party sample."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc2231"
+  ],
+  "issues": [],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "outlook-mixed-continuations",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<outlook-mixed-continuations@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Quarterly café report.",
+    "html": "<p>Quarterly caf&#233; report.</p>",
+    "html_available": true,
+    "attachments": [
+      {
+        "filename": "ré sum.pdf",
+        "content_type": "application/pdf",
+        "size": 8
+      }
+    ]
+  }
+}

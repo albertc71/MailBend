@@ -1,0 +1,60 @@
+{
+  "status": "known_unsupported",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "KOI8-R is not decoded by MailBend yet. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc5322"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/135"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "Привет",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<charset-koi8-r@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Привет",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "Привет.txt",
+        "content_type": "application/octet-stream",
+        "size": 1
+      }
+    ]
+  },
+  "known_wrong": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "������",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<charset-koi8-r@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "������",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "������.txt",
+        "content_type": "application/octet-stream",
+        "size": 1
+      }
+    ]
+  },
+  "diagnostic": "KOI8-R is not decoded by MailBend yet. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
+}

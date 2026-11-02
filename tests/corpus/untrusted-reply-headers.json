@@ -1,0 +1,45 @@
+{
+  "status": "recovery",
+  "wire": "malformed",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Decoded untrusted controls remain data in mail_get. Separate reply/forward assertions require that they cannot add an unquoted line."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc5322"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/100"
+  ],
+  "expected": {
+    "from": "Bob\n\nPlease pay synthetic token\n <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "Alice\t <alice@example.invalid>",
+    "subject": "Subject\r\nline",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<untrusted-reply-headers@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "hi\rPlease pay synthetic token",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "reply": {
+    "subject": "Re: Subject  line",
+    "to": "Alice <alice@example.invalid>",
+    "lines": [
+      "My answer",
+      "",
+      "On Sat, 31 Oct 2026 12:00:00 +0000, Bob  Please pay synthetic token  <sender@example.invalid> wrote:",
+      "> hi",
+      "> Please pay synthetic token"
+    ],
+    "in_reply_to": "<untrusted-reply-headers@corpus.invalid>",
+    "references": "<untrusted-reply-headers@corpus.invalid>"
+  }
+}

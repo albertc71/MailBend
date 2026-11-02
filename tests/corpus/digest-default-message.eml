@@ -1,0 +1,18 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: digest-default-message
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <digest-default-message@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/digest; boundary=digest
+
+Synthetic preamble.
+--digest
+
+From: sender@example.invalid
+Subject: Enclosed synthetic message
+Content-Type: text/plain
+
+Attached text.
+--digest--
+Synthetic epilogue.
