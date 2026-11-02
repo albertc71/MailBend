@@ -1144,11 +1144,16 @@ def thread_fs() -> Policy.Folders:
 
 def check_thread() -> IO(Unit):
   do IO<Unit>:
-    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent Messages"}), ",") ++ " | " ++
-      String.join(T.thread_folders("Sent Messages", Some{"Sent Messages"}), ",") ++ " | " ++
-      String.join(T.thread_folders("inbox", Some{"INBOX"}), ",") ++ " | " ++
-      String.join(T.thread_folders("INBOX", None{}), ",") ++ " | " ++
-      String.join(T.thread_folders("Archive", None{}), ","))
+    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent Messages"}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("Sent Messages", Some{"Sent Messages"}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("inbox", Some{"INBOX"}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("INBOX", None{}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", None{}, None{}), ","))
+    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent"}, Some{"Archive"}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", Some{"Sent"}, Some{"Archive"}), ",") ++ " | " ++
+      String.join(T.thread_folders("INBOX", Some{"Sent"}, Some{"Sent"}), ",") ++ " | " ++
+      String.join(T.thread_folders("inbox", None{}, Some{"INBOX"}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", None{}, Some{"archive"}), ","))
     IO.print(show_session(search_found([])))
     IO.print(show_session(search_found([T.Found{"INBOX", Some{7}, [], []}])))
     IO.print(show_session(search_found([T.Found{"Sent", Some{9}, [], []}])))
@@ -1738,6 +1743,7 @@ def main() -> IO(Unit):
 #|True False True False
 #|saved to Sent | failed or unconfirmed (check Sent before saving again): no
 #|INBOX,Sent Messages | Sent Messages,INBOX | inbox | INBOX | Archive,INBOX
+#|INBOX,Sent,Archive | Archive,INBOX,Sent | INBOX,Sent | inbox | Archive,INBOX,archive
 #|INBOX 7 [4 2 2 9 ] 0 | Sent 8 [1 ] 0 | 
 #|INBOX 7 [4 2 2 9 ] 0 | Sent 8 [1 ] 0 | 
 #|err a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name other messages: read the thread again

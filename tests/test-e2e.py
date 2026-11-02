@@ -648,6 +648,7 @@ def run_all(work, *, tool_scenarios_only=False):
     whole_read_identity(work)
     thread_classify_identity(work)
     threads(work)
+    archive_threads(work)
     awaiting_replies(work)
     live_contacts(work)
     flags_first_reads(work)
@@ -3542,9 +3543,9 @@ def thread_classify_identity(work):
                       and len(ts.requests()) == requests, (r, commands))
             finally:
                 srv.stop()
-        # EXAMINE 1 reads the seed; 2/3 search INBOX/Sent; 4/5 fetch their headers.
+        # EXAMINE 1 reads the seed; 2/3/4 search INBOX/Sent/Archive; 5/6 fetch headers.
         # A reset must stop in the changed session, before any subsequent UID command.
-        for at in (2, 4, 5, 6, 7, 8):
+        for at in (2, 5, 6, 7, 8, 9, 10):
             changed = thread_fixture()
             changed["examine_changes"] = [{"at": at, "uidvalidity": 99}]
             srv = Server(work, fixture=changed)
@@ -4048,7 +4049,7 @@ def threads(work):
               "oldest first, and stop before INBOX 12",
               c == 0 and thread_of(r) == [first, reply, answer], r)
         check("thread: the folders searched and each message's uidvalidity are reported",
-              r.get("searched") == ["INBOX", "Sent Messages"] and r.get("folder") == "INBOX" and r.get("uid") == 7
+              r.get("searched") == ["INBOX", "Sent Messages", "Archive"] and r.get("folder") == "INBOX" and r.get("uid") == 7
               and [m.get("uidvalidity") for m in r.get("messages", [])] == [1700000001, 1700000004, 1700000001], r)
         check("thread: each message carries its summary",
               [m.get("subject") for m in r.get("messages", [])] == ["Trip plans"] * 3
@@ -4062,7 +4063,7 @@ def threads(work):
         c, r = tool(srv, "mail_get_thread", {"folder": "Sent Messages", "uid": 1}, MAILBEND_READ_ONLY="1")
         check("thread: allowed in read-only mode; from Sent, INBOX is searched too, so the message it answers "
               "and the answers to it are found",
-              c == 0 and r.get("searched") == ["Sent Messages", "INBOX"]
+              c == 0 and r.get("searched") == ["Sent Messages", "INBOX", "Archive"]
               and thread_of(r) == [first, reply, answer, fourth], r)
         c, r = tool(srv, "mail_get_thread", {"uid": 99})
         check("thread: a missing UID is an error", c != 0 and "no message with UID 99" in r.get("error", ""), r)
@@ -4082,11 +4083,125 @@ def threads(work):
         c, r = tool(srv, "mail_get_thread", {"uid": 7})
         searches = [line for line in srv.log_lines()[log_start:] if " UID SEARCH " in line]
         check("thread: a reply naming 3000 unknown IDs in References is read; its round searches only 50 IDs "
-              "(3 keys in 2 folders each), after 1 in the first round",
+              "(3 keys in 3 folders each), after 1 in the first round",
               c == 0 and thread_of(r) == [first, ("INBOX", 8, "<trip1@example.com>")]
-              and len(searches) == (1 + 50) * 3 * 2, (r, len(searches)))
+              and len(searches) == (1 + 50) * 3 * 3, (r, len(searches)))
     finally:
         srv.stop()
+
+
+def archive_threads(work):
+    """Resolved Archive extends the same bounded, read-only thread search."""
+    fixture = thread_fixture()
+    fixture["mailboxes"]["Archive"]["messages"] = [thread_message(
+        20, "01-Oct-2026 09:30:00 +0000",
+        "Message-ID: <archived@example.com>\r\nReferences: <trip1@example.com>\r\n")]
+    args = {"uid": 7, "uidvalidity": fixture["mailboxes"]["INBOX"]["uidvalidity"]}
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        c, result = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+        check("thread Archive: linked archived message is ordered with its parent",
+              c == 0 and thread_of(result) == [("INBOX", 7, None),
+              ("Archive", 20, "<trip1@example.com>"),
+              ("Sent Messages", 1, "<trip1@example.com>"),
+              ("INBOX", 8, "<trip2@example.com>")]
+              and result.get("searched") == ["INBOX", "Sent Messages", "Archive"], result)
+        check("thread Archive: archived UID carries its own generation",
+              any(m.get("folder") == "Archive" and m.get("uidvalidity") == 1700000005
+                  for m in result.get("messages", [])), result)
+        for folder, uid, archive, expected in [
+                ("INBOX", 7, "INBOX", ["INBOX", "Sent Messages"]),
+                ("INBOX", 7, "Sent Messages", ["INBOX", "Sent Messages"]),
+                ("Archive", 20, "Archive", ["Archive", "INBOX", "Sent Messages"])]:
+            start = len(srv.log_lines())
+            code, value = tool(srv, "mail_get_thread", {"folder": folder, "uid": uid},
+                               MAILBEND_ARCHIVE_FOLDER=archive, MAILBEND_READ_ONLY="1")
+            searches_per_folder = {}
+            current = None
+            block_seen = False
+            for line in srv.log_lines()[start:]:
+                if " EXAMINE " in line:
+                    current, block_seen = line.split(" EXAMINE ", 1)[1], False
+                elif " UID SEARCH " in line and not block_seen:
+                    searches_per_folder[current] = searches_per_folder.get(current, 0) + 1
+                    block_seen = True
+            check("thread Archive: duplicate resolved folder searched at most once per round: " + archive,
+                  code == 0 and value.get("searched") == expected
+                  and len(searches_per_folder) == len(expected)
+                  and all(count <= 2 for count in searches_per_folder.values()),
+                  (value, searches_per_folder))
+        code, invalid = tool(srv, "mail_get_thread", args,
+                             MAILBEND_ARCHIVE_FOLDER="missing-archive")
+        check("thread Archive: invalid explicit override refuses instead of inventing a folder",
+              code != 0 and "error" in invalid and "messages" not in invalid, invalid)
+        commands = srv.log_lines()
+        check("thread Archive: all reads preserve flags and mailbox state",
+              srv.st() == before and not any(" SELECT " in line or any(
+                  token in line for token in MUTATING_COMMANDS) for line in commands)
+              and all("BODY.PEEK" in line for line in commands if " UID FETCH " in line), commands)
+    finally:
+        srv.stop()
+
+    baseline = None
+    for mode in ("absent", "ambiguous", "all-only"):
+        variant = thread_fixture()
+        if mode == "absent":
+            del variant["mailboxes"]["Archive"]
+        elif mode == "ambiguous":
+            variant["mailboxes"]["Second Archive"] = copy.deepcopy(variant["mailboxes"]["Archive"])
+        else:
+            archive = variant["mailboxes"].pop("Archive")
+            archive["special"] = ["\\All"]
+            variant["mailboxes"]["Everything"] = archive
+        srv = Server(work, fixture=variant)
+        try:
+            code, value = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+            check("thread Archive: no guessed role for " + mode,
+                  code == 0 and value.get("searched") == ["INBOX", "Sent Messages"]
+                  and thread_of(value) == [("INBOX", 7, None),
+                  ("Sent Messages", 1, "<trip1@example.com>"),
+                  ("INBOX", 8, "<trip2@example.com>")], value)
+            if baseline is None:
+                baseline = value
+            else:
+                check("thread Archive: unresolved role preserves the complete no-Archive result: " + mode,
+                      value == baseline, value)
+            if mode == "all-only":
+                code, explicit = tool(srv, "mail_get_thread", args,
+                                      MAILBEND_ARCHIVE_FOLDER="Everything")
+                check("thread Archive: explicit selectable All override is respected",
+                      code == 0 and explicit.get("searched") == ["INBOX", "Sent Messages", "Everything"], explicit)
+        finally:
+            srv.stop()
+
+    for generation in (0, "missing", "changed"):
+        variant = copy.deepcopy(fixture)
+        if generation == "changed":
+            # Seed; three folder searches; INBOX, Sent and Archive header fetches.
+            variant["examine_changes"] = [{"at": 7, "uidvalidity": 99}]
+        else:
+            variant["mailboxes"]["Archive"]["uidvalidity"] = generation
+        srv = Server(work, fixture=variant)
+        try:
+            code, value = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+            commands = srv.log_lines()
+            archive_fetch = False
+            current = None
+            for line in commands:
+                if " EXAMINE " in line:
+                    current = line.split(" EXAMINE ", 1)[1].strip('"')
+                if current == "Archive" and " UID FETCH " in line:
+                    archive_fetch = True
+            check("thread Archive: invalid or changed generation prevents Archive FETCH: " + str(generation),
+                  code != 0 and "UIDVALIDITY" in value.get("error", "")
+                  and "messages" not in value and not archive_fetch, (value, commands))
+            flag_map = lambda state: {f: {m["uid"]: m["flags"] for m in mb["messages"]}
+                                      for f, mb in state["mailboxes"].items()}
+            check("thread Archive: generation failure preserves flags: " + str(generation),
+                  flag_map(srv.st()) == flag_map(variant))
+        finally:
+            srv.stop()
 
 
 def listed_once(r):
