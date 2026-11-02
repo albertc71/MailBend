@@ -27,8 +27,40 @@ resolved, the captured clock, and candidate messages. Each message includes
 Bcc is not fetched. Missing recipients are empty strings, not invented values.
 Unresolved Archive is explicitly reported and is outside the searched scope.
 Replied means a later exact reference, not a verified human or recipient answer.
-Self-follow-ups, auto-replies and bounces can qualify. Self, list, automatic-message
-and bounce exclusions remain follow-up work in #63.
+Self-follow-ups, list replies, auto-replies and bounces can qualify even when
+candidate exclusions are enabled. No reply evidence is filtered.
+
+### Optional candidate exclusions
+
+`exclude_lists` and `exclude_automated` are independent Boolean arguments, both
+false by default. Non-Boolean values fail before mailbox access, including on
+the CLI. They omit candidates from the already bounded Sent sample before
+building reply searches and rendering results. They do not fetch extra messages,
+backfill a filtered sample, change response fields, or clear incomplete coverage.
+A capped sample with every candidate excluded still has `complete:false`.
+
+List exclusion recognizes exactly one List-ID field whose trimmed value has
+one angle-bracketed dotted identifier and no suffix. Its nonempty labels contain
+only ASCII letters, digits and hyphens, with no leading or trailing hyphen.
+An optional display prefix contains only ASCII letters, digits, hyphens, spaces
+and tabs. Quoted display names, comments and other unsupported syntax remain
+visible rather than being guessed at.
+
+Exclusion parsing recognizes at most 4096 characters of fetched headers and
+998 characters in a List-ID value. Larger inputs stay visible. These are local
+recognition bounds, not permission to truncate headers or discard reply evidence.
+List-ID is a stored-header signal, not proof that a To/Cc address is a mailing list.
+
+Automated exclusion recognizes exactly one Auto-Submitted field containing only
+`auto-generated` or `auto-replied`, case-insensitively, after whitespace trimming.
+`no`, parameters, comments and other values do not trigger exclusion. Missing,
+malformed or duplicate fields do not trigger their respective filter. Repeated
+identical fields are also ambiguous. A valid independent signal can still trigger
+the other enabled filter. Header metadata is untrusted and is not authentication.
+
+Broader #63 work remains deferred, including self-only exclusion because Bcc is
+not fetched, broader automated/bounce heuristics, optional Jev annotations,
+keyword workflow and recipe integration.
 
 ## Coverage and bounds
 
@@ -92,6 +124,34 @@ statechart /path/to/MailBend/docs/plans/awaiting-reply-model/Awaiting.tla \
 
 Use `Broken.cfg` and a different output directory for the negative control;
 that run must report the NoFalseAbsence violation.
+
+### Candidate filter model
+
+```mermaid
+stateDiagram-v2
+  [*] --> Sample
+  Sample --> Classify: apply enabled positive candidate signals
+  Classify --> Excluded: candidate matches a filter
+  Classify --> Replied: retained valid candidate has a later exact reference
+  Classify --> Awaiting: retained valid candidate has complete reply evidence without a match
+  Classify --> Unknown: retained candidate has invalid or incomplete evidence
+```
+
+`CandidateFilters.tla` separates enabled options from unambiguous stored-header
+signals. It checks that disabled options retain candidates, exclusions do not
+invent sample coverage, and retained candidates keep the existing reply rules.
+The model abstracts header recognition and IO, rather than proving either.
+This is a manually run design model, not a CI gate. TLA+ is an external tool.
+
+With a local TLA+ tools jar, run from `docs/plans/awaiting-reply-model`:
+
+```sh
+java -cp "$TLA_TOOLS_JAR" tlc2.TLC -config CandidateFilters.cfg CandidateFilters.tla
+java -cp "$TLA_TOOLS_JAR" tlc2.TLC -config CandidateFiltersBroken.cfg CandidateFilters.tla
+```
+
+The second configuration deliberately promotes incomplete sample coverage after
+exclusion and must violate `NoInventedCoverage`.
 
 ## Review order
 

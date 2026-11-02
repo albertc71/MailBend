@@ -76,7 +76,7 @@ Jev off, no tool asks it.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
 | `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
-| `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Replied means a later reference, including self-follow-ups, auto-replies or bounces; exclusions are deferred in #63 | no | no |
+| `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Opt-in list and automated Sent-candidate exclusions; replied still includes self-follow-ups, auto-replies or bounces | no | no |
 | `mail_contacts` | Bounded Sent contact candidates and a human-reviewed allowlist value. Ambiguous names return every sampled match | no | no |
 | `mail_correspondents` | Exact observed Sent recipient and per-folder received counts within an explicit window | no | no |
 | `mail_classify` | For up to 50 messages, which existing folder each belongs in and whether it needs a reply, an action or attention | no | decides (listed only with Jev on) |

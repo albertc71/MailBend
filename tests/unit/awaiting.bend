@@ -21,6 +21,10 @@ def state(rs: List<&2, T.Node>, complete: Bool) -> String:
 def search(lines: List<&2, I.RLine>) -> String:
   Bool.show(Maybe.is_some(&2, List<&2, U32>, A.search(lines)))
 
+def excluded(headers: String, lists: Bool, automated: Bool) -> String:
+  Bool.show(A.excluded(node(1, "01-Oct-2026 09:00:00 +0000", headers),
+    A.Filters{lists, automated}))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(state([], True{}))
@@ -49,6 +53,42 @@ def main() -> IO(Unit):
     IO.print(I.uid_set(A.smallest([9, 3, 3, 1])))
     IO.print(I.key_str(A.batch_key(["<a@x>", "<b@x>"])))
 
+    IO.print(Bool.show(A.list_value("<" ++ String.repeat("a", 999n) ++ ".test>")))
+    IO.print(excluded("Subject: " ++ String.repeat("x", 4097n) ++ "\r\nList-ID: <team.test>\r\n", True{}, True{}))
+    IO.print(Bool.show(A.list_value("<" ++ String.repeat("a", 991n) ++ ".test>")))
+    IO.print(Bool.show(A.list_value("<" ++ String.repeat("a", 992n) ++ ".test>")))
+    IO.print(excluded("Subject: " ++ String.repeat("x", 4063n) ++ "\r\nList-ID: <team.test>\r\n", True{}, True{}))
+    IO.print(excluded("Subject: " ++ String.repeat("x", 4064n) ++ "\r\nList-ID: <team.test>\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.test>\r\nList-ID broken\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted: auto-replied\r\nAuto-Submitted broken\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: Team\r\n list <team.test>\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted:\r\n auto-replied\r\n", True{}, True{}))
+    IO.print(excluded("", True{}, True{}))
+    IO.print(excluded("List-ID: <team.example.test>\r\n", False{}, False{}))
+    IO.print(excluded("List-ID: Team list <team.example.test>\r\n", True{}, False{}))
+    IO.print(excluded("List-ID: <team.example.test>\r\n", False{}, True{}))
+    IO.print(excluded("Auto-Submitted: AuTo-GeNeRaTeD\r\n", False{}, True{}))
+    IO.print(excluded("Auto-Submitted: auto-replied\r\n", True{}, False{}))
+    IO.print(excluded("Auto-Submitted: auto-replied\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted: no\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted: auto-replied; owner=test\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted: auto-replied (test)\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted: auto-replied\r\nAuto-Submitted: auto-replied\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted: auto-replied\r\nAuto-Submitted: no\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: team.example.test\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team..test>\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.-test>\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.test> junk\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.test> <other.test>\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.test>\r\nList-ID: <team.test>\r\n", True{}, True{}))
+    IO.print(excluded("List-ID : <team.test>\r\n", True{}, True{}))
+    IO.print(excluded("Auto-Submitted : auto-replied\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: invalid\r\nAuto-Submitted: auto-replied\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.test>\r\nAuto-Submitted: invalid\r\n", True{}, True{}))
+    IO.print(excluded("List-ID: <team.test>\r\nList-ID: invalid\r\nAuto-Submitted: auto-replied\r\n", True{}, True{}))
+    IO.print(excluded("List-ID : <team.test>\r\nAuto-Submitted: auto-replied\r\n", True{}, True{}))
+    IO.print(state([reply("In-Reply-To: <sent@x>\r\nAuto-Submitted: auto-replied\r\nList-ID: <team.test>\r\n")], True{}))
+
 #|awaiting
 #|unknown
 #|replied
@@ -74,3 +114,38 @@ def main() -> IO(Unit):
 #|False
 #|1,3,9
 #|OR OR HEADER "References" "<a@x>" HEADER "In-Reply-To" "<a@x>" OR HEADER "References" "<b@x>" HEADER "In-Reply-To" "<b@x>"
+#|False
+#|False
+#|True
+#|False
+#|True
+#|False
+#|False
+#|False
+#|True
+#|True
+#|False
+#|False
+#|True
+#|False
+#|True
+#|False
+#|True
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|False
+#|True
+#|True
+#|True
+#|True
+#|replied

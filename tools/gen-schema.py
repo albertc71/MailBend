@@ -655,12 +655,22 @@ TOOLS = [
          "can contain awaiting items whose reply evidence is complete. Incomplete reply "
          "search or header evidence never confirms absence. Each SEARCH is capped at 10000 UIDs. "
          "Replied means a later exact reference, including self-follow-ups, auto-replies or bounces; "
-         "it does not prove a human or recipient answer. Exclusions are deferred. "
+         "it does not prove a human or recipient answer. Optional exclusions affect only sampled Sent "
+         "candidates, never reply evidence or pre-filter coverage; no backfill. "
+         "Headers over 4096 characters remain visible; List-ID recognition stops at 998 characters. "
          "No subject matching, Jev calls, flags, drafts or sends. Scheduling belongs to the agent.",
          hints(read_only=True, idempotent=True),
          {"window_days": param("integer", minimum=1, maximum=3650, default=30),
           "min_age_days": param("integer", minimum=0, maximum=3650, default=3),
-          "limit": param("integer", minimum=1, maximum=50, default=50)}),
+          "limit": param("integer", minimum=1, maximum=50, default=50),
+          "exclude_lists": param("boolean", default=False,
+              description="Exclude Sent candidates with one unambiguous List-ID: an angle-bracketed "
+              "dotted identifier with ASCII alphanumeric/hyphen labels and optional simple "
+              "ASCII word/space display text. Missing, duplicate or malformed values stay visible."),
+          "exclude_automated": param("boolean", default=False,
+              description="Exclude Sent candidates with one bare Auto-Submitted value of "
+              "auto-generated or auto-replied, case-insensitively. Parameters, comments, missing, "
+              "duplicate, malformed and no values stay visible.")}),
     tool("mail_contacts",
          "Read-only contacts observed in stored Sent To/Cc/Bcc headers. Scan the highest UIDs "
          "within an INTERNALDATE SINCE window, at most limit headers. Rank by observed-message "

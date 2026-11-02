@@ -3896,6 +3896,68 @@ def awaiting_replies(work):
     finally:
         srv.stop()
 
+    filtered = copy.deepcopy(fixture)
+    metadata = [
+        "List-ID: Team list <team.example.test>\r\n",
+        "Auto-Submitted: AuTo-GeNeRaTeD\r\n",
+        "List-ID: <team.example.test>\r\nAuto-Submitted: auto-replied\r\n",
+        "",
+        "List-ID: not-a-list-id\r\nAuto-Submitted: no\r\n",
+        "List-ID: <team.example.test>\r\nList-ID: <team.example.test>\r\n",
+        "Auto-Submitted: auto-replied\r\nAuto-Submitted: no\r\n",
+        "Auto-Submitted: auto-generated; owner=sender@example.test\r\n",
+        "List-ID: <team..test>\r\nAuto-Submitted: auto-replied (comment)\r\n",
+        "List-ID : <team.example.test>\r\nAuto-Submitted : auto-replied\r\n",
+        "List-ID: broken\r\nAuto-Submitted: auto-replied\r\n",
+        "List-ID: <team.example.test>\r\nAuto-Submitted: broken\r\n",
+    ]
+    filtered["mailboxes"]["Sent Messages"]["messages"] = [
+        message(uid, 10, f"candidate-{uid}", extra)
+        for uid, extra in enumerate(metadata, 1)]
+    filtered["mailboxes"]["INBOX"]["messages"] = [message(1, 1, "automatic-answer",
+        "In-Reply-To: <candidate-4@example.test>\r\nAuto-Submitted: auto-replied\r\n"
+        "List-ID: <team.example.test>\r\nReturn-Path: <>\r\n")]
+    for args, omitted in (({}, set()),
+                          ({"exclude_lists": False, "exclude_automated": False}, set()),
+                          ({"exclude_lists": True}, {1, 3, 12}),
+                          ({"exclude_automated": True}, {2, 3, 11}),
+                          ({"exclude_lists": True, "exclude_automated": True}, {1, 2, 3, 11, 12})):
+        srv = Server(work, fixture=filtered)
+        try:
+            before = srv.st()
+            c, r = tool(srv, "mail_awaiting_reply", args, MAILBEND_READ_ONLY="1")
+            messages = r.get("messages", [])
+            by_uid = {m["anchor"]["uid"]: m for m in messages}
+            check(f"awaiting filters: independent candidate exclusions {args}", c == 0 and
+                  r.get("complete") is True and set(by_uid) == set(range(1, 13)) - omitted, r)
+            check("awaiting filters: automatic list bounce/self reply remains evidence",
+                  by_uid.get(4, {}).get("status") == "replied", r)
+            lines = srv.log_lines()
+            searches = [line for line in lines if " UID SEARCH " in line and "HEADER" in line]
+            check("awaiting filters: excluded candidates are not searched", searches and all(
+                f"<candidate-{uid}@example.test>" not in line
+                for uid in omitted for line in searches), searches)
+            check("awaiting filters: retained candidate is searched", any(
+                "<candidate-4@example.test>" in line for line in searches), searches)
+            check("awaiting filters: no writes or flag changes", srv.st() == before and not any(
+                verb in line for line in lines for verb in
+                (" SELECT ", " STORE ", " APPEND ", " EXPUNGE", "MAIL FROM:")), lines)
+        finally:
+            srv.stop()
+    srv = Server(work, fixture=filtered)
+    try:
+        c, r = tool(srv, "mail_awaiting_reply", {"limit": 1, "exclude_lists": True})
+        check("awaiting filters: empty filtered cap stays incomplete without backfill", c == 0 and
+              r.get("complete") is False and r.get("messages") == [], r)
+        for flag in ("exclude_lists", "exclude_automated"):
+            for invalid in ("true", "false", 1, 0, None, [], {}):
+                before = srv.log_lines()
+                c, r = tool(srv, "mail_awaiting_reply", {flag: invalid})
+                check(f"awaiting filters: non-Boolean {flag}={invalid!r} refused before network",
+                      c != 0 and "error" in r and srv.log_lines() == before, r)
+    finally:
+        srv.stop()
+
     for mode in ("missing", "malformed", "duplicate"):
         srv = Server(work, fixture=fixture, extra=("--search-response", mode))
         try:

@@ -27,6 +27,7 @@ import ./src/ops.bend as Ops
 import ./src/smtp.bend as S
 import ./src/policy.bend as Policy
 import ./src/awaiting.bend as Await
+import ./src/thread.bend as AwaitThread
 
 import ./src/response.bend as Response
 
@@ -1940,3 +1941,8 @@ law prefix_whole_when_room:
   for enough: {U32.to_nat(left) == Nat.add(WireBudget.utf8_weight(J.esc(s)), extra) : Nat}
   ({Budget.prefix_text(Response.prefix(s, left)) == s : String} &
    {U32.to_nat(Budget.prefix_left(Response.prefix(s, left))) == extra : Nat})
+
+# Disabled candidate filters never hide a sampled message.
+law awaiting_disabled_filters_keep_candidate:
+  for n: AwaitThread.Node
+  {Await.excluded(n, Await.Filters{False{}, False{}}) == False{} : Bool}
