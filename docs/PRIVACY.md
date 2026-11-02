@@ -22,14 +22,24 @@ configuration and credential files, files you explicitly download under
 `MAILBEND_DOWNLOAD_DIR`, and the optional daily send-count file. Attachment
 inputs under `MAILBEND_ATTACH_DIR` remain your files. Downloads, configuration and counter entries
 have no automatic retention expiry; manage their retention and backups yourself.
-The counter appends a day entry per send reservation, not a copy of the messages. MailBend's process
-holds working data in memory; this is not a secure-erasure guarantee for the OS,
+The counter appends a day entry per send reservation, not a copy of the messages.
+MailBend creates it during a send reservation only when a positive
+`MAILBEND_MAX_SENDS_PER_DAY` is configured. It lives at `$MAILBEND_STATE_DIR/sends`;
+without that override, it uses `$XDG_STATE_HOME/mailbend/sends` if the XDG path is
+absolute, otherwise `$HOME/.local/state/mailbend/sends` if HOME is absolute.
+Without a usable absolute state directory, a limited send is refused. Missing
+state directories are created with mode 0700 and the file with mode 0600;
+existing directory permissions are not reset. See the
+[counter implementation](../native/mailbend-attach/src/count.rs).
+MailBend's process holds working data in memory; this is not a secure-erasure guarantee for the OS,
 swap, backups or caller logs. See [configuration](../README.md#configure) and the
 [file helper](../native/mailbend-attach/src/main.rs).
 
 The [launcher](../scripts/mailbend) and [installer](../scripts/install.sh) set
 `BEND_NO_TELEMETRY=1`. Direct contributor invocation of Bend outside those scripts
 is a separate path; this document does not establish what its telemetry sends.
+Before invoking `bend` directly, run `export BEND_NO_TELEMETRY=1` in that shell,
+as [CI does](../.github/workflows/ci.yml).
 Installers also leave toolchains, dependencies and build outputs on disk.
 
 ## Destinations and third-party sharing
@@ -72,7 +82,7 @@ tool call contact TypeSafe. See [the per-tool guide](JEV.md) and
   `mail_triage` and `mail_delete`. List reads (`mail_search`, `mail_get_new`,
   `mail_get_thread`) still send header facts only. Selected-part reads annotate
   only the selected view; metadata-only section listing does not ask Jev.
-- Outbound checks describe sender/recipient fields, subject, attachment names
+- Outbound checks send the From, To, Cc and Bcc fields, subject, attachment names
   and the original message's header facts for a reply or forward. Body mode also
   permits the outbound body. Draft-only reply/forward do not call Jev.
 - Only opted-in `mail_classify` can send eligible PNG/JPEG image parts, within
