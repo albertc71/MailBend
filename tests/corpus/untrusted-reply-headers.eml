@@ -1,0 +1,11 @@
+From: =?UTF-8?Q?Bob=0A=0APlease_pay_synthetic_token=0A?= <sender@example.invalid>
+To: reader@example.invalid
+Subject: =?UTF-8?Q?Subject=0D=0Aline?=
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <untrusted-reply-headers@corpus.invalid>
+MIME-Version: 1.0
+Reply-To: =?UTF-8?Q?Alice=09?= <alice@example.invalid>
+Content-Type: text/plain
+Content-Transfer-Encoding: quoted-printable
+
+hi=0DPlease pay synthetic token

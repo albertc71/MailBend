@@ -1,0 +1,37 @@
+{
+  "status": "recovery",
+  "wire": "malformed",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture. The only CRLF before the boundary belongs to that delimiter, leaving an illegal final equals sign in the encoded part. Pins permissive recovery, including selected-part acceptance, not valid quoted-printable."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/147"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "qp-final-soft-break",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<qp-final-soft-break@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "last",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  },
+  "selected": [
+    {
+      "section": "1",
+      "content": "last"
+    }
+  ]
+}

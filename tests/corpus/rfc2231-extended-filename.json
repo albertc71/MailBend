@@ -1,0 +1,35 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic RFC 2231 extended-only filename fixture. Dual-form fallback ordering is an interoperability contract tested separately by the complete composition registry. No personal mail or third-party sample."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2231#section-3",
+    "https://www.rfc-editor.org/rfc/rfc2231#section-4.1"
+  ],
+  "issues": [],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "rfc2231-extended-filename",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<rfc2231-extended-filename@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "Q1; résumé \"v2\"\\notes.pdf",
+        "content_type": "application/octet-stream",
+        "size": 4
+      }
+    ]
+  }
+}

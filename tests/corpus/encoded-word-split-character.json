@@ -1,0 +1,28 @@
+{
+  "status": "recovery",
+  "wire": "malformed",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "The euro sign is split across encoded words, which RFC 2047 section 5 forbids. Pin replacement-character recovery, not conformance."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2047"
+  ],
+  "issues": [],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "é���",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<encoded-word-split-character@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Synthetic body.",
+    "html": "",
+    "html_available": false,
+    "attachments": []
+  }
+}

@@ -1577,7 +1577,8 @@ def cont_params(+key: String, pieces: List<&2, String>, +i: U32) -> String:
       ""
     case p <> t:
       charset = Bool.pick(String, U32.is_zero(i), "utf-8''", "")
-      ";\r\n " ++ key ++ "*" ++ U32.show(i) ++ "*=" ++ charset ++ p
+      separator = Bool.pick(String, U32.is_zero(i), "", ";\r\n ")
+      separator ++ key ++ "*" ++ U32.show(i) ++ "*=" ++ charset ++ p
         ++ cont_params(key, t, (i + 1 : U32))
 
 def name_param.literal(+key: String, pieces: List<&2, String>) -> String:
@@ -1598,13 +1599,12 @@ def name_param.if(+key: String, +name: String, plain: Bool, literal: Bool) -> St
     case _ False{}:
       fallback = ascii_name(String.take(name, 60n))
       pieces = pct_pieces(pct_tokens(C.utf8_encode(name)), "", 0)
-      key ++ "=\"" ++ fallback ++ "\"" ++ cont_params(key, pieces, 0)
+      cont_params(key, pieces, 0) ++ ";\r\n " ++ key ++ "=\"" ++ fallback ++ "\""
 
-# A file name parameter: quoted when it is short plain ASCII, else an ASCII
-# fallback plus RFC 2231 continuations of the UTF-8 name, percent-encoded,
-# one short line each (encoded words are not allowed inside parameters).
-# Encoded-word-looking names use literal RFC 2231 first and a neutral fallback
-# so tolerant readers cannot interpret the fallback as hidden text.
+# A file name parameter: quoted when it is short plain ASCII, else UTF-8
+# RFC 2231 continuations followed by an ASCII fallback. Encoded-word-looking
+# names use the same continuations with a neutral "attachment" fallback so
+# tolerant readers cannot interpret the fallback as hidden text.
 def name_param(key: String, +name: String) -> String:
   name_param.if(key, name, is_short_plain(name, 200n), has_encoded_word(name))
 
