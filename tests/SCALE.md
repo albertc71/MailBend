@@ -68,25 +68,30 @@ baseline=$(python3 tests/scale_baseline.py)
 python3 tests/test-scale.py --baseline "$baseline" --output build/scale-results.json
 ```
 
-The selector accepts exactly the two reviewed CPU model names and chooses a
-fixed baseline file. An unknown CPU fails selection. CI still collects a
+The selector accepts only `AMD EPYC 9V45 96-Core Processor` and chooses
+`scale-baseline.json`. Other CPU models fail selection. CI still collects a
 bounded candidate using the unchanged full-profile comparison, then forces
 a failed job even if that command unexpectedly exits successfully. This is
 evidence capture, not a baseline or acceptance fallback. Selection is not
 acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
-The scale job pins CPython 3.13.18, like ordinary CI. The 7763 baseline below
-uses that version and the current fake servers. The retained 9V45 record
-used 3.12.3 and older fake servers: selecting it must still fail full-profile
-comparison until fresh 9V45 evidence is independently reviewed. Intel 8573C
-has been observed but has no reviewed baseline; its evidence-only run cannot
-pass. CPU selection alone never makes a stale or unknown profile acceptable.
+The scale job pins CPython 3.13.18, like ordinary CI. The selected 9V45
+baseline records the current candidate-SEARCH fixture hash. The retained
+7763 record predates that fixture change and is not selected. The 7763,
+Intel 8573C and EPYC 9V74 models take the explicit unreviewed-CPU
+evidence-only path until fresh matching evidence is independently reviewed. CPU selection alone never
+makes a stale or unknown profile acceptable.
 
 The comparison requires the same runner, operating system, architecture,
 CPU model, logical CPU count, Bend version, Python implementation/version,
 limits and sample count. The profile also hashes the measurement harness,
 fixture generator, image generator and both fake servers. A different
-profile is incomparable and fails. Wall-time, maximum-process RSS or IMAP
+profile is incomparable and fails. Changing either fake server or fixture
+module requires re-recording every selected baseline. Ordinary CI checks
+those source hashes with `python3 tests/test-scale-baseline.py`. This check
+is separate from the measurement job so a stale record blocks ordinary CI
+without preventing collection of a replacement candidate. The measurement
+job still cannot pass an incomparable profile. Wall-time, maximum-process RSS or IMAP
 login medians more than 25% above the baseline fail. The fast contract tests
 include a deliberate 26% slowdown and reject invalid or incomplete samples.
 This threshold detects a budget breach; it does not by itself establish a
@@ -129,16 +134,46 @@ resource output cannot pass; a group killed by the safety stop may have no
 GNU time output. The report then keeps only the sampled diagnostic peak.
 The timer binary hash and version are part of the comparable runner profile.
 
-## Hosted baseline
+## Active hosted 9V45 candidate
+
+[Run 41409341267](https://github.com/albertc71/MailBend/actions/runs/41409341267)
+measured all 35 exact samples in 584.59 seconds on source
+`2562db03ed6481c852398a3a4e4450ff4c384966`. The profile is EPYC 9V45,
+CPython 3.13.18 and the candidate-SEARCH fixture hash introduced on main.
+Independent review matched all 26,874 logged JSON bytes and SHA-256
+`a1996859ada45410fec61c6f2770f2386dcfc43f4e63c9c300770bff3cc9a93c`.
+The report is committed unchanged. That evidence-capture run correctly
+failed while this CPU had no current selected baseline. A subsequent
+matching-profile comparison is required; this candidate is not a pass.
+
+## Previous 7763 baseline and passing comparison
+
+The previous 7763 baseline comes from
+[run 41402595457](https://github.com/albertc71/MailBend/actions/runs/41402595457),
+source `9e591fc86bfac81e61b9568d3463a34756955cf4`. All 35 exact samples passed
+in 706.85 seconds with CPython 3.13.18 and the main-integrated fixture hashes.
+Independent review verified all 26,864 bytes and JSON SHA-256
+`eafd9e0710bd713f45e9d4b954b6091ac8b4ad4ec3b8009cdf59b03a4076c2d8`.
+That candidate run correctly failed against its old profile. The subsequent
+[comparison 41404768369](https://github.com/albertc71/MailBend/actions/runs/41404768369)
+passed on source `79ae6bfc13a1441ca635ca4a7c919508aa222aa6`: all 35 samples,
+697.28 seconds, identical full profile, and all 21 median checks within the
+unchanged 25% budget. The largest median increase was 1.24%. Independent
+review verified JSON SHA-256
+`dbf67ea5157c7c3e046e45fde1c6f838cd99bd125cfd5d7a2ab5f121839c8237`.
+This is evidence for that historical 7763 profile, not the newer fixture
+hash or all hosted CPU models.
+
+## Previous 9V45 measurement
 
 [Run 41397060015](https://github.com/albertc71/MailBend/actions/runs/41397060015)
 measured all 35 samples on source `e0494f20a891b59bb96fc4426be32233e1ee0968`
 in 526.76 seconds. Its comparison correctly failed against the old profile;
 the complete candidate was independently reviewed before being committed
-unchanged as the current baseline. Its verified JSON SHA-256 is
+unchanged as an earlier baseline. It is no longer selected. Its verified
+JSON SHA-256 is
 `e06ec29924bcd8e27b86f26e69a4c972eb9ca29fc455e5e347c8be8442b6ef2f`.
-A subsequent matching-profile comparison is still required; this candidate
-run is not a comparison pass.
+This candidate run was not a comparison pass.
 
 The expanded profile records GitHub-hosted Ubuntu 24.04.5 LTS, x86-64,
 AMD EPYC 9V45, four logical CPUs, Bend 2.0.35 and CPython 3.12.3, plus the
@@ -159,17 +194,7 @@ The older CPU was different, so timing differences do not prove a speedup.
 RSS and IMAP-login medians are close, but only matching complete profiles
 can pass the regression gate.
 
-### Second supported hosted CPU
-
-The current 7763 baseline comes from
-[run 41402595457](https://github.com/albertc71/MailBend/actions/runs/41402595457),
-source `9e591fc86bfac81e61b9568d3463a34756955cf4`. All 35 exact samples passed
-in 706.85 seconds with CPython 3.13.18 and the main-integrated fixture hashes.
-Independent review verified all 26,864 bytes and JSON SHA-256
-`eafd9e0710bd713f45e9d4b954b6091ac8b4ad4ec3b8009cdf59b03a4076c2d8`.
-This run correctly failed against the old profile. It establishes the new
-7763 candidate, not a successful regression comparison. A later matching
-profile must pass the unchanged 25% gate before readiness.
+## Earlier 7763 measurement
 
 The previous 7763 candidate is retained in Git history and its hosted log:
 
@@ -181,8 +206,9 @@ samples, 699.07 seconds. Independent review verified full JSON SHA-256
 `a1b82bac473aefa91f1c5768039e4d2666d94754cc620fb8d7b1555f84eed5b4`.
 Its profile differs from the 9V45 candidate only in CPU model. This run also
 failed comparison correctly against the other CPU, not workload validation.
-Neither candidate is itself a successful regression comparison. The selected
-baseline must pass all unchanged full-profile and 25% checks on a later run.
+These earlier candidate runs were not successful regression comparisons;
+the later passing run for the historical 7763 profile is linked above.
+The active 9V45 profile has no passing comparison yet.
 
 ### Previous hosted baseline
 

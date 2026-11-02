@@ -239,7 +239,7 @@ sys.exit(24)
             "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py"})
 
     def test_baseline_selection_preserves_full_profile_gate(self):
-        for cpu in ("AMD EPYC 9V45 96-Core Processor", "AMD EPYC 7763 64-Core Processor"):
+        for cpu in ("AMD EPYC 9V45 96-Core Processor",):
             with self.subTest(cpu=cpu):
                 baseline = json.loads(select_baseline(cpu).read_text())
                 self.assertEqual(baseline["profile"]["cpu"], cpu)
@@ -248,7 +248,8 @@ sys.exit(24)
                 changed["profile"]["python_version"] = "different"
                 self.assertEqual(scale.compare(baseline, changed), [
                     "runner/toolchain profile differs; measurements are not comparable"])
-        for cpu in ("unknown", "", "AMD EPYC 7763"):
+        for cpu in ("unknown", "", "AMD EPYC 7763", "AMD EPYC 7763 64-Core Processor",
+                    "INTEL(R) XEON(R) PLATINUM 8573C"):
             with self.subTest(cpu=cpu), self.assertRaises(ValueError):
                 select_baseline(cpu)
 
