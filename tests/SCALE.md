@@ -77,9 +77,9 @@ acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
 The scale job pins CPython 3.13.18, like ordinary CI. The selected 9V45
 baseline records the current candidate-SEARCH fixture hash. The retained
-7763 record predates that fixture change and is not selected. Both 7763 and
-Intel 8573C take the explicit unreviewed-CPU evidence-only path until fresh
-matching evidence is independently reviewed. CPU selection alone never
+7763 record predates that fixture change and is not selected. The 7763,
+Intel 8573C and EPYC 9V74 models take the explicit unreviewed-CPU
+evidence-only path until fresh matching evidence is independently reviewed. CPU selection alone never
 makes a stale or unknown profile acceptable.
 
 The comparison requires the same runner, operating system, architecture,
@@ -207,7 +207,8 @@ samples, 699.07 seconds. Independent review verified full JSON SHA-256
 Its profile differs from the 9V45 candidate only in CPU model. This run also
 failed comparison correctly against the other CPU, not workload validation.
 These earlier candidate runs were not successful regression comparisons;
-the later passing run for the active profile is linked above.
+the later passing run for the historical 7763 profile is linked above.
+The active 9V45 profile has no passing comparison yet.
 
 ### Previous hosted baseline
 

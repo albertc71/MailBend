@@ -346,7 +346,7 @@ jobs:
           else
             if ! baseline=$(python3 tests/scale_baseline.py); then
               echo "::error::Unreviewed CPU: collecting evidence, never accepting this run"
-              python3 tests/test-scale.py --output scale-results.json
+              python3 tests/test-scale.py --baseline tests/scale-baseline.json --output scale-results.json
               exit 1
             fi
             python3 tests/test-scale.py --baseline "$baseline" --output scale-results.json
