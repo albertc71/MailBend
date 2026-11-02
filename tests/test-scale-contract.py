@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fast controls for scale measurement, comparison and synthetic input shape."""
+import ast
 import importlib.util
 import json
 import os
@@ -14,7 +15,7 @@ import unittest
 from unittest import mock
 
 from scale_baseline import select_baseline
-from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message
+from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message, png
 
 SPEC = importlib.util.spec_from_file_location("scale", pathlib.Path(__file__).with_name("test-scale.py"))
 scale = importlib.util.module_from_spec(SPEC)
@@ -203,9 +204,12 @@ sys.exit(24)
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "tests").mkdir()
-            names = ("scale_fixtures.py", "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")
+            names = ("scale_fixtures.py", "scale_support/v1/image_fixtures.py",
+                     "scale_support/v1/fake_mail_server.py", "scale_support/v1/fake_typesafe.py")
             for name in names:
-                (root / "tests" / name).write_text(name)
+                path = root / "tests" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name)
             timer = root / "time"
             timer.write_text("synthetic timer")
             with mock.patch.object(scale, "ROOT", root), \
@@ -223,18 +227,79 @@ sys.exit(24)
                     after["profile"] = scale.profile()
                     self.assertIn("not comparable", scale.compare(before, after)[0], name)
                     path.write_text(name)
+                for name in ("image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py"):
+                    (root / "tests" / name).write_text("unrelated E2E fixture changed")
+                self.assertEqual(scale.profile(), original)
                 with mock.patch.object(scale.platform, "python_version", return_value="different Python"):
                     after = report()
                     after["profile"] = scale.profile()
                     self.assertIn("not comparable", scale.compare(before, after)[0])
+
+    def test_snapshot_provenance_and_import_boundary(self):
+        root = scale.ROOT / "tests/scale_support/v1"
+        origin = json.loads((root / "ORIGIN.json").read_text())
+        self.assertEqual(origin["source_commit"], "9b50f9d3c4aadad9f213c01f7b576d2e124394cc")
+        self.assertEqual(set(origin["files"]), {
+            "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py"})
+        self.assertEqual(set((root.parent).rglob("*.py")), {
+            root / name for name in origin["files"]})
+        for name, source in origin["files"].items():
+            with self.subTest(file=name):
+                self.assertEqual(source["source_path"], "tests/" + name)
+                self.assertEqual(scale.digest(root / name), source["sha256"])
+                tree = ast.parse((root / name).read_text())
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        modules = [alias.name for alias in node.names]
+                    elif isinstance(node, ast.ImportFrom):
+                        self.assertEqual(node.level, 0)
+                        modules = [node.module]
+                    else:
+                        continue
+                    for module in modules:
+                        self.assertIn(module.split(".")[0], sys.stdlib_module_names)
+        self.assertEqual(png.__module__, "scale_support.v1.image_fixtures")
+        self.assertEqual(pathlib.Path(sys.modules[png.__module__].__file__).resolve(),
+                         root / "image_fixtures.py")
+
+    def test_fixture_import_rejects_ambient_general_modules(self):
+        script = r"""
+import builtins, sys
+sys.path.insert(0, sys.argv[1])
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name in {"image_fixtures", "fake_mail_server", "fake_typesafe"}:
+        raise AssertionError("ambient general fixture import: " + name)
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+import scale_fixtures
+assert scale_fixtures.png.__module__ == "scale_support.v1.image_fixtures"
+"""
+        result = subprocess.run([sys.executable, "-c", script, str(scale.ROOT / "tests")],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_measured_server_commands_use_only_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            server = mock.Mock(ports={"imap": "1", "smtp": "2", "proxy": "3"})
+            with mock.patch.object(scale, "fixture", return_value={}), \
+                    mock.patch.object(scale, "Server", return_value=server) as start, \
+                    mock.patch.object(scale, "measure", side_effect=RuntimeError("stop before workload")):
+                with self.assertRaisesRegex(RuntimeError, "stop before workload"):
+                    scale.run_sample(SCENARIOS[-1], work, work, mock.Mock())
+            self.assertEqual([call.args[0][1] for call in start.call_args_list], [
+                str(scale.ROOT / "tests/scale_support/v1/fake_mail_server.py"),
+                str(scale.ROOT / "tests/scale_support/v1/fake_typesafe.py")])
+            self.assertEqual(server.stop.call_count, 2)
 
     def test_comparison_filter_covers_measured_dependencies(self):
         workflow = (scale.ROOT / ".github/workflows/scale-compare.yml").read_text()
         paths = {line.removeprefix("      - ") for line in workflow.splitlines()
                  if line.startswith("      - ")}
         self.assertEqual(paths, {
-            "tests/test-scale.py", "tests/scale_fixtures.py", "tests/image_fixtures.py",
-            "tests/fake_mail_server.py", "tests/fake_typesafe.py", "tests/scale-baseline.json",
+            "tests/test-scale.py", "tests/scale_fixtures.py", "tests/scale_support/**",
+            "tests/scale-baseline.json",
             ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml",
             "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py"})
 

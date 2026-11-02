@@ -61,6 +61,35 @@ sample fails the run. The report retains failures rather than treating them
 as fast measurements. These safety limits can reject workloads that would
 succeed on a larger machine.
 
+## Versioned scale apparatus
+
+Scale uses the fixed files in `tests/scale_support/v1/`, not the evolving
+general E2E fake servers. The first snapshot copies all three fixture files
+byte-for-byte from commit `9b50f9d3c4aadad9f213c01f7b576d2e124394cc`.
+`ORIGIN.json` records their original paths and SHA-256 hashes. This deliberate
+~100 KiB duplication keeps unrelated E2E fault-injection additions out of
+measured code; ordinary E2E tests continue to use the general fixtures.
+
+Both server commands use explicit snapshot paths. Image generation imports
+only the snapshot module. The profile hashes the actual bytes of all three
+snapshot dependencies, the generator and the measurement harness. The
+manifest is provenance, not an exemption from these checks. Editing any
+executed snapshot dependency invalidates the profile and requires fresh,
+independently reviewed hosted measurements. General-fixture-only changes
+neither alter scale's imported code nor trigger its comparison workflow.
+
+Protocol, security or correctness fixes that apply to these measured
+workloads must be ported explicitly to the snapshot and remeasured. Do not
+silently sync unrelated fault features. Review the imported dependency set
+when adding a module; every executed local dependency must be hashed.
+Version names alone never permit comparison. The initial byte identity and
+contract checks do not substitute for the complete 35-sample hosted run.
+
+The path and import migration changes the harness and generator hashes.
+Existing records remain historical evidence and intentionally fail against
+this new apparatus until genuine new samples are reviewed. No metadata may
+be copied onto old measurements to make the profiles match.
+
 ## Compare a recorded baseline
 
 ```sh
@@ -75,23 +104,25 @@ a failed job even if that command unexpectedly exits successfully. This is
 evidence capture, not a baseline or acceptance fallback. Selection is not
 acceptance: the unchanged harness still requires the same full profile.
 It never combines measurements or records a replacement automatically.
-The scale job pins CPython 3.13.18, like ordinary CI. The selected 9V45
-baseline records the current candidate-SEARCH fixture hash. The retained
-7763 record predates that fixture change and is not selected. Both 7763 and
-Intel 8573C take the explicit unreviewed-CPU evidence-only path until fresh
-matching evidence is independently reviewed. CPU selection alone never
-makes a stale or unknown profile acceptable.
+The scale job pins CPython 3.13.18, like ordinary CI. The selector still
+identifies the previous 9V45 record, which predates this snapshot-path
+migration and must fail full-profile comparison. No selected record yet
+validates the new apparatus. The retained 7763 record is also historical.
+Unselected CPUs take the explicit evidence-only path until fresh matching
+evidence is independently reviewed. CPU selection alone never makes a
+stale or unknown profile acceptable.
 
 The comparison requires the same runner, operating system, architecture,
 CPU model, logical CPU count, Bend version, Python implementation/version,
 limits and sample count. The profile also hashes the measurement harness,
 fixture generator, image generator and both fake servers. A different
-profile is incomparable and fails. Changing either fake server or fixture
-module requires re-recording every selected baseline. Ordinary CI checks
-those source hashes with `python3 tests/test-scale-baseline.py`. This check
-is separate from the measurement job so a stale record blocks ordinary CI
-without preventing collection of a replacement candidate. The measurement
-job still cannot pass an incomparable profile. Wall-time, maximum-process RSS or IMAP
+profile is incomparable and fails. Changing any versioned scale-support
+file or the scale fixture generator requires re-recording every selected
+baseline. Ordinary CI checks those source hashes with
+`python3 tests/test-scale-baseline.py`. This check is separate from the
+measurement job so a stale record blocks ordinary CI without preventing
+collection of a replacement candidate. The measurement job still cannot
+pass an incomparable profile. Wall-time, maximum-process RSS or IMAP
 login medians more than 25% above the baseline fail. The fast contract tests
 include a deliberate 26% slowdown and reject invalid or incomplete samples.
 This threshold detects a budget breach; it does not by itself establish a
@@ -109,7 +140,7 @@ workflow reaches the default branch. Scale runs have a separate concurrency
 group from ordinary CI, so they cannot cancel a push check on the same branch.
 Ordinary product pull requests run only the fast contract controls. A separate
 `Scale comparison` workflow runs when a pull request changes the measurement
-harness, fixtures (including image generation and both fake servers), either
+harness, scale fixture generator, versioned scale-support directory, either
 baseline, the selector or either workflow. Changes to the shared CI workflow trigger comparison
 because it also defines the scale environment. It reuses the
 same bounded scale job in comparison mode, checks out the exact PR head, and
@@ -134,7 +165,7 @@ resource output cannot pass; a group killed by the safety stop may have no
 GNU time output. The report then keeps only the sampled diagnostic peak.
 The timer binary hash and version are part of the comparable runner profile.
 
-## Active hosted 9V45 candidate
+## Previous hosted 9V45 candidate
 
 [Run 41409341267](https://github.com/albertc71/MailBend/actions/runs/41409341267)
 measured all 35 exact samples in 584.59 seconds on source

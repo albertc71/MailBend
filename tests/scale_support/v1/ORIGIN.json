@@ -1,0 +1,17 @@
+{
+  "source_commit": "9b50f9d3c4aadad9f213c01f7b576d2e124394cc",
+  "files": {
+    "fake_mail_server.py": {
+      "source_path": "tests/fake_mail_server.py",
+      "sha256": "3f5ac5c1bc4167537dc7511a1c98fbd938a05fe6c8184c8104157a7e79264e9c"
+    },
+    "fake_typesafe.py": {
+      "source_path": "tests/fake_typesafe.py",
+      "sha256": "883ca82b5048f6ab2fbe20325a2b17801fae1090e9ed936b1671b9c9f48b5083"
+    },
+    "image_fixtures.py": {
+      "source_path": "tests/image_fixtures.py",
+      "sha256": "9a1af6dd57315bbc7f887af6b80cc2043d36bd980a66cf6e9a70750a7f4be2d0"
+    }
+  }
+}

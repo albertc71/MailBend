@@ -2,7 +2,7 @@
 import base64
 from dataclasses import dataclass
 
-from image_fixtures import png
+from scale_support.v1.image_fixtures import png
 
 
 MIB = 1024 * 1024
