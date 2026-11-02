@@ -35,6 +35,8 @@ jobs:
         run: |
           sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Offline posture native egress inventory
+        run: python3 tests/test-posture-inventory.py
       - name: Generated schema is up to date
         run: |
           python3 tools/gen-unicode-tags.py --check
@@ -156,6 +158,9 @@ jobs:
         if: matrix.suite == 'support'
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
+        if: matrix.suite == 'support'
+      - name: Offline posture boundary and redaction
+        run: python3 tests/test-posture.py
         if: matrix.suite == 'support'
       - name: MCP inherited-descriptor and lifecycle tests
         run: python3 tests/test-stdio.py

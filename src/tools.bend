@@ -7580,6 +7580,190 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
     case Ops.OForward{}:
       t_respond(args, 1, jev)
 
+# A redacted routing snapshot. URL paths, credentials and local paths never enter it.
+type PostureEndpoint is Data:
+  PostureEndpoint{host: String, port: U32}
+
+type PostureTrustSource is Data:
+  PostureSystemTrust{}
+  PostureSslCertEnv{}
+  PostureMailbendCaFile{}
+
+def posture_trust_source(mailbend_ca: Bool, ssl_file: Bool, ssl_dirs: Bool) -> PostureTrustSource:
+  match mailbend_ca ssl_file ssl_dirs:
+    case True{} _ _:
+      PostureMailbendCaFile{}
+    case False{} False{} False{}:
+      PostureSystemTrust{}
+    case _ _ _:
+      PostureSslCertEnv{}
+
+def posture_trust_token(source: PostureTrustSource) -> String:
+  match source:
+    case PostureSystemTrust{}:
+      "system"
+    case PostureSslCertEnv{}:
+      "ssl_cert_env"
+    case PostureMailbendCaFile{}:
+      "mailbend_ca_file"
+
+type PostureEndpoints is Data:
+  PostureEndpoints{
+    imap: PostureEndpoint, smtp: PostureEndpoint, smtp_tls: String,
+    doh: Maybe<&2, PostureEndpoint>, proxy: Maybe<&2, PostureEndpoint>,
+    proxy_set: Bool, doh_proxy: Bool, typesafe_proxy: Bool,
+    imap_ip: Maybe<&2, String>, smtp_ip: Maybe<&2, String>,
+    attach: Bool, download: Bool, trust: PostureTrustSource
+  }
+
+def posture_send_allowed(ro: Bool, drafts: Bool, jev: Bool) -> Bool:
+  String.is_empty(Policy.refusal(Ops.OSend{}, J.obj([]), ro, drafts, jev))
+
+def posture_state_change(ro: Bool) -> Bool:
+  Bool.not(ro)
+
+def posture_body(s: Jev.Switch) -> Bool:
+  match s:
+    case Jev.On{Jev.Body{}}:
+      True{}
+    case _:
+      False{}
+
+def posture_images(m: Jev.ImageMode) -> Bool:
+  match m:
+    case Jev.ImagesOn{}:
+      True{}
+    case Jev.ImagesOff{}:
+      False{}
+
+def posture_endpoint(e: PostureEndpoint) -> J.Json:
+  PostureEndpoint{host, port} = e
+  J.obj([J.kv("host", J.str(host)), J.kv("port", J.num(port))])
+
+def posture_optional(e: Maybe<&2, PostureEndpoint>) -> J.Json:
+  match e:
+    case Some{endpoint}:
+      posture_endpoint(endpoint)
+    case None{}:
+      J.JNull{}
+
+def posture_send_kind(allowed: Bool, restricted: Bool) -> String:
+  match allowed:
+    case False{}:
+      "none"
+    case True{}:
+      Bool.pick(String, restricted, "allowlist", "unrestricted")
+
+def posture_jev_mode(s: Jev.Switch) -> String:
+  match s:
+    case Jev.Off{}:
+      "off"
+    case Jev.On{Jev.Headers{}}:
+      "headers"
+    case Jev.On{Jev.Body{}}:
+      "body"
+
+def posture_text_tools(s: Jev.Switch) -> List<&2, String>:
+  match s:
+    case Jev.On{Jev.Body{}}:
+      ["mail_get", "mail_classify", "mail_triage", "mail_delete", "mail_send", "mail_reply",
+        "mail_forward"]
+    case _:
+      []
+
+def posture_image_tools(images: Jev.ImageMode) -> List<&2, String>:
+  match images:
+    case Jev.ImagesOn{}:
+      ["mail_classify"]
+    case Jev.ImagesOff{}:
+      []
+
+def posture_typesafe(s: Jev.Switch, +images: Jev.ImageMode, proxied: Bool) -> J.Json:
+  match s:
+    case Jev.Off{}:
+      J.JNull{}
+    case Jev.On{+content}:
+      J.obj([J.kv("host", J.str("api.typesafe.ai")), J.kv("port", J.num(443)),
+        J.kv("tls", J.str("verified_https")), J.kv("proxied", J.bool(proxied)),
+        J.kv("tool_list_scope", J.str("Conservative possible paths before read-only and " ++
+          "drafts-only restrictions, not available tools. Saving drafts does not ask Jev.")),
+        J.kv("header_facts_and_attachment_names", J.strs(
+          ["mail_search", "mail_get_new", "mail_get_thread", "mail_get", "mail_classify",
+            "mail_triage", "mail_delete", "mail_send", "mail_reply", "mail_forward"])),
+        J.kv("message_text", J.strs(posture_text_tools(Jev.On{content}))),
+        J.kv("images", J.strs(posture_image_tools(images))),
+        J.kv("other_data", J.str("Existing folder names, prompts, category options, the account " ++
+          "identity and proposed recipients may accompany requests. " ++
+          "Headers mode is not private."))])
+
+def posture_ip_json(ip: Maybe<&2, String>) -> J.Json:
+  match ip:
+    case None{}:
+      J.JNull{}
+    case Some{address}:
+      J.str(address)
+
+def posture_mail(e: PostureEndpoint, tls: String, ip: Maybe<&2, String>) -> J.Json:
+  J.obj([J.kv("endpoint", posture_endpoint(e)), J.kv("tls", J.str(tls)),
+    J.kv("route", J.str("direct_never_proxied")),
+    J.kv("connect_ip_override", posture_ip_json(ip))])
+
+def posture(c: Policy.Config, sending: Sending, endpoints: PostureEndpoints) -> Policy.Out:
+  match c:
+    case Policy.ConfigBad{msg}:
+      Policy.Err{"configuration error: " ++ msg}
+    case Policy.Config{+ro, +drafts, +jev, +images}:
+      Sending{save_sent, +allow, +limit, state_dir} = sending
+      PostureEndpoints{imap, smtp, tls, doh, proxy, proxy_set, doh_proxy, typesafe_proxy,
+        imap_ip, smtp_ip, attach, download, trust} = endpoints
+      +on = Jev.is_on(jev)
+      +allowed = posture_send_allowed(ro, drafts, on)
+      +restricted = Bool.not(List.is_empty(&2, String, allow))
+      Policy.Ok{J.obj([J.kv("offline", J.bool(True{})), J.kv("redacted", J.bool(True{})),
+        J.kv("capabilities", J.obj([
+          J.kv("state_change", J.bool(posture_state_change(ro))),
+          J.kv("send", J.str(posture_send_kind(allowed, restricted))),
+          J.kv("drafts", J.str(Bool.pick(String, ro, "none",
+            Bool.pick(String, drafts, "drafts_only", "allowed")))),
+          J.kv("allowlist_entries", J.num(U32.from_nat(List.length(&2, String, allow)))),
+          J.kv("daily_cap", Bool.pick(J.Json, U32.is_zero(limit), J.JNull{}, J.num(limit))),
+          J.kv("save_sent", J.bool(save_sent)), J.kv("attachments_configured", J.bool(attach)),
+          J.kv("downloads_configured", J.bool(download)),
+          J.kv("jev", J.str(posture_jev_mode(jev))),
+          J.kv("body_permission", J.bool(posture_body(jev))),
+          J.kv("image_permission", J.bool(posture_images(images))),
+          J.kv("jev_required_tools", J.strs(["mail_classify", "mail_triage"])),
+          J.kv("jev_veto_tools", J.strs(Bool.pick(List<&2, String>, on,
+            ["mail_send", "mail_reply", "mail_forward", "mail_delete"], []))),
+          J.kv("unlisted_recipients_warning", J.bool(allowed && Bool.not(restricted))),
+          J.kv("permanent_delete_confirmation_is_human_approval", J.bool(False{}))])),
+        J.kv("egress", J.obj([
+          J.kv("imap", posture_mail(imap, "implicit_verified_tls", imap_ip)),
+          J.kv("smtp", posture_mail(smtp, tls, smtp_ip)),
+          J.kv("smtp_send_permitted", J.bool(allowed)),
+          J.kv("typesafe", posture_typesafe(jev, images, typesafe_proxy)),
+          J.kv("doh", posture_optional(doh)), J.kv("doh_proxied", J.bool(doh_proxy)),
+          J.kv("configured_https_proxy", posture_optional(proxy)),
+          J.kv("proxy_setting_set", J.bool(proxy_set)),
+          J.kv("proxy_endpoint_scope", J.str("Invalid proxy syntax is not parsed when no " ++
+            "configured HTTPS destination uses it; its endpoint is then omitted.")),
+          J.kv("proxy_observes", J.str("CONNECT destination host and port; optional proxy " ++
+            "authentication. Per-host no_proxy can bypass it. Mail TCP never uses it.")),
+          J.kv("dns_observes", J.str("Resolved hostnames. System DNS resolves direct mail " ++
+            "without DoH, proxy hosts and custom DoH hosts. Cloudflare :443 bootstrap uses " ++
+            "1.1.1.1 or 1.0.0.1. Connect-IP overrides and numeric IPs skip target lookup.")),
+          J.kv("trust_source", J.str(posture_trust_token(trust))),
+          J.kv("trust_source_scope", J.str("Configured source only; certificate files and " ++
+            "directories are not opened or validated."))])),
+        J.kv("scope", J.str("Configured permissions and potential routes. Endpoints are configuration, " ++
+          "not observed traffic. Tool lists conservatively name possible Jev paths before " ++
+          "read-only and drafts-only restrictions; they are not the available tools list. " ++
+          "Draft-only reply and forward do not ask Jev. Not a delivery, " ++
+          "quota, endpoint-validity or security guarantee. No connections, helper runs or " ++
+          "credential-file reads. Read-only still reads private untrusted mail and may " ++
+          "send permitted data to TypeSafe. All three Rule of Two properties hold when " ++
+          "state change or external communication is allowed."))])}
+
 def gated.if(problem: String, op: Ops.Op, args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
   IO(Policy.Out):
   match problem:

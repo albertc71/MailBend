@@ -577,7 +577,7 @@ def mcp() -> IO(Unit):
 
 def usage() -> String:
   "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -] | " ++
-    "mailbend diagnose [--imap] [--smtp] | mailbend version"
+    "mailbend diagnose [--imap] [--smtp] | mailbend diagnose --posture | mailbend version"
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -746,8 +746,15 @@ def diagnose_cli(imap: Bool, smtp: Bool) -> IO(Unit):
     o : Policy.Out <- Diagnostics.run(imap, smtp)
     print_out(o)
 
+def posture_cli() -> IO(Unit):
+  do IO<Unit>:
+    o : Policy.Out <- Diagnostics.posture()
+    print_out(o)
+
 def cli(args: List<&2, String>) -> IO(Unit):
   match args:
+    case "diagnose" <> "--posture" <> Nil{}:
+      posture_cli()
     case "diagnose" <> Nil{}:
       diagnose_cli(False{}, False{})
     case "diagnose" <> "--imap" <> Nil{}:

@@ -392,6 +392,10 @@ def main():
 def run_all(work, *, tool_scenarios_only=False):
     if not tool_scenarios_only:
         mcp_headless()
+        posture = subprocess.run([sys.executable, str(ROOT / "tests/test-posture.py")],
+                                 text=True, capture_output=True)
+        check("offline posture: gate matrix, redaction and denied IO boundaries", posture.returncode == 0,
+              posture.stdout + posture.stderr)
         setup_diagnostics(work)
     srv = Server(work)
     try:
