@@ -5194,6 +5194,7 @@ def triage(work):
     triage_partial_contacts(work, key_file)
     triage_candidate_contacts(work, key_file)
     triage_candidate_refusals(work, key_file)
+    triage_positive_reuse(work, key_file)
     triage_flagged_meanwhile(work, key_file)
     triage_protections(work, key_file)
 
@@ -5326,6 +5327,80 @@ def triage_candidate_refusals(work, key_file):
             c, r = triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)
             check(f"triage candidate refusal: {mode} remains fatal before Jev or filing", c != 0 and
                   not ts.requests() and srv.st() == before, r)
+        finally:
+            ts.stop()
+            srv.stop()
+
+
+def triage_positive_reuse(work, key_file):
+    for mode in ("shared", "partial", "near_match", "malformed", "uidvalidity"):
+        fixture = triage_fixture()
+        duplicate = 40
+        fixture["mailboxes"]["INBOX"]["messages"].append(
+            triage_message(duplicate, "[disposable] Second note", sender=FRIEND))
+        group = copy.deepcopy(fixture["mailboxes"]["Sent Messages"]["messages"][-1])
+        recipients = f'To: news@example.com\r\nCc: Friend <{FRIEND.upper()}>\r\nBcc: dana@example.com'
+        if mode == "near_match":
+            recipients = ('To: news@example.com\r\nCc: friend@example.com.extra\r\n'
+                          'Bcc: "dana@example.com" <else@example.test>')
+        if mode == "malformed":
+            recipients = f'To: news@example.com\r\nCc: "Unclosed <{FRIEND}>\r\nBcc: dana@example.com'
+        if mode == "uidvalidity":
+            recipients = f'To: news@example.com\r\nCc: {FRIEND}'
+        group["raw"] = group["raw"].replace("To: " + FRIEND, recipients)
+        sent = [group]
+        if mode == "partial":
+            malformed = copy.deepcopy(group)
+            malformed["uid"] = 2
+            malformed["raw"] = malformed["raw"].replace("Cc: Friend", 'Cc: "Unclosed Friend')
+            sent.append(malformed)
+        fixture["mailboxes"]["Sent Messages"]["messages"] = sent
+        if mode == "uidvalidity":
+            # INBOX read, first candidate SEARCH/FETCH, then the unresolved sender.
+            fixture["examine_changes"] = [{"at": 4, "uidvalidity": 99}]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file,
+                               [SAFE, FLAGGED_RECEIPT, NO_FOLDER, FRIENDLY, duplicate], **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            records = srv.log_records()
+            lines = [record["line"] for record in records]
+            searches = [line for line in lines if " SEARCH OR TO " in line]
+            sent_sessions = sum(' EXAMINE "Sent Messages"' in line for line in lines)
+            if mode == "uidvalidity":
+                check("triage positive reuse: unresolved sender generation change still aborts", c != 0 and
+                      "Sent UIDVALIDITY changed" in r.get("error", "") and not ts.requests() and
+                      all(uid in msgs(srv.st(), "INBOX") for uid in (SAFE, FRIENDLY, duplicate)) and
+                      len(searches) == 2 and sent_sessions == 3, (r, searches, sent_sessions))
+                continue
+            check(f"triage positive reuse: {mode} preserves category filing", c == 0 and
+                  rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts", r)
+            if mode in ("shared", "partial"):
+                check(f"triage positive reuse: {mode} exact To/Cc/Bcc evidence protects every sender", c == 0 and
+                      all("the user has written to its sender" in rows.get(uid, {}).get("vetoes", []) and
+                          rows.get(uid, {}).get("destination") is None
+                          for uid in (SAFE, NO_FOLDER, FRIENDLY, duplicate)), r)
+                check(f"triage positive reuse: {mode} duplicate senders share one SEARCH and two Sent sessions",
+                      len(searches) == 1 and 'TO "news@example.com"' in searches[0] and
+                      sent_sessions == 2 and logins(records) == 4,
+                      (searches, sent_sessions, logins(records)))
+            else:
+                check(f"triage positive reuse: {mode} cannot skip unproven senders", c == 0 and
+                      len(searches) == 3 and sent_sessions == 6 and
+                      all('TO "' + address + '"' in "\n".join(searches)
+                          for address in ("news@example.com", "dana@example.com", FRIEND)),
+                      (r, searches, sent_sessions))
+                if mode == "near_match":
+                    check("triage positive reuse: substring and display-name matches are not correspondents",
+                          all("the user has written to its sender" not in rows.get(uid, {}).get("vetoes", [])
+                              for uid in (NO_FOLDER, FRIENDLY, duplicate)) and
+                          rows.get(FRIENDLY, {}).get("destination") == REVIEW and
+                          rows.get(duplicate, {}).get("destination") == REVIEW, r)
+                else:
+                    check("triage positive reuse: malformed headers retain each sender's uncertainty",
+                          all("whether the user has written to its sender cannot be told" in
+                              rows.get(uid, {}).get("vetoes", [])
+                              for uid in (SAFE, NO_FOLDER, FRIENDLY, duplicate)), r)
         finally:
             ts.stop()
             srv.stop()

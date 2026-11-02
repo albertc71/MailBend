@@ -988,8 +988,8 @@ setting `MAILBEND_ALLOWED_RECIPIENTS`. It is not a shell command. Do not execute
 interpolate it as shell code. Existing configuration is never changed. Persistent
 cache and optional vCard-directory access from #62 remain deferred owner decisions.
 
-Triage searches all stored Sent To/Cc/Bcc headers separately for each sender, then
-verifies at most 100 matching candidate headers with the same exact parser. Unrelated
+Triage searches all stored Sent To/Cc/Bcc headers for each sender still needing
+evidence, then verifies at most 100 matching candidate headers with the same exact parser. Unrelated
 Sent messages do not consume that candidate budget. Substring SEARCH hits are only
 candidates: a fully inspected no-match can establish a stranger, while an exact
 positive remains a correspondent even in a partial sample. Capped, malformed or
@@ -998,10 +998,18 @@ can still proceed. A verified tagged `NO` for that sender's candidate SEARCH als
 leaves only that sender unverified. `BAD`, failed EXAMINE, authentication, transport
 or mailbox-identity failures still abort the call.
 
-The current implementation opens one search session per distinct sender and a
-second session when candidate headers must be fetched: up to two sessions per
-sender, for at most 50 senders (100 Sent sessions). This is not batched; high-latency accounts may
-notice the sequential session cost.
+An exact positive recipient found in one sender's verified headers also protects
+later, still-unchecked senders with that same address. Their redundant searches
+are skipped, even when the first scan has incomplete coverage. Negative or unknown
+coverage is never shared. Earlier settled results are not revisited, and no
+correspondence evidence is cached across calls.
+
+Each sender still needing a search uses one session and a second when headers
+must be fetched. The worst case remains two sessions per distinct sender, for at
+most 50 senders (100 Sent sessions). When the first verified message covers every
+sender, two Sent sessions suffice. This is opportunistic positive-evidence reuse,
+not a guarantee of two-session batching; disjoint correspondents still incur the
+sequential session cost.
 The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
 UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
 claim that untrusted headers establish real-world identity.
