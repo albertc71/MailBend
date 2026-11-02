@@ -630,9 +630,10 @@ optional TypeSafe checks, DNS/proxy services and install hosts have separate
 processing and retention policies. Headers sent to Jev are still personal data;
 a zero-retention switch is your statement, not a verified contract.
 
-Read the [Privacy Policy and data-handling statement](https://github.com/albertc71/MailBend/blob/main/docs/PRIVACY.md)
+Read the [Privacy Policy and data-handling statement](docs/PRIVACY.md)
 for collection, use, storage, sharing, retention, dated provider sources and
-regulated-use checks. Report suspected vulnerabilities through
+regulated-use checks for this revision. The [published main policy](https://github.com/albertc71/MailBend/blob/main/docs/PRIVACY.md)
+is also available at a stable HTTPS URL. Report suspected vulnerabilities through
 [private reporting](https://github.com/albertc71/MailBend/security/advisories/new);
 use [issues](https://github.com/albertc71/MailBend/issues) only for non-sensitive
 questions. Never post credentials or real mail.
