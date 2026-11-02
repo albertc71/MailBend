@@ -24,6 +24,8 @@ import ./src/image.bend as Image
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
+import ./src/brief.bend as Brief
+import ./src/contacts.bend as Contacts
 import ./src/smtp.bend as S
 import ./src/policy.bend as Policy
 import ./src/awaiting.bend as Await
@@ -34,7 +36,7 @@ import ./src/response.bend as Response
 # Tool classes
 # ------------
 
-# Reading is read-only, and permanent deletion is not. Exactly eleven tools
+# Reading is read-only, and permanent deletion is not. Exactly twelve tools
 # are read-only (MAILBEND_READ_ONLY allows and lists only them); every other
 # tool can change mail, send it, or (mail_get_attachment) write a file.
 # mail_classify only asks TypeSafe about messages; mail_triage asks it, then
@@ -60,10 +62,10 @@ law download_is_not_read_only:
 law trash_is_not_destructive:
   {Ops.is_destructive(Ops.OTrash{}) == False{} : Bool}
 
-# LAW: the read-only tools are exactly these eleven, in this order
-law read_only_tools_are_exactly_eleven:
+# LAW: the read-only tools are exactly these twelve, in this order
+law read_only_tools_are_exactly_twelve:
   {Ops.read_only_names(Ops.all_ops()) ==
-    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+    ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
       "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify"]
     : List<&2, String>}
 
@@ -74,38 +76,38 @@ law read_only_tools_are_exactly_eleven:
 law tools_listed_per_config:
   for drafts: Bool
   ({Ops.listed_names(Ops.all_ops(), False{}, False{}, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
        "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify", "mail_triage",
        "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_send", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, False{}, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
        "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_send",
        "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
        "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify", "mail_triage",
        "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag", "mail_move",
        "mail_label", "mail_trash", "mail_delete", "mail_create_folder", "mail_rename_folder",
        "mail_save_draft", "mail_reply", "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), False{}, True{}, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
        "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_get_attachment",
        "mail_mark_read", "mail_mark_unread",
        "mail_flag", "mail_unflag", "mail_move", "mail_label", "mail_trash", "mail_delete",
        "mail_create_folder", "mail_rename_folder", "mail_save_draft", "mail_reply",
        "mail_forward"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, True{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
        "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents", "mail_classify"] : List<&2, String>} &
    {Ops.listed_names(Ops.all_ops(), True{}, drafts, False{}) ==
-      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh",
+      ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh",
        "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents"] : List<&2, String>})
 
 # LAW: every operation's tool name resolves back to that operation.
@@ -1942,6 +1944,29 @@ law prefix_whole_when_room:
   ({Budget.prefix_text(Response.prefix(s, left)) == s : String} &
    {U32.to_nat(Budget.prefix_left(Response.prefix(s, left))) == extra : Nat})
 
+# The tagged representation assigns one group per item; UID identity and
+# multiplicity survive the production classifier, not just the list length.
+law brief_preserves_selected_uids:
+  for ms: List<&2, I.Msg>
+  for cs: List<&2, Contacts.Contact>
+  for allowed: List<&2, String>
+  for me: String
+  {Brief.uids(Brief.items(ms, cs, allowed, me)) == Brief.message_uids(ms) : List<&2, U32>}
+
+law brief_partitions_selected_uids:
+  for ms: List<&2, I.Msg>
+  for cs: List<&2, Contacts.Contact>
+  for allowed: List<&2, String>
+  for me: String
+  for uid: U32
+  {Brief.occurrences(Brief.uids(Brief.items(ms, cs, allowed, me)), uid) ==
+   Brief.occurrences(Brief.message_uids(ms), uid) : Nat}
+
+law brief_plans_write_nothing:
+  for folder: String
+  for checkpoint: Bool
+  for since: U32
+  {I.any_writes(Ops.plan_brief(folder, checkpoint, since)) == False{} : Bool}
 # Disabled candidate filters never hide a sampled message.
 law awaiting_disabled_filters_keep_candidate:
   for n: AwaitThread.Node

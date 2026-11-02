@@ -107,7 +107,7 @@ It never combines measurements or records a replacement automatically.
 The scale job pins CPython 3.13.18, like ordinary CI. The new 9V45 snapshot
 candidate below records the actual versioned dependency hashes. A matching
 comparison is still required. The retained 7763 record is historical.
-The 7763, Intel 8573C and EPYC 9V74 models take the explicit unreviewed-CPU
+The 7763, Intel 8573C, EPYC 9V74 and Intel 6973P-C models take the explicit unreviewed-CPU
 evidence-only path until fresh matching evidence is independently reviewed.
 CPU selection alone never makes a stale or unknown profile acceptable.
 
@@ -174,6 +174,10 @@ completed all 35 exact samples in 547.06 seconds on source
 This exact report is the selected baseline. The run correctly failed
 comparison against the old apparatus profile; it is not a regression pass.
 A subsequent matching-profile comparison must pass the unchanged gates.
+[Run 41416193899](https://github.com/albertc71/MailBend/actions/runs/41416193899)
+completed all 35 samples but failed because its Intel 6973P-C CPU was not
+reviewed. That report is retained as evidence, not promoted or a comparison
+pass. Snapshot isolation does not solve arbitrary runner hardware allocation.
 
 ## Previous hosted 9V45 candidate
 
@@ -183,9 +187,13 @@ measured all 35 exact samples in 584.59 seconds on source
 CPython 3.13.18 and the candidate-SEARCH fixture hash introduced on main.
 Independent review matched all 26,874 logged JSON bytes and SHA-256
 `a1996859ada45410fec61c6f2770f2386dcfc43f4e63c9c300770bff3cc9a93c`.
-The report is committed unchanged. That evidence-capture run correctly
-failed while this CPU had no current selected baseline. A subsequent
-matching-profile comparison is required; this candidate is not a pass.
+That evidence-capture run correctly failed while this CPU had no current
+selected baseline. Its later matching-profile
+[comparison 41415510407](https://github.com/albertc71/MailBend/actions/runs/41415510407)
+passed on `1fb8fe5dd04a12119ef805cf6c817d790acfb87c`: all 35 samples,
+identical full profile, and all 21 median checks within the unchanged 25%
+budget. This is historical evidence for the pre-snapshot apparatus, not
+acceptance of the current snapshot profile.
 
 ## Previous 7763 baseline and passing comparison
 

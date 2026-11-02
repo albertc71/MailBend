@@ -117,6 +117,24 @@ def polling(srv, work):
     checkpoint(brief, 54)
     check(run(brief, "brief").returncode == 0 and report.read_bytes() == contents,
           "replayed brief replaces the same batch without appending duplicates")
+    check(b"unknown_people" in contents or b"people" in contents,
+          "brief renders mail_brief primary groups, not the old bare summary")
+    checkpoint(brief, 54, 42)
+    brief_path = Path(brief["MAILBEND_RECIPE_STATE"]) / "checkpoint.json"
+    previous = brief_path.read_bytes()
+    check(run(brief, "brief").returncode != 0 and brief_path.read_bytes() == previous,
+          "brief identity failure preserves the exact checkpoint")
+    stub = work / "bin" / "incomplete-read"
+    stub.write_text("#!/bin/sh\nprintf '%s\\n' '" + json.dumps(dict(
+        folder="INBOX", uidvalidity=t.INBOX_VALIDITY, next_since_uid=54,
+        has_more=False, messages=[])) + "'\n")
+    stub.chmod(0o700)
+    for selected_env, mode in ((env, "notify"), (brief, "brief")):
+        target = checkpoint(selected_env, 54)
+        previous = target.read_bytes()
+        check(run({**selected_env, "MAILBEND_BIN": str(stub)}, mode).returncode != 0
+              and target.read_bytes() == previous,
+              mode + " refuses a result missing its required completion/identity marker")
     check(srv.st()["mailboxes"] == before and not srv.st().get("sent"),
           "polling leaves all mailbox state and flags unchanged")
     check(not any(any(verb in line for verb in t.MUTATING_COMMANDS + (" SELECT ",))

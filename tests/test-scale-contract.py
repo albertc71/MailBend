@@ -22,6 +22,26 @@ scale = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scale)
 
 
+def snapshot_files(root):
+    """Include sourceless bytecode/extensions; generated source caches are not inputs."""
+    files = set()
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise AssertionError(f"snapshot symlink: {path}")
+        if path.is_file() and "__pycache__" not in path.relative_to(root).parts:
+            files.add(path.relative_to(root))
+    return files
+
+
+def assert_no_stdlib_shadow(root):
+    # First component covers package directories and ABI-tagged native modules,
+    # in addition to .py and legacy sourceless .pyc modules.
+    collisions = {path.name for path in root.iterdir()
+                  if path.name.split(".")[0] in sys.stdlib_module_names}
+    if collisions:
+        raise AssertionError(f"stdlib import collision: {sorted(collisions)}")
+
+
 def sample(count=1):
     return {"status": "passed", "wall_seconds": 1.0, "peak_rss_kib": 1000,
             "imap_logins": 2, "exit_code": 0, "timed_out": False,
@@ -241,8 +261,8 @@ sys.exit(24)
         self.assertEqual(origin["source_commit"], "9b50f9d3c4aadad9f213c01f7b576d2e124394cc")
         self.assertEqual(set(origin["files"]), {
             "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py"})
-        self.assertEqual(set((root.parent).rglob("*.py")), {
-            root / name for name in origin["files"]})
+        self.assertEqual(snapshot_files(root.parent), {
+            pathlib.Path("v1", name) for name in [*origin["files"], "ORIGIN.json"]})
         for name, source in origin["files"].items():
             with self.subTest(file=name):
                 self.assertEqual(source["source_path"], "tests/" + name)
@@ -261,6 +281,67 @@ sys.exit(24)
         self.assertEqual(png.__module__, "scale_support.v1.image_fixtures")
         self.assertEqual(pathlib.Path(sys.modules[png.__module__].__file__).resolve(),
                          root / "image_fixtures.py")
+
+    def test_snapshot_inventory_rejects_unhashed_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "v1").mkdir()
+            source = root / "v1/image_fixtures.py"
+            source.write_text("# synthetic inventory fixture\n")
+            expected = {pathlib.Path("v1/image_fixtures.py")}
+            self.assertEqual(snapshot_files(root), expected)
+            for name in ("__init__.pyc", "v1/ssl.pyc", "v1/ssl.so",
+                         "v1/ssl.cpython-313-x86_64-linux-gnu.so"):
+                with self.subTest(file=name):
+                    extra = root / name
+                    extra.write_bytes(b"unhashed fixture")
+                    self.assertNotEqual(snapshot_files(root), expected)
+                    extra.unlink()
+            cache = root / "v1/__pycache__"
+            cache.mkdir()
+            (cache / "image_fixtures.cpython-313.pyc").write_bytes(b"generated cache")
+            self.assertEqual(snapshot_files(root), expected)
+            link = root / "v1/linked.py"
+            link.symlink_to(source)
+            with self.assertRaisesRegex(AssertionError, "snapshot symlink"):
+                snapshot_files(root)
+
+    def test_measured_stdlib_imports_are_outside_repository(self):
+        tests = scale.ROOT / "tests"
+        assert_no_stdlib_shadow(tests)
+        sources = [tests / "test-scale.py", tests / "scale_fixtures.py",
+                   *(tests / "scale_support/v1").glob("*.py")]
+        modules = set()
+        for source in sources:
+            for node in ast.walk(ast.parse(source.read_text())):
+                if isinstance(node, ast.Import):
+                    modules.update(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    modules.add(node.module.split(".")[0])
+        for module in modules & sys.stdlib_module_names:
+            with self.subTest(module=module):
+                spec = importlib.util.find_spec(module)
+                self.assertIsNotNone(spec)
+                if spec.origin not in {"built-in", "frozen"}:
+                    self.assertIsNotNone(spec.origin)
+                    self.assertFalse(pathlib.Path(spec.origin).resolve().is_relative_to(scale.ROOT))
+
+    def test_stdlib_collision_guard_rejects_modules_and_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "fixture_helpers.py").write_text("# allowed\n")
+            assert_no_stdlib_shadow(root)
+            for name in ("random.py", "struct.pyc", "zlib.so",
+                         "zlib.cpython-313-x86_64-linux-gnu.so"):
+                with self.subTest(file=name):
+                    collision = root / name
+                    collision.write_bytes(b"synthetic collision")
+                    with self.assertRaisesRegex(AssertionError, "stdlib import collision"):
+                        assert_no_stdlib_shadow(root)
+                    collision.unlink()
+            (root / "email").mkdir()
+            with self.assertRaisesRegex(AssertionError, "stdlib import collision"):
+                assert_no_stdlib_shadow(root)
 
     def test_fixture_import_rejects_ambient_general_modules(self):
         script = r"""
