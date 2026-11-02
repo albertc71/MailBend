@@ -993,7 +993,14 @@ Sent messages do not consume that candidate budget. Substring SEARCH hits are on
 candidates: a fully inspected no-match can establish a stranger, while an exact
 positive remains a correspondent even in a partial sample. Capped, malformed or
 missing candidate evidence vetoes deletion for that sender only; category filing
-can still proceed. Transport or mailbox-identity failures still abort the call.
+can still proceed. A verified tagged `NO` for that sender's candidate SEARCH also
+leaves only that sender unverified. `BAD`, failed EXAMINE, authentication, transport
+or mailbox-identity failures still abort the call.
+
+The current implementation opens one search session per distinct sender and a
+second session when candidate headers must be fetched: up to two sessions per
+sender, for at most 50 senders (100 Sent sessions). This is not batched; high-latency accounts may
+notice the sequential session cost.
 The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
 UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
 claim that untrusted headers establish real-world identity.

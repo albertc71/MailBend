@@ -4927,10 +4927,49 @@ def contacts_candidates.reply(r: Run(), folder: String, now: U32) -> IO(ContactS
       contacts_candidates.identity(ok_at(lines, 1) && ok_at(lines, 2),
         positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY")), lines, folder, now)
 
+def contacts_candidates.tag_count(lines: List<&2, I.RLine>, +prefix: String, count: U32)
+  -> U32:
+  match lines:
+    case Nil{}:
+      count
+    case I.RLine{text, lits} <> rest:
+      contacts_candidates.tag_count(rest, prefix, U32.min(2,
+        (count + Bool.pick(U32, String.starts_with(text, prefix), 1, 0) : U32)))
+
+def contacts_candidates.no_identity(valid: Bool, lines: List<&2, I.RLine>)
+  -> Maybe<&2, U32>:
+  match valid:
+    case False{}:
+      None{}
+    case True{}:
+      positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"))
+
+def contacts_candidates.no_lines(+lines: List<&2, I.RLine>) -> Maybe<&2, U32>:
+  contacts_candidates.no_identity(ok_at(lines, 1) && String.eq(I.status(lines, 2), "NO") &&
+    U32.is_eq(contacts_candidates.tag_count(lines, "a1 ", 0), 1) &&
+    U32.is_eq(contacts_candidates.tag_count(lines, "a2 ", 0), 1), lines)
+
+def contacts_candidates.no_uidv(p: Policy.Proc) -> Maybe<&2, U32>:
+  match p:
+    case Policy.ProcOk{5, out, err}:
+      contacts_candidates.no_lines(I.frame(out))
+    case _:
+      None{}
+
+def contacts_candidates.proc_reply(no: Maybe<&2, U32>, p: Policy.Proc,
+  folder: String, now: U32) -> IO(ContactScan):
+  match no:
+    case Some{v}:
+      IO.pure(ContactScan, ContactScan{folder, Some{v}, [], 0, False{},
+        "server refused this sender's candidate SEARCH"})
+    case None{}:
+      contacts_candidates.reply(imap_result(p), folder, now)
+
 def contacts_candidates(+folder: String, address: String, now: U32) -> IO(ContactScan):
   do IO<ContactScan>:
-    r : Run() <- await_raw(Ops.plan_contact_candidates(folder, address))
-    contacts_candidates.reply(r, folder, now)
+    path : String <- env_or("MAILBEND_TLS_HELPER", "")
+    +p : Policy.Proc <- refresh_run.at(path, Ops.plan_contact_candidates(folder, address))
+    contacts_candidates.proc_reply(contacts_candidates.no_uidv(p), p, folder, now)
 
 def contacts_received(folders: List<&2, String>, +since: String, +limit: U32, +now: U32)
   -> IO(List<&2, ContactScan>):
