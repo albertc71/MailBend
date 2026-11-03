@@ -65,6 +65,7 @@ python3 tests/test-writing-laws.py                # malformed guide fences fail 
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
+python3 tests/test-mcp-schema-comparison.py        # bounded comparison startup and descendant cleanup
 python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
 python3 tests/test-scale-baseline.py               # historical selected baselines match apparatus
 python3 -I tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls

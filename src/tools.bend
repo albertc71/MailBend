@@ -9064,12 +9064,16 @@ def offered_in(ts: J.Json, names: List<&2, String>) -> J.Json:
     case _:
       ts
 
-def offered_for(ts: J.Json, c: Policy.Config) -> J.Json:
+# Both parsed and generated-JSON listings use this same fail-closed policy.
+def offered_names(c: Policy.Config) -> List<&2, String>:
   match c:
     case Policy.Config{ro, drafts, jev, images}:
-      offered_in(ts, Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev)))
+      Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev))
     case Policy.ConfigBad{msg}:
-      offered_in(ts, Ops.listed_names(Ops.all_ops(), True{}, False{}, False{}))
+      Ops.listed_names(Ops.all_ops(), True{}, False{}, False{})
+
+def offered_for(ts: J.Json, c: Policy.Config) -> J.Json:
+  offered_in(ts, offered_names(c))
 
 # The tool definitions `ts` (a JSON array) that this configuration offers.
 def offered_tools(ts: J.Json) -> IO(J.Json):

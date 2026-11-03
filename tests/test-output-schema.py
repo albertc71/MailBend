@@ -22,9 +22,18 @@ def check_rendered_text(tools):
     """Decode generated defs and the final aggregator, not generator internals."""
     rendered = schema.render(tools)
     assert rendered == schema.render(tools), "generation must be deterministic"
+    original, selected = rendered.split("# Select only known generated definitions, in schema order.\n")
+    assert re.findall(r'^def ([a-zA-Z0-9_.]+)\(', selected, re.M) == [
+        "tool_defs.named", "tool_defs.contains", "tool_defs.select",
+        "tool_defs.selected", "tool_defs_for"]
+    cases = re.findall(r'    case "([a-zA-Z0-9_]+)":\n      (tool_defs\.[a-zA-Z0-9_]+)\(\)', selected)
+    assert cases == [(entry["name"], "tool_defs." + entry["name"]) for entry in tools]
+    order = re.search(r'tool_defs.selected\(\[\n(.*?)\], names\)', selected, re.S)
+    assert order
+    assert json.loads("[" + order.group(1) + "]") == [entry["name"] for entry in tools]
     declarations = re.findall(
-        r'^def ([a-zA-Z0-9_.]+)\(\) -> String:\n(.*?)(?=^def |\Z)', rendered, re.M | re.S)
-    all_names = re.findall(r'^def ([a-zA-Z0-9_.]+)\(', rendered, re.M)
+        r'^def ([a-zA-Z0-9_.]+)\(\) -> String:\n(.*?)(?=^def |\Z)', original, re.M | re.S)
+    all_names = re.findall(r'^def ([a-zA-Z0-9_.]+)\(', original, re.M)
     assert [name for name, _ in declarations] == all_names
     assert len(set(all_names)) == len(all_names)
     values, wire = {}, None

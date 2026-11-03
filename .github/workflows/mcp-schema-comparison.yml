@@ -1,0 +1,58 @@
+name: MCP schema comparison
+on:
+  pull_request:
+    paths:
+      - 'tests/compare-mcp-schema.py'
+      - 'tests/test-mcp-schema-comparison.py'
+      - '.github/workflows/mcp-schema-comparison.yml'
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Baseline commit to compare on this runner
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  comparison:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || inputs.baseline }}
+          path: reference
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 8b0e08e4b14aaad235c5ee256a773edee5b3ed3d
+          path: frozen-harness
+          persist-credentials: false
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+          rustup toolchain install 1.99 --profile minimal
+          sh candidate/scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Comparison lifecycle negative controls
+        run: python3 candidate/tests/test-mcp-schema-comparison.py
+      - name: Build reference then candidate
+        run: |
+          (cd reference && scripts/install.sh)
+          (cd candidate && scripts/install.sh)
+      - name: Alternating frozen short soaks and startup measurements
+        run: >-
+          python3 candidate/tests/compare-mcp-schema.py
+          --reference reference --candidate candidate
+          --harness frozen-harness/tests/test-soak.py
