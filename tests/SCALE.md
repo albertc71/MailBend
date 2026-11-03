@@ -406,7 +406,10 @@ hash tuple or the complete tuple reviewed in #258 at
 `b00464bda8bb70f9238036301242eb6df5131f99`. Mixed tuples and all other helper
 bytes fail closed. The literal path-ordered hashes are in `scale_pair.py`.
 This separate policy change does not admit a moving branch or derive approved
-hashes from candidate files. Future migrations need their own reviewed change.
+hashes dynamically from candidate files. The checker runs from the candidate
+tree, so any change to `scale_pair.py` or its allow-list is itself a reviewed
+policy change, not enforcement by a separately trusted checker. The scale PR
+workflow triggers on that path. Future migrations need their own reviewed change.
 
 The reference helpers, both launchers, both `install.sh` files and all frozen
 measurement files retain their original exact-byte checks. The paired job stays
