@@ -1144,11 +1144,16 @@ def thread_fs() -> Policy.Folders:
 
 def check_thread() -> IO(Unit):
   do IO<Unit>:
-    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent Messages"}), ",") ++ " | " ++
-      String.join(T.thread_folders("Sent Messages", Some{"Sent Messages"}), ",") ++ " | " ++
-      String.join(T.thread_folders("inbox", Some{"INBOX"}), ",") ++ " | " ++
-      String.join(T.thread_folders("INBOX", None{}), ",") ++ " | " ++
-      String.join(T.thread_folders("Archive", None{}), ","))
+    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent Messages"}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("Sent Messages", Some{"Sent Messages"}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("inbox", Some{"INBOX"}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("INBOX", None{}, None{}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", None{}, None{}), ","))
+    IO.print(String.join(T.thread_folders("INBOX", Some{"Sent"}, Some{"Archive"}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", Some{"Sent"}, Some{"Archive"}), ",") ++ " | " ++
+      String.join(T.thread_folders("INBOX", Some{"Sent"}, Some{"Sent"}), ",") ++ " | " ++
+      String.join(T.thread_folders("inbox", None{}, Some{"INBOX"}), ",") ++ " | " ++
+      String.join(T.thread_folders("Archive", None{}, Some{"archive"}), ","))
     IO.print(show_session(search_found([])))
     IO.print(show_session(search_found([T.Found{"INBOX", Some{7}, [], []}])))
     IO.print(show_session(search_found([T.Found{"Sent", Some{9}, [], []}])))
@@ -1419,6 +1424,22 @@ def check_contact_refusal() -> IO(Unit):
       T.contacts_candidates.no_uidv(Policy.ProcRefused{"a2 NO refused"}))))
 
 
+def check_contact_reuse() -> IO(Unit):
+  do IO<Unit>:
+    +shared : List<&2, T.Pending> = T.triage_candidate_states([pending(1, Some{"a@x"}),
+      pending(2, Some{"b@y"}), pending(3, Some{"b@y"}), pending(4, Some{"c@z"})],
+      "a@x", ["a@x", "b@y"], False{})
+    IO.print(String.join(T.senders(shared, []), ",") ++ " " ++ vetoes_line(shared))
+    +negative : List<&2, T.Pending> = T.triage_candidate_states([pending(1, Some{"a@x"}),
+      pending(2, Some{"b@y"})], "a@x", ["b@y.extra"], True{})
+    IO.print(String.join(T.senders(negative, []), ",") ++ " " ++ vetoes_line(negative))
+    +partial : List<&2, T.Pending> = T.triage_candidate_states([pending(1, Some{"a@x"}),
+      pending(2, Some{"b@y"}), pending(3, Some{"c@z"})], "a@x", ["b@y"], False{})
+    IO.print(String.join(T.senders(partial, []), ",") ++ " " ++ vetoes_line(partial))
+    earlier : T.Pending = T.triage_contact_state([], False{}, pending(1, Some{"b@y"}))
+    IO.print(vetoes_line(T.triage_candidate_states([earlier], "a@x", ["b@y"], True{})))
+
+
 def main() -> IO(Unit):
   do IO<Unit>:
     randomness_cases()
@@ -1448,6 +1469,7 @@ def main() -> IO(Unit):
     IO.print(Bool.show(T.contacts_raw_small(I.Msg{1, [], "01-Oct-2026 09:00:00 +0000", 0,
       String.repeat("x", 4097n), "", I.VNil{}})))
     check_contact_refusal()
+    check_contact_reuse()
 
 
 #|stamp first read refused
@@ -1721,6 +1743,7 @@ def main() -> IO(Unit):
 #|True False True False
 #|saved to Sent | failed or unconfirmed (check Sent before saving again): no
 #|INBOX,Sent Messages | Sent Messages,INBOX | inbox | INBOX | Archive,INBOX
+#|INBOX,Sent,Archive | Archive,INBOX,Sent | INBOX,Sent | inbox | Archive,INBOX,archive
 #|INBOX 7 [4 2 2 9 ] 0 | Sent 8 [1 ] 0 | 
 #|INBOX 7 [4 2 2 9 ] 0 | Sent 8 [1 ] 0 | 
 #|err a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name other messages: read the thread again
@@ -1804,3 +1827,7 @@ def main() -> IO(Unit):
 #|False
 #|False
 #|False
+#|c@z [the user has written to its sender][the user has written to its sender][the user has written to its sender][]
+#|b@y [][]
+#|c@z [whether the user has written to its sender cannot be told][the user has written to its sender][]
+#|[whether the user has written to its sender cannot be told]

@@ -75,6 +75,34 @@ MUTATIONS = (
         "IO.pure(List<&2, Fate>, acc)",
         "bind_run_done",
     ),
+    (
+        "json-array-omits-closing-bracket",
+        "src/json.bend",
+        '"[" ++ show(items) ++ "]"',
+        '"[" ++ show(items) ++ ""',
+        "show_bytes",
+    ),
+    (
+        "json-chain-doubles-separator",
+        "src/json.bend",
+        '    case _:\n      ","',
+        '    case _:\n      ",,"',
+        "separator",
+    ),
+    (
+        "json-quote-omits-escaping",
+        "src/json.bend",
+        '"\\\"" ++ esc(s) ++ "\\\""',
+        '"\\\"" ++ s ++ "\\\""',
+        "quote",
+    ),
+    (
+        "json-object-counter-omits-colon",
+        "src/response.bend",
+        "((3 + C.utf8_len(J.esc(k)) : U32) + bytes(v) : U32)",
+        "((2 + C.utf8_len(J.esc(k)) : U32) + bytes(v) : U32)",
+        "show_bytes",
+    ),
 )
 
 
@@ -98,6 +126,7 @@ def fingerprint():
     paths = sorted((ROOT / "src").glob("*.bend"))
     paths += sorted((ROOT / "tests/formal").glob("budget-*.bend"))
     paths += sorted((ROOT / "tests/formal").glob("scalar-*.bend"))
+    paths += sorted((ROOT / "tests/formal").glob("json-size-*.bend"))
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
 
@@ -106,6 +135,9 @@ def main():
     generated = subprocess.run(["python3", str(ROOT / "tests/formal/gen-scalar-atom-trie.py"), "--check"],
                                capture_output=True, text=True, timeout=30)
     require(generated.returncode == 0, ("scalar atom generator", generated.stdout, generated.stderr))
+    arithmetic = subprocess.run(["python3", str(ROOT / "tests/formal/gen-json-size-arithmetic.py"), "--check"],
+                                capture_output=True, text=True, timeout=30)
+    require(arithmetic.returncode == 0, ("JSON arithmetic generator", arithmetic.stdout, arithmetic.stderr))
     original = check(ROOT)
     require(original.returncode == 0 and "ALL PROOFS CHECK" in original.stdout,
             ("baseline", original.stdout, original.stderr))
@@ -115,7 +147,10 @@ def main():
             root = Path(directory)
             shutil.copytree(ROOT / "src", root / "src")
             (root / "tests/formal").mkdir(parents=True)
-            for source in list((ROOT / "tests/formal").glob("budget-*.bend")) + list((ROOT / "tests/formal").glob("scalar-*.bend")):
+            sources = (list((ROOT / "tests/formal").glob("budget-*.bend"))
+                       + list((ROOT / "tests/formal").glob("scalar-*.bend"))
+                       + list((ROOT / "tests/formal").glob("json-size-*.bend")))
+            for source in sources:
                 shutil.copy2(source, root / "tests/formal" / source.name)
             target = root / path
             source = target.read_text(encoding="utf-8")

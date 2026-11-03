@@ -28,9 +28,9 @@ class DriftChecks(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         files = [*ROOT.glob("*.md"), ROOT / "LAWS.bend", ROOT / "main.bend",
-                 ROOT / ".env.example", ROOT / "scripts/mailbend",
+                 ROOT / ".env.example", ROOT / "scripts/mailbend", ROOT / "tools/gen-schema.py",
                  *ROOT.glob("src/*.bend"), *ROOT.glob("native/*/src/**/*.rs"),
-                 *ROOT.glob("docs/**/*.md")]
+                 *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md")]
         for source in files:
             target = self.root / source.relative_to(ROOT)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -52,9 +52,162 @@ class DriftChecks(unittest.TestCase):
         self.assertEqual(result.returncode, 1 if expected else 0, result.stdout + result.stderr)
         if expected:
             self.assertIn(expected, result.stderr)
+        return result
 
     def test_current_documentation(self):
         self.check()
+
+    def test_skill_unknown_tool(self):
+        for name in ("mail_missing", "mail_getWrong"):
+            with self.subTest(name=name):
+                self.append("skills/mailbend/SKILL.md", f"\nCall `{name}`.\n")
+                self.check(f"unknown tool {name}")
+
+    def test_skill_unknown_scoped_argument(self):
+        self.append("skills/mailbend/SKILL.md", "\nUse `mail_get.nonexistent`.\n")
+        self.check("unknown argument mail_get.nonexistent")
+
+    def test_skill_argument_must_belong_to_named_tool(self):
+        self.append("skills/mailbend/SKILL.md", "\nUse mail_probe.max_response_bytes.\n")
+        self.check("unknown argument mail_probe.max_response_bytes")
+
+    def test_skill_signature_arguments_are_scoped(self):
+        self.append("skills/mailbend/references/tools.md", "\nmail_probe(max_response_bytes)\n")
+        self.check("unknown argument mail_probe.max_response_bytes")
+
+    def test_skill_valid_scoped_arguments(self):
+        self.append("skills/mailbend/SKILL.md", "\nUse `mail_get.projection` or mail_get.max_response_bytes.\n")
+        self.append("skills/mailbend/SKILL.md", "\n`mail_get(folder, uid, projection, max_response_bytes)`\n")
+        self.check()
+
+    def test_skill_signature_rejects_unparsed_argument(self):
+        self.append("skills/mailbend/references/tools.md", "\n`mail_get(folder, bogus-field)`\n")
+        self.check("invalid argument notation mail_get(folder, bogus-field)")
+
+    def test_skill_tool_index_must_cover_current_schema(self):
+        path = self.root / "skills/mailbend/references/tools.md"
+        path.write_text(re.sub(r"\bmail_probe\([^()\n]*\)", "mail_probe", path.read_text()))
+        self.check("references/tools.md: missing tool mail_probe")
+
+    def test_missing_skill_reference_fails(self):
+        (self.root / "skills/mailbend/references/cli.md").unlink()
+        self.check("references/cli.md: missing skill file")
+
+    def test_skill_local_file_and_heading_links(self):
+        self.append("skills/mailbend/SKILL.md", "\n[Missing](references/not-there.md)\n")
+        self.check("missing linked file references/not-there.md")
+        self.append("skills/mailbend/SKILL.md", "\n[Missing](../../README.md#not-a-heading)\n")
+        self.check("missing linked heading ../../README.md#not-a-heading")
+
+    def test_skill_absolute_repository_anchor_is_checked(self):
+        self.replace("skills/mailbend/SKILL.md", "README.md#safety", "README.md#no-such-heading")
+        self.check("missing linked heading https://github.com/albertc71/MailBend/blob/main/README.md#no-such-heading")
+
+    def test_skill_absolute_repository_file_is_checked(self):
+        self.replace("skills/mailbend/SKILL.md", "README.md#safety", "missing.md#safety")
+        self.check("missing linked file https://github.com/albertc71/MailBend/blob/main/missing.md#safety")
+
+    def test_skill_foreign_urls_are_not_local_files(self):
+        self.append("skills/mailbend/SKILL.md", "\n[Foreign](https://example.test/absent.md#absent)\n"
+                    "[Other branch](https://github.com/albertc71/MailBend/blob/mainland/absent.md#absent)\n")
+        self.check()
+
+    def test_skill_repository_url_cannot_leave_checkout(self):
+        self.append("skills/mailbend/SKILL.md", "\n[Outside](https://github.com/albertc71/MailBend/blob/main/../outside.md#title)\n")
+        self.check("linked file outside repository")
+
+    def test_skill_index_signature_requires_every_argument(self):
+        self.replace("skills/mailbend/references/tools.md",
+                     "mail_get(folder, uid, uidvalidity, section, max_bytes, projection, max_response_bytes)",
+                     "mail_get(folder, uid)")
+        self.check("missing argument mail_get.uidvalidity")
+
+    def test_skill_empty_index_signature_does_not_hide_arguments(self):
+        self.replace("skills/mailbend/references/tools.md", "mail_refresh(folder, uids, uidvalidity)", "mail_refresh()")
+        self.check("missing argument mail_refresh.uidvalidity")
+
+    def test_skill_new_schema_argument_requires_index_update(self):
+        self.append("tools/gen-schema.py", '\nTOOLS[0]["inputSchema"]["properties"]["future_option"] = {"type": "boolean"}\n')
+        self.check("missing argument mail_probe.future_option")
+
+    def test_skill_underscore_and_duplicate_heading_anchors(self):
+        self.append("README.md", "\n### `mail_get` sections\n### `mail_get` sections\n"
+                    "### Repeated\n### Repeated-1\n### Repeated\n")
+        self.append("skills/mailbend/SKILL.md", "\n[First](../../README.md#mail_get-sections)\n"
+                    "[Second](../../README.md#mail_get-sections-1)\n"
+                    "[Collision](https://github.com/albertc71/MailBend/blob/main/README.md#repeated-2)\n")
+        self.check()
+        self.append("skills/mailbend/SKILL.md", "\n[Absent](../../README.md#mail_get-sections-2)\n")
+        self.check("missing linked heading ../../README.md#mail_get-sections-2")
+
+    def test_skill_missing_schema_is_a_clean_failure(self):
+        (self.root / "tools/gen-schema.py").unlink()
+        result = self.check("tools/gen-schema.py: cannot load schema")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_broken_schema_is_a_clean_failure(self):
+        for content, exception in [("def broken(:\n", "SyntaxError"),
+                                   ('raise RuntimeError("fixture import failure")\n', "RuntimeError")]:
+            with self.subTest(exception=exception):
+                (self.root / "tools/gen-schema.py").write_text(content)
+                result = self.check(f"cannot load schema ({exception}:")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_schema_exit_is_a_clean_failure(self):
+        (self.root / "tools/gen-schema.py").write_text("raise SystemExit(0)\n")
+        result = self.check("cannot load schema (SystemExit: 0)")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_malformed_schema_is_a_clean_failure(self):
+        for content in ("pass\n", "TOOLS = [{'name': 'mail_probe'}]\n",
+                        "TOOLS = None\n", "TOOLS = [{'name': 'mail_probe', 'inputSchema': None}]\n"):
+            with self.subTest(content=content):
+                (self.root / "tools/gen-schema.py").write_text(content)
+                result = self.check("tools/gen-schema.py: invalid tool schema")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_skill_index_prose_allows_partial_signatures(self):
+        self.append("skills/mailbend/references/tools.md",
+                    "\nFor example, call `mail_get(folder, uid)`.\n"
+                    "- Example: `mail_refresh(folder)` is a partial example.\n")
+        self.check()
+
+    def test_skill_prose_cannot_replace_index_entry(self):
+        self.replace("skills/mailbend/references/tools.md", "- `mail_probe()`:",
+                     "Example: `mail_probe()`:")
+        self.check("references/tools.md: missing tool mail_probe")
+
+    def test_skill_fenced_headings_do_not_create_anchors(self):
+        for fence in ("```", "~~~~"):
+            with self.subTest(fence=fence):
+                (self.root / "docs/fence-fixture.md").write_text(
+                    f"{fence}text\n# Only in code\n{fence}\n# Visible\n")
+                (self.root / "skills/mailbend/references/fence.md").write_text(
+                    "[Absent](../../../docs/fence-fixture.md#only-in-code)\n")
+                self.check("missing linked heading")
+
+    def test_skill_unclosed_and_mismatched_fences_stay_code(self):
+        for content in ("```\n~~~\n# Hidden\n", "~~~~\n~~~\n# Hidden\n",
+                        "```\n# Hidden\n"):
+            with self.subTest(content=content):
+                (self.root / "docs/fence-fixture.md").write_text(content)
+                (self.root / "skills/mailbend/references/fence.md").write_text(
+                    "[Absent](../../../docs/fence-fixture.md#hidden)\n")
+                self.check("missing linked heading")
+
+    def test_skill_fences_do_not_shift_duplicate_heading_anchors(self):
+        self.append("README.md", "\n````text\n# Fence title\n```\n# Fence title\n"
+                    "````\n   ~~~text\n# Fence title\n   ~~~~\n# Fence title\n")
+        self.append("skills/mailbend/SKILL.md", "\n[Real](../../README.md#fence-title)\n")
+        self.check()
+        self.append("skills/mailbend/SKILL.md", "\n[Absent](../../README.md#fence-title-1)\n")
+        self.check("missing linked heading ../../README.md#fence-title-1")
+
+    def test_skill_schema_import_does_not_regenerate(self):
+        generated = self.root / "src/schema.bend"
+        before = generated.read_bytes()
+        self.check()
+        self.assertEqual(generated.read_bytes(), before)
 
     def test_stale_law_in_existing_architecture_table(self):
         self.replace("docs/ARCHITECTURE.md", "read_only_tools_are_exactly_twelve",

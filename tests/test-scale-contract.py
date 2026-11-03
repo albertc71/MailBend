@@ -383,8 +383,7 @@ assert scale_fixtures.png.__module__ == "scale_support.v1.image_fixtures"
             "tests/scale_fixtures.py", "tests/scale_support/**",
             "tests/scale-baseline.json",
             ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml",
-            "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py",
-            ".github/workflows/foundation-scale.yml"})
+            "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py"})
 
     def test_baseline_selection_preserves_full_profile_gate(self):
         for cpu in ("AMD EPYC 9V45 96-Core Processor",):

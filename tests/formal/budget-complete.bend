@@ -2,3 +2,4 @@
 import ./budget-proofs.bend as Admission
 import ./budget-bind-proofs.bend as Bind
 import ./scalar-escape-proofs.bend as Scalar
+import ./json-size-proofs.bend as JsonSize

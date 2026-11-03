@@ -669,7 +669,7 @@ TOOLS = [
     tool("mail_get_thread",
          "Read the conversation a message belongs to, oldest first (by "
          "INTERNALDATE, then UID): the messages in its folder, INBOX and "
-         "the resolved Sent folder that are linked to it by Message-ID, "
+         "the resolved Sent and Archive folders that are linked to it by Message-ID, "
          "In-Reply-To and References, each with its folder, uidvalidity and "
          "parent (the Message-ID of the message it answers in the thread, "
          "or null). Messages are never grouped by subject. Two rounds of "

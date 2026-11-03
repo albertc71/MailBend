@@ -15,8 +15,9 @@ discuss larger changes before writing them.
   of that law contract: review changes to `admit_all`, `lengths_exact`,
   `Within` and the other observers as changes to the laws, and explain them
   in the pull request. Do not weaken an observer or premise to make a proof
-  pass. The budget mutation check fingerprints `tests/formal/budget-*.bend` and
-  `tests/formal/scalar-*.bend`, including these observer modules, to check that its run leaves the checkout
+  pass. The budget mutation check fingerprints `tests/formal/budget-*.bend`,
+  `tests/formal/scalar-*.bend` and `tests/formal/json-size-*.bend`, including
+  these observer modules, to check that its run leaves the checkout
   unchanged; this is not an approval gate for later contract changes.
 - Never put real credentials, account addresses or mail in code, tests,
   fixtures, issues or pull requests. Tests run against the local fake server
@@ -48,7 +49,7 @@ The scale contract checks need GNU `time` (`sudo apt-get install time` on Ubuntu
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
-python3 scripts/check-docs.py                     # documented names resolve in source
+python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
@@ -82,6 +83,13 @@ MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools thr
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
+the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).
+Keep the entrypoint under 300 lines, use portable frontmatter without
+`allowed-tools`, and retain explicit human approval before sends and deletes.
+The documentation check validates tool-scoped names and arguments against
+`tools/gen-schema.py`; it is not a behavioral evaluation of an agent.
 
 The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
 checks. The second repeats the tool scenarios through structured MCP without
