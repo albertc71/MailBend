@@ -46,6 +46,8 @@ def main() -> IO(Unit):
     IO.print(coverage("", []))
     IO.print(coverage(header(4), [4, 4]))
     IO.print(coverage(empty_header(4), [4, 4, 9]))
+    # The fallback may fill one UID while another remains missing.
+    IO.print(coverage(header(4) ++ empty_header(9), [4, 9, 12]))
     return Unit{}
 
 #|4,9,
@@ -57,3 +59,4 @@ def main() -> IO(Unit):
 #| missing=
 #|4, missing=
 #|4, missing=9,
+#|4,9, missing=12,
