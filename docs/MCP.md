@@ -17,7 +17,9 @@ using the same current policy as the parsed listing path. Only generated schema
 bytes enter that tools/list-specific envelope; request IDs are JSON-encoded.
 No parsed schema or filtered response is retained between requests. Modern and
 older legacy projections retain the original parsed-schema path. CLI listing
-and tool-call validation are unchanged.
+is unchanged. Tool-call validation parses only the named generated definition,
+then applies the same input-schema and policy checks. Every known tool must
+retain its original input schema; unknown names keep the unknown-tool refusal.
 
 ```mermaid
 stateDiagram-v2
@@ -31,8 +33,23 @@ stateDiagram-v2
     Closed --> [*]
 ```
 
+Tool-call schema selection follows the existing validation order:
+
+```mermaid
+stateDiagram-v2
+    [*] --> NamedDefinition: tool name selects generated JSON
+    NamedDefinition --> Arguments: parse inputSchema
+    Arguments --> Refused: invalid arguments
+    Arguments --> Dispatch: valid arguments or unknown tool name
+    Dispatch --> Refused: unknown operation
+    Dispatch --> Policy: known operation
+    Policy --> Refused: policy blocks operation
+    Policy --> Run: permitted operation
+```
+
 The `MCP schema comparison` workflow builds a reference and candidate on the
-same standard Linux runner, then runs two alternating pairs of the immutable
+same standard Linux runner for each of x86-64 and ARM64, then runs two
+alternating pairs of the immutable
 500-request short soak from PR #257. Both retain its 180-second deadline and
 all memory, reply and latency gates. Startup-to-first-reply time and RSS are
 reported separately, so moving work to initialization is visible. A reference
