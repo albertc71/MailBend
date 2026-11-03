@@ -202,12 +202,13 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 4
       matrix:
         suite:
           - cli
           - mcp
           - support
+          - soak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -258,8 +259,8 @@ jobs:
         if: matrix.suite == 'cli'
         run: python3 tests/test-e2e.py
       - name: Short synthetic MCP soak
-        if: matrix.suite == 'mcp'
-        timeout-minutes: 5
+        if: matrix.suite == 'soak'
+        timeout-minutes: 6
         run: python3 tests/test-soak.py --profile short
       - name: Structured MCP tool scenarios
         if: matrix.suite == 'mcp'

@@ -118,10 +118,22 @@ def child_limits():
 
 
 def stop(proc):
-    if proc is not None:
+    if proc is not None and proc.returncode is None:
+        # Do not signal a PGID after its leader has already been reaped.
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
         proc.wait(timeout=10)
+
+
+def next_reply(replies, deadline):
+    remaining = deadline - time.monotonic()
+    assert remaining > 0, "soak time budget exceeded"
+    try:
+        return replies.get(timeout=min(30, remaining))
+    except queue.Empty:
+        if time.monotonic() >= deadline:
+            raise AssertionError("soak time budget exceeded") from None
+        raise AssertionError("no MCP reply within 30 seconds") from None
 
 
 def run(profile):
@@ -209,9 +221,7 @@ def run(profile):
                     sent_at = time.monotonic()
                     write_batch(session, batch, min(10, max(0, started + budget - time.monotonic())))
                     for item in batch:
-                        remaining = started + budget - time.monotonic()
-                        assert remaining > 0, "soak time budget exceeded"
-                        received, reply = replies.get(timeout=min(30, remaining))
+                        received, reply = next_reply(replies, started + budget)
                         assert reply is not None, "core exited before completing requests"
                         check_reply(reply, item)
                         completed += 1

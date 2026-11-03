@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
+import queue
 
 spec = importlib.util.spec_from_file_location("soak", Path(__file__).with_name("test-soak.py"))
 soak = importlib.util.module_from_spec(spec)
@@ -41,6 +43,31 @@ class SoakContract(unittest.TestCase):
         soak.check_reply({"jsonrpc": "2.0", "id": 8, "result": {"isError": True}}, invalid)
         with self.assertRaises(AssertionError):
             soak.check_reply({"jsonrpc": "2.0", "id": 8, "result": {}}, invalid)
+
+    def test_reply_deadline_and_stall(self):
+        replies = Mock()
+        replies.get.return_value = (1, {"id": 1})
+        with patch.object(soak.time, "monotonic", return_value=100):
+            self.assertEqual(soak.next_reply(replies, 110), (1, {"id": 1}))
+            replies.get.assert_called_once_with(timeout=10)
+        replies.get.side_effect = queue.Empty
+        for clock, deadline, reason in (([100, 130], 200, "no MCP reply within 30 seconds"),
+                                        ([100, 110], 110, "soak time budget exceeded"),
+                                        ([110], 110, "soak time budget exceeded")):
+            with patch.object(soak.time, "monotonic", side_effect=clock):
+                with self.assertRaisesRegex(AssertionError, reason):
+                    soak.next_reply(replies, deadline)
+
+    def test_cleanup_does_not_signal_reaped_leader(self):
+        proc = Mock(pid=1234, returncode=0)
+        with patch.object(soak.os, "killpg") as kill:
+            soak.stop(proc)
+            kill.assert_not_called()
+            proc.wait.assert_not_called()
+            proc.returncode = None
+            soak.stop(proc)
+            kill.assert_called_once_with(1234, soak.signal.SIGKILL)
+            proc.wait.assert_called_once_with(timeout=10)
 
     def test_comparison_windows_have_identical_mix(self):
         for count in (500, 5000):

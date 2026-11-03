@@ -63,6 +63,8 @@ python3 tests/test-writing-laws.py                # malformed guide fences fail 
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
+python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
+python3 tests/test-soak.py --profile short         # synthetic session soak after build
 python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
 python3 tests/test-scale-baseline.py               # historical selected baselines match apparatus
 python3 -I tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls
@@ -296,12 +298,19 @@ This is a synthetic stress pattern; real clients' concurrent request behavior
 has not been verified. All replies must arrive once, in request order, with
 the expected operation result. Extra replies after the final request fail.
 
-The core's RSS is sampled every 100 ms. After warm-up it must stay below
+The core's RSS is sampled every 100 ms. After warm-up it must stay at most
 1 GiB and within 256 MiB of the warm-up peak. The last tenth's p95 latency
 must not exceed three times the first tenth's p95. Latency includes queueing
 from the burst write; both comparison windows have the same request mix.
 The short run has a 180-second request budget, the long run 1,800 seconds,
-plus bounded setup and shutdown. JSON output records the RSS curve, p50/p95,
+plus bounded setup and shutdown. A missing reply fails after 30 seconds even
+when the total budget remains. One hosted short run passed in 168.99 seconds;
+an earlier run timed out at 180 seconds. These observations leave limited
+headroom and do not establish a reliable flake rate or its cause. The workload
+and all acceptance bounds remain unchanged.
+CI runs it in a separate required runtime matrix lane, allowing four lanes in
+parallel rather than adding serial work to MCP scenarios. This adds a build
+but does not guarantee a particular overall CI duration. JSON output records the RSS curve, p50/p95,
 drift ratio and elapsed time. These are regression bounds, not evidence of
 memory stability over days or a promise about a provider's latency.
 
