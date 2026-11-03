@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import resource
+import runpy
 import select
 import shutil
 import signal
@@ -517,6 +518,36 @@ class StdioTests(unittest.TestCase):
                         if proc.poll() is None:
                             proc.kill()
                         proc.wait(timeout=10)
+
+    def test_repeated_schema_across_protocols_and_policies(self):
+        # CLI remains an uncached oracle; compare complete definitions, not counts.
+        for switches in ({"MAILBEND_READ_ONLY": "0"},
+                         {"MAILBEND_READ_ONLY": "1"},
+                         {"MAILBEND_READ_ONLY": "invalid"},
+                         {"MAILBEND_READ_ONLY": "0", "MAILBEND_DRAFTS_ONLY": "1"}):
+            env = dict(ENV, **switches)
+            with self.subTest(switches=switches):
+                cli = subprocess.run([str(LAUNCHERS[0]), "tools"], capture_output=True,
+                                     env=env, timeout=30, check=True)
+                listed = json.loads(cli.stdout)
+                definitions = {t["name"]: t for t in runpy.run_path(str(ROOT / "tools/gen-schema.py"))["TOOLS"]}
+                expected = [definitions[t["name"]] for t in listed]
+                self.assertEqual(listed, [{k: v for k, v in t.items() if k != "outputSchema"} for t in expected])
+                with Session(LAUNCHERS[0], env=env, pipe=True) as session:
+                    session.send(discovery())
+                    session.line()
+                    for ident, params in ((2, {}), (3, {}), (4, {"_meta": META})):
+                        session.send(request("tools/list", ident, params))
+                        reply = session.line()
+                        self.assertEqual(reply["id"], ident)
+                        self.assertEqual(reply["result"]["tools"], expected)
+                    session.send(request("initialize", 5, {"protocolVersion": "2024-11-05"}))
+                    session.line()
+                    session.send(request("tools/list", 6))
+                    old = [{k: v for k, v in tool.items() if k != "outputSchema"} for tool in expected]
+                    self.assertEqual(session.line()["result"]["tools"], old)
+                    session.close_input()
+                    self.assertEqual(session.proc.wait(timeout=10), 0)
 
     def test_typesafe_read_only_tools(self):
         with tempfile.TemporaryDirectory() as directory:
