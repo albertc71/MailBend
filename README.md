@@ -76,7 +76,7 @@ Jev off, no tool asks it.
 | `mail_get_new` | Messages after a `UIDVALIDITY + UID` checkpoint | no | adds notes |
 | `mail_brief` | Bounded metadata groups, arrival checkpoint and stored-Sent contact evidence | no | adds notes |
 | `mail_refresh` | Bounded flags and presence refresh for known UIDs | no | — |
-| `mail_get_thread` | The conversation of a message from its folder, INBOX and Sent, linked by message IDs, never by subject | no | adds notes |
+| `mail_get_thread` | The [conversation](docs/THREADS.md) of a message from its folder, INBOX and resolved Sent and Archive, linked by message IDs, never by subject | no | adds notes |
 | `mail_awaiting_reply` | Bounded Sent reply tracker with exact IDs and explicit unknown coverage. Opt-in list and automated Sent-candidate exclusions; replied still includes self-follow-ups, auto-replies or bounces | no | no |
 | `mail_contacts` | Bounded Sent contact candidates and a human-reviewed allowlist value. Ambiguous names return every sampled match | no | no |
 | `mail_correspondents` | Exact observed Sent recipient and per-folder received counts within an explicit window | no | no |
@@ -422,6 +422,14 @@ roles. `mail_list_folders` retains actual advertised attributes and
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
 
+Install the optional [MailBend agent skill](skills/mailbend/SKILL.md) by copying
+the complete `skills/mailbend/` directory, including `references/`, into your
+client's supported skills directory. It teaches safe MCP and CLI workflows; it
+does not install or configure MailBend, grant tool access, or approve mail changes.
+Use your client's skill-loading instructions and verify that it loads the skill.
+Automatic `npx skills add` discovery and every client's loading behavior have not
+been verified.
+
 The [CLI contract](docs/CLI.md) documents stdin arguments, output and exit codes.
 Use `call <tool> -` with a pipe or file to keep JSON out of the argument list.
 
@@ -654,6 +662,24 @@ The serialized tool result also has a 256 KiB cap (excluding its CLI/MCP
 envelope); expansion beyond it returns all UIDs unknown. The
 synthetic cost measurements and experiment decision are in
 [the refresh experiment](docs/REFRESH.md).
+
+## Privacy Policy
+
+MailBend runs on your machine and processes mail for the operations you request.
+It has no hosted MailBend mailbox service or application log files, but local
+configuration, explicit downloads and the optional send counter persist. Your
+client can capture results and share them with its own services. Mail providers,
+optional TypeSafe checks, DNS/proxy services and install hosts have separate
+processing and retention policies. Headers sent to Jev are still personal data;
+a zero-retention switch is your statement, not a verified contract.
+
+Read the [Privacy Policy and data-handling statement](docs/PRIVACY.md)
+for collection, use, storage, sharing, retention, dated provider sources and
+regulated-use checks for this revision. The [published main policy](https://github.com/albertc71/MailBend/blob/main/docs/PRIVACY.md)
+is also available at a stable HTTPS URL. Report suspected vulnerabilities through
+[private reporting](https://github.com/albertc71/MailBend/security/advisories/new);
+use [issues](https://github.com/albertc71/MailBend/issues) only for non-sensitive
+questions. Never post credentials or real mail.
 
 ## Safety
 
@@ -1039,8 +1065,8 @@ setting `MAILBEND_ALLOWED_RECIPIENTS`. It is not a shell command. Do not execute
 interpolate it as shell code. Existing configuration is never changed. Persistent
 cache and optional vCard-directory access from #62 remain deferred owner decisions.
 
-Triage searches all stored Sent To/Cc/Bcc headers separately for each sender, then
-verifies at most 100 matching candidate headers with the same exact parser. Unrelated
+Triage searches all stored Sent To/Cc/Bcc headers for each sender still needing
+evidence, then verifies at most 100 matching candidate headers with the same exact parser. Unrelated
 Sent messages do not consume that candidate budget. Substring SEARCH hits are only
 candidates: a fully inspected no-match can establish a stranger, while an exact
 positive remains a correspondent even in a partial sample. Capped, malformed or
@@ -1049,10 +1075,18 @@ can still proceed. A verified tagged `NO` for that sender's candidate SEARCH als
 leaves only that sender unverified. `BAD`, failed EXAMINE, authentication, transport
 or mailbox-identity failures still abort the call.
 
-The current implementation opens one search session per distinct sender and a
-second session when candidate headers must be fetched: up to two sessions per
-sender, for at most 50 senders (100 Sent sessions). This is not batched; high-latency accounts may
-notice the sequential session cost.
+An exact positive recipient found in one sender's verified headers also protects
+later, still-unchecked senders with that same address. Their redundant searches
+are skipped, even when the first scan has incomplete coverage. Negative or unknown
+coverage is never shared. Earlier settled results are not revisited, and no
+correspondence evidence is cached across calls.
+
+Each sender still needing a search uses one session and a second when headers
+must be fetched. The worst case remains two sessions per distinct sender, for at
+most 50 senders (100 Sent sessions). When the first verified message covers every
+sender, two Sent sessions suffice. This is opportunistic positive-evidence reuse,
+not a guarantee of two-session batching; disjoint correspondents still incur the
+sequential session cost.
 The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
 UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
 claim that untrusted headers establish real-world identity.

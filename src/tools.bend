@@ -1907,8 +1907,8 @@ def t_get_new(+args: J.Json) -> IO(Shown):
 # ---------------
 
 # A conversation is read without changing anything: the message's summary,
-# the folders (to resolve Sent), then two rounds. A round searches the
-# message's folder, INBOX and the Sent folder, in one session, for the IDs
+# the folders (to resolve Sent and Archive), then two rounds. A round searches
+# the message's folder, INBOX, Sent and Archive, in one session, for the IDs
 # the thread names so far (thread.bend). A second session fetches the summaries
 # of the UIDs not seen yet, and only the messages whose headers name one of
 # those IDs exactly are kept, since SEARCH HEADER matches substrings. There
@@ -2230,9 +2230,10 @@ def thread_folders.put(fs: List<&2, String>, sent: Maybe<&2, String>) -> List<&2
       folder_added(fs, s)
 
 # The folders a thread is searched in, each once: the message's own, INBOX,
-# where answers arrive, and the Sent folder when it resolves.
-def thread_folders(mbox: String, sent: Maybe<&2, String>) -> List<&2, String>:
-  thread_folders.put(folder_added([mbox], "INBOX"), sent)
+# where answers arrive, then the resolved Sent and Archive folders.
+def thread_folders(mbox: String, sent: Maybe<&2, String>, archive: Maybe<&2, String>)
+  -> List<&2, String>:
+  thread_folders.put(thread_folders.put(folder_added([mbox], "INBOX"), sent), archive)
 
 def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32,
   +Policy.checked: Bool) -> IO(Shown):
@@ -2241,7 +2242,7 @@ def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32,
       pure_shown(Policy.Err{m})
     case Done{+fs}:
       Policy.Folders{all, drafts, trash, sent, junk, archive} = fs
-      +folders = thread_folders(mbox, sent)
+      +folders = thread_folders(mbox, sent, archive)
       do IO<Shown>:
         one : Thread() <- thread_round(Done{st}, folders, Policy.checked)
         two : Thread() <- thread_round(one, folders, Policy.checked)
@@ -8332,11 +8333,12 @@ def triage_contact_state(+known: List<&2, String>, complete: Bool, p: Pending) -
         Some{known}, None{})
       settled.put(Some{a}, f, vetoes, state)
 
-def triage_candidate_state(+p: Pending, address: String, known: List<&2, String>,
+def triage_candidate_state(+p: Pending, +address: String, +known: List<&2, String>,
   complete: Bool) -> Pending:
   match p:
-    case Pending{f, vetoes, Some{a}}:
-      Bool.pick(Pending, String.eq(a, address), triage_contact_state(known, complete, p), p)
+    case Pending{f, vetoes, Some{+a}}:
+      Bool.pick(Pending, String.eq(a, address) || C.is_in(a, known),
+        triage_contact_state(known, complete && String.eq(a, address), p), p)
     case _:
       p
 
@@ -8382,6 +8384,23 @@ def triage_candidates.set(scan: ContactScan, address: String, expected: Maybe<&2
       triage_candidates.accept(triage_candidate_uidv(expected, v),
         ContactScan{f, Some{v}, cs, n, complete, reason}, address, v, t)
 
+# Settled messages no longer carry a sender. Exact positives can therefore
+# skip later searches without sharing another sender's negative coverage.
+def triage_candidates.needed(address: String, t: Triaging) -> Bool:
+  Triaging{call, c, cats, opts, roles, caps, review, found, missing} = t
+  C.is_in(address, senders(found, []))
+
+def triage_candidates.scan(needed: Bool, +address: String,
+  expected: Maybe<&2, U32>, t: Triaging, folder: String, now: U32)
+  -> IO(Result<&2, &2, String, CandidateState>):
+  match needed:
+    case False{}:
+      IO.pure(Result<&2, &2, String, CandidateState>, Done{CandidateState{expected, t}})
+    case True{}:
+      do IO<Result<&2, &2, String, CandidateState>>:
+        scan : ContactScan <- contacts_candidates(folder, address, now)
+        return triage_candidates.set(scan, address, expected, t)
+
 def triage_candidates(addrs: List<&2, String>,
   state: Result<&2, &2, String, CandidateState>, +folder: String, +now: U32) -> IO(Policy.Out):
   match addrs state:
@@ -8389,10 +8408,11 @@ def triage_candidates(addrs: List<&2, String>,
       pure_out(Policy.Err{"cannot verify Sent correspondence (" ++ reason ++ "); nothing was moved"})
     case Nil{} Done{CandidateState{expected, t}}:
       triage_ask(t)
-    case +a <> rest Done{CandidateState{expected, t}}:
+    case +a <> rest Done{CandidateState{expected, +t}}:
       do IO<Policy.Out>:
-        scan : ContactScan <- contacts_candidates(folder, a, now)
-        triage_candidates(rest, triage_candidates.set(scan, a, expected, t), folder, now)
+        next : Result<&2, &2, String, CandidateState> <- triage_candidates.scan(
+          triage_candidates.needed(a, t), a, expected, t, folder, now)
+        triage_candidates(rest, next, folder, now)
 
 def triage_sent.put(sent: Maybe<&2, String>, addrs: List<&2, String>,
   t: Triaging) -> IO(Policy.Out):

@@ -18,7 +18,8 @@ class BaselineSource(unittest.TestCase):
     def test_every_selected_baseline_matches_current_source(self):
         self.assertTrue(BASELINES, "no selected baseline")
         dependencies = {name: digest(ROOT / "tests" / name) for name in
-                        ("image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")}
+                        ("scale_support/v1/image_fixtures.py", "scale_support/v1/fake_mail_server.py",
+                         "scale_support/v1/fake_typesafe.py")}
         for cpu in BASELINES:
             with self.subTest(cpu=cpu):
                 profile = json.loads(select_baseline(cpu).read_text())["profile"]
