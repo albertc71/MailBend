@@ -27,6 +27,14 @@ PINNED = {
 }
 INSTALLERS = ("scripts/install.sh", "scripts/install-bend.sh", "scripts/install-rust.sh",
               "scripts/install-lean.sh")
+# Candidate-only source migration reviewed in PR #258 at b00464bda8bb70f9238036301242eb6df5131f99.
+# The three helpers are one indivisible tuple; neither mixed revisions nor a
+# candidate-provided policy is accepted. Reference setup still uses old bytes.
+CANDIDATE_HELPER_TUPLE = (
+    "57c7d071b6f0155c69058a883e83b97f6a76a17d438d9cce1d2b870576c2af1b",
+    "0396875e0f8c09599c9badbe4fbde259b61138308977835fbf0c8b4c198c7a17",
+    "4b30ca5f48136b481243ea0c819c970563e13e96ef660b8bd7ad8c738ce14374",
+)
 EXECUTABLES = ("bin/mailbend-core", "bin/mailbend-tls", "bin/mailbend-attach",
                "bin/mailbend-typesafe", "bin/mailbend-stdio", "scripts/mailbend")
 
@@ -95,11 +103,19 @@ def preflight(reference, candidate, candidate_sha):
         for name, expected_hash in PINNED.items():
             path, _ = regular(root, name)
             require(sha(path.read_bytes()) == expected_hash, f"apparatus changed: {path}")
+    original_helpers, candidate_helpers = [], []
     for name in ("scripts/mailbend", *INSTALLERS):
         expected = sha(git(roots[0], "show", f"{REFERENCE_SHA}:{name}"))
-        for root in roots:
+        for side, root in enumerate(roots):
             path, _ = regular(root, name)
-            require(sha(path.read_bytes()) == expected, f"fixed launcher/installer changed: {path}")
+            actual = sha(path.read_bytes())
+            if side == 1 and name in INSTALLERS[1:]:
+                original_helpers.append(expected)
+                candidate_helpers.append(actual)
+            else:
+                require(actual == expected, f"fixed launcher/installer changed: {path}")
+    require(tuple(candidate_helpers) in (tuple(original_helpers), CANDIDATE_HELPER_TUPLE),
+            "candidate installer helper tuple is not a reviewed complete revision")
     return roots
 
 
