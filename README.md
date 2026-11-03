@@ -1091,20 +1091,18 @@ The [contact_plans](LAWS.bend) law proves read-only plans and the header fetch's
 UIDVALIDITY guard. Parsing and aggregation are covered by synthetic tests, not a
 claim that untrusted headers establish real-world identity.
 
-
-## License
-
-MIT; see [LICENSE](LICENSE).
-
-
 ### Deterministic metadata brief
 
 `mail_brief` answers a bounded metadata attention question in one call. With no
 `since_uid`, it selects unseen, undeleted messages oldest first. Pass `since_uid: 0`
 to start an arrival stream, or the prior `next_since_uid` and `uidvalidity` to
 continue it. The default page is 50 messages, with a maximum of 100. A checkpoint
-from an unseen page is an arrival checkpoint, not a cursor for later changes to
-read status. Use `mail_refresh` for known-message flag changes.
+from a complete unseen page uses the EXAMINE UIDNEXT minus one (`checkpoint_basis:
+high_water`), including when no unseen messages exist. SEARCH arrivals above that
+snapshot wait for the next call. A capped page uses its last selected UID
+(`selected_prefix`), never skipping unreturned unseen messages. Continuing that
+prefix with `since_uid` can also return historical seen mail. Neither cursor
+tracks later changes to read status. Use `mail_refresh` for known-message flag changes.
 
 Every returned message has one `group` and an independent `delivery` value.
 Groups are `people`, `lists`, `automated` and `unknown_people`. `groups` gives the
@@ -1135,3 +1133,26 @@ Optional body previews, lifetime first-time classification, and #139's paid
 agent-quality comparison remain outside this metadata core. The synthetic
 persona check measures tool calls and metadata coverage, not agent quality.
 See [the design and state model](docs/plans/deterministic-brief.md).
+
+Only From, To, Cc, List-Id, Auto-Submitted and Precedence consume the 4096-byte
+classification bound; duplicates remain visible and malformed evidence stays
+conservative. Original summaries are unchanged. Explicit empty header strings
+are represented; persistent NIL or absent selected data still fails closed.
+SEARCH is capped at 10000 UIDs. A capped unseen page can select only a few old
+unread messages, yet its arrival continuation includes all later seen mail too.
+On a large folder that continuation can exceed the cap and fail repeatedly.
+Lowering the page limit does not reduce that SEARCH, and repeating unseen mode
+returns the same first page. There is currently no lossless brief continuation
+for this case. `mail_get_new {"start":"now"}` skips the existing backlog; it is
+not a recovery method. No returned checkpoint advances past omitted eligible
+unseen messages, but that safety guarantee does not guarantee paging progress.
+A count limit is not a byte budget: set `max_response_bytes` when needed.
+
+Unseen mode excludes `\Deleted` messages. A complete high-water page passes
+those excluded UIDs even if they are later undeleted. Arrival mode has no
+`UNDELETED` filter and may return deleted messages. Neither checkpoint tracks
+later changes to flags.
+
+## License
+
+MIT; see [LICENSE](LICENSE).

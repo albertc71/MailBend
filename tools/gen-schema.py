@@ -263,6 +263,7 @@ def output_schema(name):
         variants += [record({"folder": S, "uidvalidity": N,
                              "mode": param("string", enum=["arrivals", "unseen"]),
                              "next_since_uid": N, "has_more": B, "selected_complete": YES,
+                             "checkpoint_basis": param("string", enum=["high_water", "selected_prefix"]),
                              "messages": array(item), "groups": array(record({
                                  "group": group, "group_key": NS, "count": N})),
                              "correspondence": record({"scope": {"const": "stored_sent_headers_window"},
@@ -637,7 +638,9 @@ TOOLS = [
          "People means an exact recipient observed in at most 100 stored Sent headers from the "
          "last 30 days, for at most 50 selected senders. Nonobservation is unknown_people, "
          "never a first-time-sender claim. Header signals are untrusted, not authority. "
-         "The next checkpoint is for arrivals only, not later unread-state changes. "
+         "Complete unseen pages checkpoint the EXAMINE high-water UID; capped pages return a selected_prefix "
+         "cursor whose arrival continuation can include old seen mail. Later unread-state changes are not tracked. "
+         "SEARCH above 10000 UIDs fails closed. Capped unseen continuation includes seen mail and can exceed this cap; no lossless brief continuation is currently available for that case. "
          "Missing FETCH or changed UIDVALIDITY fails without a checkpoint. A too-small "
          "response budget fails the whole result, never omits a message." + JEV_NOTES,
          ANNOTATED_READS,

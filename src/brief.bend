@@ -20,6 +20,52 @@ type Delivery is Data:
 type Item is Data:
   Item{message: I.Msg, group: Group, delivery: Delivery, list_key: String}
 
+type SelectionWindow is Data:
+  ArrivalWindow{since: U32}
+  UnseenWindow{high: U32}
+
+def window_mode(w: SelectionWindow) -> String:
+  match w:
+    case ArrivalWindow{s}:
+      "arrivals"
+    case UnseenWindow{h}:
+      "unseen"
+
+def window_floor(w: SelectionWindow) -> U32:
+  match w:
+    case ArrivalWindow{s}:
+      s
+    case UnseenWindow{h}:
+      0
+
+def window_contains(w: SelectionWindow, +u: U32) -> Bool:
+  match w:
+    case ArrivalWindow{s}:
+      U32.is_gt(u, s)
+    case UnseenWindow{h}:
+      U32.is_gt(u, 0) && U32.is_le(u, h)
+
+def window_uids(xs: List<&2, U32>, +w: SelectionWindow) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      []
+    case +u <> t:
+      List.filter.put(U32, u, window_uids(t, w), window_contains(w, u))
+
+def checkpoint(w: SelectionWindow, more: Bool, last: U32) -> U32:
+  match w:
+    case ArrivalWindow{s}:
+      last
+    case UnseenWindow{h}:
+      Bool.pick(U32, more, last, h)
+
+def checkpoint_basis(w: SelectionWindow, more: Bool) -> String:
+  match w:
+    case ArrivalWindow{s}:
+      "selected_prefix"
+    case UnseenWindow{h}:
+      Bool.pick(String, more, "selected_prefix", "high_water")
+
 def group_name(g: Group) -> String:
   match g:
     case People{}:
@@ -44,17 +90,43 @@ def uid(m: I.Msg) -> U32:
   I.Msg{u, flags, date, size, hs, body, st} = m
   u
 
-def headers_bytes(small: Bool, +hs: String) -> Bool:
-  match small:
+def classification_field(+name: String) -> Bool:
+  String.eq(name, "from") || String.eq(name, "to") || String.eq(name, "cc") ||
+    String.eq(name, "list-id") || String.eq(name, "auto-submitted") || String.eq(name, "precedence")
+
+# Retain duplicate relevant fields; irrelevant header size is not classification evidence.
+def classification_fields(xs: List<&2, M.Hdr>) -> List<&2, M.Hdr>:
+  match xs:
+    case Nil{}:
+      []
+    case +h <> t:
+      M.Hdr{name, value} = h
+      List.filter.put(M.Hdr, h, classification_fields(t), classification_field(name))
+
+def evidence(hs: String) -> List<&2, M.Hdr>:
+  classification_fields(M.headers(hs))
+
+def fields_bytes(xs: List<&2, M.Hdr>) -> U32:
+  match xs:
+    case Nil{}:
+      0
+    case M.Hdr{+name, value} <> t:
+      # Saturation also bounds the work on a single oversized value.
+      +tail = fields_bytes(t)
+      +size = (Codec.utf8_len(String.take(value, 4097n)) + Codec.utf8_len(name) + 4 : U32)
+      Bool.pick(U32, U32.is_gt(size, 4096) || U32.is_gt(tail, 4096), 4097,
+        (size + tail : U32))
+
+def headers_bytes(complete: Bool, hs: String) -> Bool:
+  match complete:
     case False{}:
       False{}
     case True{}:
-      U32.is_le(Codec.utf8_len(hs), 4096) &&
-        (String.ends_with(hs, "\r\n\r\n") || String.eq(hs, "\r\n"))
+      U32.is_le(fields_bytes(evidence(hs)), 4096)
 
 def headers_small(m: I.Msg) -> Bool:
   I.Msg{u, flags, date, size, +hs, body, st} = m
-  headers_bytes(Nat.is_le(String.length(String.take(hs, 4097n)), 4096n), hs)
+  headers_bytes(String.ends_with(hs, "\r\n\r\n") || String.eq(hs, "\r\n"), hs)
 
 def sender.one(xs: List<&2, String>) -> Maybe<&2, String>:
   match xs:
@@ -76,7 +148,7 @@ def sender.small(small: Bool, m: I.Msg) -> Maybe<&2, String>:
       None{}
     case True{}:
       I.Msg{u, flags, date, size, hs, body, st} = m
-      +fields = M.headers(hs)
+      +fields = evidence(hs)
       sender.fields(Nat.is_eq(C.field_count(fields, "from"), 1n) &&
         C.valid_fields(C.values(fields, False{})), fields)
 
@@ -175,7 +247,7 @@ def item.small(small: Bool, +m: I.Msg, cs: List<&2, C.Contact>,
       Item{m, UnknownPeople{}, OtherOrUnknown{}, ""}
     case True{}:
       I.Msg{u, flags, date, size, hs, body, st} = m
-      +fields = M.headers(hs)
+      +fields = evidence(hs)
       +list_id = M.header(fields, "list-id")
       Item{m, group(bulk(fields), known.sender(sender(m), cs, allowed)),
         delivery(fields, me), list_key(bulk(fields), list_id)}

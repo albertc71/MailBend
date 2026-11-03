@@ -5301,7 +5301,7 @@ def t_contacts(+args: J.Json, +contacts: Bool) -> IO(Policy.Out):
 # ----------------------------
 
 type BriefPage is Data:
-  BriefPage{folder: String, uidv: U32, next: U32, more: Bool, mode: String,
+  BriefPage{folder: String, uidv: U32, next: U32, more: Bool, window: Brief.SelectionWindow,
     messages: List<&2, I.Msg>}
 
 type BriefCount is Data:
@@ -5347,13 +5347,14 @@ def brief_counts_json(xs: List<&2, BriefCount>) -> List<&2, J.Json>:
         J.kv("count", J.num(n))]) <> brief_counts_json(t)
 
 def brief_output(p: BriefPage, +scan: ContactScan, me: String, since: String) -> Shown:
-  BriefPage{folder, uidv, next, more, mode, +ms} = p
+  BriefPage{folder, uidv, next, +more, +window, +ms} = p
   ContactScan{f, v, cs, sampled, complete, reason} = scan
   +senders = Brief.senders(ms)
   +allowed = List.take(&2, String, senders, 50n)
   +items = Brief.items(ms, cs, allowed, String.to_lower(me))
   Listed{ok_obj([J.kv("folder", J.str(folder)), J.kv("uidvalidity", J.num(uidv)),
-    J.kv("mode", J.str(mode)), J.kv("next_since_uid", J.num(next)),
+    J.kv("mode", J.str(Brief.window_mode(window))),
+    J.kv("checkpoint_basis", J.str(Brief.checkpoint_basis(window, more))), J.kv("next_since_uid", J.num(next)),
     J.kv("has_more", J.bool(more)), J.kv("selected_complete", J.bool(True{})),
     J.kv("messages", J.arr(brief_items(items))),
     J.kv("groups", J.arr(brief_counts_json(brief_counts(items, [])))),
@@ -5399,7 +5400,7 @@ def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
           I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
 
 def brief_contacts(+p: BriefPage) -> IO(Shown):
-  BriefPage{folder, uidv, next, more, mode, ms} = p
+  BriefPage{folder, uidv, next, more, window, ms} = p
   do IO<Shown>:
     me : String <- env_or("MAILBEND_EMAIL", "")
     brief_contacts.if(List.is_empty(&2, String, Brief.senders(ms)), p, me)
@@ -5412,46 +5413,66 @@ def brief_headers.complete(complete: Bool, p: BriefPage) -> IO(Shown):
       brief_contacts(p)
 
 def brief_headers(r: Run(), folder: String, +uidv: U32, next: U32, more: Bool,
-  mode: String, +uids: List<&2, U32>) -> IO(Shown):
+  window: Brief.SelectionWindow, +uids: List<&2, U32>) -> IO(Shown):
   match r:
     case Fail{m}:
       pure_shown(Policy.Err{m})
     case Done{+lines}:
-      +ms = fetched_msgs(lines, uids, False{})
+      +ms = new_messages(lines, uids)
       brief_headers.complete(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv) &&
-        Brief.same_uids(Brief.message_uids(ms), uids),
-        BriefPage{folder, uidv, next, more, mode, ms})
+        Brief.same_uids(msg_uids(ms), uids),
+        BriefPage{folder, uidv, next, more, window, ms})
 
-def brief_fetch(uids: List<&2, U32>, +folder: String, +uidv: U32, since: U32,
-  more: Bool, mode: String) -> IO(Shown):
+def brief_fetch(uids: List<&2, U32>, +folder: String, +uidv: U32,
+  +more: Bool, +window: Brief.SelectionWindow) -> IO(Shown):
   match uids:
     case Nil{}:
-      brief_contacts(BriefPage{folder, uidv, since, False{}, mode, []})
+      brief_contacts(BriefPage{folder, uidv,
+        Brief.checkpoint(window, False{}, Brief.window_floor(window)), False{}, window, []})
     case +h <> +t:
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_headers_checked(folder, h <> t, Some{uidv}))
-        brief_headers(r, folder, uidv, last_or(h <> t, since), more, mode, h <> t)
+        brief_headers(r, folder, uidv,
+          Brief.checkpoint(window, more, last_or(h <> t, Brief.window_floor(window))),
+          more, window, h <> t)
 
 def brief_selected(uids: Maybe<&2, List<&2, U32>>, folder: String, uidv: U32,
-  +since: U32, +limit: U32, mode: String) -> IO(Shown):
+  +limit: U32, +window: Brief.SelectionWindow) -> IO(Shown):
   match uids:
     case None{}:
-      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 UIDs; no checkpoint returned"})
+      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 UIDs; no checkpoint returned; capped unseen continuation may exceed this limit when seen mail is included; no lossless brief continuation is currently available for that case"})
     case Some{xs}:
-      +eligible = asc(unseen(above(xs, since), []))
-      brief_fetch(List.take(&2, U32, eligible, U32.to_nat(limit)), folder, uidv, since,
-        Nat.is_gt(List.length(&2, U32, eligible), U32.to_nat(limit)), mode)
+      +eligible = asc(unseen(Brief.window_uids(xs, window), []))
+      brief_fetch(List.take(&2, U32, eligible, U32.to_nat(limit)), folder, uidv,
+        Nat.is_gt(List.length(&2, U32, eligible), U32.to_nat(limit)), window)
+
+def brief_unseen(next: Maybe<&2, U32>, lines: List<&2, I.RLine>, folder: String,
+  uidv: U32, limit: U32) -> IO(Shown):
+  match next:
+    case None{}:
+      pure_shown(Policy.Err{"brief EXAMINE did not report a valid UIDNEXT; no checkpoint returned"})
+    case Some{n}:
+      brief_selected(Await.search(I.replies(lines, 2)), folder, uidv, limit,
+        Brief.UnseenWindow{(n - 1 : U32)})
+
+def brief_window(checkpoint: Bool, +lines: List<&2, I.RLine>, folder: String,
+  uidv: U32, +since: U32, limit: U32) -> IO(Shown):
+  match checkpoint:
+    case False{}:
+      brief_unseen(new_now.code(I.replies(lines, 1), "UIDNEXT"), lines, folder, uidv, limit)
+    case True{}:
+      brief_selected(Bool.pick(Maybe<&2, List<&2, U32>>, U32.is_eq(since, Ops.max_uid()),
+        Some{[]}, Await.search(I.replies(lines, 2))), folder, uidv, limit, Brief.ArrivalWindow{since})
 
 def brief_identity(valid: Bool, lines: List<&2, I.RLine>, folder: String,
-  uidv: U32, +since: U32, limit: U32, mode: String) -> IO(Shown):
+  uidv: U32, since: U32, limit: U32, checkpoint: Bool) -> IO(Shown):
   match valid:
     case False{}:
       pure_shown(Policy.Err{"brief UIDVALIDITY missing or changed; discard the old checkpoint and restart"})
     case True{}:
-      brief_selected(Bool.pick(Maybe<&2, List<&2, U32>>, U32.is_eq(since, Ops.max_uid()),
-        Some{[]}, Await.search(I.replies(lines, 2))), folder, uidv, since, limit, mode)
+      brief_window(checkpoint, lines, folder, uidv, since, limit)
 
-def brief_found(r: Run(), folder: String, since: U32, +known: U32, limit: U32, mode: String)
+def brief_found(r: Run(), folder: String, since: U32, +known: U32, limit: U32, checkpoint: Bool)
   -> IO(Shown):
   match r:
     case Fail{m}:
@@ -5459,7 +5480,7 @@ def brief_found(r: Run(), folder: String, since: U32, +known: U32, limit: U32, m
     case Done{+lines}:
       +v = Maybe.default(&2, U32, positive(I.ok_code(lines, "UIDVALIDITY")), 0)
       brief_identity(Bool.not(U32.is_zero(v)) &&
-        (U32.is_zero(known) || U32.is_eq(known, v)), lines, folder, v, since, limit, mode)
+        (U32.is_zero(known) || U32.is_eq(known, v)), lines, folder, v, since, limit, checkpoint)
 
 def brief_start(valid: Bool, +args: J.Json, +checkpoint: Bool, +since: U32, limit: U32)
   -> IO(Shown):
@@ -5471,7 +5492,7 @@ def brief_start(valid: Bool, +args: J.Json, +checkpoint: Bool, +since: U32, limi
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_brief(folder, checkpoint, since))
         brief_found(r, folder, since, uidv_arg(args), limit,
-          Bool.pick(String, checkpoint, "arrivals", "unseen"))
+          checkpoint)
 
 def t_brief(+args: J.Json) -> IO(Shown):
   +since = u32_arg(args, "since_uid", 0)
