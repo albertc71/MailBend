@@ -6,7 +6,6 @@ import ../../src/json.bend as J
 import ../../src/schema.bend as Schema
 import ../../src/tools.bend as T
 import ../../src/ops.bend as Ops
-import ../../src/mcp-protocol.bend as MCP
 
 def equal(a: String, b: String, ok: Bool) -> Bool:
   match a b:
@@ -28,8 +27,7 @@ def same(+names: List<&2, String>) -> Bool:
 def envelope(+parsed: J.Json, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
   +names = Ops.listed_names(Ops.all_ops(), ro, drafts, jev)
   +id = J.str("quote\"\\\nline")
-  original = Main.rpc_result(id, MCP.cacheable_result(False{},
-    J.obj([J.kv("tools", Main.tools_for(True{}, T.offered_in(parsed, names)))]), Main.version()))
+  original = Main.parsed_listed_result(False{}, True{}, id, T.offered_in(parsed, names))
   equal(Main.listed_result(id, names), original, True{})
 
 def main() -> IO(Unit):

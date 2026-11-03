@@ -298,12 +298,11 @@ all memory, reply and latency gates. Startup-to-first-reply time and RSS are
 reported separately, so moving work to initialization is visible. A reference
 timeout is reported as incomplete evidence, not a successful full workload;
 any candidate failure fails the comparison. Reports stay in the job log.
-The workflow runs when its comparison driver changes and can be dispatched
-manually with a baseline commit. A single matched run does not establish
-performance across all machines or long-lived sessions.
+A single matched run does not establish performance across all machines or
+long-lived sessions.
 
-The automatic path filter covers only the comparison workflow and its driver
-and control tests. Edits to `main.bend`, `src/tools.bend`, or the generated
+The automatic pull-request path filter covers only the comparison workflow
+and its driver and control tests; pushes to `main` do not trigger it. Edits to `main.bend`, `src/tools.bend`, or the generated
 selector alone do not trigger it. When a later measured-code change needs fresh
 performance evidence, run the workflow manually, selecting the candidate
 branch/ref and an explicit reference commit in the `baseline` input. Retain
