@@ -35,15 +35,22 @@ env:
 jobs:
   source-checks:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Secret scan (gitleaks, redacted; tree and history)
+        if: matrix.runner == 'ubuntu-24.04'
         run: sh scripts/scan-secrets.sh
+      - name: Toolchain installer platform and checksum gates
+        run: python3 tests/test-toolchain-installers.py
       - name: Documentation source names and drift mutations
         run: |
           python3 scripts/check-docs.py
@@ -135,8 +142,12 @@ jobs:
   # mutation checks (Bend only) run beside source-checks, not after it.
   proofs:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -196,12 +207,13 @@ jobs:
         run: python3 tests/formal/check-plan-wire-mutations.py
   runtime:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       max-parallel: 3
       matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
         suite:
           - cli
           - mcp
@@ -221,7 +233,7 @@ jobs:
       - name: Install result-schema test dependency
         run: python3 -m pip install jsonschema==4.26.0
       - name: Install Rust 1.99 (native/rust-toolchain.toml)
-        run: rustup toolchain install 1.99 --profile minimal
+        run: sh scripts/install-rust.sh
       - name: Install Bend
         run: |
           sh scripts/install-bend.sh
@@ -265,17 +277,21 @@ jobs:
           python3 tests/test-scheduled-recipes.py
   rust:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     defaults:
       run:
         working-directory: native
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Install Rust 1.99 (the MSRV, native/rust-toolchain.toml)
-        run: rustup toolchain install 1.99 --profile minimal --component clippy,rustfmt
+        run: sh ../scripts/install-rust.sh
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

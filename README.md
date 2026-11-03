@@ -210,7 +210,8 @@ running MCP server keeps running; restart it so its core matches the new
 helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
 the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
-pins only the Linux x64 archive. Elsewhere, install the same Bend version yourself.
+pins Linux x86_64 and aarch64 archives, each with its own checksum.
+Other operating systems and architectures are refused.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
@@ -1000,7 +1001,7 @@ before relying on a complete link.
 For failed calls, provider limits, concurrency, upgrades, and rollback, use
 the [operator runbook](docs/OPERATIONS.md).
 
-- Linux only (file access through `openat2` needs Linux 5.6+), with
+- Linux x86_64 and aarch64 only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit
   TLS; no OAuth. Only the existing iCloud STARTTLS profile is live-tested.
 - The compiled Bend core needs glibc 2.34 or newer. The installer checks this

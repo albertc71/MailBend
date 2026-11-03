@@ -34,8 +34,10 @@ discuss larger changes before writing them.
 
 ## Checks
 
-Run these before opening a pull request. CI runs the same on Linux x64,
-plus `cargo deny check`, a fuzz smoke run and the source checks in
+Run these before opening a pull request. CI runs proofs, unit tests, runtime suites and Rust checks on Linux x86_64
+and aarch64 (Linux 5.6+ and glibc 2.34+). Fuzzing, the dedicated mutations job and the
+secret scan stay on x86_64. Both architectures run `cargo deny check` and
+the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
 need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
 schema checks need Python `jsonschema` (`python3 -m pip install jsonschema==4.26.0`).
@@ -242,9 +244,9 @@ checkout credential.
    toolchain. The canary does this with an empty home and a failing Lean shim.
    If the diagnostic format changes, update and test the discovery step.
    Do not guess the version or remove the proven-kernel check.
-5. When the candidate checks pass, update `BEND_VERSION` and `BEND_SHA256`
-   together in `scripts/install-bend.sh`. Verify the downloaded Linux x64
-   archive against the official release digest. Set `LEAN_TOOLCHAIN` in
+5. When the candidate checks pass, update `BEND_VERSION` and both architecture-specific `BEND_SHA256`
+   values together in `scripts/install-bend.sh`. Verify the downloaded Linux
+   x86_64 and aarch64 archives against their official release digests. Set `LEAN_TOOLCHAIN` in
    `scripts/install-lean.sh` to the version the candidate requests.
 6. Run every [contributor check](#checks) on the proposed pins, including
    `bend PROOF.bend --verdict`. Require `ALL PROOFS CHECK`. Run normal CI on
