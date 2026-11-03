@@ -11364,3 +11364,117 @@ def tool_defs() -> String:
     tool_defs.mail_send(),
     tool_defs.mail_reply(),
     tool_defs.mail_forward()], ",") ++ "]"
+
+# Select only known generated definitions, in schema order.
+def tool_defs.named(name: String) -> String:
+  match name:
+    case "mail_probe":
+      tool_defs.mail_probe()
+    case "mail_list_folders":
+      tool_defs.mail_list_folders()
+    case "mail_search":
+      tool_defs.mail_search()
+    case "mail_get":
+      tool_defs.mail_get()
+    case "mail_get_new":
+      tool_defs.mail_get_new()
+    case "mail_brief":
+      tool_defs.mail_brief()
+    case "mail_refresh":
+      tool_defs.mail_refresh()
+    case "mail_get_thread":
+      tool_defs.mail_get_thread()
+    case "mail_awaiting_reply":
+      tool_defs.mail_awaiting_reply()
+    case "mail_contacts":
+      tool_defs.mail_contacts()
+    case "mail_correspondents":
+      tool_defs.mail_correspondents()
+    case "mail_classify":
+      tool_defs.mail_classify()
+    case "mail_triage":
+      tool_defs.mail_triage()
+    case "mail_get_attachment":
+      tool_defs.mail_get_attachment()
+    case "mail_mark_read":
+      tool_defs.mail_mark_read()
+    case "mail_mark_unread":
+      tool_defs.mail_mark_unread()
+    case "mail_flag":
+      tool_defs.mail_flag()
+    case "mail_unflag":
+      tool_defs.mail_unflag()
+    case "mail_move":
+      tool_defs.mail_move()
+    case "mail_label":
+      tool_defs.mail_label()
+    case "mail_trash":
+      tool_defs.mail_trash()
+    case "mail_delete":
+      tool_defs.mail_delete()
+    case "mail_create_folder":
+      tool_defs.mail_create_folder()
+    case "mail_rename_folder":
+      tool_defs.mail_rename_folder()
+    case "mail_save_draft":
+      tool_defs.mail_save_draft()
+    case "mail_send":
+      tool_defs.mail_send()
+    case "mail_reply":
+      tool_defs.mail_reply()
+    case "mail_forward":
+      tool_defs.mail_forward()
+    case _:
+      ""
+
+def tool_defs.contains(+name: String, names: List<&2, String>) -> Bool:
+  match names:
+    case Nil{}:
+      False{}
+    case h <> t:
+      String.eq(name, h) || tool_defs.contains(name, t)
+
+def tool_defs.select(keep: Bool, name: String, rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      tool_defs.named(name) <> rest
+    case False{}:
+      rest
+
+def tool_defs.selected(all: List<&2, String>, +names: List<&2, String>) -> List<&2, String>:
+  match all:
+    case Nil{}:
+      []
+    case +h <> t:
+      tool_defs.select(tool_defs.contains(h, names), h, tool_defs.selected(t, names))
+
+def tool_defs_for(names: List<&2, String>) -> String:
+  "[" ++ String.join(tool_defs.selected([
+    "mail_probe",
+    "mail_list_folders",
+    "mail_search",
+    "mail_get",
+    "mail_get_new",
+    "mail_brief",
+    "mail_refresh",
+    "mail_get_thread",
+    "mail_awaiting_reply",
+    "mail_contacts",
+    "mail_correspondents",
+    "mail_classify",
+    "mail_triage",
+    "mail_get_attachment",
+    "mail_mark_read",
+    "mail_mark_unread",
+    "mail_flag",
+    "mail_unflag",
+    "mail_move",
+    "mail_label",
+    "mail_trash",
+    "mail_delete",
+    "mail_create_folder",
+    "mail_rename_folder",
+    "mail_save_draft",
+    "mail_send",
+    "mail_reply",
+    "mail_forward"], names), ",") ++ "]"

@@ -43,7 +43,7 @@
     },
     {
       "path": "native/deny.toml",
-      "sha256": "8d674480e8f8caec7ea9d626447d64de984b1ece2604404ad8e0e6cbf8f2b9cc"
+      "sha256": "fc2fac4048fd9fac061f14d4bcc2d52532c0c4df980ec5a763cac763c93c0385"
     },
     {
       "path": "native/fuzz/.gitignore",

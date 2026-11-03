@@ -1767,6 +1767,27 @@ def new_messages.finish(
       oldest_first(List.append(&2, I.Msg, ms,
         new_empty.unique(requested(new_empty.lines(lines), uids), msg_uids(ms))))
 
+# Keep the post-fallback missing set with the messages for cursor validation.
+type NewCoverage is Data:
+  NewCoverage{messages: List<&2, I.Msg>, missing: List<&2, U32>}
+
+def new_messages.coverage_finish(
+  missing: List<&2, U32>, +lines: List<&2, I.RLine>,
+  +uids: List<&2, U32>, +ms: List<&2, I.Msg>
+) -> NewCoverage:
+  match missing:
+    case Nil{}:
+      NewCoverage{ms, []}
+    case _:
+      +all = new_messages.finish(missing, lines, uids, ms)
+      NewCoverage{all, unseen(uids, msg_uids(all))}
+
+def new_messages.coverage(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> NewCoverage:
+  +ms = fetched_msgs(lines, uids, False{})
+  new_messages.coverage_finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
+
+# Brief computes the missing set once to select the fallback, then checks
+# exact UID sequence equality; it does not need a post-fallback missing set.
 def new_messages(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
   +ms = fetched_msgs(lines, uids, False{})
   new_messages.finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
@@ -1787,6 +1808,11 @@ def new_headers.complete(
     case h <> t:
       Listed{Policy.Err{"FETCH did not return every requested message; retry the same checkpoint"}, []}
 
+def new_headers.coverage(coverage: NewCoverage, folder: String, uidv: U32,
+  next: U32, more: Bool) -> Shown:
+  NewCoverage{ms, missing} = coverage
+  new_headers.complete(missing, ms, folder, uidv, next, more)
+
 def new_headers.if(
   same: Bool,
   lines: List<&2, I.RLine>,
@@ -1799,8 +1825,7 @@ def new_headers.if(
 ) -> Shown:
   match same:
     case True{}:
-      +ms = new_messages(lines, uids)
-      new_headers.complete(unseen(uids, msg_uids(ms)), ms, folder, uidv, next, more)
+      new_headers.coverage(new_messages.coverage(lines, uids), folder, uidv, next, more)
     case False{}:
       Listed{new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, []), []}
 
@@ -9039,12 +9064,16 @@ def offered_in(ts: J.Json, names: List<&2, String>) -> J.Json:
     case _:
       ts
 
-def offered_for(ts: J.Json, c: Policy.Config) -> J.Json:
+# Both parsed and generated-JSON listings use this same fail-closed policy.
+def offered_names(c: Policy.Config) -> List<&2, String>:
   match c:
     case Policy.Config{ro, drafts, jev, images}:
-      offered_in(ts, Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev)))
+      Ops.listed_names(Ops.all_ops(), ro, drafts, Jev.is_on(jev))
     case Policy.ConfigBad{msg}:
-      offered_in(ts, Ops.listed_names(Ops.all_ops(), True{}, False{}, False{}))
+      Ops.listed_names(Ops.all_ops(), True{}, False{}, False{})
+
+def offered_for(ts: J.Json, c: Policy.Config) -> J.Json:
+  offered_in(ts, offered_names(c))
 
 # The tool definitions `ts` (a JSON array) that this configuration offers.
 def offered_tools(ts: J.Json) -> IO(J.Json):

@@ -34,8 +34,10 @@ discuss larger changes before writing them.
 
 ## Checks
 
-Run these before opening a pull request. CI runs the same on Linux x64,
-plus `cargo deny check`, a fuzz smoke run and the source checks in
+Run these before opening a pull request. CI runs proofs, unit tests, runtime suites and Rust checks on Linux x86_64
+and aarch64 (Linux 5.6+ and glibc 2.34+). Fuzzing, the dedicated mutations job and the
+secret scan stay on x86_64. Both architectures run `cargo deny check` and
+the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
 need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
 schema checks need Python `jsonschema` (`python3 -m pip install jsonschema==4.26.0`).
@@ -65,6 +67,7 @@ python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UI
 sh tests/run-unit.sh
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
+python3 tests/test-mcp-schema-comparison.py        # bounded comparison startup and descendant cleanup
 python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
 python3 tests/test-scale-baseline.py               # historical selected baselines match apparatus
 python3 -I tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls
@@ -244,9 +247,9 @@ checkout credential.
    toolchain. The canary does this with an empty home and a failing Lean shim.
    If the diagnostic format changes, update and test the discovery step.
    Do not guess the version or remove the proven-kernel check.
-5. When the candidate checks pass, update `BEND_VERSION` and `BEND_SHA256`
-   together in `scripts/install-bend.sh`. Verify the downloaded Linux x64
-   archive against the official release digest. Set `LEAN_TOOLCHAIN` in
+5. When the candidate checks pass, update `BEND_VERSION` and both architecture-specific `BEND_SHA256`
+   values together in `scripts/install-bend.sh`. Verify the downloaded Linux
+   x86_64 and aarch64 archives against their official release digests. Set `LEAN_TOOLCHAIN` in
    `scripts/install-lean.sh` to the version the candidate requests.
 6. Run every [contributor check](#checks) on the proposed pins, including
    `bend PROOF.bend --verdict`. Require `ALL PROOFS CHECK`. Run normal CI on
@@ -304,13 +307,17 @@ must not exceed three times the first tenth's p95. Latency includes queueing
 from the burst write; both comparison windows have the same request mix.
 The short run has a 180-second request budget, the long run 1,800 seconds,
 plus bounded setup and shutdown. A missing reply fails after 30 seconds even
-when the total budget remains. One hosted short run passed in 168.99 seconds;
-an earlier run timed out at 180 seconds. These observations leave limited
-headroom and do not establish a reliable flake rate or its cause. The workload
-and all acceptance bounds remain unchanged.
-CI runs it in a separate required runtime matrix lane, allowing four lanes in
-parallel rather than adding serial work to MCP scenarios. This adds a build
-but does not guarantee a particular overall CI duration. JSON output records the RSS curve, p50/p95,
+when the total budget remains. Earlier hosted runs approached or exceeded
+180 seconds. A [matched x86-64 comparison](https://github.com/albertc71/MailBend/actions/runs/41594093738)
+after generated tool-list emission completed in 115.14/114.49 seconds versus
+160.23/155.12 seconds for its reference, with the workload and all bounds
+unchanged. Two short runs do not establish a universal flake rate or ARM
+performance; both architectures must pass their own required lane.
+CI runs four separate required runtime lanes per architecture, allowing all
+eight matrix entries in parallel rather than serializing soak after MCP
+scenarios. Runner availability can still cause queueing. This adds a build per
+architecture but does not guarantee a particular overall CI duration. JSON
+output records the RSS curve, p50/p95,
 drift ratio and elapsed time. Both success and failure output include counts
 and reply-gap summaries by fixed synthetic operation. Gaps span consecutive
 replies within a burst (the first starts at the burst write); they help locate

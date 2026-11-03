@@ -1041,6 +1041,27 @@ def tool_list_def(tools):
             f'    {calls}], ",") ++ "]"\n')
 
 
+def selected_tool_list_def(tools):
+    """Select trusted definitions in canonical schema order, without parsing."""
+    cases = "\n".join(f'    case "{entry["name"]}":\n      {def_name(entry)}()'
+                      for entry in tools)
+    names = ",\n    ".join(json.dumps(entry["name"]) for entry in tools)
+    return ("# Select only known generated definitions, in schema order.\n"
+            "def tool_defs.named(name: String) -> String:\n"
+            "  match name:\n" + cases + '\n    case _:\n      ""\n\n'
+            "def tool_defs.contains(+name: String, names: List<&2, String>) -> Bool:\n"
+            "  match names:\n    case Nil{}:\n      False{}\n"
+            "    case h <> t:\n      String.eq(name, h) || tool_defs.contains(name, t)\n\n"
+            "def tool_defs.select(keep: Bool, name: String, rest: List<&2, String>) -> List<&2, String>:\n"
+            "  match keep:\n    case True{}:\n      tool_defs.named(name) <> rest\n"
+            "    case False{}:\n      rest\n\n"
+            "def tool_defs.selected(all: List<&2, String>, +names: List<&2, String>) -> List<&2, String>:\n"
+            "  match all:\n    case Nil{}:\n      []\n"
+            "    case +h <> t:\n      tool_defs.select(tool_defs.contains(h, names), h, tool_defs.selected(t, names))\n\n"
+            "def tool_defs_for(names: List<&2, String>) -> String:\n"
+            '  "[" ++ String.join(tool_defs.selected([\n    ' + names + '], names), ",") ++ "]"\n')
+
+
 def render(tools):
     """The whole src/schema.bend text."""
     # Share repeated literal ASTs, not JSON schema objects: every emitted byte
@@ -1055,7 +1076,7 @@ def render(tools):
             shared[piece] = f"schema_piece.p{len(shared):04d}"
     defs = [f'def {name}() -> String:\n  "{escaped(piece)}"\n'
             for piece, name in shared.items()]
-    defs += [tool_def(entry, shared) for entry in tools] + [tool_list_def(tools)]
+    defs += [tool_def(entry, shared) for entry in tools] + [tool_list_def(tools), selected_tool_list_def(tools)]
     return HEADER + "".join("\n" + d for d in defs)
 
 

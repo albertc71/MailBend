@@ -397,3 +397,31 @@ Two required workloads failed on their first attempt and were not repeated:
 The overall result is **incomplete**. It cannot be promoted to the committed
 baseline, cannot pass the comparison gate, and does not close issue #140.
 No successful 16/25 MiB capacity claim or ARM extrapolation follows from it.
+
+### Reviewed candidate installer migration (#148)
+
+The fixed reference remains `8ae04b1b3c773d14dea78e167e0047adab1e7cb5`.
+Candidate preflight accepts either the complete original Bend/Rust/Lean helper
+hash tuple or the complete tuple reviewed in #258 at
+`b00464bda8bb70f9238036301242eb6df5131f99`. Mixed tuples and all other helper
+bytes fail closed. The literal path-ordered hashes are in `scale_pair.py`.
+This separate policy change does not admit a moving branch or derive approved
+hashes dynamically from candidate files. The checker runs from the candidate
+tree, so any change to `scale_pair.py` or its allow-list is itself a reviewed
+policy change, not enforcement by a separately trusted checker. The scale PR
+workflow triggers on that path. Future migrations need their own reviewed change.
+
+The reference helpers, both launchers, both `install.sh` files and all frozen
+measurement files retain their original exact-byte checks. The paired job stays
+on the standard x86-64 runner, installs Bend from the verified reference helper,
+and builds both source trees with unflagged `install.sh`. Candidate ARM helper
+code is admitted source, not an alternative paired toolchain setup. The x86-64
+release pins are unchanged in #258. This is not ARM scale validation or a claim
+of separately attested compiler binary identities. All 35 pairs, absolute
+limits and the 1.25 median paired ratio gate remain unchanged.
+
+Synthetic preflight controls exercise both tuple choices and reject mixed,
+mutated, misplaced, reference-side, linked, missing and dirty-source cases.
+Their synthetic approved tuple tests policy behavior; independent review of
+the three published helper blobs establishes the real tuple's provenance.
+The literal tuple assertion is a pin-change alarm, not that provenance proof.

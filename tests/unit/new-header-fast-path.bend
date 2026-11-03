@@ -15,19 +15,48 @@ def uid_list(ms: List<&2, I.Msg>) -> String:
     case m <> t:
       U32.show(T.msg_uid(m)) ++ "," ++ uid_list(t)
 
-def count(raw: String, uids: List<&2, U32>) -> String:
+def uids_from(raw: String, uids: List<&2, U32>) -> String:
   uid_list(T.new_messages(I.frame(raw), uids))
+
+def missing_uids(xs: List<&2, U32>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case x <> t:
+      U32.show(x) ++ "," ++ missing_uids(t)
+
+def coverage.show(result: T.NewCoverage) -> String:
+  T.NewCoverage{ms, missing} = result
+  uid_list(ms) ++ " missing=" ++ missing_uids(missing)
+
+def coverage(raw: String, uids: List<&2, U32>) -> String:
+  coverage.show(T.new_messages.coverage(I.frame(raw), uids))
 
 def main() -> IO(Unit):
   do IO<Unit>:
     # Complete normal path, including an unsolicited and duplicate response.
-    IO.print(count(header(4) ++ header(9) ++ header(9) ++ header(99), [4, 9]))
+    IO.print(uids_from(header(4) ++ header(9) ++ header(9) ++ header(99), [4, 9]))
     # Mixed normal/empty path must retain the fallback for missing UIDs.
-    IO.print(count(header(4) ++ empty_header(9), [4, 9]))
+    IO.print(uids_from(header(4) ++ empty_header(9), [4, 9]))
     # Missing data remains missing; no cursor-safe message is fabricated.
-    IO.print(count(header(4), [4, 9]))
+    IO.print(uids_from(header(4), [4, 9]))
+    IO.print(coverage(header(4) ++ header(9), [4, 9]))
+    IO.print(coverage(header(4) ++ empty_header(9), [4, 9]))
+    IO.print(coverage(header(4), [4, 9]))
+    IO.print(coverage("", []))
+    IO.print(coverage(header(4), [4, 4]))
+    IO.print(coverage(empty_header(4), [4, 4, 9]))
+    # The fallback may fill one UID while another remains missing.
+    IO.print(coverage(header(4) ++ empty_header(9), [4, 9, 12]))
     return Unit{}
 
 #|4,9,
 #|4,9,
 #|4,
+#|4,9, missing=
+#|4,9, missing=
+#|4, missing=9,
+#| missing=
+#|4, missing=
+#|4, missing=9,
+#|4,9, missing=12,

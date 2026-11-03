@@ -12,6 +12,36 @@ Do not register `bin/mailbend-core` directly: the pinned Bend runtime reopens
 `/dev/stdin`, which fails with `ENXIO` on socket-backed input.
 That failure exits with code 6 and directs you to `scripts/mailbend mcp`.
 
+Structured legacy `tools/list` replies select trusted generated JSON definitions
+using the same current policy as the parsed listing path. Only generated schema
+bytes enter that tools/list-specific envelope; request IDs are JSON-encoded.
+No parsed schema or filtered response is retained between requests. Modern and
+older legacy projections retain the original parsed-schema path. CLI listing
+and tool-call validation are unchanged.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Serve
+    Serve --> Select: structured legacy tools/list
+    Select --> Emit: current policy selects generated definitions
+    Emit --> Serve: encode ID and send reply
+    Serve --> Parsed: modern or older legacy tools/list
+    Parsed --> Serve: filter and project original schema
+    Serve --> Closed: EOF or framing limit
+    Closed --> [*]
+```
+
+The `MCP schema comparison` workflow builds a reference and candidate on the
+same standard Linux runner, then runs two alternating pairs of the immutable
+500-request short soak from PR #257. Both retain its 180-second deadline and
+all memory, reply and latency gates. Startup-to-first-reply time and RSS are
+reported separately, so moving work to initialization is visible. A reference
+timeout is reported as incomplete evidence, not a successful full workload;
+any candidate failure fails the comparison. Reports stay in the job log.
+The workflow runs when its comparison driver changes and can be dispatched
+manually with a baseline commit. A single matched run does not establish
+performance across all machines or long-lived sessions.
+
 Modern requests include `params._meta` with
 `io.modelcontextprotocol/protocolVersion: "2026-07-28"` and
 `io.modelcontextprotocol/clientCapabilities: {}`. Client identity is optional.

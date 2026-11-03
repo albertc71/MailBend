@@ -186,6 +186,34 @@ def call_tool(modern: Bool, structured: Bool, id: J.Json, +params: J.Json) -> IO
   args = object_or_empty(J.get(params, "arguments"))
   run_tool(modern, structured, id, Policy.str_arg(params, "name", ""), args)
 
+# Only generated schema bytes enter this tools/list-specific envelope. The
+# untrusted request ID is always JSON-encoded; no request text is spliced in.
+def listed_result(id: J.Json, names: List<&2, String>) -> String:
+  "{\"jsonrpc\":\"2.0\",\"id\":" ++ J.show(id) ++
+  ",\"result\":{\"tools\":" ++ Schema.tool_defs_for(names) ++ "}}"
+
+def list_tools.parsed(modern: Bool, structured: Bool, id: J.Json) -> IO(Unit):
+  do IO<Unit>:
+    ts : J.Json <- offered_tools()
+    IO.print(rpc_result(id, MCP.cacheable_result(modern,
+      J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
+
+def list_tools.legacy(structured: Bool, id: J.Json) -> IO(Unit):
+  match structured:
+    case True{}:
+      do IO<Unit>:
+        c : Policy.Config <- T.config()
+        IO.print(listed_result(id, T.offered_names(c)))
+    case False{}:
+      list_tools.parsed(False{}, False{}, id)
+
+def list_tools(modern: Bool, structured: Bool, id: J.Json) -> IO(Unit):
+  match modern:
+    case True{}:
+      list_tools.parsed(True{}, structured, id)
+    case False{}:
+      list_tools.legacy(structured, id)
+
 # Requests
 # --------
 
@@ -197,10 +225,7 @@ def respond(
     case "tools/call":
       call_tool(modern, structured, id, params)
     case "tools/list":
-      do IO<Unit>:
-        ts : J.Json <- offered_tools()
-        IO.print(rpc_result(id, MCP.cacheable_result(modern,
-          J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
+      list_tools(modern, structured, id)
     case "server/discover":
       IO.print(rpc_result(id, MCP.cacheable_result(True{}, J.obj([
         J.kv("supportedVersions", MCP.versions()),

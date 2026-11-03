@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -223,6 +224,138 @@ class PairTests(unittest.TestCase):
         with mock.patch.object(pair, "git", return_value=b"wrong\n"):
             with self.assertRaisesRegex(ValueError, "wrong source SHA"):
                 pair.preflight(ROOT, ROOT.parent / "other", "a" * 40)
+
+    def test_complete_installer_migration_through_real_preflight(self):
+        # Keep filesystem validation, source hashing and preflight real. Only Git
+        # metadata and the reviewed new tuple use small synthetic fixtures here.
+        names = ("scripts/mailbend", *pair.INSTALLERS)
+        original = {name: (ROOT / name).read_bytes() for name in names}
+        revised = {name: original[name] + b"\n# synthetic reviewed revision\n"
+                   for name in pair.INSTALLERS[1:]}
+        allowed = tuple(pair.sha(revised[name]) for name in pair.INSTALLERS[1:])
+        for case in ("old", "new", "mixed", "reference-new", "wrong-path",
+                     "changed-bend", "changed-rust", "changed-lean",
+                     "launcher-reference", "launcher-candidate", "install-reference",
+                     "install-candidate", "apparatus-reference", "apparatus-candidate",
+                     "missing", "symlink", "hardlink", "dirty", "wrong-head", "wrong-tag"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                roots = tuple(pathlib.Path(tmp) / side for side in pair.SIDES)
+                for root in roots:
+                    for name in (*pair.PINNED, *names):
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes((ROOT / name).read_bytes())
+                for name, data in revised.items():
+                    if case != "old":
+                        (roots[1] / name).write_bytes(data)
+                if case == "mixed":
+                    (roots[1] / pair.INSTALLERS[1]).write_bytes(original[pair.INSTALLERS[1]])
+                elif case == "reference-new":
+                    (roots[0] / pair.INSTALLERS[1]).write_bytes(revised[pair.INSTALLERS[1]])
+                elif case == "wrong-path":
+                    (roots[1] / pair.INSTALLERS[1]).write_bytes(revised[pair.INSTALLERS[2]])
+                elif case.startswith("changed-"):
+                    name = "scripts/install-" + case.split("-")[1] + ".sh"
+                    (roots[1] / name).write_bytes(revised[name] + b"x")
+                elif case.startswith(("launcher-", "install-", "apparatus-")):
+                    kind, side = case.split("-")
+                    name = {"launcher": "scripts/mailbend", "install": "scripts/install.sh",
+                            "apparatus": "tests/test-scale.py"}[kind]
+                    (roots[pair.SIDES.index(side)] / name).write_bytes(b"changed")
+                elif case in ("missing", "symlink", "hardlink"):
+                    path = roots[1] / pair.INSTALLERS[1]
+                    path.unlink()
+                    if case in ("symlink", "hardlink"):
+                        # Keep accepted revised bytes: bypassing regular() must
+                        # not get caught incidentally by the mixed-tuple gate.
+                        target = pathlib.Path(tmp) / "revised-bend.sh"
+                        target.write_bytes(revised[pair.INSTALLERS[1]])
+                        if case == "symlink":
+                            path.symlink_to(target)
+                        else:
+                            path.hardlink_to(target)
+                def git(root, *args):
+                    if args == ("rev-parse", "HEAD"):
+                        return ("0" * 40 if case == "wrong-head" else
+                                pair.REFERENCE_SHA if root == roots[0] else "a" * 40).encode()
+                    if args[0] == "status":
+                        return b" M tracked" if case == "dirty" else b""
+                    if args[0] == "rev-parse":
+                        return ("0" * 40 if case == "wrong-tag" else pair.REFERENCE_SHA).encode()
+                    self.assertEqual(args[0], "show")
+                    return original[args[1].split(":", 1)[1]]
+                with mock.patch.object(pair, "git", side_effect=git), \
+                        mock.patch.object(pair, "CANDIDATE_HELPER_TUPLE", allowed):
+                    if case in ("old", "new"):
+                        self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                    elif case == "missing":
+                        with self.assertRaises(FileNotFoundError):
+                            pair.preflight(*roots, "a" * 40)
+                    else:
+                        expected = {
+                            "mixed": "not a reviewed complete revision",
+                            "wrong-path": "not a reviewed complete revision",
+                            "changed-bend": "not a reviewed complete revision",
+                            "changed-rust": "not a reviewed complete revision",
+                            "changed-lean": "not a reviewed complete revision",
+                            "reference-new": "fixed launcher/installer changed",
+                            "launcher-reference": "fixed launcher/installer changed",
+                            "launcher-candidate": "fixed launcher/installer changed",
+                            "install-reference": "fixed launcher/installer changed",
+                            "install-candidate": "fixed launcher/installer changed",
+                            "apparatus-reference": "apparatus changed",
+                            "apparatus-candidate": "apparatus changed",
+                            "symlink": "symlink forbidden",
+                            "hardlink": "not an unaliased regular file",
+                            "dirty": "tracked source is dirty",
+                            "wrong-head": "wrong source SHA",
+                            "wrong-tag": "reference tag does not resolve",
+                        }[case]
+                        with self.assertRaisesRegex(ValueError, expected):
+                            pair.preflight(*roots, "a" * 40)
+
+    def test_reviewed_installer_tuple_is_literal_and_path_ordered(self):
+        self.assertEqual(pair.INSTALLERS[1:], ("scripts/install-bend.sh",
+                         "scripts/install-rust.sh", "scripts/install-lean.sh"))
+        self.assertEqual(pair.CANDIDATE_HELPER_TUPLE, (
+            "57c7d071b6f0155c69058a883e83b97f6a76a17d438d9cce1d2b870576c2af1b",
+            "0396875e0f8c09599c9badbe4fbde259b61138308977835fbf0c8b4c198c7a17",
+            "4b30ca5f48136b481243ea0c819c970563e13e96ef660b8bd7ad8c738ce14374"))
+
+    def test_paired_setup_uses_reference_toolchain_and_unflagged_builds(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        def check(text):
+            # Anchor to the actual two-space job, never workflow_call.inputs.scale.
+            job = re.split(r"(?m)^  scale:\s*$", text)[1]
+            job = re.split(r"(?m)^  [a-zA-Z][a-zA-Z0-9_-]*:\s*$", job)[0]
+            self.assertRegex(job, r"(?m)^    runs-on: ubuntu-24\.04$")
+            setup = job.split("- name: Install the verified pinned Bend toolchain", 1)[1]
+            setup = setup.split("      - name:", 1)[0]
+            shell = setup.split("        run: |\n", 1)[1]
+            script = "\n".join(line[10:] for line in shell.splitlines())
+            for mode, expected in (("false", "reference"), ("true", "candidate")):
+                with tempfile.TemporaryDirectory() as tmp:
+                    # Execute control flow but intercept installer execution.
+                    stub = 'sh() { printf "%s\\n" "$*"; };\n'
+                    result = subprocess.run(["bash", "-eu", "-c", stub + script],
+                        env={**os.environ, "RECORD_SCALE": mode,
+                             "GITHUB_PATH": str(pathlib.Path(tmp) / "path")},
+                        text=True, capture_output=True, timeout=2)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(),
+                                     [expected + "/scripts/install-bend.sh"])
+            self.assertEqual(job.count("run: reference/scripts/install.sh\n"), 1)
+            self.assertEqual(job.count("run: candidate/scripts/install.sh\n"), 1)
+        check(workflow)
+        actual_job = workflow.index("\n  scale:\n")
+        for mutation in (workflow[:actual_job] + workflow[actual_job:].replace(
+                            "runs-on: ubuntu-24.04", "runs-on: ubuntu-24.04-arm", 1),
+                         workflow.replace("sh reference/scripts/install-bend.sh",
+                            "sh reference/scripts/install-bend.sh\n            sh candidate/scripts/install-bend.sh"),
+                         workflow.replace("run: candidate/scripts/install.sh\n",
+                            "run: candidate/scripts/install.sh --install-bend\n")):
+            with self.assertRaises(AssertionError):
+                check(mutation)
 
     def test_isolated_cli_ignores_ambient_imports_before_preflight(self):
         with tempfile.TemporaryDirectory() as temp:
