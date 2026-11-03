@@ -1786,8 +1786,8 @@ def new_messages.coverage(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> Ne
   +ms = fetched_msgs(lines, uids, False{})
   new_messages.coverage_finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
 
-# Brief needs exact UID sequence equality, so keep its existing path and avoid
-# computing the missing set a second time there.
+# Brief computes the missing set once to select the fallback, then checks
+# exact UID sequence equality; it does not need a post-fallback missing set.
 def new_messages(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
   +ms = fetched_msgs(lines, uids, False{})
   new_messages.finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
