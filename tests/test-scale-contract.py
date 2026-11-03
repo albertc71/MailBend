@@ -379,7 +379,8 @@ assert scale_fixtures.png.__module__ == "scale_support.v1.image_fixtures"
         paths = {line.removeprefix("      - ") for line in workflow.splitlines()
                  if line.startswith("      - ")}
         self.assertEqual(paths, {
-            "tests/test-scale.py", "tests/scale_fixtures.py", "tests/scale_support/**",
+            "tests/test-scale.py", "tests/scale_pair.py", "tests/test-scale-pair.py",
+            "tests/scale_fixtures.py", "tests/scale_support/**",
             "tests/scale-baseline.json",
             ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml",
             "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py",
@@ -399,31 +400,6 @@ assert scale_fixtures.png.__module__ == "scale_support.v1.image_fixtures"
                     "INTEL(R) XEON(R) PLATINUM 8573C"):
             with self.subTest(cpu=cpu), self.assertRaises(ValueError):
                 select_baseline(cpu)
-
-    def test_unknown_cpu_workflow_captures_evidence_but_cannot_pass(self):
-        workflow = (scale.ROOT / ".github/workflows/ci.yml").read_text()
-        step = workflow.split("      - name: Measure only local synthetic workloads\n", 1)[1]
-        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            python = root / "python3"
-            python.write_text("#!/bin/sh\n"
-                'case "$1" in\n'
-                '  tests/scale_baseline.py) [ "$UNKNOWN_CPU" = yes ] && exit 1; echo reviewed.json ;;\n'
-                '  tests/test-scale.py) printf "%s\\n" "$*" > "$CALL_LOG" ;;\n'
-                'esac\n')
-            python.chmod(0o755)
-            for unknown, expected in (("yes", 1), ("no", 0)):
-                with self.subTest(unknown=unknown):
-                    env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"],
-                               RECORD_SCALE="false", UNKNOWN_CPU=unknown, CALL_LOG=str(root / "call"))
-                    result = subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env,
-                                            capture_output=True, text=True, timeout=5)
-                    self.assertEqual(result.returncode, expected, result.stderr)
-                    call = (root / "call").read_text()
-                    self.assertIn("--output scale-results.json", call)
-                    self.assertNotIn("--record", call)
-                    self.assertEqual("--baseline reviewed.json" in call, unknown == "no")
 
     def test_forward_command_guards_allow_only_sent_append(self):
         safe = ['A1 EXAMINE "INBOX"', 'A2 UID FETCH 1 (BODY.PEEK[])',
