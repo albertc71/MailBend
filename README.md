@@ -576,6 +576,49 @@ MailBend itself remains daemon-free.
 
 Keep a separate `(folder, uidvalidity, next_since_uid)` arrival cursor and a
 cache of known UIDs for each mailbox. Use `mail_get_new` as before for arrivals.
+
+Save a new arrival cursor only after a successful result. If FETCH omits a
+selected message or returns NIL header data, `mail_get_new` returns an error
+without messages or `next_since_uid`. Retry with the same saved cursor and
+UIDVALIDITY. The retry searches again, so a UID expunged between SEARCH and
+FETCH is no longer selected. An explicit empty header string is represented
+as a message with empty selected fields and does not block the cursor.
+
+A server that persistently omits a still-present UID or returns NIL still
+blocks polling at that gap. Retry cannot repair unavailable server data.
+Do not switch to `start: "now"` to hide this error unless you intend to skip
+the backlog. NIL is absent data, not the empty string
+([RFC 9051 section 4.5](https://www.rfc-editor.org/rfc/rfc9051.html#section-4.5)).
+
+This is an explicit current limitation, tracked in the
+[#241 review discussion](https://github.com/albertc71/MailBend/pull/241#discussion_r4440348365)
+following [#238](https://github.com/albertc71/MailBend/pull/238#discussion_r4439995924).
+A future recovery contract must distinguish unavailable header data from
+fetched empty data; this change does not claim to solve persistent NIL.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Search
+    Search --> Reset: UIDVALIDITY changed
+    Search --> Unchanged: no selected UIDs
+    Search --> Fetch: bounded selected UIDs
+    Fetch --> Error: transport or protocol failure
+    Fetch --> Reset: UIDVALIDITY changed
+    Fetch --> Error: any selected UID lacks header data or returns NIL
+    Fetch --> Publish: every selected UID has header data, including empty strings
+    Error --> Search: retry the original checkpoint
+    Publish --> [*]
+    Unchanged --> [*]
+    Reset --> [*]
+```
+
+Empty-string coverage accepts the exact requested header-name set regardless
+of order, letter case, repeated spaces or quoted names. It rejects duplicate
+names, different sections and partial sections. This compatibility is tested
+with synthetic responses, not a live provider mailbox. The compatibility path
+limits the section key to 1024 characters and does not accept escaped or
+literal header names.
+
 Call `mail_refresh` with `folder` (default `INBOX`), the saved `uidvalidity`, and
 1–100 `uids` to refresh the cache. Duplicates count toward the input limit and
 are returned once, sorted. UIDs and UIDVALIDITY must be in 1–4294967295; empty
