@@ -10,11 +10,12 @@ on:
       - tests/scale_baseline.py
       - .github/workflows/scale-compare.yml
       - .github/workflows/ci.yml
+      - .github/workflows/foundation-scale.yml
 permissions:
   contents: read
 jobs:
   compare:
-    uses: ./.github/workflows/ci.yml
+    uses: ./.github/workflows/foundation-scale.yml
     with:
       scale: true
       record_scale: false
