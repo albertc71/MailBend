@@ -284,3 +284,24 @@ adds no product fix for it. Normal CI remains on Bend 2.0.35 and its existing
 Lean pin. This first observation is a local report, not a claim that the
 scheduled GitHub workflow has run. Retain the workflow run summary and logs
 when reproducing it on GitHub.
+
+## MCP schema comparison
+
+The `MCP schema comparison` workflow builds a reference and candidate on the
+same standard Linux runner, then runs two alternating pairs of the immutable
+500-request short soak from PR #257. Both retain its 180-second deadline and
+all memory, reply and latency gates. Startup-to-first-reply time and RSS are
+reported separately, so moving work to initialization is visible. A reference
+timeout is reported as incomplete evidence, not a successful full workload;
+any candidate failure fails the comparison. Reports stay in the job log.
+The workflow runs when its comparison driver changes and can be dispatched
+manually with a baseline commit. A single matched run does not establish
+performance across all machines or long-lived sessions.
+
+The automatic path filter covers only the comparison workflow and its driver
+and control tests. Edits to `main.bend`, `src/tools.bend`, or the generated
+selector alone do not trigger it. When a later measured-code change needs fresh
+performance evidence, run the workflow manually, selecting the candidate
+branch/ref and an explicit reference commit in the `baseline` input. Retain
+both exact source identities. A prior
+comparison is evidence for its tested head only, not later revisions.
