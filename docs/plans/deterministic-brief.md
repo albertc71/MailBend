@@ -59,11 +59,10 @@ same session, and then verifies the complete selected UID sequence.
 ## Evidence and limits
 
 - At most 100 selected messages, default 50. SEARCH above 10000 UIDs fails closed.
-  Capped unseen continuation switches to all arrivals, including seen mail; on
-  large folders that SEARCH can exceed the cap repeatedly. A smaller page does
-  not narrow the SEARCH and repeating unseen mode repeats its first page. No
-  lossless brief continuation currently handles this case. `start=now` discards
-  the backlog, not recovers it. No-skip safety is not a paging-progress guarantee.
+  Structured unseen continuation retains UNSEEN/UNDELETED and finite UID bounds,
+  fixing seen-mail amplification. More than10000 matching unseen UIDs remains
+  unsupported. Legacy since_uid still changes to all arrivals and can exceed the
+  cap on large folders. `start=now` discards backlog, not recovers it.
 - Unseen mode excludes `\Deleted` UIDs; a complete high-water checkpoint passes
   those UIDs even if later undeleted. Arrivals have no `UNDELETED` filter. Neither
   mode follows subsequent flag changes.
@@ -128,3 +127,47 @@ Always returning the high-water UID was rejected because capped unseen backlogs
 would be lost. Always returning the last selected UID replayed all-seen history.
 The typed arrival/unseen window plus explicit cursor basis keeps these cases
 separate without changing message summaries or contact-evidence semantics.
+
+
+## Structured unseen continuation
+
+`next_continuation` is null for arrivals and completed unseen pages. A partial
+unseen page returns a version1 object bound to folder, UIDVALIDITY, after_uid L
+and original high_uid H. Supply it as `continuation`, never with since_uid.
+Initial acquisition EXAMINEs to obtain H; continued acquisition also validates
+positive UIDNEXT and rejects H greater than UIDNEXT minus1. Both then execute a
+UIDVALIDITY-guarded `UNSEEN UNDELETED UID L+1:H` search. L=H verifies identity but
+never constructs an empty/reversed IMAP range. No native contract changes.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Parse
+  Parse --> Failed: invalid/conflicting continuation
+  Parse --> Snapshot: initial unseen or valid continuation
+  Snapshot --> Failed: missing identity/UIDNEXT or future H
+  Snapshot --> Empty: L equals H
+  Snapshot --> BoundedSearch: L less than H
+  BoundedSearch --> Failed: identity changed or SEARCH cap/malformed
+  BoundedSearch --> Fetch: oldest selected prefix
+  Fetch --> Failed: missing selected UID or identity changed
+  Fetch --> Budget: all selected messages represented
+  Empty --> Budget
+  Budget --> Failed: metadata cannot fit
+  Budget --> Partial: next_continuation retains H, advances L
+  Budget --> Complete: next_continuation null, arrival checkpoint H
+```
+
+Flags are dynamic, not a frozen snapshot: a message behind L newly becoming
+unseen or undeleted is not revisited. A selected message's changed flags do not
+remove it after selection. With successful reads, sufficient response budget
+and at most10000 matching remaining unseen UIDs, each partial page advances L
+strictly; completion retains H. Numeric scan windows for arbitrary larger unseen
+backlogs are deliberately deferred.
+
+The [continuation model](brief-model/Continuation.tla) is design-time only. It
+allows flag membership to change between pages and checks interval membership,
+no repeated delivery, no skipped selected-set remainder and strict partial
+progress. Arrival-predicate, missing-upper-bound and premature-H mutants must
+break those invariants. It is not a server/parser proof or a CI drift check.
+Production interval, plan-read-only and completed-cursor laws plus synthetic
+CLI/MCP tests cover the implemented interfaces.

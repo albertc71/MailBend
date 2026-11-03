@@ -15,7 +15,7 @@ and flag changes are writes too.
 - `mail_search(folder, from, to, cc, subject, body, text, since, before, unseen, seen, flagged, cursor, limit, projection, max_response_bytes)`: Search and page summaries, newest first.
 - `mail_get(folder, uid, uidvalidity, section, max_bytes, projection, max_response_bytes)`: Read one message or a listed MIME part.
 - `mail_get_new(folder, start, since_uid, uidvalidity, limit, projection, max_response_bytes)`: Read arrivals after a mailbox checkpoint.
-- `mail_brief(folder, since_uid, uidvalidity, limit, projection, max_response_bytes)`: Read bounded deterministic metadata groups.
+- `mail_brief(folder, since_uid, uidvalidity, continuation, limit, projection, max_response_bytes)`: Read bounded deterministic metadata groups. Resume a capped unseen page with its returned continuation token; arrival cursors retain their existing meaning.
 - `mail_refresh(folder, uids, uidvalidity)`: Refresh flags and presence of known UIDs.
 - `mail_get_thread(folder, uid, uidvalidity, projection, max_response_bytes)`: Read a message-ID-linked conversation.
 - `mail_awaiting_reply(window_days, min_age_days, limit, exclude_lists, exclude_automated)`: Report replied, awaiting and unknown states for bounded Sent candidates.

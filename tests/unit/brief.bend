@@ -3,6 +3,8 @@ import ../../src/brief.bend as B
 import ../../src/imap.bend as I
 import ../../src/contacts.bend as C
 import ../../src/mime.bend as M
+import ../../src/json.bend as J
+import ../../src/ops.bend as Ops
 
 def msg(u: U32, hs: String) -> I.Msg:
   I.Msg{u, [], "", 0, hs, "", I.VNil{}}
@@ -31,6 +33,13 @@ def edge(+a: String, +b: String) -> String:
   edge_result(B.fields_bytes(edge_fields(a, b)),
     B.item(msg(7, edge_headers(a, b)), [], [], "me@x"))
 
+def cursor_status(r: B.CursorResult()) -> String:
+  match r:
+    case Fail{m}:
+      "invalid"
+    case Done{c}:
+      J.show(B.cursor_json(c))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(observed("From: known@x\r\nTo: me@x\r\n\r\n"))
@@ -48,15 +57,27 @@ def main() -> IO(Unit):
     IO.print(label(B.item(msg(1, "From: known@x\r\n\r\n"),
       [C.Contact{"known@x", "", 1, 0, True{}}], [], "me@x")))
     IO.print(I.uid_set(B.uids(B.items([msg(2, ""), msg(1, ""), msg(2, "")], [], [], ""))))
-    IO.print(U32.show(B.checkpoint(B.UnseenWindow{8}, False{}, 0)))
-    IO.print(U32.show(B.checkpoint(B.UnseenWindow{8}, False{}, 2)))
-    IO.print(U32.show(B.checkpoint(B.UnseenWindow{8}, True{}, 2)))
-    IO.print(I.uid_set(B.window_uids([0, 2, 4, 5, 6], B.UnseenWindow{4})))
+    IO.print(U32.show(B.checkpoint(B.UnseenWindow{0, 8}, False{}, 0)))
+    IO.print(U32.show(B.checkpoint(B.UnseenWindow{0, 8}, False{}, 2)))
+    IO.print(U32.show(B.checkpoint(B.UnseenWindow{0, 8}, True{}, 2)))
+    IO.print(I.uid_set(B.window_uids([0, 2, 4, 5, 6], B.UnseenWindow{0, 4})))
     IO.print(I.uid_set(B.window_uids([0, 2, 4, 5, 6], B.ArrivalWindow{4})))
     IO.print(edge(String.repeat("x", 2023n), String.repeat("x", 2023n)))
     IO.print(edge(String.repeat("x", 2023n), String.repeat("x", 2024n)))
     IO.print(edge(String.repeat("é", 1011n) ++ "x", String.repeat("x", 2023n)))
     IO.print(edge(String.repeat("é", 1011n) ++ "x", String.repeat("x", 2024n)))
+    IO.print(I.uid_set(B.window_uids([0, 1, 3, 5, 8, 9], B.UnseenWindow{3, 8})))
+    IO.print(J.show(B.next_cursor(B.UnseenWindow{1, 9}, True{}, "INBOX", 7, 3)))
+    IO.print(J.show(B.next_cursor(B.UnseenWindow{1, 9}, False{}, "INBOX", 7, 9)))
+    IO.print(cursor_status(B.cursor_read(B.cursor_json(B.UnseenCursor{"INBOX", 7, 3, 9}))))
+    IO.print(cursor_status(B.cursor_read(B.cursor_json(B.UnseenCursor{"INBOX", 7, 10, 9}))))
+    IO.print(cursor_status(B.cursor_read(B.cursor_json(B.UnseenCursor{"INBOX", 0, 3, 9}))))
+    IO.print(cursor_status(B.cursor_read(J.JNull{})))
+    IO.print(I.key_str(I.KUidRange{2, 9}))
+    IO.print(Bool.show(I.any_writes(Ops.plan_brief_range("INBOX", 7, 1, 9))))
+    IO.print(String.join(I.preview(Ops.plan_brief_range("INBOX", 7, 4294967295, 4294967295)), " | "))
+    IO.print(I.uid_set(B.uids(B.items([
+      I.Msg{3, ["\\Seen", "\\Deleted"], "", 0, "\r\n", "", I.VNil{}}], [], [], ""))))
 
 #|people:direct:
 #|unknown_people:cc_only:
@@ -81,3 +102,14 @@ def main() -> IO(Unit):
 #|4097:unknown_people:other_or_unknown
 #|4096:lists:direct
 #|4097:unknown_people:other_or_unknown
+#|5,8
+#|{"version":1,"mode":"unseen","folder":"INBOX","uidvalidity":7,"after_uid":3,"high_uid":9}
+#|null
+#|{"version":1,"mode":"unseen","folder":"INBOX","uidvalidity":7,"after_uid":3,"high_uid":9}
+#|invalid
+#|invalid
+#|invalid
+#|UID 2:9
+#|False
+#|a1 EXAMINE "INBOX" | =EXPECT * OK [UIDVALIDITY 7]
+#|3

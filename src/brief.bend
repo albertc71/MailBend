@@ -1,6 +1,7 @@
 # Each selected message has one primary group. Header evidence is not trust.
 import Base
 import ./imap.bend as I
+import ./json.bend as J
 import ./mime.bend as M
 import ./contacts.bend as C
 import ./codec.bend as Codec
@@ -22,28 +23,28 @@ type Item is Data:
 
 type SelectionWindow is Data:
   ArrivalWindow{since: U32}
-  UnseenWindow{high: U32}
+  UnseenWindow{after: U32, high: U32}
 
 def window_mode(w: SelectionWindow) -> String:
   match w:
     case ArrivalWindow{s}:
       "arrivals"
-    case UnseenWindow{h}:
+    case UnseenWindow{l, h}:
       "unseen"
 
 def window_floor(w: SelectionWindow) -> U32:
   match w:
     case ArrivalWindow{s}:
       s
-    case UnseenWindow{h}:
-      0
+    case UnseenWindow{l, h}:
+      l
 
 def window_contains(w: SelectionWindow, +u: U32) -> Bool:
   match w:
     case ArrivalWindow{s}:
       U32.is_gt(u, s)
-    case UnseenWindow{h}:
-      U32.is_gt(u, 0) && U32.is_le(u, h)
+    case UnseenWindow{l, h}:
+      U32.is_gt(u, l) && U32.is_le(u, h)
 
 def window_uids(xs: List<&2, U32>, +w: SelectionWindow) -> List<&2, U32>:
   match xs:
@@ -56,15 +57,94 @@ def checkpoint(w: SelectionWindow, more: Bool, last: U32) -> U32:
   match w:
     case ArrivalWindow{s}:
       last
-    case UnseenWindow{h}:
+    case UnseenWindow{l, h}:
       Bool.pick(U32, more, last, h)
 
 def checkpoint_basis(w: SelectionWindow, more: Bool) -> String:
   match w:
     case ArrivalWindow{s}:
       "selected_prefix"
-    case UnseenWindow{h}:
+    case UnseenWindow{l, h}:
       Bool.pick(String, more, "selected_prefix", "high_water")
+
+# This is an untrusted consistency token, not authority or a frozen flag snapshot.
+type UnseenCursor is Data:
+  UnseenCursor{folder: String, uidv: U32, after: U32, high: U32}
+
+def CursorResult() -> Data:
+  Result<&2, &2, String, UnseenCursor>
+
+def cursor_invalid() -> CursorResult():
+  Fail{"invalid brief continuation: use next_continuation unchanged, without since_uid"}
+
+def cursor_number.value(n: Maybe<&2, U32>, raw: String) -> Maybe<&2, U32>:
+  match n:
+    case Some{+v}:
+      Bool.pick(Maybe<&2, U32>, String.eq(raw, U32.show(v)), Some{v}, None{})
+    case None{}:
+      None{}
+
+def cursor_number(m: Maybe<&2, J.Json>) -> Maybe<&2, U32>:
+  match m:
+    case Some{J.JNum{+raw}}:
+      cursor_number.value(U32.read(raw), raw)
+    case _:
+      None{}
+
+# Six required fields plus an exact bounded member count reject unknown and
+# duplicate members too: any such member displaces a required one.
+def cursor_members(xs: J.Json, left: Nat) -> Bool:
+  match xs left:
+    case J.JEnd{} 0n:
+      True{}
+    case J.JCons{J.JKv{k, v}, t} 1n+n:
+      cursor_members(t, n)
+    case _ _:
+      False{}
+
+def cursor_checked(valid: Bool, f: String, v: U32, l: U32, h: U32) -> CursorResult():
+  match valid:
+    case True{}:
+      Done{UnseenCursor{f, v, l, h}}
+    case False{}:
+      cursor_invalid()
+
+def cursor_folder_valid(+f: String) -> Bool:
+  Bool.not(String.is_empty(f)) && M.no_ctl(f) &&
+    Nat.is_le(String.length(String.take(f, 4001n)), 4000n)
+
+def cursor_values(version: Maybe<&2, U32>, mode: Maybe<&2, String>, folder: Maybe<&2, String>,
+  uidv: Maybe<&2, U32>, after: Maybe<&2, U32>, high: Maybe<&2, U32>, members: Bool) -> CursorResult():
+  match version mode folder uidv after high:
+    case Some{ver} Some{m} Some{+f} Some{+v} Some{+l} Some{+h}:
+      cursor_checked(members && U32.is_eq(ver, 1) && String.eq(m, "unseen") &&
+        cursor_folder_valid(f) &&
+        U32.is_gt(v, 0) && U32.is_le(l, h), f, v, l, h)
+    case _ _ _ _ _ _:
+      cursor_invalid()
+
+def cursor_read(+j: J.Json) -> CursorResult():
+  match j:
+    case J.JObj{xs}:
+      cursor_values(cursor_number(J.get(j, "version")), J.as_str(J.get(j, "mode")),
+        J.as_str(J.get(j, "folder")), cursor_number(J.get(j, "uidvalidity")),
+        cursor_number(J.get(j, "after_uid")), cursor_number(J.get(j, "high_uid")),
+        cursor_members(xs, 6n))
+    case _:
+      cursor_invalid()
+
+def cursor_json(c: UnseenCursor) -> J.Json:
+  UnseenCursor{f, v, l, h} = c
+  J.obj([J.kv("version", J.num(1)), J.kv("mode", J.str("unseen")),
+    J.kv("folder", J.str(f)), J.kv("uidvalidity", J.num(v)),
+    J.kv("after_uid", J.num(l)), J.kv("high_uid", J.num(h))])
+
+def next_cursor(w: SelectionWindow, more: Bool, folder: String, uidv: U32, last: U32) -> J.Json:
+  match w more:
+    case UnseenWindow{l, h} True{}:
+      cursor_json(UnseenCursor{folder, uidv, last, h})
+    case _ _:
+      J.JNull{}
 
 def group_name(g: Group) -> String:
   match g:

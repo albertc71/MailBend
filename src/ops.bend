@@ -304,7 +304,22 @@ def plan_brief(folder: String, checkpoint: Bool, since: U32) -> List<&2, I.Cmd>:
     case True{}:
       plan_new(folder, since)
     case False{}:
-      [I.CExamine{folder}, I.CSearch{[I.KUnseen{}, I.KUndeleted{}]}]
+      [I.CExamine{folder}]
+
+# Only a nonempty ascending interval may become an IMAP range. Reversed
+# ranges match messages in IMAP; they are not an empty-set representation.
+def plan_brief_range.if(nonempty: Bool, folder: String, uidv: U32, after: U32, high: U32)
+  -> List<&2, I.Cmd>:
+  match nonempty:
+    case False{}:
+      [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)}]
+    case True{}:
+      [I.CExamine{folder}, I.CExpect{I.uidv_line(uidv)},
+        I.CSearch{[I.KUnseen{}, I.KUndeleted{}, I.KUidRange{(after + 1 : U32), high}]}]
+
+def plan_brief_range(folder: String, uidv: U32, +after: U32, +high: U32)
+  -> List<&2, I.Cmd>:
+  plan_brief_range.if(U32.is_lt(after, high), folder, uidv, after, high)
 
 def plan_new_now(mbox: String) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}]

@@ -93,6 +93,12 @@ def run(t, work):
     finally:
         srv.stop()
 
+    spec = importlib.util.spec_from_file_location('brief_continuation_cases',
+                                                   t.ROOT / 'tests/brief-continuation-cases.py')
+    continuation_cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(continuation_cases)
+    continuation_cases.run(t, work)
+
     # UIDNEXT is a snapshot boundary, not the maximum unseen UID. The existing
     # override also models messages arriving after EXAMINE but before SEARCH.
     for scenario, messages, high, limit, expected, cursor, basis in (

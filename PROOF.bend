@@ -2448,10 +2448,10 @@ def Laws.brief_plans_write_nothing(folder, checkpoint, since):
 def Laws.awaiting_disabled_filters_keep_candidate(n):
   {==}
 
-def Laws.brief_complete_unseen_highwater(high, last):
+def Laws.brief_complete_unseen_highwater(after, high, last):
   {==}
 
-def Laws.brief_partial_unseen_prefix(high, last):
+def Laws.brief_partial_unseen_prefix(after, high, last):
   {==}
 
 def Laws.brief_arrivals_keep_prefix(since, more, last):
@@ -2459,3 +2459,30 @@ def Laws.brief_arrivals_keep_prefix(since, more, last):
 
 def Laws.json_serialized_bytes(j):
   JsonSize.show_bytes(j)
+
+
+def brief_range_readonly(nonempty: Bool, folder: String, uidv: U32, after: U32, high: U32)
+  -> {I.any_writes(Ops.plan_brief_range.if(nonempty, folder, uidv, after, high)) == False{} : Bool}:
+  match nonempty:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.brief_range_writes_nothing(folder, uidv, after, high):
+  +l = after
+  +h = high
+  brief_range_readonly(U32.is_lt(l, h), folder, uidv, l, h)
+
+def Laws.brief_range_wire(first, last):
+  {==}
+
+def Laws.brief_completed_has_no_continuation(window, folder, uidv, last):
+  match window:
+    case Brief.ArrivalWindow{s}:
+      {==}
+    case Brief.UnseenWindow{l, h}:
+      {==}
+
+def Laws.brief_unseen_filter_interval(after, high, uid):
+  {==}

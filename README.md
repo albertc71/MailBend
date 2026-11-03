@@ -1100,8 +1100,13 @@ continue it. The default page is 50 messages, with a maximum of 100. A checkpoin
 from a complete unseen page uses the EXAMINE UIDNEXT minus one (`checkpoint_basis:
 high_water`), including when no unseen messages exist. SEARCH arrivals above that
 snapshot wait for the next call. A capped page uses its last selected UID
-(`selected_prefix`), never skipping unreturned unseen messages. Continuing that
-prefix with `since_uid` can also return historical seen mail. Neither cursor
+(`selected_prefix`), never skipping unreturned unseen messages. For a partial
+unseen page, pass its `next_continuation` object unchanged as `continuation` on
+the next call, without `since_uid`. This retains the original folder,
+UIDVALIDITY and high-water mark, and searches only later unseen, undeleted UIDs
+inside that range. When `next_continuation` is null, unseen traversal is complete
+and `next_since_uid` is the arrival checkpoint. Legacy continuation using
+`since_uid` still includes historical seen mail. Neither cursor
 tracks later changes to read status. Use `mail_refresh` for known-message flag changes.
 
 Every returned message has one `group` and an independent `delivery` value.
@@ -1138,14 +1143,22 @@ Only From, To, Cc, List-Id, Auto-Submitted and Precedence consume the 4096-byte
 classification bound; duplicates remain visible and malformed evidence stays
 conservative. Original summaries are unchanged. Explicit empty header strings
 are represented; persistent NIL or absent selected data still fails closed.
-SEARCH is capped at 10000 UIDs. A capped unseen page can select only a few old
-unread messages, yet its arrival continuation includes all later seen mail too.
-On a large folder that continuation can exceed the cap and fail repeatedly.
-Lowering the page limit does not reduce that SEARCH, and repeating unseen mode
-returns the same first page. There is currently no lossless brief continuation
-for this case. `mail_get_new {"start":"now"}` skips the existing backlog; it is
-not a recovery method. No returned checkpoint advances past omitted eligible
-unseen messages, but that safety guarantee does not guarantee paging progress.
+SEARCH is capped at 10000 matching UIDs. Structured unseen continuation avoids
+seen-mail amplification; it does not support arbitrary backlogs of more than
+10000 matching unseen messages. Legacy `since_uid` continuation can still exceed
+that cap due to later seen messages. A smaller page does not narrow that SEARCH.
+`mail_get_new {"start":"now"}` skips existing backlog, not recovers it.
+
+Continuation fields are `version: 1`, `mode: "unseen"`, `folder`, `uidvalidity`,
+`after_uid` and `high_uid`. An explicit top-level folder or identity must match.
+Unseen folder names must contain 1..4000 characters without control characters.
+The token is untrusted input, not permission or a frozen unread-membership
+snapshot. Every call verifies identity and current UIDNEXT before searching;
+a future high-water token fails. The original high-water mark never increases.
+Unseen/undeleted flags are evaluated again on each page: changes behind
+`after_uid` are not revisited, and selected messages changing flags before FETCH
+remain represented. Failed SEARCH/FETCH, identity changes and budget refusals
+return no advancing continuation. Retry the unchanged input.
 A count limit is not a byte budget: set `max_response_bytes` when needed.
 
 Unseen mode excludes `\Deleted` messages. A complete high-water page passes

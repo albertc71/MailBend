@@ -5361,7 +5361,7 @@ def brief_counts_json(xs: List<&2, BriefCount>) -> List<&2, J.Json>:
         J.kv("count", J.num(n))]) <> brief_counts_json(t)
 
 def brief_output(p: BriefPage, +scan: ContactScan, me: String, since: String) -> Shown:
-  BriefPage{folder, uidv, next, +more, +window, +ms} = p
+  BriefPage{+folder, +uidv, +next, +more, +window, +ms} = p
   ContactScan{f, v, cs, sampled, complete, reason} = scan
   +senders = Brief.senders(ms)
   +allowed = List.take(&2, String, senders, 50n)
@@ -5370,6 +5370,7 @@ def brief_output(p: BriefPage, +scan: ContactScan, me: String, since: String) ->
     J.kv("mode", J.str(Brief.window_mode(window))),
     J.kv("checkpoint_basis", J.str(Brief.checkpoint_basis(window, more))), J.kv("next_since_uid", J.num(next)),
     J.kv("has_more", J.bool(more)), J.kv("selected_complete", J.bool(True{})),
+    J.kv("next_continuation", Brief.next_cursor(window, more, folder, uidv, next)),
     J.kv("messages", J.arr(brief_items(items))),
     J.kv("groups", J.arr(brief_counts_json(brief_counts(items, [])))),
     J.kv("correspondence", J.obj([
@@ -5454,67 +5455,172 @@ def brief_selected(uids: Maybe<&2, List<&2, U32>>, folder: String, uidv: U32,
   +limit: U32, +window: Brief.SelectionWindow) -> IO(Shown):
   match uids:
     case None{}:
-      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 UIDs; no checkpoint returned; capped unseen continuation may exceed this limit when seen mail is included; no lossless brief continuation is currently available for that case"})
+      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 matching UIDs; no checkpoint or continuation returned; arbitrary larger unseen backlogs are not supported"})
     case Some{xs}:
       +eligible = asc(unseen(Brief.window_uids(xs, window), []))
       brief_fetch(List.take(&2, U32, eligible, U32.to_nat(limit)), folder, uidv,
         Nat.is_gt(List.length(&2, U32, eligible), U32.to_nat(limit)), window)
 
-def brief_unseen(next: Maybe<&2, U32>, lines: List<&2, I.RLine>, folder: String,
-  uidv: U32, limit: U32) -> IO(Shown):
+# UIDNEXT values reach this gate only through strict positive parsing.
+def brief_high_valid(next: Maybe<&2, U32>, high: U32) -> Bool:
   match next:
     case None{}:
-      pure_shown(Policy.Err{"brief EXAMINE did not report a valid UIDNEXT; no checkpoint returned"})
-    case Some{n}:
-      brief_selected(Await.search(I.replies(lines, 2)), folder, uidv, limit,
-        Brief.UnseenWindow{(n - 1 : U32)})
+      False{}
+    case Some{+n}:
+      U32.is_gt(n, 0) && U32.is_le(high, (n - 1 : U32))
 
-def brief_window(checkpoint: Bool, +lines: List<&2, I.RLine>, folder: String,
-  uidv: U32, +since: U32, limit: U32) -> IO(Shown):
-  match checkpoint:
+def brief_range_complete(valid: Bool, lines: List<&2, I.RLine>, folder: String,
+  uidv: U32, after: U32, high: U32, limit: U32) -> IO(Shown):
+  match valid:
     case False{}:
-      brief_unseen(new_now.code(I.replies(lines, 1), "UIDNEXT"), lines, folder, uidv, limit)
+      pure_shown(Policy.Err{"brief snapshot identity or UIDNEXT changed; no checkpoint or continuation returned"})
     case True{}:
-      brief_selected(Bool.pick(Maybe<&2, List<&2, U32>>, U32.is_eq(since, Ops.max_uid()),
-        Some{[]}, Await.search(I.replies(lines, 2))), folder, uidv, limit, Brief.ArrivalWindow{since})
+      brief_selected(Await.search(I.replies(lines, 2)), folder, uidv, limit,
+        Brief.UnseenWindow{after, high})
 
-def brief_identity(valid: Bool, lines: List<&2, I.RLine>, folder: String,
-  uidv: U32, since: U32, limit: U32, checkpoint: Bool) -> IO(Shown):
+def brief_range_result(r: Run(), folder: String, +uidv: U32, after: U32, +high: U32,
+  limit: U32) -> IO(Shown):
+  match r:
+    case Fail{m}:
+      pure_shown(Policy.Err{m})
+    case Done{+lines}:
+      brief_range_complete(uidv_is(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"), uidv) &&
+        brief_high_valid(new_now.code(I.replies(lines, 1), "UIDNEXT"), high),
+        lines, folder, uidv, after, high, limit)
+
+def brief_range(empty: Bool, +folder: String, +uidv: U32, +after: U32, +high: U32,
+  limit: U32) -> IO(Shown):
+  match empty:
+    case True{}:
+      brief_fetch([], folder, uidv, False{}, Brief.UnseenWindow{after, high})
+    case False{}:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_brief_range(folder, uidv, after, high))
+        brief_range_result(r, folder, uidv, after, high, limit)
+
+def brief_snapshot_valid(valid: Bool, folder: String, uidv: U32, +after: U32,
+  +high: U32, limit: U32) -> IO(Shown):
+  match valid:
+    case False{}:
+      pure_shown(Policy.Err{"brief UIDVALIDITY changed or continuation exceeds current UIDNEXT; no checkpoint returned"})
+    case True{}:
+      brief_range(U32.is_eq(after, high), folder, uidv, after, high, limit)
+
+def brief_snapshot_codes(next: Maybe<&2, U32>, uidv: Maybe<&2, U32>, folder: String,
+  +known: U32, +after: U32, requested: Maybe<&2, U32>, limit: U32) -> IO(Shown):
+  match next uidv:
+    case Some{+n} Some{+v}:
+      +high = Maybe.default(&2, U32, requested, (n - 1 : U32))
+      brief_snapshot_valid((U32.is_zero(known) || U32.is_eq(known, v)) &&
+        U32.is_le(after, high) && U32.is_le(high, (n - 1 : U32)), folder, v, after, high, limit)
+    case _ _:
+      pure_shown(Policy.Err{"brief EXAMINE did not report valid positive UIDNEXT and UIDVALIDITY; no checkpoint returned"})
+
+def brief_snapshot(r: Run(), folder: String, known: U32, after: U32,
+  high: Maybe<&2, U32>, limit: U32) -> IO(Shown):
+  match r:
+    case Fail{m}:
+      pure_shown(Policy.Err{m})
+    case Done{+lines}:
+      brief_snapshot_codes(new_now.code(I.replies(lines, 1), "UIDNEXT"),
+        new_now.code(I.replies(lines, 1), "UIDVALIDITY"), folder, known, after, high, limit)
+
+def brief_open(+folder: String, known: U32, after: U32, high: Maybe<&2, U32>, limit: U32)
+  -> IO(Shown):
+  do IO<Shown>:
+    r : Run() <- imap_run(Ops.plan_brief(folder, False{}, 0))
+    brief_snapshot(r, folder, known, after, high, limit)
+
+def brief_arrivals_valid(valid: Bool, lines: List<&2, I.RLine>, folder: String,
+  uidv: U32, +since: U32, limit: U32) -> IO(Shown):
   match valid:
     case False{}:
       pure_shown(Policy.Err{"brief UIDVALIDITY missing or changed; discard the old checkpoint and restart"})
     case True{}:
-      brief_window(checkpoint, lines, folder, uidv, since, limit)
+      brief_selected(Bool.pick(Maybe<&2, List<&2, U32>>, U32.is_eq(since, Ops.max_uid()),
+        Some{[]}, Await.search(I.replies(lines, 2))), folder, uidv, limit, Brief.ArrivalWindow{since})
 
-def brief_found(r: Run(), folder: String, since: U32, +known: U32, limit: U32, checkpoint: Bool)
-  -> IO(Shown):
+def brief_arrivals(r: Run(), folder: String, since: U32, +known: U32, limit: U32) -> IO(Shown):
   match r:
     case Fail{m}:
       pure_shown(Policy.Err{m})
     case Done{+lines}:
       +v = Maybe.default(&2, U32, positive(I.ok_code(lines, "UIDVALIDITY")), 0)
-      brief_identity(Bool.not(U32.is_zero(v)) &&
-        (U32.is_zero(known) || U32.is_eq(known, v)), lines, folder, v, since, limit, checkpoint)
+      brief_arrivals_valid(Bool.not(U32.is_zero(v)) &&
+        (U32.is_zero(known) || U32.is_eq(known, v)), lines, folder, v, since, limit)
 
-def brief_start(valid: Bool, +args: J.Json, +checkpoint: Bool, +since: U32, limit: U32)
-  -> IO(Shown):
+def brief_initial_unseen(valid: Bool, folder: String, known: U32, limit: U32) -> IO(Shown):
+  match valid:
+    case False{}:
+      pure_shown(Policy.Err{"unseen brief folder must contain 1..4000 characters without control characters"})
+    case True{}:
+      brief_open(folder, known, 0, None{}, limit)
+
+def brief_initial(checkpoint: Bool, +args: J.Json, +since: U32, limit: U32) -> IO(Shown):
+  match checkpoint:
+    case False{}:
+      +folder = folder_arg(args)
+      brief_initial_unseen(Brief.cursor_folder_valid(folder), folder, uidv_arg(args), limit)
+    case True{}:
+      +folder = folder_arg(args)
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_brief(folder, True{}, since))
+        brief_arrivals(r, folder, since, uidv_arg(args), limit)
+
+def brief_cursor_folder(m: Maybe<&2, J.Json>, folder: String) -> Bool:
+  match m:
+    case None{}:
+      True{}
+    case Some{J.JStr{f}}:
+      String.eq(f, folder)
+    case _:
+      False{}
+
+def brief_cursor_uidv(m: Maybe<&2, J.Json>, v: U32) -> Bool:
+  match m:
+    case None{}:
+      True{}
+    case Some{j}:
+      uidv_is(Brief.cursor_number(Some{j}), v)
+
+def brief_continue_valid(valid: Bool, c: Brief.UnseenCursor, limit: U32) -> IO(Shown):
+  match valid:
+    case False{}:
+      pure_shown(Policy.Err{"brief continuation conflicts with since_uid, folder or uidvalidity"})
+    case True{}:
+      Brief.UnseenCursor{f, v, l, h} = c
+      brief_open(f, v, l, Some{h}, limit)
+
+def brief_continue(c: Brief.CursorResult(), +args: J.Json, limit: U32) -> IO(Shown):
+  match c:
+    case Fail{m}:
+      pure_shown(Policy.Err{m})
+    case Done{+cursor}:
+      Brief.UnseenCursor{f, v, l, h} = cursor
+      brief_continue_valid(Bool.not(Maybe.is_some(&2, J.Json, J.get(args, "since_uid"))) &&
+        brief_cursor_folder(J.get(args, "folder"), f) && brief_cursor_uidv(J.get(args, "uidvalidity"), v),
+        cursor, limit)
+
+def brief_request(c: Maybe<&2, J.Json>, +args: J.Json, since: U32, limit: U32) -> IO(Shown):
+  match c:
+    case None{}:
+      brief_initial(Maybe.is_some(&2, J.Json, J.get(args, "since_uid")), args, since, limit)
+    case Some{j}:
+      brief_continue(Brief.cursor_read(j), args, limit)
+
+def brief_start(valid: Bool, +args: J.Json, since: U32, limit: U32) -> IO(Shown):
   match valid:
     case False{}:
       pure_shown(Policy.Err{"invalid brief checkpoint or limit (1..100); since_uid above 0 requires uidvalidity"})
     case True{}:
-      +folder = folder_arg(args)
-      do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_brief(folder, checkpoint, since))
-        brief_found(r, folder, since, uidv_arg(args), limit,
-          checkpoint)
+      brief_request(J.get(args, "continuation"), args, since, limit)
 
 def t_brief(+args: J.Json) -> IO(Shown):
   +since = u32_arg(args, "since_uid", 0)
   +limit = u32_arg(args, "limit", 50)
   brief_start(await_arg_valid(J.get(args, "since_uid")) && await_arg_valid(J.get(args, "uidvalidity")) &&
     await_arg_valid(J.get(args, "limit")) && U32.is_ge(limit, 1) && U32.is_le(limit, 100) &&
-    String.is_empty(new_request(since, uidv_arg(args))), args,
-    Maybe.is_some(&2, J.Json, J.get(args, "since_uid")), since, limit)
+    String.is_empty(new_request(since, uidv_arg(args))), args, since, limit)
 
 def stamp() -> IO(Result<&2, &2, String, Stamp>):
   do IO<Result<&2, &2, String, Stamp>>:
