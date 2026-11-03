@@ -35,7 +35,8 @@ discuss larger changes before writing them.
 ## Checks
 
 Run these before opening a pull request. CI runs proofs, unit tests, runtime suites and Rust checks on Linux x86_64
-and aarch64 (Linux 5.6+ and glibc 2.34+). Fuzzing, the dedicated mutations job and the
+and aarch64. MailBend needs Linux 5.6+ and glibc 2.34+ on either architecture.
+Fuzzing, the dedicated mutations job and the
 secret scan stay on x86_64. Both architectures run `cargo deny check` and
 the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
