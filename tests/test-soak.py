@@ -59,6 +59,13 @@ def request(ident, index):
     return {"jsonrpc": "2.0", "id": ident, "method": method, "params": params}
 
 
+def gap_summary(gaps):
+    # Labels come only from our fixed request mix, never received mail or errors.
+    return {name: {"checked_replies": len(values), "total_seconds": sum(values),
+                   "p50_seconds": percentile(values, .5), "max_seconds": max(values)}
+            for name, values in gaps.items() if values}
+
+
 def check_reply(reply, sent):
     assert reply.get("jsonrpc") == "2.0" and type(reply.get("id")) is int, "invalid reply envelope"
     assert reply["id"] == sent["id"], "missing, duplicate, unsolicited or out-of-order reply"
@@ -143,6 +150,7 @@ def run(profile):
     fake = session = reader = sampler = None
     finished = threading.Event()
     samples, sampling_errors = [], []
+    reply_gaps = {}
     completed = 0
     started = None
     replies = queue.Queue(maxsize=16)
@@ -220,10 +228,16 @@ def run(profile):
                     batch = [request(i + 1, i) for i in range(offset, offset + BURST)]
                     sent_at = time.monotonic()
                     write_batch(session, batch, min(10, max(0, started + budget - time.monotonic())))
+                    previous_reply_at = sent_at
                     for item in batch:
                         received, reply = next_reply(replies, started + budget)
                         assert reply is not None, "core exited before completing requests"
                         check_reply(reply, item)
+                        operation = item["params"].get("name", item["method"])
+                        if item["params"].get("arguments", {}).get("uid") == 0:
+                            operation += ":invalid_uid"
+                        reply_gaps.setdefault(operation, []).append(received - previous_reply_at)
+                        previous_reply_at = received
                         completed += 1
                         assert not sampling_errors, "RSS sampling failed or core exceeded 1 GiB"
                         if offset >= WARMUP:
@@ -248,12 +262,13 @@ def run(profile):
                     "python": platform.python_version(), "platform": platform.platform(),
                     "fixture_sha256": hashlib.sha256((ROOT / "tests/fixtures/mailbox.json").read_bytes()).hexdigest(),
                     "measured_requests": count, "warmup_requests": WARMUP,
-                    "burst": BURST, "elapsed_seconds": elapsed, "rss_sample_interval_seconds": SAMPLE_SECONDS,
+                    "burst": BURST, "elapsed_seconds": elapsed, "reply_gap_by_operation": gap_summary(reply_gaps), "rss_sample_interval_seconds": SAMPLE_SECONDS,
                     "rss_curve": [[round(stamp - started, 3), rss] for stamp, rss in samples],
                     **metrics}, sort_keys=True))
             except Exception:
                 print(json.dumps({"status": "failed", "profile": profile,
                     "completed_requests_including_warmup": completed,
+                    "reply_gap_by_operation": gap_summary(reply_gaps),
                     "elapsed_seconds": None if started is None else time.monotonic() - started,
                     "last_rss_kib": samples[-1][1] if samples else None,
                     "peak_rss_kib": max((rss for _, rss in samples), default=None)}, sort_keys=True), flush=True)

@@ -44,6 +44,14 @@ class SoakContract(unittest.TestCase):
         with self.assertRaises(AssertionError):
             soak.check_reply({"jsonrpc": "2.0", "id": 8, "result": {}}, invalid)
 
+    def test_gap_summary_reports_checked_work_only(self):
+        self.assertEqual(soak.gap_summary({}), {})
+        result = soak.gap_summary({"mail_get": [.1, .3], "tools/list": [.01], "unused": []})
+        self.assertEqual(result["mail_get"]["checked_replies"], 2)
+        self.assertAlmostEqual(result["mail_get"]["total_seconds"], .4)
+        self.assertEqual(result["mail_get"]["max_seconds"], .3)
+        self.assertNotIn("unused", result)
+
     def test_reply_deadline_and_stall(self):
         replies = Mock()
         replies.get.return_value = (1, {"id": 1})

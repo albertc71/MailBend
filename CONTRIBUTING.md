@@ -311,7 +311,11 @@ and all acceptance bounds remain unchanged.
 CI runs it in a separate required runtime matrix lane, allowing four lanes in
 parallel rather than adding serial work to MCP scenarios. This adds a build
 but does not guarantee a particular overall CI duration. JSON output records the RSS curve, p50/p95,
-drift ratio and elapsed time. These are regression bounds, not evidence of
+drift ratio and elapsed time. Both success and failure output include counts
+and reply-gap summaries by fixed synthetic operation. Gaps span consecutive
+replies within a burst (the first starts at the burst write); they help locate
+slow work but are not isolated CPU timings. They include warm-up and exclude
+unvalidated or unfinished replies. These are regression bounds, not evidence of
 memory stability over days or a promise about a provider's latency.
 
 The session follows this state model:
