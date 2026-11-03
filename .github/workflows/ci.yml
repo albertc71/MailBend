@@ -129,8 +129,8 @@ jobs:
         run: |
           python3 tests/formal/search-pagination-model.py
           python3 tests/formal/check-search-contract-mutations.py
-  # The kernel-rechecked proofs and the mutation checks run beside
-  # source-checks, so the slowest source lane is about a third as long.
+  # The kernel-rechecked proofs (the only steps that need Lean) and the
+  # mutation checks (Bend only) run beside source-checks, not after it.
   proofs:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
