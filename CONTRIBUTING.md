@@ -54,7 +54,7 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
-python3 tests/test-toolchain-installers.py         # pinned asset URLs and installer refusal paths
+python3 tests/test-toolchain-installers.py        # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 bend src/tools.bend --verdict                     # retain tool-layer kernel coverage
@@ -206,6 +206,29 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) messages
 (`fix:`, `feat:`, `docs:`, ...). By contributing you agree that your work is
 licensed under the [MIT License](LICENSE).
 
+## Bump an installer pin
+
+For a standalone installer update, change the version and both architecture
+checksums together in the corresponding script:
+
+- Bend: `BEND_VERSION` and both `BEND_SHA256` values in `scripts/install-bend.sh`.
+- elan: `ELAN_VERSION` and both `ELAN_SHA256` values in `scripts/install-lean.sh`.
+- rustup: `RUSTUP_VERSION` and both `RUSTUP_SHA256` values in `scripts/install-rust.sh`.
+
+Verify each downloaded x86_64 and aarch64 asset against its official release
+digest. Update the corresponding expected URLs and checksums in
+`tests/test-toolchain-installers.py`, keeping those expectations independent
+of the installer source. Run that test and the [contributor checks](#checks),
+then require exact-head native x86_64 and aarch64 CI before review completion.
+A passing mock test checks selection and refusal paths, not upstream provenance.
+
+Changing elan or rustup does not by itself change the installed Lean or Rust
+version. Keep `LEAN_TOOLCHAIN` and `RUST_TOOLCHAIN` unchanged unless that
+compiler upgrade is also intended and verified. For Bend compiler changes,
+follow the full [Bend upgrade runbook](#upgrade-bend) below. Installer scripts
+are also pinned by the paired-scale preflight; any required pin migration
+needs separate review, not a bypass of that check.
+
 ## Upgrade Bend
 
 Use the [Bend upgrade canary](.github/workflows/bend-canary.yml) as an early
@@ -250,10 +273,9 @@ checkout credential.
 5. When the candidate checks pass, update `BEND_VERSION` and both architecture-specific `BEND_SHA256`
    values together in `scripts/install-bend.sh`. Verify the downloaded Linux
    x86_64 and aarch64 archives against their official release digests. Set `LEAN_TOOLCHAIN` in
-   `scripts/install-lean.sh` to the version the candidate requests. Update the
-   corresponding expected URLs and checksums in `tests/test-toolchain-installers.py`
-   whenever the Bend, elan or rustup installer pins change. Keep those expectations
-   independent of the installer source so the test can detect an accidental change.
+   `scripts/install-lean.sh` to the version the candidate requests. Follow
+   [Bump an installer pin](#bump-an-installer-pin) to update the independent
+   URL and checksum expectations and review any paired-scale pin migration.
 6. Run every [contributor check](#checks) on the proposed pins, including
    `bend PROOF.bend --verdict`. Require `ALL PROOFS CHECK`. Run normal CI on
    the exact PR commit. Do not weaken laws, expected output, or security
