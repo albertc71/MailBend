@@ -18,6 +18,7 @@ import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/codec.bend as C
 import ./src/imap.bend as I
+import ./src/mime.bend as M
 import ./src/sections.bend as Part
 
 import ./src/search-cursor.bend as SC
@@ -2410,14 +2411,41 @@ def Laws.image_bind_byte_cap(draws, vs, corpus, exact):
 def Laws.prefix_whole_when_room(s, left, extra, enough):
   ScalarProof.prefix_whole_when_wire_room(s, left, extra, enough)
 
-def brief_item_uid(small: Bool, m: I.Msg, cs: List<&2, Contacts.Contact>,
+def brief_prepared_item_uid(small: Bool, m: I.Msg, fields: List<&2, M.Hdr>,
+  a: Maybe<&2, String>, cs: List<&2, Contacts.Contact>, allowed: List<&2, String>, me: String)
+  -> {Brief.item_uid(Brief.prepared_item.small(small, m, fields, a, cs, allowed, me)) ==
+    Brief.uid(m) : U32}:
+  match small:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def brief_prepared_uid(p: Brief.Prepared, cs: List<&2, Contacts.Contact>,
   allowed: List<&2, String>, me: String)
-  -> {Brief.item_uid(Brief.item.small(small, m, cs, allowed, me)) == Brief.uid(m) : U32}:
-  match small m:
-    case False{} _:
+  -> {Brief.item_uid(Brief.prepared_item(p, cs, allowed, me)) ==
+    Brief.uid(Brief.prepared_message(p)) : U32}:
+  match p:
+    case Brief.Prepared{m, fields, small, a}:
+      brief_prepared_item_uid(small, m, fields, a, cs, allowed, me)
+
+def brief_prepare_message(complete: Bool, m: I.Msg, hs: String)
+  -> {Brief.prepared_message(Brief.prepare.complete(complete, m, hs)) == m : I.Msg}:
+  match complete:
+    case False{}:
       {==}
-    case True{} I.Msg{u, flags, date, size, hs, body, st}:
+    case True{}:
       {==}
+
+def brief_item_uid(+m: I.Msg, +cs: List<&2, Contacts.Contact>,
+  +allowed: List<&2, String>, +me: String)
+  -> {Brief.item_uid(Brief.item(m, cs, allowed, me)) == Brief.uid(m) : U32}:
+  I.Msg{u, flags, date, size, +hs, body, st} = m
+  Equal.trans(U32, Brief.item_uid(Brief.item(m, cs, allowed, me)),
+    Brief.uid(Brief.prepared_message(Brief.prepare(m))), Brief.uid(m),
+    brief_prepared_uid(Brief.prepare(m), cs, allowed, me),
+    Equal.cong(I.Msg, U32, Brief.uid, Brief.prepared_message(Brief.prepare(m)), m,
+      brief_prepare_message(String.ends_with(hs, "\r\n\r\n") || String.eq(hs, "\r\n"), m, hs)))
 
 def Laws.brief_preserves_selected_uids(ms, cs, allowed, me):
   match ms:
@@ -2428,7 +2456,7 @@ def Laws.brief_preserves_selected_uids(ms, cs, allowed, me):
       +allowed = allowed
       +me = me
       %Equal.sym(U32, Brief.item_uid(Brief.item(m, cs, allowed, me)), Brief.uid(m),
-        brief_item_uid(Brief.headers_small(m), m, cs, allowed, me)) :
+        brief_item_uid(m, cs, allowed, me)) :
         {_ <> Brief.uids(Brief.items(t, cs, allowed, me)) == Brief.uid(m) <> Brief.message_uids(t) : List<&2, U32>}
       Equal.cong(List<&2, U32>, List<&2, U32>, xs => Brief.uid(m) <> xs,
         Brief.uids(Brief.items(t, cs, allowed, me)), Brief.message_uids(t),

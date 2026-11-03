@@ -118,8 +118,11 @@ unseen subsets, EXAMINE high-water marks and oldest selected prefixes. It checks
 that no omitted eligible UID is at or below the returned cursor, complete pages
 use the snapshot boundary, and racing SEARCH UIDs above that boundary are not
 selected. It models the selection rule, not the IMAP server or parser. Production
-kernel laws cover checkpoint branches, not the window filter; synthetic server tests cover their
-wiring, malformed UIDNEXT and concurrent-arrival transcripts.
+kernel laws pin the checkpoint helper branches, interval predicate and read-only
+plan interfaces. They do not formally prove the full Tools orchestration that
+chooses those branches, acquires and validates the selected data, or admits the
+final response budget. Synthetic CLI/MCP cases cover that wiring, malformed
+UIDNEXT, concurrent-arrival transcripts and failed acquisition/budget paths.
 
 Review alternatives: using the maximum SEARCH UID was rejected because a racing
 seen arrival between the snapshot and a later unseen arrival could be skipped.
@@ -171,3 +174,32 @@ progress. Arrival-predicate, missing-upper-bound and premature-H mutants must
 break those invariants. It is not a server/parser proof or a CI drift check.
 Production interval, plan-read-only and completed-cursor laws plus synthetic
 CLI/MCP tests cover the implemented interfaces.
+
+
+## Prepared classification evidence
+
+Each selected message is prepared once before the stored-Sent lookup. The
+prepared value retains the original message, every relevant header occurrence,
+the complete-block/4096-byte validity result and the validated sender. Invalid
+preparations discard parsed fields while retaining the original message. The same
+prepared page and deduplicated sender list cross every role lookup and contact
+scan branch into final classification. Empty and failed contact lookups do not
+rebuild header evidence. Duplicate fields and malformed/oversized evidence keep
+their existing conservative meaning; the byte bound charges unfolded UTF-8
+relevant names and values, not unrelated summary headers.
+
+This is one classification parse per complete selected header block, not one
+parse for the whole tool. Summary metadata and annotations still read the
+original message through their existing paths. No parser, contact trust or
+privacy contract changes, and no measured speedup is claimed here.
+
+The existing raw-message UID laws retain their universal scope. Their APIs now
+prepare inputs and use the same prepared classifier as production. Preparation
+retains the original message and the classifier retains its UID. They do not
+prove that Tools prepares only once or passes the same page through IO; the
+source/call-path regression guard and synthetic CLI/MCP cases cover that wiring.
+`tests/unit/brief-prepared.bend` compares frozen pre-cache classification with
+explicit goldens and the prepared path. `tests/brief-evidence-contract.py` is
+invoked by the existing brief CLI/MCP scenarios and rejects reintroduced parses
+in preparation, sender gathering, output and role/scan branches. These are
+regression checks, not a formal cost proof or a benchmark.

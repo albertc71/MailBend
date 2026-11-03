@@ -18,6 +18,11 @@ type Delivery is Data:
   CcOnly{}
   OtherOrUnknown{}
 
+# Classification evidence is prepared once, then retained across contact IO.
+# The original message is kept for summaries and annotation.
+type Prepared is Data:
+  Prepared{message: I.Msg, fields: List<&2, M.Hdr>, valid: Bool, sender: Maybe<&2, String>}
+
 type Item is Data:
   Item{message: I.Msg, group: Group, delivery: Delivery, list_key: String}
 
@@ -197,17 +202,6 @@ def fields_bytes(xs: List<&2, M.Hdr>) -> U32:
       Bool.pick(U32, U32.is_gt(size, 4096) || U32.is_gt(tail, 4096), 4097,
         (size + tail : U32))
 
-def headers_bytes(complete: Bool, hs: String) -> Bool:
-  match complete:
-    case False{}:
-      False{}
-    case True{}:
-      U32.is_le(fields_bytes(evidence(hs)), 4096)
-
-def headers_small(m: I.Msg) -> Bool:
-  I.Msg{u, flags, date, size, +hs, body, st} = m
-  headers_bytes(String.ends_with(hs, "\r\n\r\n") || String.eq(hs, "\r\n"), hs)
-
 def sender.one(xs: List<&2, String>) -> Maybe<&2, String>:
   match xs:
     case +s <> Nil{}:
@@ -222,18 +216,45 @@ def sender.fields(valid: Bool, hs: List<&2, M.Hdr>) -> Maybe<&2, String>:
     case True{}:
       sender.one(C.tokens(C.values(hs, False{})))
 
-def sender.small(small: Bool, m: I.Msg) -> Maybe<&2, String>:
+def sender.small(small: Bool, +fields: List<&2, M.Hdr>) -> Maybe<&2, String>:
   match small:
     case False{}:
       None{}
     case True{}:
-      I.Msg{u, flags, date, size, hs, body, st} = m
-      +fields = evidence(hs)
       sender.fields(Nat.is_eq(C.field_count(fields, "from"), 1n) &&
         C.valid_fields(C.values(fields, False{})), fields)
 
-def sender(+m: I.Msg) -> Maybe<&2, String>:
-  sender.small(headers_small(m), m)
+def prepare.fields(m: I.Msg, +fields: List<&2, M.Hdr>) -> Prepared:
+  +small = U32.is_le(fields_bytes(fields), 4096)
+  # Invalid evidence is never consulted again; do not retain oversized parsed values.
+  Prepared{m, Bool.pick(List<&2, M.Hdr>, small, fields, []),
+    small, sender.small(small, fields)}
+
+def prepare.complete(complete: Bool, m: I.Msg, hs: String) -> Prepared:
+  match complete:
+    case False{}:
+      Prepared{m, [], False{}, None{}}
+    case True{}:
+      prepare.fields(m, evidence(hs))
+
+def prepare(+m: I.Msg) -> Prepared:
+  I.Msg{u, flags, date, size, +hs, body, st} = m
+  prepare.complete(String.ends_with(hs, "\r\n\r\n") || String.eq(hs, "\r\n"), m, hs)
+
+def prepare_all(ms: List<&2, I.Msg>) -> List<&2, Prepared>:
+  match ms:
+    case Nil{}:
+      []
+    case m <> t:
+      prepare(m) <> prepare_all(t)
+
+def prepared_message(p: Prepared) -> I.Msg:
+  Prepared{m, fields, valid, a} = p
+  m
+
+def sender(p: Prepared) -> Maybe<&2, String>:
+  Prepared{m, fields, valid, a} = p
+  a
 
 def senders.put(a: Maybe<&2, String>, +seen: List<&2, String>)
   -> List<&2, String>:
@@ -244,14 +265,14 @@ def senders.put(a: Maybe<&2, String>, +seen: List<&2, String>)
       Bool.pick(List<&2, String>, List.contains(~String, ~String.eq, seen, s), seen,
         List.append(&2, String, seen, [s]))
 
-def senders.go(ms: List<&2, I.Msg>, seen: List<&2, String>) -> List<&2, String>:
+def senders.go(ms: List<&2, Prepared>, seen: List<&2, String>) -> List<&2, String>:
   match ms:
     case Nil{}:
       seen
     case m <> t:
       senders.go(t, senders.put(sender(m), seen))
 
-def senders(ms: List<&2, I.Msg>) -> List<&2, String>:
+def senders(ms: List<&2, Prepared>) -> List<&2, String>:
   senders.go(ms, [])
 
 def positive(c: C.Contact) -> Bool:
@@ -320,28 +341,36 @@ def list_key(b: Meta.Bulk, s: String) -> String:
     case _:
       ""
 
-def item.small(small: Bool, +m: I.Msg, cs: List<&2, C.Contact>,
-  allowed: List<&2, String>, me: String) -> Item:
+def prepared_item.small(small: Bool, m: I.Msg, +fields: List<&2, M.Hdr>,
+  a: Maybe<&2, String>, cs: List<&2, C.Contact>, allowed: List<&2, String>, me: String) -> Item:
   match small:
     case False{}:
       Item{m, UnknownPeople{}, OtherOrUnknown{}, ""}
     case True{}:
-      I.Msg{u, flags, date, size, hs, body, st} = m
-      +fields = evidence(hs)
-      +list_id = M.header(fields, "list-id")
-      Item{m, group(bulk(fields), known.sender(sender(m), cs, allowed)),
-        delivery(fields, me), list_key(bulk(fields), list_id)}
+      +b = bulk(fields)
+      Item{m, group(b, known.sender(a, cs, allowed)),
+        delivery(fields, me), list_key(b, M.header(fields, "list-id"))}
 
-def item(+m: I.Msg, cs: List<&2, C.Contact>, allowed: List<&2, String>, me: String) -> Item:
-  item.small(headers_small(m), m, cs, allowed, me)
+def prepared_item(p: Prepared, cs: List<&2, C.Contact>,
+  allowed: List<&2, String>, me: String) -> Item:
+  Prepared{m, fields, small, a} = p
+  prepared_item.small(small, m, fields, a, cs, allowed, me)
 
-def items(ms: List<&2, I.Msg>, +cs: List<&2, C.Contact>, +allowed: List<&2, String>, +me: String)
-  -> List<&2, Item>:
-  match ms:
+def prepared_items(ps: List<&2, Prepared>, +cs: List<&2, C.Contact>,
+  +allowed: List<&2, String>, +me: String) -> List<&2, Item>:
+  match ps:
     case Nil{}:
       []
-    case m <> t:
-      item(m, cs, allowed, me) <> items(t, cs, allowed, me)
+    case p <> t:
+      prepared_item(p, cs, allowed, me) <> prepared_items(t, cs, allowed, me)
+
+# Raw-message convenience APIs use the same prepared classifier as production.
+def item(m: I.Msg, cs: List<&2, C.Contact>, allowed: List<&2, String>, me: String) -> Item:
+  prepared_item(prepare(m), cs, allowed, me)
+
+def items(ms: List<&2, I.Msg>, cs: List<&2, C.Contact>, allowed: List<&2, String>, me: String)
+  -> List<&2, Item>:
+  prepared_items(prepare_all(ms), cs, allowed, me)
 
 def item_uid(i: Item) -> U32:
   Item{m, g, d, k} = i

@@ -11,6 +11,16 @@ from datetime import datetime, timezone, timedelta
 
 
 def run(t, work):
+    spec = importlib.util.spec_from_file_location('brief_evidence_contract',
+                                                  t.ROOT / 'tests/brief-evidence-contract.py')
+    contract = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(contract)
+    try:
+        mutations = contract.run()
+        t.check('brief: classification prepared once across contact IO; reparse mutations rejected',
+                mutations == 5)
+    except AssertionError as error:
+        t.check('brief: prepared evidence source contract', False, str(error))
     now = time.time()
 
     def message(uid, sender, headers='', flags=()):
@@ -40,6 +50,12 @@ def run(t, work):
                 [m['uid'] for m in rows] == [1, 2, 3, 4, 6, 7] and
                 [m['group'] for m in rows] == ['people', 'unknown_people', 'lists', 'automated',
                                                'unknown_people', 'lists'], result)
+        t.check('brief: prepared classification preserves original summaries',
+                [m.get('subject') for m in rows] ==
+                [f'Brief item {uid}' for uid in (1, 2, 3, 4, 6, 7)] and
+                [m.get('from') for m in rows] ==
+                ['known@example.test', 'new@example.test', 'list@example.test',
+                 'robot@example.test', 'broken', 'list@example.test'], result)
         t.check('brief: delivery is independent of sender evidence',
                 [m['delivery'] for m in rows] == ['direct', 'cc_only', 'other_or_unknown',
                                                  'other_or_unknown', 'direct', 'other_or_unknown'], result)
@@ -247,6 +263,38 @@ def run(t, work):
         t.check('brief: missing Sent retains message and explicit unknown coverage', code == 0 and
                 result.get('messages', [{}])[0].get('group') == 'unknown_people' and
                 result.get('correspondence', {}).get('coverage', {}).get('complete') is False, result)
+    finally:
+        srv.stop()
+
+    for extra, label in ((('--reject', 'LIST'), 'probe failure'),
+                         (('--special-on-request', '--special-return-fails'), 'role failure')):
+        srv = t.Server(work, fixture=fixture, extra=extra)
+        try:
+            code, result = t.tool(srv, 'mail_brief', {'limit': 4})
+            rows = result.get('messages', [])
+            t.check(f'brief: {label} retains prepared classification and original summaries',
+                    code == 0 and [m['uid'] for m in rows] == [1, 2, 3, 4] and
+                    [m['group'] for m in rows] == ['unknown_people', 'unknown_people',
+                                                 'lists', 'automated'] and
+                    [m['subject'] for m in rows] == [f'Brief item {i}' for i in range(1, 5)] and
+                    result.get('correspondence', {}).get('coverage', {}).get('complete') is False,
+                    result)
+        finally:
+            srv.stop()
+
+    no_senders = copy.deepcopy(fixture)
+    no_senders['mailboxes']['INBOX']['messages'] = [
+        message(1, 'broken', f'To: {fixture["user"]}\r\n'),
+        message(2, 'broken', 'List-Id: news.example.test\r\n')]
+    srv = t.Server(work, fixture=no_senders)
+    try:
+        code, result = t.tool(srv, 'mail_brief')
+        rows = result.get('messages', [])
+        t.check('brief: no valid senders skips Sent scan without losing cached fields', code == 0 and
+                [m['group'] for m in rows] == ['unknown_people', 'lists'] and
+                rows[0]['delivery'] == 'direct' and
+                result.get('correspondence', {}).get('total_senders') == 0 and
+                not any(' EXAMINE "Sent Messages"' in line for line in srv.log_lines()), result)
     finally:
         srv.stop()
 

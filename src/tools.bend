@@ -5318,6 +5318,10 @@ type BriefPage is Data:
   BriefPage{folder: String, uidv: U32, next: U32, more: Bool, window: Brief.SelectionWindow,
     messages: List<&2, I.Msg>}
 
+type PreparedBriefPage is Data:
+  PreparedBriefPage{page: BriefPage, evidence: List<&2, Brief.Prepared>,
+    senders: List<&2, String>}
+
 type BriefCount is Data:
   BriefCount{group: String, key: String, count: U32}
 
@@ -5360,12 +5364,12 @@ def brief_counts_json(xs: List<&2, BriefCount>) -> List<&2, J.Json>:
       J.obj([J.kv("group", J.str(g)), J.kv("group_key", Metadata.nullable(k)),
         J.kv("count", J.num(n))]) <> brief_counts_json(t)
 
-def brief_output(p: BriefPage, +scan: ContactScan, me: String, since: String) -> Shown:
-  BriefPage{+folder, +uidv, +next, +more, +window, +ms} = p
+def brief_output(prepared: PreparedBriefPage, +scan: ContactScan, me: String, since: String) -> Shown:
+  PreparedBriefPage{p, evidence, +senders} = prepared
+  BriefPage{+folder, +uidv, +next, +more, +window, ms} = p
   ContactScan{f, v, cs, sampled, complete, reason} = scan
-  +senders = Brief.senders(ms)
   +allowed = List.take(&2, String, senders, 50n)
-  +items = Brief.items(ms, cs, allowed, String.to_lower(me))
+  +items = Brief.prepared_items(evidence, cs, allowed, String.to_lower(me))
   Listed{ok_obj([J.kv("folder", J.str(folder)), J.kv("uidvalidity", J.num(uidv)),
     J.kv("mode", J.str(Brief.window_mode(window))),
     J.kv("checkpoint_basis", J.str(Brief.checkpoint_basis(window, more))), J.kv("next_since_uid", J.num(next)),
@@ -5381,7 +5385,7 @@ def brief_output(p: BriefPage, +scan: ContactScan, me: String, since: String) ->
       J.kv("total_senders", J.num(U32.from_nat(List.length(&2, String, senders)))),
       J.kv("coverage", contacts_coverage(scan))]))]), ms}
 
-def brief_sent_role(fs: Fs(), p: BriefPage, me: String, +since: String, now: U32)
+def brief_sent_role(fs: Fs(), p: PreparedBriefPage, me: String, +since: String, now: U32)
   -> IO(Shown):
   match fs:
     case Fail{m}:
@@ -5393,7 +5397,7 @@ def brief_sent_role(fs: Fs(), p: BriefPage, me: String, +since: String, now: U32
         scan : ContactScan <- contacts_scan(f, since, 100, True{}, "", now)
         return brief_output(p, scan, me, since)
 
-def brief_roles(r: Run(), p: BriefPage, me: String, since: String, now: U32) -> IO(Shown):
+def brief_roles(r: Run(), p: PreparedBriefPage, me: String, since: String, now: U32) -> IO(Shown):
   match r:
     case Fail{m}:
       IO.pure(Shown, brief_output(p, contacts_failed("", m), me, since))
@@ -5403,7 +5407,7 @@ def brief_roles(r: Run(), p: BriefPage, me: String, since: String, now: U32) -> 
           merge_folders(I.folders(lines), []))
         brief_sent_role(fs, p, me, since, now)
 
-def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
+def brief_contacts.if(empty: Bool, p: PreparedBriefPage, me: String) -> IO(Shown):
   match empty:
     case True{}:
       IO.pure(Shown, brief_output(p, contacts_failed("", "not scanned: no selected senders"), me, ""))
@@ -5418,7 +5422,10 @@ def brief_contacts(+p: BriefPage) -> IO(Shown):
   BriefPage{folder, uidv, next, more, window, ms} = p
   do IO<Shown>:
     me : String <- env_or("MAILBEND_EMAIL", "")
-    brief_contacts.if(List.is_empty(&2, String, Brief.senders(ms)), p, me)
+    +evidence : List<&2, Brief.Prepared> = Brief.prepare_all(ms)
+    +senders : List<&2, String> = Brief.senders(evidence)
+    brief_contacts.if(List.is_empty(&2, String, senders),
+      PreparedBriefPage{p, evidence, senders}, me)
 
 def brief_headers.complete(complete: Bool, p: BriefPage) -> IO(Shown):
   match complete:
