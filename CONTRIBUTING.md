@@ -252,8 +252,11 @@ policy migration before treating a helper update as ready:
    unchanged helpers. Never derive approved hashes dynamically from candidate
    files or bypass the refusal of unreviewed or mixed tuples.
 2. Update [Reviewed candidate installer migration](tests/SCALE.md#reviewed-candidate-installer-migration-148)
-   with the source revision and scope. Update `tests/test-scale-pair.py` where
-   controls depend on that tuple, retaining rejection and alias controls.
+   with the source revision and scope. Preserve the historical #148 record;
+   for a new migration, rename the section to cover all reviewed migrations,
+   append the new record, and update this link to the renamed heading.
+   Update the literal tuple assertion in `tests/test-scale-pair.py` and any
+   other controls that depend on that tuple. Keep rejection and alias controls.
    Run `python3 tests/test-scale-pair.py`.
 3. Require the paired comparison to pass on the exact proposed PR head, as
    well as native CI. Editing `tests/scale_pair.py` triggers
