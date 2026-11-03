@@ -265,10 +265,15 @@ class PairTests(unittest.TestCase):
                 elif case in ("missing", "symlink", "hardlink"):
                     path = roots[1] / pair.INSTALLERS[1]
                     path.unlink()
-                    if case == "symlink":
-                        path.symlink_to(roots[0] / pair.INSTALLERS[1])
-                    elif case == "hardlink":
-                        path.hardlink_to(roots[0] / pair.INSTALLERS[1])
+                    if case in ("symlink", "hardlink"):
+                        # Keep accepted revised bytes: bypassing regular() must
+                        # not get caught incidentally by the mixed-tuple gate.
+                        target = pathlib.Path(tmp) / "revised-bend.sh"
+                        target.write_bytes(revised[pair.INSTALLERS[1]])
+                        if case == "symlink":
+                            path.symlink_to(target)
+                        else:
+                            path.hardlink_to(target)
                 def git(root, *args):
                     if args == ("rev-parse", "HEAD"):
                         return ("0" * 40 if case == "wrong-head" else
@@ -283,8 +288,30 @@ class PairTests(unittest.TestCase):
                         mock.patch.object(pair, "CANDIDATE_HELPER_TUPLE", allowed):
                     if case in ("old", "new"):
                         self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                    elif case == "missing":
+                        with self.assertRaises(FileNotFoundError):
+                            pair.preflight(*roots, "a" * 40)
                     else:
-                        with self.assertRaises((ValueError, FileNotFoundError)):
+                        expected = {
+                            "mixed": "not a reviewed complete revision",
+                            "wrong-path": "not a reviewed complete revision",
+                            "changed-bend": "not a reviewed complete revision",
+                            "changed-rust": "not a reviewed complete revision",
+                            "changed-lean": "not a reviewed complete revision",
+                            "reference-new": "fixed launcher/installer changed",
+                            "launcher-reference": "fixed launcher/installer changed",
+                            "launcher-candidate": "fixed launcher/installer changed",
+                            "install-reference": "fixed launcher/installer changed",
+                            "install-candidate": "fixed launcher/installer changed",
+                            "apparatus-reference": "apparatus changed",
+                            "apparatus-candidate": "apparatus changed",
+                            "symlink": "symlink forbidden",
+                            "hardlink": "not an unaliased regular file",
+                            "dirty": "tracked source is dirty",
+                            "wrong-head": "wrong source SHA",
+                            "wrong-tag": "reference tag does not resolve",
+                        }[case]
+                        with self.assertRaisesRegex(ValueError, expected):
                             pair.preflight(*roots, "a" * 40)
 
     def test_reviewed_installer_tuple_is_literal_and_path_ordered(self):
