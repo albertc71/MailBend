@@ -49,7 +49,7 @@ The scale contract checks need GNU `time` (`sudo apt-get install time` on Ubuntu
 ```sh
 scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rust if missing
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
-python3 scripts/check-docs.py                     # documented names resolve in source
+python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
@@ -64,6 +64,8 @@ python3 tests/formal/check-writing-laws.py         # compile the guide and rejec
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
 python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
+python3 tests/test-scale-baseline.py               # historical selected baselines match apparatus
+python3 -I tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
 bash tests/test-transport.sh
@@ -82,15 +84,24 @@ python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes;
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
 
+When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
+the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).
+Keep the entrypoint under 300 lines, use portable frontmatter without
+`allowed-tools`, and retain explicit human approval before sends and deletes.
+The documentation check validates tool-scoped names and arguments against
+`tools/gen-schema.py`; it is not a behavioral evaluation of an agent.
+
 The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
 checks. The second repeats the tool scenarios through structured MCP without
 repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
 complete run, including when `MAILBEND_TEST_MCP=1` is set.
 
-CI runs source and proof checks, CLI, structured MCP and support suites on
-isolated standard Ubuntu runners. Each runtime runner builds its own binaries
+CI runs source checks and unit tests, kernel-rechecked proofs, proof mutation
+checks, CLI, structured MCP and support suites on isolated standard Ubuntu
+runners. Each runtime runner builds its own binaries
 from the checked-out revision. This repeats build work to avoid shared-state
-races and artifact storage. Rust and fuzz checks remain separate. The final
+races and artifact storage. Rust and fuzz checks remain separate. Source,
+proof and mutation lanes each install their own toolchain. The final
 `checks` job requires every lane to succeed, including Rust and fuzz; skipped
 or cancelled lanes do not count as a pass.
 

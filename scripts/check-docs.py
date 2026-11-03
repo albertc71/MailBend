@@ -2,6 +2,7 @@
 """Check documented source names without compiling or connecting to a service."""
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -87,10 +88,110 @@ def law_references(text, path, root):
     return refs
 
 
-def check(root):
+def heading_slugs(text):
+    slugs = set()
+    fence = None
+    for line in text.splitlines():
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+            continue
+        if marker and (marker[1][0] != "`" or "`" not in marker[2]):
+            fence = marker[1]
+            continue
+        match = re.match(r"^#+ (.+)$", line)
+        if not match:
+            continue
+        heading = match[1]
+        base = re.sub(r"[^a-z0-9 _-]", "", heading.lower()).replace(" ", "-")
+        slug = base
+        suffix = 0
+        while slug in slugs:
+            suffix += 1
+            slug = f"{base}-{suffix}"
+        slugs.add(slug)
+    return slugs
+
+
+def skill_references(root):
     errors = []
+    directory = root / "skills/mailbend"
+    for relative in ("SKILL.md", "references/tools.md", "references/cli.md"):
+        if not (directory / relative).is_file():
+            errors.append(f"skills/mailbend/{relative}: missing skill file")
+    if errors:
+        return errors
+
+    spec = importlib.util.spec_from_file_location("mailbend_documented_schema", root / "tools/gen-schema.py")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except (Exception, SystemExit) as error:
+        raise ValueError(f"tools/gen-schema.py: cannot load schema ({type(error).__name__}: {error})") from error
+    try:
+        tools = required({tool["name"]: set(tool["inputSchema"]["properties"])
+                          for tool in module.TOOLS}, "schema tools")
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"tools/gen-schema.py: invalid tool schema ({type(error).__name__}: {error})") from error
+    tool_name = r"mail_[A-Za-z_0-9]+"
+    signatures = re.compile(r"\b(" + tool_name + r")\(([^()\n]*)\)")
+    listed = set()
+    for path in sorted(directory.rglob("*.md")):
+        text = path.read_text()
+        label = str(path.relative_to(root))
+        names = set(re.findall(r"\b" + tool_name + r"\b", text))
+        errors.extend(f"{label}: unknown tool {name}" for name in sorted(names - tools.keys()))
+        arguments = set(re.findall(r"\b(" + tool_name + r")\.(" + NAME + r")\b", text))
+        for match in signatures.finditer(text):
+            name, raw = match.groups()
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            index_entry = (path == directory / "references/tools.md"
+                           and text[line_start:match.start()] == "- `"
+                           and text[match.end():].startswith("`:"))
+            if index_entry:
+                listed.add(name)
+            signature_arguments = set()
+            for argument in raw.split(",") if raw.strip() else []:
+                argument = argument.strip()
+                if not re.fullmatch(NAME, argument):
+                    errors.append(f"{label}: invalid argument notation {name}({raw})")
+                else:
+                    arguments.add((name, argument))
+                    signature_arguments.add(argument)
+            if index_entry and name in tools:
+                errors.extend(f"{label}: missing argument {name}.{argument}"
+                              for argument in sorted(tools[name] - signature_arguments))
+        for name, argument in sorted(arguments):
+            if name in tools and argument not in tools[name]:
+                errors.append(f"{label}: unknown argument {name}.{argument}")
+        for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", text):
+            repository_prefix = "https://github.com/albertc71/MailBend/blob/main/"
+            if target.startswith(repository_prefix):
+                relative, _, anchor = target[len(repository_prefix):].partition("#")
+                destination = (root / relative).resolve()
+            elif re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+                continue
+            else:
+                relative, _, anchor = target.partition("#")
+                destination = (path.parent / relative).resolve() if relative else path
+            if not destination.is_relative_to(root):
+                errors.append(f"{label}: linked file outside repository {target}")
+            elif not destination.is_file():
+                errors.append(f"{label}: missing linked file {target}")
+            elif anchor and destination.suffix == ".md":
+                if anchor not in heading_slugs(destination.read_text()):
+                    errors.append(f"{label}: missing linked heading {target}")
+    errors.extend(f"skills/mailbend/references/tools.md: missing tool {name}"
+                  for name in sorted(tools.keys() - listed))
+    return errors
+
+
+def check(root):
+    errors = skill_references(root)
     laws = required(set(re.findall(r"^law (" + NAME + r")\s*:", (root / "LAWS.bend").read_text(), re.M)), "law declarations")
-    docs = sorted(root.glob("*.md")) + sorted((root / "docs").rglob("*.md"))
+    docs = (sorted(root.glob("*.md")) + sorted((root / "docs").rglob("*.md"))
+            + sorted((root / "skills/mailbend").rglob("*.md")))
     count = 0
     for path in docs:
         refs = law_references(path.read_text(), path, root)
@@ -151,7 +252,7 @@ def main():
     if errors:
         print("Documentation drift:\n" + "\n".join(errors), file=sys.stderr)
         return 1
-    print("Documentation names resolve: laws, environment, CLI usage, and source layers")
+    print("Documentation names resolve: laws, environment, CLI usage, source layers, and skill tools")
     return 0
 
 
