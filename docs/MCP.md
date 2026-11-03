@@ -12,20 +12,23 @@ Do not register `bin/mailbend-core` directly: the pinned Bend runtime reopens
 `/dev/stdin`, which fails with `ENXIO` on socket-backed input.
 That failure exits with code 6 and directs you to `scripts/mailbend mcp`.
 
-Each MCP process parses the immutable generated tool schema once when opening
-its session and retains that unfiltered value until EOF or a framing error closes
-the session. This moves parsing cost to startup and retains the schema in memory.
-Every `tools/list` still applies the current process configuration and the
-individual request's protocol projection; no filtered list or reply is cached.
-CLI tool listing and tool-call validation keep their independent paths.
+Structured legacy `tools/list` replies select trusted generated JSON definitions
+using the same current policy as the parsed listing path. Only generated schema
+bytes enter that tools/list-specific envelope; request IDs are JSON-encoded.
+No parsed schema or filtered response is retained between requests. Modern and
+older legacy projections retain the original parsed-schema path. CLI listing
+and tool-call validation are unchanged.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ParseSchema: open stdin
-    ParseSchema --> Serve: retain immutable unfiltered schema
-    Serve --> Serve: filter and project each tools/list
+    [*] --> Serve
+    Serve --> Select: structured legacy tools/list
+    Select --> Emit: current policy selects generated definitions
+    Emit --> Serve: encode ID and send reply
+    Serve --> Parsed: modern or older legacy tools/list
+    Parsed --> Serve: filter and project original schema
     Serve --> Closed: EOF or framing limit
-    Closed --> [*]: release session state
+    Closed --> [*]
 ```
 
 The `MCP schema comparison` workflow builds a reference and candidate on the

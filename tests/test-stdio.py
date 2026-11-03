@@ -536,7 +536,7 @@ class StdioTests(unittest.TestCase):
                 with Session(LAUNCHERS[0], env=env, pipe=True) as session:
                     session.send(discovery())
                     session.line()
-                    for ident, params in ((2, {}), (3, {}), (4, {"_meta": META})):
+                    for ident, params in ((2, {}), ('quote"\\\n雪', {}), (None, {}), (1.25, {}), (4, {"_meta": META})):
                         session.send(request("tools/list", ident, params))
                         reply = session.line()
                         self.assertEqual(reply["id"], ident)

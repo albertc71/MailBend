@@ -24,11 +24,9 @@ def version() -> String:
   "0.1.0"
 
 # The tools this session offers: the schema less what the configuration hides.
-def tool_schema() -> J.Json:
-  Maybe.default(&2, J.Json, J.parse(Schema.tool_defs()), J.arr([]))
-
 def offered_tools() -> IO(J.Json):
-  T.offered_tools(tool_schema())
+  schema = Maybe.default(&2, J.Json, J.parse(Schema.tool_defs()), J.arr([]))
+  T.offered_tools(schema)
 
 # Tool results
 # ============
@@ -188,21 +186,46 @@ def call_tool(modern: Bool, structured: Bool, id: J.Json, +params: J.Json) -> IO
   args = object_or_empty(J.get(params, "arguments"))
   run_tool(modern, structured, id, Policy.str_arg(params, "name", ""), args)
 
+# Only generated schema bytes enter this tools/list-specific envelope. The
+# untrusted request ID is always JSON-encoded; no request text is spliced in.
+def listed_result(id: J.Json, names: List<&2, String>) -> String:
+  "{\"jsonrpc\":\"2.0\",\"id\":" ++ J.show(id) ++
+  ",\"result\":{\"tools\":" ++ Schema.tool_defs_for(names) ++ "}}"
+
+def list_tools.parsed(modern: Bool, structured: Bool, id: J.Json) -> IO(Unit):
+  do IO<Unit>:
+    ts : J.Json <- offered_tools()
+    IO.print(rpc_result(id, MCP.cacheable_result(modern,
+      J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
+
+def list_tools.legacy(structured: Bool, id: J.Json) -> IO(Unit):
+  match structured:
+    case True{}:
+      do IO<Unit>:
+        c : Policy.Config <- T.config()
+        IO.print(listed_result(id, T.offered_names(c)))
+    case False{}:
+      list_tools.parsed(False{}, False{}, id)
+
+def list_tools(modern: Bool, structured: Bool, id: J.Json) -> IO(Unit):
+  match modern:
+    case True{}:
+      list_tools.parsed(True{}, structured, id)
+    case False{}:
+      list_tools.legacy(structured, id)
+
 # Requests
 # --------
 
 # Answers a request by its method. `params` is an object.
-def respond(+schema: J.Json,
+def respond(
   modern: Bool, structured: Bool, id: J.Json, +method: String, params: J.Json
 ) -> IO(Unit):
   match method:
     case "tools/call":
       call_tool(modern, structured, id, params)
     case "tools/list":
-      do IO<Unit>:
-        ts : J.Json <- T.offered_tools(schema)
-        IO.print(rpc_result(id, MCP.cacheable_result(modern,
-          J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
+      list_tools(modern, structured, id)
     case "server/discover":
       IO.print(rpc_result(id, MCP.cacheable_result(True{}, J.obj([
         J.kv("supportedVersions", MCP.versions()),
@@ -232,36 +255,36 @@ def modern_request.problem(method: String, +p: J.Json) -> String:
     case _:
       ""
 
-def modern_request.run(+schema: J.Json, id: J.Json, method: String, p: J.Json, problem: String) -> IO(Unit):
+def modern_request.run(id: J.Json, method: String, p: J.Json, problem: String) -> IO(Unit):
   match problem:
     case "":
-      respond(schema, True{}, True{}, id, method, p)
+      respond(True{}, True{}, id, method, p)
     case _:
       IO.print(rpc_error(id, "-32602", problem))
 
-def modern_request.method(+schema: J.Json, id: J.Json, +method: String, +p: J.Json) -> IO(Unit):
+def modern_request.method(id: J.Json, +method: String, +p: J.Json) -> IO(Unit):
   match method:
     case "initialize":
       IO.print(rpc_error(id, "-32601", "initialize is a legacy method"))
     case "ping":
       IO.print(rpc_error(id, "-32601", "ping is a legacy method"))
     case _:
-      modern_request.run(schema, id, method, p, modern_request.problem(method, p))
+      modern_request.run(id, method, p, modern_request.problem(method, p))
 
-def modern_request.version(+schema: J.Json, id: J.Json, method: String, p: J.Json, supported: Bool) -> IO(Unit):
+def modern_request.version(id: J.Json, method: String, p: J.Json, supported: Bool) -> IO(Unit):
   match supported:
     case False{}:
       IO.print(MCP.unsupported(id, p))
     case True{}:
-      modern_request.method(schema, id, method, p)
+      modern_request.method(id, method, p)
 
 # After envelope/id validation: metadata shape, version, method, then params.
-def modern_request.meta(+schema: J.Json, id: J.Json, method: String, +p: J.Json, valid: Bool) -> IO(Unit):
+def modern_request.meta(id: J.Json, method: String, +p: J.Json, valid: Bool) -> IO(Unit):
   match valid:
     case False{}:
       IO.print(rpc_error(id, "-32602", "invalid params: required MCP metadata is malformed"))
     case True{}:
-      modern_request.version(schema, id, method, p, String.eq(MCP.requested(p), MCP.modern_version()))
+      modern_request.version(id, method, p, String.eq(MCP.requested(p), MCP.modern_version()))
 
 # Only legacy initialization changes connection state. Modern metadata never
 # inherits or changes that state, even when modern and legacy calls interleave.
@@ -282,17 +305,17 @@ def legacy_structured(legacy: Maybe<&2, String>) -> Bool:
     case None{}:
       False{}
 
-def respond_era(+schema: J.Json,
+def respond_era(
   +legacy: Maybe<&2, String>, id: J.Json, +method: String, +p: J.Json, modern: Bool
 ) -> IO(Maybe<&2, String>):
   match modern:
     case True{}:
       do IO<Maybe<&2, String>>:
-        modern_request.meta(schema, id, method, p, MCP.metadata_ok(p))
+        modern_request.meta(id, method, p, MCP.metadata_ok(p))
         return legacy
     case False{}:
       do IO<Maybe<&2, String>>:
-        respond(schema, False{}, legacy_structured(legacy), id, method, p)
+        respond(False{}, legacy_structured(legacy), id, method, p)
         return legacy_after(legacy, method, p)
 
 # Explicit modern metadata always selects modern handling. Without it, only
@@ -303,7 +326,7 @@ def is_modern(legacy: Maybe<&2, String>, +method: String, p: J.Json) -> Bool:
     Bool.not(String.eq(method, "initialize") || String.eq(method, "ping")))
 
 # Parameters that are not an object are refused, not read as none.
-def respond_with(+schema: J.Json,
+def respond_with(
   +legacy: Maybe<&2, String>, id: J.Json, +method: String, params: Maybe<&2, J.Json>
 ) -> IO(Maybe<&2, String>):
   match params:
@@ -314,10 +337,10 @@ def respond_with(+schema: J.Json,
         return legacy
     case Some{+p}:
       modern = is_modern(legacy, method, p)
-      respond_era(schema, legacy, id, method, p, modern)
+      respond_era(legacy, id, method, p, modern)
 
 # A notification (no id) gets no answer and cannot select a legacy revision.
-def request(+schema: J.Json,
+def request(
   legacy: Maybe<&2, String>, +req: J.Json, id: Maybe<&2, J.Json>
 ) -> IO(Maybe<&2, String>):
   match id:
@@ -325,7 +348,7 @@ def request(+schema: J.Json,
       IO.pure(Maybe<&2, String>, legacy)
     case Some{i}:
       method = Policy.str_arg(req, "method", "")
-      respond_with(schema, legacy, i, method, object_or_empty(J.get(req, "params")))
+      respond_with(legacy, i, method, object_or_empty(J.get(req, "params")))
 
 # A JSON-RPC id is a string, a number or null.
 def id_ok(id: Maybe<&2, J.Json>) -> Bool:
@@ -385,23 +408,23 @@ def invalid_request(legacy: Maybe<&2, String>, +req: J.Json) -> String:
 
 # A message failing the envelope check is answered with -32600, under its
 # id when that id is valid.
-def message.if(+schema: J.Json, +legacy: Maybe<&2, String>, +req: J.Json, valid: Bool) -> IO(Maybe<&2, String>):
+def message.if(+legacy: Maybe<&2, String>, +req: J.Json, valid: Bool) -> IO(Maybe<&2, String>):
   match valid:
     case True{}:
-      request(schema, legacy, req, J.get(req, "id"))
+      request(legacy, req, J.get(req, "id"))
     case False{}:
       do IO<Maybe<&2, String>>:
         IO.print(invalid_request(legacy, req))
         return legacy
 
-def message(+schema: J.Json, +legacy: Maybe<&2, String>, m: Maybe<&2, J.Json>) -> IO(Maybe<&2, String>):
+def message(+legacy: Maybe<&2, String>, m: Maybe<&2, J.Json>) -> IO(Maybe<&2, String>):
   match m:
     case None{}:
       do IO<Maybe<&2, String>>:
         IO.print(rpc_unidentified(legacy, "-32700", "parse error"))
         return legacy
     case Some{+req}:
-      message.if(schema, legacy, req, envelope_ok_for(legacy, req))
+      message.if(legacy, req, envelope_ok_for(legacy, req))
 
 # Lines
 # -----
@@ -423,22 +446,22 @@ def is_blank(s: String) -> Bool:
     case _:
       False{}
 
-def handle_text.if(+schema: J.Json, legacy: Maybe<&2, String>, text: String, blank: Bool) -> IO(Maybe<&2, String>):
+def handle_text.if(legacy: Maybe<&2, String>, text: String, blank: Bool) -> IO(Maybe<&2, String>):
   match blank:
     case True{}:
       IO.pure(Maybe<&2, String>, legacy)
     case False{}:
-      message(schema, legacy, J.parse(text))
+      message(legacy, J.parse(text))
 
-def handle_text(+schema: J.Json, legacy: Maybe<&2, String>, +text: String) -> IO(Maybe<&2, String>):
-  handle_text.if(schema, legacy, text, is_blank(text))
+def handle_text(legacy: Maybe<&2, String>, +text: String) -> IO(Maybe<&2, String>):
+  handle_text.if(legacy, text, is_blank(text))
 
 # JSON-RPC messages are UTF-8: a line that does not round-trip through the
 # decoder (invalid bytes become U+FFFD) is a parse error, not a request.
-def handle_line.if(+schema: J.Json, +legacy: Maybe<&2, String>, text: String, valid: Bool) -> IO(Maybe<&2, String>):
+def handle_line.if(+legacy: Maybe<&2, String>, text: String, valid: Bool) -> IO(Maybe<&2, String>):
   match valid:
     case True{}:
-      handle_text(schema, legacy, text)
+      handle_text(legacy, text)
     case False{}:
       do IO<Maybe<&2, String>>:
         IO.print(rpc_unidentified(legacy, "-32700",
@@ -447,18 +470,18 @@ def handle_line.if(+schema: J.Json, +legacy: Maybe<&2, String>, text: String, va
 
 # Answers one complete line of UTF-8 bytes. It is decoded only once whole, so
 # a read that ends inside a multi-byte character cannot corrupt it.
-def handle_line(+schema: J.Json, legacy: Maybe<&2, String>, +line: String) -> IO(Maybe<&2, String>):
+def handle_line(legacy: Maybe<&2, String>, +line: String) -> IO(Maybe<&2, String>):
   +text = C.utf8_decode(line)
-  handle_line.if(schema, legacy, text, String.eq(C.utf8_encode(text), line))
+  handle_line.if(legacy, text, String.eq(C.utf8_encode(text), line))
 
-def handle_lines(+schema: J.Json, ls: List<&2, String>, legacy: Maybe<&2, String>) -> IO(Maybe<&2, String>):
+def handle_lines(ls: List<&2, String>, legacy: Maybe<&2, String>) -> IO(Maybe<&2, String>):
   match ls:
     case Nil{}:
       IO.pure(Maybe<&2, String>, legacy)
     case l <> t:
       do IO<Maybe<&2, String>>:
-        next : Maybe<&2, String> <- handle_line(schema, legacy, l)
-        handle_lines(schema, t, next)
+        next : Maybe<&2, String> <- handle_line(legacy, l)
+        handle_lines(t, next)
 
 # Serving stdin
 # -------------
@@ -493,15 +516,15 @@ def StdinRead() -> Type:
 # Bend's own server demos) rather than counting down a fuel that would end a
 # long session.
 @unsafe
-def serve(+schema: J.Json, f: File, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>) -> IO(Unit):
+def serve(f: File, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>) -> IO(Unit):
   do IO<Unit>:
     m : StdinRead() <- File.read_bytes(f, 65536)
-    serve.read(schema, m, parts, n, legacy)
+    serve.read(m, parts, n, legacy)
 
 # A failed read ends the session; an empty one (end of input) answers the
 # unfinished line first.
 @unsafe
-def serve.read(+schema: J.Json,
+def serve.read(
   m: StdinRead(), parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>
 ) -> IO(Unit):
   (f, r) = m
@@ -512,26 +535,26 @@ def serve.read(+schema: J.Json,
       match xs:
         case Nil{}:
           do IO<Unit>:
-            ignored : Maybe<&2, String> <- handle_line(schema, legacy, pending(parts))
+            ignored : Maybe<&2, String> <- handle_line(legacy, pending(parts))
             File.close(f)
         case h <> t:
-          serve.chunk(schema, f, String.split(C.bytes_str(xs), '\n'), parts, n, legacy)
+          serve.chunk(f, String.split(C.bytes_str(xs), '\n'), parts, n, legacy)
 
 # `pieces` is the chunk split at its newlines. Its first piece ends the
 # unfinished line, which is refused once it is longer than the cap.
 @unsafe
-def serve.chunk(+schema: J.Json,
+def serve.chunk(
   f: File, pieces: List<&2, String>, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>
 ) -> IO(Unit):
   match pieces:
     case Nil{}:
-      serve(schema, f, parts, n, legacy)
+      serve(f, parts, n, legacy)
     case +p <> rest:
       +length = (n + C.byte_len(p) : U32)
-      serve.chunk.if(schema, f, rest, p <> parts, length, U32.is_gt(length, line_cap()), legacy)
+      serve.chunk.if(f, rest, p <> parts, length, U32.is_gt(length, line_cap()), legacy)
 
 @unsafe
-def serve.chunk.if(+schema: J.Json,
+def serve.chunk.if(
   f: File, rest: List<&2, String>, parts: List<&2, String>,
   n: U32, over: Bool, legacy: Maybe<&2, String>
 ) -> IO(Unit):
@@ -541,22 +564,22 @@ def serve.chunk.if(+schema: J.Json,
         IO.print(too_long(legacy))
         File.close(f)
     case False{}:
-      serve.rest(schema, f, rest, parts, n, legacy)
+      serve.rest(f, rest, parts, n, legacy)
 
 # `rest` holds the pieces of the chunk after its first newline, if any.
 @unsafe
-def serve.rest(+schema: J.Json,
+def serve.rest(
   f: File, +rest: List<&2, String>, parts: List<&2, String>, n: U32, legacy: Maybe<&2, String>
 ) -> IO(Unit):
   match rest:
     case Nil{}:
-      serve(schema, f, parts, n, legacy)
+      serve(f, parts, n, legacy)
     case h <> t:
       do IO<Unit>:
-        next : Maybe<&2, String> <- handle_line(schema, legacy, pending(parts))
-        last : Maybe<&2, String> <- handle_lines(schema, complete_lines(rest), next)
+        next : Maybe<&2, String> <- handle_line(legacy, pending(parts))
+        last : Maybe<&2, String> <- handle_lines(complete_lines(rest), next)
         +unfinished : String = last_line(rest)
-        serve(schema, f, [unfinished], C.byte_len(unfinished), last)
+        serve(f, [unfinished], C.byte_len(unfinished), last)
 
 def mcp.failed(code: U32, message: String) -> IO(Unit):
   match code:
@@ -568,9 +591,7 @@ def mcp.failed(code: U32, message: String) -> IO(Unit):
 def mcp.opened(r: Result<&1, &1, U32 & String, File>) -> IO(Unit):
   match r:
     case Done{f}:
-      # Parse immutable schema once, not once per tools/list. Availability and
-      # protocol projection are still selected for each individual request.
-      serve(tool_schema(), f, [], 0, None{})
+      serve(f, [], 0, None{})
     case Fail{e}:
       (code, message) = e
       mcp.failed(code, message)
