@@ -119,29 +119,6 @@ jobs:
             echo "the send gate's request is not a plain cargo" >&2
             exit 1
           fi
-      - name: Install Lean (scripts/install-lean.sh, for --verdict)
-        run: sh scripts/install-lean.sh
-      - name: Safety proofs, rechecked by the proven kernel
-        run: |
-          bend PROOF.bend --verdict
-          bend src/tools.bend --verdict
-          bend tests/formal/tool-laws.bend --verdict
-      - name: Bounded SMTP model mutation checks
-        run: python3 tests/formal/check-smtp-tls.py
-      - name: Policy proof boundaries and mutation checks
-        run: python3 tests/formal/check-policy.py
-      - name: Role-folder resolution mutation checks
-        run: python3 tests/formal/check-role-folders.py
-
-      - name: Response and image budget proof mutation checks
-        run: python3 tests/formal/check-response-image-budgets.py
-
-      - name: Writing-laws guide snippets and rejected production mutation
-        run: |
-          python3 tests/test-writing-laws.py
-          python3 tests/formal/check-writing-laws.py
-      - name: Change-plan and UID wire mutation checks
-        run: python3 tests/formal/check-plan-wire-mutations.py
       - name: Unit tests
         run: sh tests/run-unit.sh
       - name: Image request cap and the fake TypeSafe's image rules
@@ -152,6 +129,69 @@ jobs:
         run: |
           python3 tests/formal/search-pagination-model.py
           python3 tests/formal/check-search-contract-mutations.py
+  # The kernel-rechecked proofs and the mutation checks run beside
+  # source-checks, so the slowest source lane is about a third as long.
+  proofs:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+      - name: Install Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Install Lean (scripts/install-lean.sh, for --verdict)
+        run: sh scripts/install-lean.sh
+      - name: Safety proofs, rechecked by the proven kernel
+        run: |
+          bend PROOF.bend --verdict
+          bend src/tools.bend --verdict
+          bend tests/formal/tool-laws.bend --verdict
+      - name: Bounded SMTP model mutation checks
+        run: python3 tests/formal/check-smtp-tls.py
+      - name: Role-folder resolution mutation checks
+        run: python3 tests/formal/check-role-folders.py
+      - name: Writing-laws guide snippets and rejected production mutation
+        run: |
+          python3 tests/test-writing-laws.py
+          python3 tests/formal/check-writing-laws.py
+  mutations:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+      - name: Install Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Policy proof boundaries and mutation checks
+        run: python3 tests/formal/check-policy.py
+      - name: Response and image budget proof mutation checks
+        run: python3 tests/formal/check-response-image-budgets.py
+      - name: Change-plan and UID wire mutation checks
+        run: python3 tests/formal/check-plan-wire-mutations.py
   runtime:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
@@ -295,6 +335,8 @@ jobs:
     timeout-minutes: 5
     needs:
       - source-checks
+      - proofs
+      - mutations
       - runtime
       - rust
       - fuzz
@@ -303,12 +345,16 @@ jobs:
       - name: Every required lane passed
         env:
           SOURCE_RESULT: ${{ needs.source-checks.result }}
+          PROOFS_RESULT: ${{ needs.proofs.result }}
+          MUTATIONS_RESULT: ${{ needs.mutations.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
         run: |
           set -eu
           test "$SOURCE_RESULT" = success
+          test "$PROOFS_RESULT" = success
+          test "$MUTATIONS_RESULT" = success
           test "$RUNTIME_RESULT" = success
           test "$RUST_RESULT" = success
           test "$FUZZ_RESULT" = success

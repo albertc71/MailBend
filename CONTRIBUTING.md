@@ -94,10 +94,12 @@ checks. The second repeats the tool scenarios through structured MCP without
 repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
 complete run, including when `MAILBEND_TEST_MCP=1` is set.
 
-CI runs source and proof checks, CLI, structured MCP and support suites on
-isolated standard Ubuntu runners. Each runtime runner builds its own binaries
+CI runs source checks and unit tests, kernel-rechecked proofs, proof mutation
+checks, CLI, structured MCP and support suites on isolated standard Ubuntu
+runners. Each runtime runner builds its own binaries
 from the checked-out revision. This repeats build work to avoid shared-state
-races and artifact storage. Rust and fuzz checks remain separate. The final
+races and artifact storage. Rust and fuzz checks remain separate. Source,
+proof and mutation lanes each install their own toolchain. The final
 `checks` job requires every lane to succeed, including Rust and fuzz; skipped
 or cancelled lanes do not count as a pass.
 
