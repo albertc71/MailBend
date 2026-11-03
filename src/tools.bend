@@ -1752,10 +1752,24 @@ def new_empty.unique(ms: List<&2, I.Msg>, +seen: List<&2, U32>) -> List<&2, I.Ms
       +u = msg_uid(m)
       List.filter.put(I.Msg, m, new_empty.unique(t, u <> seen), Bool.not(uid_in(u, seen)))
 
+# Only tokenize empty-header candidates when a requested UID is missing.
+# A separate branch avoids evaluating the fallback on the complete path.
+def new_messages.finish(
+  missing: List<&2, U32>,
+  +lines: List<&2, I.RLine>,
+  +uids: List<&2, U32>,
+  +ms: List<&2, I.Msg>
+) -> List<&2, I.Msg>:
+  match missing:
+    case Nil{}:
+      ms
+    case _:
+      oldest_first(List.append(&2, I.Msg, ms,
+        new_empty.unique(requested(new_empty.lines(lines), uids), msg_uids(ms))))
+
 def new_messages(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
   +ms = fetched_msgs(lines, uids, False{})
-  oldest_first(List.append(&2, I.Msg, ms,
-    new_empty.unique(requested(new_empty.lines(lines), uids), msg_uids(ms))))
+  new_messages.finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
 
 # Incomplete FETCH data must not publish a cursor past an unreturned UID.
 # A retry searches again, so a message expunged between sessions cannot stall it.
