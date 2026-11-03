@@ -280,3 +280,48 @@ adds no product fix for it. Normal CI remains on Bend 2.0.35 and its existing
 Lean pin. This first observation is a local report, not a claim that the
 scheduled GitHub workflow has run. Retain the workflow run summary and logs
 when reproducing it on GitHub.
+
+## MCP session soak
+
+After building, run `python3 tests/test-soak.py --profile short` (CI) or
+`python3 tests/test-soak.py --profile long` (manual). These use one compiled
+MCP core and the local TLS fake server, never a provider account. Existing
+mail settings are removed from the child environment. The test password and
+mail are synthetic, and the output contains only measurements.
+
+Each profile warms up with 50 requests, then measures 500 or 5,000 requests.
+Every ten-request burst is written before replies are read, with the same mix
+of tool discovery, probe, search, get, flag/unflag and expected failures.
+This is a synthetic stress pattern; real clients' concurrent request behavior
+has not been verified. All replies must arrive once, in request order, with
+the expected operation result. Extra replies after the final request fail.
+
+The core's RSS is sampled every 100 ms. After warm-up it must stay below
+1 GiB and within 256 MiB of the warm-up peak. The last tenth's p95 latency
+must not exceed three times the first tenth's p95. Latency includes queueing
+from the burst write; both comparison windows have the same request mix.
+The short run has a 180-second request budget, the long run 1,800 seconds,
+plus bounded setup and shutdown. JSON output records the RSS curve, p50/p95,
+drift ratio and elapsed time. These are regression bounds, not evidence of
+memory stability over days or a promise about a provider's latency.
+
+The session follows this state model:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initialize
+    Initialize --> Warmup: core PID verified
+    Warmup --> Measure: 50 replies checked
+    Measure --> Drain: all measured replies checked
+    Drain --> Pass: EOF, RSS and latency bounds hold
+    Initialize --> Fail: startup error
+    Warmup --> Fail: timeout or wrong reply
+    Measure --> Fail: timeout, wrong reply or sampling error
+    Drain --> Fail: extra reply, exit error or failed bound
+    Fail --> Cleanup
+    Pass --> Cleanup
+    Cleanup --> [*]
+```
+
+Run `python3 tests/test-soak-contract.py` for inexpensive negative controls
+that reject bad IDs, false successes, excessive RSS and latency drift.
