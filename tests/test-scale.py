@@ -338,7 +338,7 @@ def run_sample(scenario, work, certs, control):
     env = clean_env(work)
     servers = []
     try:
-        server = Server([sys.executable, str(ROOT / "tests/fake_mail_server.py"),
+        server = Server([sys.executable, str(ROOT / "tests/scale_support/v1/fake_mail_server.py"),
                          "--certdir", str(certs), "--fixture", str(fixture_path),
                          "--state", str(work / "state.json"), "--log", str(work / "mail.jsonl")],
                         env, work, "mail", control.remaining(30), control)
@@ -351,7 +351,7 @@ def run_sample(scenario, work, certs, control):
         if scenario.kind == "forward":
             call_env["MAILBEND_SAVE_SENT"] = "1"
         if scenario.kind == "classify":
-            ts = Server([sys.executable, str(ROOT / "tests/fake_typesafe.py"), "--certdir", str(certs),
+            ts = Server([sys.executable, str(ROOT / "tests/scale_support/v1/fake_typesafe.py"), "--certdir", str(certs),
                          "--key", KEY, "--log", str(work / "typesafe.jsonl")], env, work, "typesafe", control.remaining(10), control)
             servers.append(ts)
             keyfile = work / "key"
@@ -410,7 +410,8 @@ def profile():
             "fixture_generator_sha256": digest(ROOT / "tests/scale_fixtures.py"),
             "fixture_dependencies_sha256": {
                 name: digest(ROOT / "tests" / name) for name in
-                ("image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")},
+                ("scale_support/v1/image_fixtures.py", "scale_support/v1/fake_mail_server.py",
+                 "scale_support/v1/fake_typesafe.py")},
             "measurement_sha256": digest(pathlib.Path(__file__))}
 
 
