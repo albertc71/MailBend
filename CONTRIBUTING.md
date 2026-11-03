@@ -54,6 +54,7 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
+python3 tests/test-toolchain-installers.py         # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 bend src/tools.bend --verdict                     # retain tool-layer kernel coverage
@@ -249,7 +250,10 @@ checkout credential.
 5. When the candidate checks pass, update `BEND_VERSION` and both architecture-specific `BEND_SHA256`
    values together in `scripts/install-bend.sh`. Verify the downloaded Linux
    x86_64 and aarch64 archives against their official release digests. Set `LEAN_TOOLCHAIN` in
-   `scripts/install-lean.sh` to the version the candidate requests.
+   `scripts/install-lean.sh` to the version the candidate requests. Update the
+   corresponding expected URLs and checksums in `tests/test-toolchain-installers.py`
+   whenever the Bend, elan or rustup installer pins change. Keep those expectations
+   independent of the installer source so the test can detect an accidental change.
 6. Run every [contributor check](#checks) on the proposed pins, including
    `bend PROOF.bend --verdict`. Require `ALL PROOFS CHECK`. Run normal CI on
    the exact PR commit. Do not weaken laws, expected output, or security
