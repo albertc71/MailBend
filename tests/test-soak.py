@@ -131,6 +131,8 @@ def run(profile):
     fake = session = reader = sampler = None
     finished = threading.Event()
     samples, sampling_errors = [], []
+    completed = 0
+    started = None
     replies = queue.Queue(maxsize=16)
     with tempfile.TemporaryDirectory(prefix="mailbend-soak-") as directory:
         work = Path(directory)
@@ -212,6 +214,7 @@ def run(profile):
                         received, reply = replies.get(timeout=min(30, remaining))
                         assert reply is not None, "core exited before completing requests"
                         check_reply(reply, item)
+                        completed += 1
                         assert not sampling_errors, "RSS sampling failed or core exceeded 1 GiB"
                         if offset >= WARMUP:
                             latencies.append(received - sent_at)
@@ -238,6 +241,13 @@ def run(profile):
                     "burst": BURST, "elapsed_seconds": elapsed, "rss_sample_interval_seconds": SAMPLE_SECONDS,
                     "rss_curve": [[round(stamp - started, 3), rss] for stamp, rss in samples],
                     **metrics}, sort_keys=True))
+            except Exception:
+                print(json.dumps({"status": "failed", "profile": profile,
+                    "completed_requests_including_warmup": completed,
+                    "elapsed_seconds": None if started is None else time.monotonic() - started,
+                    "last_rss_kib": samples[-1][1] if samples else None,
+                    "peak_rss_kib": max((rss for _, rss in samples), default=None)}, sort_keys=True), flush=True)
+                raise
             finally:
                 finished.set()
                 try:
