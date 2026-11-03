@@ -208,15 +208,31 @@ licensed under the [MIT License](LICENSE).
 
 ## Bump an installer pin
 
-For a standalone installer update, change the version and both architecture
-checksums together in the corresponding script:
+For an installer or compiler pin update, change the version and both
+architecture checksums together in the corresponding script:
 
-- Bend: `BEND_VERSION` and both `BEND_SHA256` values in `scripts/install-bend.sh`.
+- Bend: always follow the [Bend upgrade runbook](#upgrade-bend).
+  `BEND_VERSION` selects the compiler itself, not a separate installer. Update
+  it and both `BEND_SHA256` values in `scripts/install-bend.sh` through that runbook.
 - elan: `ELAN_VERSION` and both `ELAN_SHA256` values in `scripts/install-lean.sh`.
 - rustup: `RUSTUP_VERSION` and both `RUSTUP_SHA256` values in `scripts/install-rust.sh`.
 
-Verify each downloaded x86_64 and aarch64 asset against its official release
-digest. Update the corresponding expected URLs and checksums in
+Verify each downloaded x86_64 and aarch64 asset against an upstream-published
+SHA256 for that exact version and asset:
+
+- Bend and elan: inspect the matching asset's `digest` field in the official
+  GitHub release API for [bendlang/bend](https://api.github.com/repos/bendlang/bend/releases)
+  or [leanprover/elan](https://api.github.com/repos/leanprover/elan/releases).
+- rustup: fetch `rustup-init.sha256` beside `rustup-init` under
+  `https://static.rust-lang.org/rustup/archive/<version>/<target>/`, for each
+  of `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
+
+Do not assume a future release publishes both digests. If either is missing,
+stop the bump and record the missing upstream evidence for review. A locally
+computed checksum alone is not upstream verification; compare it with the
+published value. These HTTPS sources are not an independent signature check.
+
+Update the corresponding expected URLs and checksums in
 `tests/test-toolchain-installers.py`, keeping those expectations independent
 of the installer source. Run that test and the [contributor checks](#checks),
 then require exact-head native x86_64 and aarch64 CI before review completion.
@@ -226,8 +242,35 @@ Changing elan or rustup does not by itself change the installed Lean or Rust
 version. Keep `LEAN_TOOLCHAIN` and `RUST_TOOLCHAIN` unchanged unless that
 compiler upgrade is also intended and verified. For Bend compiler changes,
 follow the full [Bend upgrade runbook](#upgrade-bend) below. Installer scripts
-are also pinned by the paired-scale preflight; any required pin migration
-needs separate review, not a bypass of that check.
+are also pinned by the paired-scale preflight. Complete its separately reviewed
+policy migration before treating a helper update as ready:
+
+1. Replace the complete literal `CANDIDATE_HELPER_TUPLE` in
+   `tests/scale_pair.py` with the reviewed SHA256 values in path order:
+   `scripts/install-bend.sh`, `scripts/install-rust.sh`, then
+   `scripts/install-lean.sh`. Review all three files as one revision, including
+   unchanged helpers. Never derive approved hashes dynamically from candidate
+   files or bypass the refusal of unreviewed or mixed tuples.
+2. Update [Reviewed candidate installer migration](tests/SCALE.md#reviewed-candidate-installer-migration-148)
+   with the source revision and scope. Update `tests/test-scale-pair.py` where
+   controls depend on that tuple, retaining rejection and alias controls.
+   Run `python3 tests/test-scale-pair.py`.
+3. Require the paired comparison to pass on the exact proposed PR head, as
+   well as native CI. Editing `tests/scale_pair.py` triggers
+   `.github/workflows/scale-compare.yml` on the PR; editing installer scripts
+   alone does not. The normal `checks` aggregate excludes `scale`, so green
+   ordinary CI alone cannot validate a helper migration. If policy and helper
+   changes use separate PRs, each needs review, and the final combined helper
+   head needs its own paired pass before it lands. If that helper PR does not
+   trigger the comparison, dispatch `.github/workflows/ci.yml` at its candidate
+   ref with `scale=true` and `record_scale=false`. Keep the fixed reference and
+   verify that the run tested the exact proposed head.
+
+Keep the fixed reference, frozen apparatus, launcher and `install.sh` checks
+intact. The paired job installs Bend from the reference helper for both builds;
+admitting candidate helper bytes does not validate a new compiler in that
+paired run. Compiler acceptance still requires the full Bend runbook and
+native checks on the intended compiler.
 
 ## Upgrade Bend
 
@@ -324,9 +367,9 @@ A single matched run does not establish performance across all machines or
 long-lived sessions.
 
 The automatic pull-request path filter covers only the comparison workflow
-and its driver and control tests; pushes to `main` do not trigger it. Edits to `main.bend`, `src/tools.bend`, or the generated
-selector alone do not trigger it. When a later measured-code change needs fresh
-performance evidence, run the workflow manually, selecting the candidate
-branch/ref and an explicit reference commit in the `baseline` input. Retain
-both exact source identities. A prior
+and its driver and control tests; pushes to `main` do not trigger it. Edits to
+`main.bend`, `src/tools.bend`, or the generated selector alone do not trigger it.
+When a later measured-code change needs fresh performance evidence, run the
+workflow manually, selecting the candidate branch/ref and an explicit reference
+commit in the `baseline` input. Retain both exact source identities. A prior
 comparison is evidence for its tested head only, not later revisions.
