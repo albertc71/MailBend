@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fast controls for scale measurement, comparison and synthetic input shape."""
+import ast
 import importlib.util
 import json
 import os
@@ -14,11 +15,31 @@ import unittest
 from unittest import mock
 
 from scale_baseline import select_baseline
-from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message
+from scale_fixtures import SCENARIOS, Scenario, fixture, sized_message, png
 
 SPEC = importlib.util.spec_from_file_location("scale", pathlib.Path(__file__).with_name("test-scale.py"))
 scale = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scale)
+
+
+def snapshot_files(root):
+    """Include sourceless bytecode/extensions; generated source caches are not inputs."""
+    files = set()
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise AssertionError(f"snapshot symlink: {path}")
+        if path.is_file() and "__pycache__" not in path.relative_to(root).parts:
+            files.add(path.relative_to(root))
+    return files
+
+
+def assert_no_stdlib_shadow(root):
+    # First component covers package directories and ABI-tagged native modules,
+    # in addition to .py and legacy sourceless .pyc modules.
+    collisions = {path.name for path in root.iterdir()
+                  if path.name.split(".")[0] in sys.stdlib_module_names}
+    if collisions:
+        raise AssertionError(f"stdlib import collision: {sorted(collisions)}")
 
 
 def sample(count=1):
@@ -203,9 +224,12 @@ sys.exit(24)
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "tests").mkdir()
-            names = ("scale_fixtures.py", "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py")
+            names = ("scale_fixtures.py", "scale_support/v1/image_fixtures.py",
+                     "scale_support/v1/fake_mail_server.py", "scale_support/v1/fake_typesafe.py")
             for name in names:
-                (root / "tests" / name).write_text(name)
+                path = root / "tests" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name)
             timer = root / "time"
             timer.write_text("synthetic timer")
             with mock.patch.object(scale, "ROOT", root), \
@@ -223,23 +247,146 @@ sys.exit(24)
                     after["profile"] = scale.profile()
                     self.assertIn("not comparable", scale.compare(before, after)[0], name)
                     path.write_text(name)
+                for name in ("image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py"):
+                    (root / "tests" / name).write_text("unrelated E2E fixture changed")
+                self.assertEqual(scale.profile(), original)
                 with mock.patch.object(scale.platform, "python_version", return_value="different Python"):
                     after = report()
                     after["profile"] = scale.profile()
                     self.assertIn("not comparable", scale.compare(before, after)[0])
+
+    def test_snapshot_provenance_and_import_boundary(self):
+        root = scale.ROOT / "tests/scale_support/v1"
+        origin = json.loads((root / "ORIGIN.json").read_text())
+        self.assertEqual(origin["source_commit"], "9b50f9d3c4aadad9f213c01f7b576d2e124394cc")
+        self.assertEqual(set(origin["files"]), {
+            "image_fixtures.py", "fake_mail_server.py", "fake_typesafe.py"})
+        self.assertEqual(snapshot_files(root.parent), {
+            pathlib.Path("v1", name) for name in [*origin["files"], "ORIGIN.json"]})
+        for name, source in origin["files"].items():
+            with self.subTest(file=name):
+                self.assertEqual(source["source_path"], "tests/" + name)
+                self.assertEqual(scale.digest(root / name), source["sha256"])
+                tree = ast.parse((root / name).read_text())
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        modules = [alias.name for alias in node.names]
+                    elif isinstance(node, ast.ImportFrom):
+                        self.assertEqual(node.level, 0)
+                        modules = [node.module]
+                    else:
+                        continue
+                    for module in modules:
+                        self.assertIn(module.split(".")[0], sys.stdlib_module_names)
+        self.assertEqual(png.__module__, "scale_support.v1.image_fixtures")
+        self.assertEqual(pathlib.Path(sys.modules[png.__module__].__file__).resolve(),
+                         root / "image_fixtures.py")
+
+    def test_snapshot_inventory_rejects_unhashed_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "v1").mkdir()
+            source = root / "v1/image_fixtures.py"
+            source.write_text("# synthetic inventory fixture\n")
+            expected = {pathlib.Path("v1/image_fixtures.py")}
+            self.assertEqual(snapshot_files(root), expected)
+            for name in ("__init__.pyc", "v1/ssl.pyc", "v1/ssl.so",
+                         "v1/ssl.cpython-313-x86_64-linux-gnu.so"):
+                with self.subTest(file=name):
+                    extra = root / name
+                    extra.write_bytes(b"unhashed fixture")
+                    self.assertNotEqual(snapshot_files(root), expected)
+                    extra.unlink()
+            cache = root / "v1/__pycache__"
+            cache.mkdir()
+            (cache / "image_fixtures.cpython-313.pyc").write_bytes(b"generated cache")
+            self.assertEqual(snapshot_files(root), expected)
+            link = root / "v1/linked.py"
+            link.symlink_to(source)
+            with self.assertRaisesRegex(AssertionError, "snapshot symlink"):
+                snapshot_files(root)
+
+    def test_measured_stdlib_imports_are_outside_repository(self):
+        tests = scale.ROOT / "tests"
+        assert_no_stdlib_shadow(tests)
+        sources = [tests / "test-scale.py", tests / "scale_fixtures.py",
+                   *(tests / "scale_support/v1").glob("*.py")]
+        modules = set()
+        for source in sources:
+            for node in ast.walk(ast.parse(source.read_text())):
+                if isinstance(node, ast.Import):
+                    modules.update(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    modules.add(node.module.split(".")[0])
+        for module in modules & sys.stdlib_module_names:
+            with self.subTest(module=module):
+                spec = importlib.util.find_spec(module)
+                self.assertIsNotNone(spec)
+                if spec.origin not in {"built-in", "frozen"}:
+                    self.assertIsNotNone(spec.origin)
+                    self.assertFalse(pathlib.Path(spec.origin).resolve().is_relative_to(scale.ROOT))
+
+    def test_stdlib_collision_guard_rejects_modules_and_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "fixture_helpers.py").write_text("# allowed\n")
+            assert_no_stdlib_shadow(root)
+            for name in ("random.py", "struct.pyc", "zlib.so",
+                         "zlib.cpython-313-x86_64-linux-gnu.so"):
+                with self.subTest(file=name):
+                    collision = root / name
+                    collision.write_bytes(b"synthetic collision")
+                    with self.assertRaisesRegex(AssertionError, "stdlib import collision"):
+                        assert_no_stdlib_shadow(root)
+                    collision.unlink()
+            (root / "email").mkdir()
+            with self.assertRaisesRegex(AssertionError, "stdlib import collision"):
+                assert_no_stdlib_shadow(root)
+
+    def test_fixture_import_rejects_ambient_general_modules(self):
+        script = r"""
+import builtins, sys
+sys.path.insert(0, sys.argv[1])
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name in {"image_fixtures", "fake_mail_server", "fake_typesafe"}:
+        raise AssertionError("ambient general fixture import: " + name)
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+import scale_fixtures
+assert scale_fixtures.png.__module__ == "scale_support.v1.image_fixtures"
+"""
+        result = subprocess.run([sys.executable, "-c", script, str(scale.ROOT / "tests")],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_measured_server_commands_use_only_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory)
+            server = mock.Mock(ports={"imap": "1", "smtp": "2", "proxy": "3"})
+            with mock.patch.object(scale, "fixture", return_value={}), \
+                    mock.patch.object(scale, "Server", return_value=server) as start, \
+                    mock.patch.object(scale, "measure", side_effect=RuntimeError("stop before workload")):
+                with self.assertRaisesRegex(RuntimeError, "stop before workload"):
+                    scale.run_sample(SCENARIOS[-1], work, work, mock.Mock())
+            self.assertEqual([call.args[0][1] for call in start.call_args_list], [
+                str(scale.ROOT / "tests/scale_support/v1/fake_mail_server.py"),
+                str(scale.ROOT / "tests/scale_support/v1/fake_typesafe.py")])
+            self.assertEqual(server.stop.call_count, 2)
 
     def test_comparison_filter_covers_measured_dependencies(self):
         workflow = (scale.ROOT / ".github/workflows/scale-compare.yml").read_text()
         paths = {line.removeprefix("      - ") for line in workflow.splitlines()
                  if line.startswith("      - ")}
         self.assertEqual(paths, {
-            "tests/test-scale.py", "tests/scale_fixtures.py", "tests/image_fixtures.py",
-            "tests/fake_mail_server.py", "tests/fake_typesafe.py", "tests/scale-baseline.json",
+            "tests/test-scale.py", "tests/scale_pair.py", "tests/test-scale-pair.py",
+            "tests/scale_fixtures.py", "tests/scale_support/**",
+            "tests/scale-baseline.json",
             ".github/workflows/scale-compare.yml", ".github/workflows/ci.yml",
             "tests/scale-baseline-epyc7763.json", "tests/scale_baseline.py"})
 
     def test_baseline_selection_preserves_full_profile_gate(self):
-        for cpu in ("AMD EPYC 9V45 96-Core Processor", "AMD EPYC 7763 64-Core Processor"):
+        for cpu in ("AMD EPYC 9V45 96-Core Processor",):
             with self.subTest(cpu=cpu):
                 baseline = json.loads(select_baseline(cpu).read_text())
                 self.assertEqual(baseline["profile"]["cpu"], cpu)
@@ -248,34 +395,10 @@ sys.exit(24)
                 changed["profile"]["python_version"] = "different"
                 self.assertEqual(scale.compare(baseline, changed), [
                     "runner/toolchain profile differs; measurements are not comparable"])
-        for cpu in ("unknown", "", "AMD EPYC 7763"):
+        for cpu in ("unknown", "", "AMD EPYC 7763", "AMD EPYC 7763 64-Core Processor",
+                    "INTEL(R) XEON(R) PLATINUM 8573C"):
             with self.subTest(cpu=cpu), self.assertRaises(ValueError):
                 select_baseline(cpu)
-
-    def test_unknown_cpu_workflow_captures_evidence_but_cannot_pass(self):
-        workflow = (scale.ROOT / ".github/workflows/ci.yml").read_text()
-        step = workflow.split("      - name: Measure only local synthetic workloads\n", 1)[1]
-        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            python = root / "python3"
-            python.write_text("#!/bin/sh\n"
-                'case "$1" in\n'
-                '  tests/scale_baseline.py) [ "$UNKNOWN_CPU" = yes ] && exit 1; echo reviewed.json ;;\n'
-                '  tests/test-scale.py) printf "%s\\n" "$*" > "$CALL_LOG" ;;\n'
-                'esac\n')
-            python.chmod(0o755)
-            for unknown, expected in (("yes", 1), ("no", 0)):
-                with self.subTest(unknown=unknown):
-                    env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"],
-                               RECORD_SCALE="false", UNKNOWN_CPU=unknown, CALL_LOG=str(root / "call"))
-                    result = subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env,
-                                            capture_output=True, text=True, timeout=5)
-                    self.assertEqual(result.returncode, expected, result.stderr)
-                    call = (root / "call").read_text()
-                    self.assertIn("--output scale-results.json", call)
-                    self.assertNotIn("--record", call)
-                    self.assertEqual("--baseline reviewed.json" in call, unknown == "no")
 
     def test_forward_command_guards_allow_only_sent_append(self):
         safe = ['A1 EXAMINE "INBOX"', 'A2 UID FETCH 1 (BODY.PEEK[])',

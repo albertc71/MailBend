@@ -14,6 +14,7 @@ import ./schema.bend as Schema
 import ./thread.bend as T
 import ./awaiting.bend as Await
 import ./contacts.bend as Contacts
+import ./brief.bend as Brief
 import ./search-cursor.bend as SC
 import ./image.bend as Image
 import ./jev.bend as Jev
@@ -1906,8 +1907,8 @@ def t_get_new(+args: J.Json) -> IO(Shown):
 # ---------------
 
 # A conversation is read without changing anything: the message's summary,
-# the folders (to resolve Sent), then two rounds. A round searches the
-# message's folder, INBOX and the Sent folder, in one session, for the IDs
+# the folders (to resolve Sent and Archive), then two rounds. A round searches
+# the message's folder, INBOX, Sent and Archive, in one session, for the IDs
 # the thread names so far (thread.bend). A second session fetches the summaries
 # of the UIDs not seen yet, and only the messages whose headers name one of
 # those IDs exactly are kept, since SEARCH HEADER matches substrings. There
@@ -2229,9 +2230,10 @@ def thread_folders.put(fs: List<&2, String>, sent: Maybe<&2, String>) -> List<&2
       folder_added(fs, s)
 
 # The folders a thread is searched in, each once: the message's own, INBOX,
-# where answers arrive, and the Sent folder when it resolves.
-def thread_folders(mbox: String, sent: Maybe<&2, String>) -> List<&2, String>:
-  thread_folders.put(folder_added([mbox], "INBOX"), sent)
+# where answers arrive, then the resolved Sent and Archive folders.
+def thread_folders(mbox: String, sent: Maybe<&2, String>, archive: Maybe<&2, String>)
+  -> List<&2, String>:
+  thread_folders.put(thread_folders.put(folder_added([mbox], "INBOX"), sent), archive)
 
 def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32,
   +Policy.checked: Bool) -> IO(Shown):
@@ -2240,7 +2242,7 @@ def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32,
       pure_shown(Policy.Err{m})
     case Done{+fs}:
       Policy.Folders{all, drafts, trash, sent, junk, archive} = fs
-      +folders = thread_folders(mbox, sent)
+      +folders = thread_folders(mbox, sent, archive)
       do IO<Shown>:
         one : Thread() <- thread_round(Done{st}, folders, Policy.checked)
         two : Thread() <- thread_round(one, folders, Policy.checked)
@@ -5295,6 +5297,190 @@ def t_contacts(+args: J.Json, +contacts: Bool) -> IO(Policy.Out):
       U32.is_ge(limit, 1) && U32.is_le(limit, 100) && U32.is_ge(now, (window * 86400 : U32)),
       args, contacts, since, limit, now)
 
+# Deterministic metadata brief
+# ----------------------------
+
+type BriefPage is Data:
+  BriefPage{folder: String, uidv: U32, next: U32, more: Bool, mode: String,
+    messages: List<&2, I.Msg>}
+
+type BriefCount is Data:
+  BriefCount{group: String, key: String, count: U32}
+
+def brief_item(i: Brief.Item) -> J.Json:
+  Brief.Item{m, g, d, key} = i
+  J.obj(List.append(&2, J.Json, summary_kvs(m),
+    [J.kv("group", J.str(Brief.group_name(g))),
+     J.kv("group_key", Metadata.nullable(key)),
+     J.kv("delivery", J.str(Brief.delivery_name(d)))]))
+
+def brief_items(xs: List<&2, Brief.Item>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case x <> t:
+      brief_item(x) <> brief_items(t)
+
+def brief_count.add(xs: List<&2, BriefCount>, +group: String, +key: String)
+  -> List<&2, BriefCount>:
+  match xs:
+    case Nil{}:
+      [BriefCount{group, key, 1}]
+    case BriefCount{+g, +k, +n} <> +t:
+      Bool.pick(List<&2, BriefCount>, String.eq(g, group) && String.eq(k, key),
+        BriefCount{g, k, (n + 1 : U32)} <> t,
+        BriefCount{g, k, n} <> brief_count.add(t, group, key))
+
+def brief_counts(xs: List<&2, Brief.Item>, acc: List<&2, BriefCount>) -> List<&2, BriefCount>:
+  match xs:
+    case Nil{}:
+      acc
+    case Brief.Item{m, g, d, key} <> t:
+      brief_counts(t, brief_count.add(acc, Brief.group_name(g), key))
+
+def brief_counts_json(xs: List<&2, BriefCount>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case BriefCount{g, k, n} <> t:
+      J.obj([J.kv("group", J.str(g)), J.kv("group_key", Metadata.nullable(k)),
+        J.kv("count", J.num(n))]) <> brief_counts_json(t)
+
+def brief_output(p: BriefPage, +scan: ContactScan, me: String, since: String) -> Shown:
+  BriefPage{folder, uidv, next, more, mode, +ms} = p
+  ContactScan{f, v, cs, sampled, complete, reason} = scan
+  +senders = Brief.senders(ms)
+  +allowed = List.take(&2, String, senders, 50n)
+  +items = Brief.items(ms, cs, allowed, String.to_lower(me))
+  Listed{ok_obj([J.kv("folder", J.str(folder)), J.kv("uidvalidity", J.num(uidv)),
+    J.kv("mode", J.str(mode)), J.kv("next_since_uid", J.num(next)),
+    J.kv("has_more", J.bool(more)), J.kv("selected_complete", J.bool(True{})),
+    J.kv("messages", J.arr(brief_items(items))),
+    J.kv("groups", J.arr(brief_counts_json(brief_counts(items, [])))),
+    J.kv("correspondence", J.obj([
+      J.kv("scope", J.str("stored_sent_headers_window")), J.kv("since", J.str(since)),
+      J.kv("window_days", J.num(30)), J.kv("header_limit", J.num(100)),
+      J.kv("sender_limit", J.num(50)),
+      J.kv("selected_senders", J.num(U32.from_nat(List.length(&2, String, allowed)))),
+      J.kv("total_senders", J.num(U32.from_nat(List.length(&2, String, senders)))),
+      J.kv("coverage", contacts_coverage(scan))]))]), ms}
+
+def brief_sent_role(fs: Fs(), p: BriefPage, me: String, +since: String, now: U32)
+  -> IO(Shown):
+  match fs:
+    case Fail{m}:
+      IO.pure(Shown, brief_output(p, contacts_failed("", m), me, since))
+    case Done{Policy.Folders{all, drafts, trash, None{}, junk, archive}}:
+      IO.pure(Shown, brief_output(p, contacts_failed("", "Sent folder is unresolved"), me, since))
+    case Done{Policy.Folders{all, drafts, trash, Some{f}, junk, archive}}:
+      do IO<Shown>:
+        scan : ContactScan <- contacts_scan(f, since, 100, True{}, "", now)
+        return brief_output(p, scan, me, since)
+
+def brief_roles(r: Run(), p: BriefPage, me: String, since: String, now: U32) -> IO(Shown):
+  match r:
+    case Fail{m}:
+      IO.pure(Shown, brief_output(p, contacts_failed("", m), me, since))
+    case Done{+lines}:
+      do IO<Shown>:
+        fs : Fs() <- await_roles(I.has_cap(I.caps(lines), "SPECIAL-USE"),
+          merge_folders(I.folders(lines), []))
+        brief_sent_role(fs, p, me, since, now)
+
+def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
+  match empty:
+    case True{}:
+      IO.pure(Shown, brief_output(p, contacts_failed("", "not scanned: no selected senders"), me, ""))
+    case False{}:
+      do IO<Shown>:
+        +now : U32 <- now_seconds()
+        r : Run() <- await_raw(Ops.plan_probe())
+        brief_roles(r, p, me, Maybe.default(&2, String,
+          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+
+def brief_contacts(+p: BriefPage) -> IO(Shown):
+  BriefPage{folder, uidv, next, more, mode, ms} = p
+  do IO<Shown>:
+    me : String <- env_or("MAILBEND_EMAIL", "")
+    brief_contacts.if(List.is_empty(&2, String, Brief.senders(ms)), p, me)
+
+def brief_headers.complete(complete: Bool, p: BriefPage) -> IO(Shown):
+  match complete:
+    case False{}:
+      pure_shown(Policy.Err{"brief FETCH omitted selected messages; retry the same checkpoint"})
+    case True{}:
+      brief_contacts(p)
+
+def brief_headers(r: Run(), folder: String, +uidv: U32, next: U32, more: Bool,
+  mode: String, +uids: List<&2, U32>) -> IO(Shown):
+  match r:
+    case Fail{m}:
+      pure_shown(Policy.Err{m})
+    case Done{+lines}:
+      +ms = fetched_msgs(lines, uids, False{})
+      brief_headers.complete(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv) &&
+        Brief.same_uids(Brief.message_uids(ms), uids),
+        BriefPage{folder, uidv, next, more, mode, ms})
+
+def brief_fetch(uids: List<&2, U32>, +folder: String, +uidv: U32, since: U32,
+  more: Bool, mode: String) -> IO(Shown):
+  match uids:
+    case Nil{}:
+      brief_contacts(BriefPage{folder, uidv, since, False{}, mode, []})
+    case +h <> +t:
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_headers_checked(folder, h <> t, Some{uidv}))
+        brief_headers(r, folder, uidv, last_or(h <> t, since), more, mode, h <> t)
+
+def brief_selected(uids: Maybe<&2, List<&2, U32>>, folder: String, uidv: U32,
+  +since: U32, +limit: U32, mode: String) -> IO(Shown):
+  match uids:
+    case None{}:
+      pure_shown(Policy.Err{"brief SEARCH is incomplete or exceeds 10000 UIDs; no checkpoint returned"})
+    case Some{xs}:
+      +eligible = asc(unseen(above(xs, since), []))
+      brief_fetch(List.take(&2, U32, eligible, U32.to_nat(limit)), folder, uidv, since,
+        Nat.is_gt(List.length(&2, U32, eligible), U32.to_nat(limit)), mode)
+
+def brief_identity(valid: Bool, lines: List<&2, I.RLine>, folder: String,
+  uidv: U32, +since: U32, limit: U32, mode: String) -> IO(Shown):
+  match valid:
+    case False{}:
+      pure_shown(Policy.Err{"brief UIDVALIDITY missing or changed; discard the old checkpoint and restart"})
+    case True{}:
+      brief_selected(Bool.pick(Maybe<&2, List<&2, U32>>, U32.is_eq(since, Ops.max_uid()),
+        Some{[]}, Await.search(I.replies(lines, 2))), folder, uidv, since, limit, mode)
+
+def brief_found(r: Run(), folder: String, since: U32, +known: U32, limit: U32, mode: String)
+  -> IO(Shown):
+  match r:
+    case Fail{m}:
+      pure_shown(Policy.Err{m})
+    case Done{+lines}:
+      +v = Maybe.default(&2, U32, positive(I.ok_code(lines, "UIDVALIDITY")), 0)
+      brief_identity(Bool.not(U32.is_zero(v)) &&
+        (U32.is_zero(known) || U32.is_eq(known, v)), lines, folder, v, since, limit, mode)
+
+def brief_start(valid: Bool, +args: J.Json, +checkpoint: Bool, +since: U32, limit: U32)
+  -> IO(Shown):
+  match valid:
+    case False{}:
+      pure_shown(Policy.Err{"invalid brief checkpoint or limit (1..100); since_uid above 0 requires uidvalidity"})
+    case True{}:
+      +folder = folder_arg(args)
+      do IO<Shown>:
+        r : Run() <- imap_run(Ops.plan_brief(folder, checkpoint, since))
+        brief_found(r, folder, since, uidv_arg(args), limit,
+          Bool.pick(String, checkpoint, "arrivals", "unseen"))
+
+def t_brief(+args: J.Json) -> IO(Shown):
+  +since = u32_arg(args, "since_uid", 0)
+  +limit = u32_arg(args, "limit", 50)
+  brief_start(await_arg_valid(J.get(args, "since_uid")) && await_arg_valid(J.get(args, "uidvalidity")) &&
+    await_arg_valid(J.get(args, "limit")) && U32.is_ge(limit, 1) && U32.is_le(limit, 100) &&
+    String.is_empty(new_request(since, uidv_arg(args))), args,
+    Maybe.is_some(&2, J.Json, J.get(args, "since_uid")), since, limit)
+
 def stamp() -> IO(Result<&2, &2, String, Stamp>):
   do IO<Result<&2, &2, String, Stamp>>:
     secs : U32 <- now_seconds()
@@ -8020,11 +8206,12 @@ def triage_contact_state(+known: List<&2, String>, complete: Bool, p: Pending) -
         Some{known}, None{})
       settled.put(Some{a}, f, vetoes, state)
 
-def triage_candidate_state(+p: Pending, address: String, known: List<&2, String>,
+def triage_candidate_state(+p: Pending, +address: String, +known: List<&2, String>,
   complete: Bool) -> Pending:
   match p:
-    case Pending{f, vetoes, Some{a}}:
-      Bool.pick(Pending, String.eq(a, address), triage_contact_state(known, complete, p), p)
+    case Pending{f, vetoes, Some{+a}}:
+      Bool.pick(Pending, String.eq(a, address) || C.is_in(a, known),
+        triage_contact_state(known, complete && String.eq(a, address), p), p)
     case _:
       p
 
@@ -8070,6 +8257,23 @@ def triage_candidates.set(scan: ContactScan, address: String, expected: Maybe<&2
       triage_candidates.accept(triage_candidate_uidv(expected, v),
         ContactScan{f, Some{v}, cs, n, complete, reason}, address, v, t)
 
+# Settled messages no longer carry a sender. Exact positives can therefore
+# skip later searches without sharing another sender's negative coverage.
+def triage_candidates.needed(address: String, t: Triaging) -> Bool:
+  Triaging{call, c, cats, opts, roles, caps, review, found, missing} = t
+  C.is_in(address, senders(found, []))
+
+def triage_candidates.scan(needed: Bool, +address: String,
+  expected: Maybe<&2, U32>, t: Triaging, folder: String, now: U32)
+  -> IO(Result<&2, &2, String, CandidateState>):
+  match needed:
+    case False{}:
+      IO.pure(Result<&2, &2, String, CandidateState>, Done{CandidateState{expected, t}})
+    case True{}:
+      do IO<Result<&2, &2, String, CandidateState>>:
+        scan : ContactScan <- contacts_candidates(folder, address, now)
+        return triage_candidates.set(scan, address, expected, t)
+
 def triage_candidates(addrs: List<&2, String>,
   state: Result<&2, &2, String, CandidateState>, +folder: String, +now: U32) -> IO(Policy.Out):
   match addrs state:
@@ -8077,10 +8281,11 @@ def triage_candidates(addrs: List<&2, String>,
       pure_out(Policy.Err{"cannot verify Sent correspondence (" ++ reason ++ "); nothing was moved"})
     case Nil{} Done{CandidateState{expected, t}}:
       triage_ask(t)
-    case +a <> rest Done{CandidateState{expected, t}}:
+    case +a <> rest Done{CandidateState{expected, +t}}:
       do IO<Policy.Out>:
-        scan : ContactScan <- contacts_candidates(folder, a, now)
-        triage_candidates(rest, triage_candidates.set(scan, a, expected, t), folder, now)
+        next : Result<&2, &2, String, CandidateState> <- triage_candidates.scan(
+          triage_candidates.needed(a, t), a, expected, t, folder, now)
+        triage_candidates(rest, next, folder, now)
 
 def triage_sent.put(sent: Maybe<&2, String>, addrs: List<&2, String>,
   t: Triaging) -> IO(Policy.Out):
@@ -8408,6 +8613,8 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
       projected(args, jev, t_get(args))
     case Ops.OGetNew{}:
       projected(args, jev, t_get_new(args))
+    case Ops.OBrief{}:
+      projected(args, jev, t_brief(args))
     case Ops.ORefresh{}:
       t_refresh(args)
     case Ops.OGetThread{}:
@@ -8924,7 +9131,7 @@ def projection_problem(+args: J.Json) -> String:
 
 def call_problem(+name: String, +args: J.Json) -> String:
   first_of(schema_problem(tool_input(name), args, name),
-    Bool.pick(String, C.is_in(name, ["mail_get", "mail_search", "mail_get_new", "mail_get_thread"]),
+    Bool.pick(String, C.is_in(name, ["mail_get", "mail_search", "mail_get_new", "mail_brief", "mail_get_thread"]),
       projection_problem(args), ""))
 
 # Runs the named tool with its JSON arguments, once they match its schema.

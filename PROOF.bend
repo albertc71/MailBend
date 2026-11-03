@@ -13,6 +13,7 @@ import ./tests/formal/budget-proofs.bend as BudgetProof
 import ./tests/formal/budget-bind-observers.bend as BindBudget
 import ./tests/formal/budget-bind-proofs.bend as BindProof
 import ./tests/formal/scalar-escape-proofs.bend as ScalarProof
+import ./tests/formal/json-size-proofs.bend as JsonSize
 import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/codec.bend as C
@@ -24,6 +25,8 @@ import ./src/image.bend as Image
 import ./src/jev.bend as Jev
 import ./src/secrets.bend as Secrets
 import ./src/ops.bend as Ops
+import ./src/brief.bend as Brief
+import ./src/contacts.bend as Contacts
 import ./src/smtp.bend as S
 import ./src/response.bend as Response
 import ./src/policy.bend as Policy
@@ -48,7 +51,7 @@ def Laws.download_is_not_read_only():
 def Laws.trash_is_not_destructive():
   {==}
 
-def Laws.read_only_tools_are_exactly_eleven():
+def Laws.read_only_tools_are_exactly_twelve():
   {==}
 
 def Laws.tools_listed_per_config(drafts):
@@ -69,6 +72,8 @@ def Laws.from_name_inverts_name(op):
     case Ops.OGet{}:
       {==}
     case Ops.OGetNew{}:
+      {==}
+    case Ops.OBrief{}:
       {==}
     case Ops.ORefresh{}:
       {==}
@@ -1943,6 +1948,8 @@ def Laws.sending_calls_are_exact(op, args):
       {==}
     case Ops.OGetNew{}:
       {==}
+    case Ops.OBrief{}:
+      {==}
     case Ops.ORefresh{}:
       {==}
     case Ops.OGetThread{}:
@@ -2403,5 +2410,43 @@ def Laws.image_bind_byte_cap(draws, vs, corpus, exact):
 def Laws.prefix_whole_when_room(s, left, extra, enough):
   ScalarProof.prefix_whole_when_wire_room(s, left, extra, enough)
 
+def brief_item_uid(small: Bool, m: I.Msg, cs: List<&2, Contacts.Contact>,
+  allowed: List<&2, String>, me: String)
+  -> {Brief.item_uid(Brief.item.small(small, m, cs, allowed, me)) == Brief.uid(m) : U32}:
+  match small m:
+    case False{} _:
+      {==}
+    case True{} I.Msg{u, flags, date, size, hs, body, st}:
+      {==}
+
+def Laws.brief_preserves_selected_uids(ms, cs, allowed, me):
+  match ms:
+    case Nil{}:
+      {==}
+    case +m <> t:
+      +cs = cs
+      +allowed = allowed
+      +me = me
+      %Equal.sym(U32, Brief.item_uid(Brief.item(m, cs, allowed, me)), Brief.uid(m),
+        brief_item_uid(Brief.headers_small(m), m, cs, allowed, me)) :
+        {_ <> Brief.uids(Brief.items(t, cs, allowed, me)) == Brief.uid(m) <> Brief.message_uids(t) : List<&2, U32>}
+      Equal.cong(List<&2, U32>, List<&2, U32>, xs => Brief.uid(m) <> xs,
+        Brief.uids(Brief.items(t, cs, allowed, me)), Brief.message_uids(t),
+        Laws.brief_preserves_selected_uids(t, cs, allowed, me))
+
+def Laws.brief_partitions_selected_uids(ms, cs, allowed, me, uid):
+  Equal.cong(List<&2, U32>, Nat, xs => Brief.occurrences(xs, uid),
+    Brief.uids(Brief.items(ms, cs, allowed, me)), Brief.message_uids(ms),
+    Laws.brief_preserves_selected_uids(ms, cs, allowed, me))
+
+def Laws.brief_plans_write_nothing(folder, checkpoint, since):
+  match checkpoint:
+    case False{}:
+      {==}
+    case True{}:
+      Laws.get_new_writes_nothing(folder, since)
 def Laws.awaiting_disabled_filters_keep_candidate(n):
   {==}
+
+def Laws.json_serialized_bytes(j):
+  JsonSize.show_bytes(j)

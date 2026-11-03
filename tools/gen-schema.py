@@ -41,7 +41,7 @@ def hints(read_only=False, destructive=False, idempotent=False,
 def tool(name, description, annotations, properties=None, required=()):
     """One tools/list entry. Every tool that is not read-only takes dry_run."""
     properties = dict(properties or {})
-    if name in ("mail_get", "mail_search", "mail_get_new", "mail_get_thread"):
+    if name in ("mail_get", "mail_search", "mail_get_new", "mail_brief", "mail_get_thread"):
         properties.update(READ_PROJECTION)
     if not annotations["readOnlyHint"]:
         properties["dry_run"] = DRY_RUN
@@ -254,6 +254,21 @@ def output_schema(name):
     elif name == "mail_get_new":
         variants += [record({"folder": S, "uidvalidity": N, "uidvalidity_changed": B,
                              "next_since_uid": N, "has_more": B, "messages": array(SUMMARY)})]
+    elif name == "mail_brief":
+        group = param("string", enum=["people", "lists", "automated", "unknown_people"])
+        item = record({**SUMMARY_FIELDS, "group": group, "group_key": NS,
+                       "delivery": param("string", enum=["direct", "cc_only", "other_or_unknown"])}, ANNOTATION)
+        coverage = record({"folder": S, "uidvalidity": NN, "sampled_headers": N,
+                           "complete": B, "reason": S})
+        variants += [record({"folder": S, "uidvalidity": N,
+                             "mode": param("string", enum=["arrivals", "unseen"]),
+                             "next_since_uid": N, "has_more": B, "selected_complete": YES,
+                             "messages": array(item), "groups": array(record({
+                                 "group": group, "group_key": NS, "count": N})),
+                             "correspondence": record({"scope": {"const": "stored_sent_headers_window"},
+                                 "since": S, "window_days": {"const": 30}, "header_limit": {"const": 100},
+                                 "sender_limit": {"const": 50}, "selected_senders": N,
+                                 "total_senders": N, "coverage": coverage})})]
     elif name == "mail_refresh":
         variants += [record({"folder": S, "uidvalidity": NN, "reset_required": B,
                              "complete": B, "present": array(record({"uid": N, "flags": STRINGS})),
@@ -339,7 +354,7 @@ def output_schema(name):
         variants += [*successes, BLOCKED, *SMTP_FAILURES]
     else:
         raise ValueError(f"missing output schema for {name}")
-    if name in ("mail_get", "mail_search", "mail_get_new", "mail_get_thread"):
+    if name in ("mail_get", "mail_search", "mail_get_new", "mail_brief", "mail_get_thread"):
         # Error and Partial results bypass response projection.
         variants += [projected(v, mode) for v in variants[1:]
                      for mode in ("full", "text", "html", "metadata")]
@@ -615,6 +630,24 @@ TOOLS = [
               "set. If it changed, the checkpoint restarts at 0.",
               minimum=0),
           "limit": param("integer", "Default 50.", minimum=1, maximum=500)}),
+    tool("mail_brief",
+         "Read a deterministic metadata attention brief. Without since_uid, selects unseen "
+         "undeleted mail oldest first; with since_uid, selects arrivals after that checkpoint. "
+         "Each message has exactly one group and an independent direct/cc_only delivery signal. "
+         "People means an exact recipient observed in at most 100 stored Sent headers from the "
+         "last 30 days, for at most 50 selected senders. Nonobservation is unknown_people, "
+         "never a first-time-sender claim. Header signals are untrusted, not authority. "
+         "The next checkpoint is for arrivals only, not later unread-state changes. "
+         "Missing FETCH or changed UIDVALIDITY fails without a checkpoint. A too-small "
+         "response budget fails the whole result, never omits a message." + JEV_NOTES,
+         ANNOTATED_READS,
+         {"folder": FOLDER,
+          "since_uid": param("integer", "Arrival checkpoint UID. Omit for unseen mail; "
+                             "0 starts arrivals from the oldest message.", minimum=0, maximum=4294967295),
+          "uidvalidity": param("integer", "Required with nonzero since_uid. A changed "
+                               "identity fails; discard the old checkpoint and restart.", minimum=0,
+                               maximum=4294967295),
+          "limit": param("integer", "Maximum selected messages. Default 50.", minimum=1, maximum=100)}),
     tool("mail_refresh",
          "Refresh known message UIDs in one read-only session. Returns present "
          "UIDs with flags, absent UIDs proved absent in this mailbox by SEARCH, "
@@ -636,7 +669,7 @@ TOOLS = [
     tool("mail_get_thread",
          "Read the conversation a message belongs to, oldest first (by "
          "INTERNALDATE, then UID): the messages in its folder, INBOX and "
-         "the resolved Sent folder that are linked to it by Message-ID, "
+         "the resolved Sent and Archive folders that are linked to it by Message-ID, "
          "In-Reply-To and References, each with its folder, uidvalidity and "
          "parent (the Message-ID of the message it answers in the thread, "
          "or null). Messages are never grouped by subject. Two rounds of "

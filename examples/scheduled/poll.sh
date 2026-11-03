@@ -32,13 +32,16 @@ jq -e --arg folder "$folder" '
     .folder == $folder and (.uidvalidity | uint and . > 0) and (.since_uid | uint)
 ' "$checkpoint" >/dev/null || fail 'Invalid checkpoint or different folder. Keep the file and reconcile it.'
 args=$(jq -c '. + {limit:50}' "$checkpoint")
-"$bin" call mail_get_new "$args" >"$work/page.json" 2>"$work/error.txt" ||
+read_tool=mail_get_new
+[[ $mode != brief ]] || read_tool=mail_brief
+"$bin" call "$read_tool" "$args" >"$work/page.json" 2>"$work/error.txt" ||
     fail 'Read failed. The checkpoint is unchanged.'
-jq -e --slurpfile old "$checkpoint" '
+jq -e --arg mode "$mode" --slurpfile old "$checkpoint" '
     def uint: type == "number" and . == floor and . >= 0 and . <= 4294967295;
     . as $page |
     .folder == $old[0].folder and .uidvalidity == $old[0].uidvalidity and
-    .uidvalidity_changed == false and (.has_more | type == "boolean") and
+    (if $mode == "brief" then .selected_complete == true and .mode == "arrivals"
+     else .uidvalidity_changed == false end) and (.has_more | type == "boolean") and
     (.next_since_uid | uint) and .next_since_uid >= $old[0].since_uid and
     (.messages | type == "array") and all(.messages[];
         (.uid | uint) and .uid > $old[0].since_uid and .uid <= $page.next_since_uid)
@@ -51,7 +54,7 @@ elif [[ $mode = brief ]]; then
     page=$(jq -r --slurpfile old "$checkpoint" '
         "\(.uidvalidity)-\($old[0].since_uid)-\(.next_since_uid).txt"' "$work/page.json")
     jq -r '"MailBend arrival batch", "", (.messages[] |
-        "UID \(.uid) | \(.from | @json) | \(.subject | @json)"),
+        "UID \(.uid) | \(.group) | \(.delivery) | \(.from | @json) | \(.subject | @json)"),
         "", "More batches waiting: \(.has_more)"' "$work/page.json" >"$work/brief.txt"
     mv -T -- "$work/brief.txt" "$state/$page"
     sync -f "$state"

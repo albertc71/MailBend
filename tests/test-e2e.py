@@ -50,8 +50,8 @@ TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEN
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
 MUTATING_COMMANDS = (" APPEND ", " STORE ", " EXPUNGE", " COPY ", " MOVE ") + FOLDER_COMMANDS
-TOOL_COUNT = 25
-READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_refresh", "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents"]
+TOOL_COUNT = 26
+READ_TOOLS = ["mail_probe", "mail_list_folders", "mail_search", "mail_get", "mail_get_new", "mail_brief", "mail_refresh", "mail_get_thread", "mail_awaiting_reply", "mail_contacts", "mail_correspondents"]
 THREAD_MOVED = ("a folder's UIDVALIDITY changed while the thread was read, so its UIDs may name "
                 "other messages: read the thread again")
 
@@ -648,6 +648,7 @@ def run_all(work, *, tool_scenarios_only=False):
     whole_read_identity(work)
     thread_classify_identity(work)
     threads(work)
+    archive_threads(work)
     awaiting_replies(work)
     live_contacts(work)
     flags_first_reads(work)
@@ -671,6 +672,10 @@ def run_all(work, *, tool_scenarios_only=False):
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
     spec = importlib.util.spec_from_file_location("metadata_cases", ROOT / "tests/metadata-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("brief_cases", ROOT / "tests/brief-cases.py")
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
@@ -3538,9 +3543,9 @@ def thread_classify_identity(work):
                       and len(ts.requests()) == requests, (r, commands))
             finally:
                 srv.stop()
-        # EXAMINE 1 reads the seed; 2/3 search INBOX/Sent; 4/5 fetch their headers.
+        # EXAMINE 1 reads the seed; 2/3/4 search INBOX/Sent/Archive; 5/6 fetch headers.
         # A reset must stop in the changed session, before any subsequent UID command.
-        for at in (2, 4, 5, 6, 7, 8):
+        for at in (2, 5, 6, 7, 8, 9, 10):
             changed = thread_fixture()
             changed["examine_changes"] = [{"at": at, "uidvalidity": 99}]
             srv = Server(work, fixture=changed)
@@ -4044,7 +4049,7 @@ def threads(work):
               "oldest first, and stop before INBOX 12",
               c == 0 and thread_of(r) == [first, reply, answer], r)
         check("thread: the folders searched and each message's uidvalidity are reported",
-              r.get("searched") == ["INBOX", "Sent Messages"] and r.get("folder") == "INBOX" and r.get("uid") == 7
+              r.get("searched") == ["INBOX", "Sent Messages", "Archive"] and r.get("folder") == "INBOX" and r.get("uid") == 7
               and [m.get("uidvalidity") for m in r.get("messages", [])] == [1700000001, 1700000004, 1700000001], r)
         check("thread: each message carries its summary",
               [m.get("subject") for m in r.get("messages", [])] == ["Trip plans"] * 3
@@ -4058,7 +4063,7 @@ def threads(work):
         c, r = tool(srv, "mail_get_thread", {"folder": "Sent Messages", "uid": 1}, MAILBEND_READ_ONLY="1")
         check("thread: allowed in read-only mode; from Sent, INBOX is searched too, so the message it answers "
               "and the answers to it are found",
-              c == 0 and r.get("searched") == ["Sent Messages", "INBOX"]
+              c == 0 and r.get("searched") == ["Sent Messages", "INBOX", "Archive"]
               and thread_of(r) == [first, reply, answer, fourth], r)
         c, r = tool(srv, "mail_get_thread", {"uid": 99})
         check("thread: a missing UID is an error", c != 0 and "no message with UID 99" in r.get("error", ""), r)
@@ -4078,11 +4083,125 @@ def threads(work):
         c, r = tool(srv, "mail_get_thread", {"uid": 7})
         searches = [line for line in srv.log_lines()[log_start:] if " UID SEARCH " in line]
         check("thread: a reply naming 3000 unknown IDs in References is read; its round searches only 50 IDs "
-              "(3 keys in 2 folders each), after 1 in the first round",
+              "(3 keys in 3 folders each), after 1 in the first round",
               c == 0 and thread_of(r) == [first, ("INBOX", 8, "<trip1@example.com>")]
-              and len(searches) == (1 + 50) * 3 * 2, (r, len(searches)))
+              and len(searches) == (1 + 50) * 3 * 3, (r, len(searches)))
     finally:
         srv.stop()
+
+
+def archive_threads(work):
+    """Resolved Archive extends the same bounded, read-only thread search."""
+    fixture = thread_fixture()
+    fixture["mailboxes"]["Archive"]["messages"] = [thread_message(
+        20, "01-Oct-2026 09:30:00 +0000",
+        "Message-ID: <archived@example.com>\r\nReferences: <trip1@example.com>\r\n")]
+    args = {"uid": 7, "uidvalidity": fixture["mailboxes"]["INBOX"]["uidvalidity"]}
+    srv = Server(work, fixture=fixture)
+    try:
+        before = srv.st()
+        c, result = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+        check("thread Archive: linked archived message is ordered with its parent",
+              c == 0 and thread_of(result) == [("INBOX", 7, None),
+              ("Archive", 20, "<trip1@example.com>"),
+              ("Sent Messages", 1, "<trip1@example.com>"),
+              ("INBOX", 8, "<trip2@example.com>")]
+              and result.get("searched") == ["INBOX", "Sent Messages", "Archive"], result)
+        check("thread Archive: archived UID carries its own generation",
+              any(m.get("folder") == "Archive" and m.get("uidvalidity") == 1700000005
+                  for m in result.get("messages", [])), result)
+        for folder, uid, archive, expected in [
+                ("INBOX", 7, "INBOX", ["INBOX", "Sent Messages"]),
+                ("INBOX", 7, "Sent Messages", ["INBOX", "Sent Messages"]),
+                ("Archive", 20, "Archive", ["Archive", "INBOX", "Sent Messages"])]:
+            start = len(srv.log_lines())
+            code, value = tool(srv, "mail_get_thread", {"folder": folder, "uid": uid},
+                               MAILBEND_ARCHIVE_FOLDER=archive, MAILBEND_READ_ONLY="1")
+            searches_per_folder = {}
+            current = None
+            block_seen = False
+            for line in srv.log_lines()[start:]:
+                if " EXAMINE " in line:
+                    current, block_seen = line.split(" EXAMINE ", 1)[1], False
+                elif " UID SEARCH " in line and not block_seen:
+                    searches_per_folder[current] = searches_per_folder.get(current, 0) + 1
+                    block_seen = True
+            check("thread Archive: duplicate resolved folder searched at most once per round: " + archive,
+                  code == 0 and value.get("searched") == expected
+                  and len(searches_per_folder) == len(expected)
+                  and all(count <= 2 for count in searches_per_folder.values()),
+                  (value, searches_per_folder))
+        code, invalid = tool(srv, "mail_get_thread", args,
+                             MAILBEND_ARCHIVE_FOLDER="missing-archive")
+        check("thread Archive: invalid explicit override refuses instead of inventing a folder",
+              code != 0 and "error" in invalid and "messages" not in invalid, invalid)
+        commands = srv.log_lines()
+        check("thread Archive: all reads preserve flags and mailbox state",
+              srv.st() == before and not any(" SELECT " in line or any(
+                  token in line for token in MUTATING_COMMANDS) for line in commands)
+              and all("BODY.PEEK" in line for line in commands if " UID FETCH " in line), commands)
+    finally:
+        srv.stop()
+
+    baseline = None
+    for mode in ("absent", "ambiguous", "all-only"):
+        variant = thread_fixture()
+        if mode == "absent":
+            del variant["mailboxes"]["Archive"]
+        elif mode == "ambiguous":
+            variant["mailboxes"]["Second Archive"] = copy.deepcopy(variant["mailboxes"]["Archive"])
+        else:
+            archive = variant["mailboxes"].pop("Archive")
+            archive["special"] = ["\\All"]
+            variant["mailboxes"]["Everything"] = archive
+        srv = Server(work, fixture=variant)
+        try:
+            code, value = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+            check("thread Archive: no guessed role for " + mode,
+                  code == 0 and value.get("searched") == ["INBOX", "Sent Messages"]
+                  and thread_of(value) == [("INBOX", 7, None),
+                  ("Sent Messages", 1, "<trip1@example.com>"),
+                  ("INBOX", 8, "<trip2@example.com>")], value)
+            if baseline is None:
+                baseline = value
+            else:
+                check("thread Archive: unresolved role preserves the complete no-Archive result: " + mode,
+                      value == baseline, value)
+            if mode == "all-only":
+                code, explicit = tool(srv, "mail_get_thread", args,
+                                      MAILBEND_ARCHIVE_FOLDER="Everything")
+                check("thread Archive: explicit selectable All override is respected",
+                      code == 0 and explicit.get("searched") == ["INBOX", "Sent Messages", "Everything"], explicit)
+        finally:
+            srv.stop()
+
+    for generation in (0, "missing", "changed"):
+        variant = copy.deepcopy(fixture)
+        if generation == "changed":
+            # Seed; three folder searches; INBOX, Sent and Archive header fetches.
+            variant["examine_changes"] = [{"at": 7, "uidvalidity": 99}]
+        else:
+            variant["mailboxes"]["Archive"]["uidvalidity"] = generation
+        srv = Server(work, fixture=variant)
+        try:
+            code, value = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+            commands = srv.log_lines()
+            archive_fetch = False
+            current = None
+            for line in commands:
+                if " EXAMINE " in line:
+                    current = line.split(" EXAMINE ", 1)[1].strip('"')
+                if current == "Archive" and " UID FETCH " in line:
+                    archive_fetch = True
+            check("thread Archive: invalid or changed generation prevents Archive FETCH: " + str(generation),
+                  code != 0 and "UIDVALIDITY" in value.get("error", "")
+                  and "messages" not in value and not archive_fetch, (value, commands))
+            flag_map = lambda state: {f: {m["uid"]: m["flags"] for m in mb["messages"]}
+                                      for f, mb in state["mailboxes"].items()}
+            check("thread Archive: generation failure preserves flags: " + str(generation),
+                  flag_map(srv.st()) == flag_map(variant))
+        finally:
+            srv.stop()
 
 
 def listed_once(r):
@@ -5227,6 +5346,7 @@ def triage(work):
     triage_partial_contacts(work, key_file)
     triage_candidate_contacts(work, key_file)
     triage_candidate_refusals(work, key_file)
+    triage_positive_reuse(work, key_file)
     triage_flagged_meanwhile(work, key_file)
     triage_protections(work, key_file)
 
@@ -5359,6 +5479,81 @@ def triage_candidate_refusals(work, key_file):
             c, r = triage_call(srv, ts, key_file, [SAFE], **BODY_MODE)
             check(f"triage candidate refusal: {mode} remains fatal before Jev or filing", c != 0 and
                   not ts.requests() and srv.st() == before, r)
+        finally:
+            ts.stop()
+            srv.stop()
+
+
+def triage_positive_reuse(work, key_file):
+    for mode in ("shared", "partial", "near_match", "malformed", "uidvalidity"):
+        fixture = triage_fixture()
+        duplicate = 40
+        fixture["mailboxes"]["INBOX"]["messages"].append(
+            triage_message(duplicate, "[disposable] Second note", sender=FRIEND))
+        group = copy.deepcopy(fixture["mailboxes"]["Sent Messages"]["messages"][-1])
+        recipients = f'To: news@example.com\r\nCc: Friend <{FRIEND.upper()}>\r\nBcc: dana@example.com'
+        if mode == "near_match":
+            recipients = ('To: news@example.com\r\nCc: friend@example.com.extra\r\n'
+                          'Bcc: "dana@example.com" <else@example.test>')
+        if mode == "malformed":
+            recipients = f'To: news@example.com\r\nCc: "Unclosed <{FRIEND}>\r\nBcc: dana@example.com'
+        if mode == "uidvalidity":
+            recipients = f'To: news@example.com\r\nCc: {FRIEND}'
+        group["raw"] = group["raw"].replace("To: " + FRIEND, recipients)
+        sent = [group]
+        if mode == "partial":
+            malformed = copy.deepcopy(group)
+            malformed["uid"] = 2
+            malformed["raw"] = malformed["raw"].replace("Cc: Friend", 'Cc: "Unclosed Friend')
+            sent.append(malformed)
+        fixture["mailboxes"]["Sent Messages"]["messages"] = sent
+        if mode == "uidvalidity":
+            # INBOX read, first candidate SEARCH/FETCH, then the unresolved sender.
+            fixture["examine_changes"] = [{"at": 4, "uidvalidity": 99}]
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            c, r = triage_call(srv, ts, key_file,
+                               [SAFE, FLAGGED_RECEIPT, NO_FOLDER, FRIENDLY, duplicate], **BODY_MODE)
+            rows = {m["uid"]: m for m in r.get("messages", [])}
+            records = srv.log_records()
+            lines = [record["line"] for record in records]
+            searches = [line for line in lines if " SEARCH OR TO " in line]
+            sent_sessions = sum(' EXAMINE "Sent Messages"' in line for line in lines)
+            role_sessions = sum(' LIST "" "*" RETURN (SPECIAL-USE)' in line for line in lines)
+            if mode == "uidvalidity":
+                check("triage positive reuse: unresolved sender generation change still aborts", c != 0 and
+                      "Sent UIDVALIDITY changed" in r.get("error", "") and not ts.requests() and
+                      all(uid in msgs(srv.st(), "INBOX") for uid in (SAFE, FRIENDLY, duplicate)) and
+                      len(searches) == 2 and sent_sessions == 3, (r, searches, sent_sessions))
+                continue
+            check(f"triage positive reuse: {mode} preserves category filing", c == 0 and
+                  rows.get(FLAGGED_RECEIPT, {}).get("destination") == "Receipts", r)
+            if mode in ("shared", "partial"):
+                check(f"triage positive reuse: {mode} exact To/Cc/Bcc evidence protects every sender", c == 0 and
+                      all("the user has written to its sender" in rows.get(uid, {}).get("vetoes", []) and
+                          rows.get(uid, {}).get("destination") is None
+                          for uid in (SAFE, NO_FOLDER, FRIENDLY, duplicate)), r)
+                check(f"triage positive reuse: {mode} duplicate senders share one SEARCH and two Sent sessions",
+                      len(searches) == 1 and 'TO "news@example.com"' in searches[0] and
+                      sent_sessions == 2 and role_sessions == 1 and logins(records) == 5,
+                      (searches, sent_sessions, role_sessions, logins(records)))
+            else:
+                check(f"triage positive reuse: {mode} cannot skip unproven senders", c == 0 and
+                      len(searches) == 3 and sent_sessions == 6 and
+                      all('TO "' + address + '"' in "\n".join(searches)
+                          for address in ("news@example.com", "dana@example.com", FRIEND)),
+                      (r, searches, sent_sessions))
+                if mode == "near_match":
+                    check("triage positive reuse: substring and display-name matches are not correspondents",
+                          all("the user has written to its sender" not in rows.get(uid, {}).get("vetoes", [])
+                              for uid in (NO_FOLDER, FRIENDLY, duplicate)) and
+                          rows.get(FRIENDLY, {}).get("destination") == REVIEW and
+                          rows.get(duplicate, {}).get("destination") == REVIEW, r)
+                else:
+                    check("triage positive reuse: malformed headers retain each sender's uncertainty",
+                          all("whether the user has written to its sender cannot be told" in
+                              rows.get(uid, {}).get("vetoes", [])
+                              for uid in (SAFE, NO_FOLDER, FRIENDLY, duplicate)), r)
         finally:
             ts.stop()
             srv.stop()
@@ -5685,7 +5880,8 @@ GATE_PEM = ("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAfakefakefakefakefa
 GATE_TEXT = "the gated body text"
 ARCHIVE_VALIDITY = FIX["mailboxes"]["Archive"]["uidvalidity"]
 ANNOTATED_READS = [("mail_search", {}), ("mail_get", {"uid": GATE_PREVIEWED}), ("mail_get_new", {"since_uid": 40, "uidvalidity": GATE_VALIDITY}),
-                   ("mail_get_thread", {"uid": 2})]
+                   ("mail_get_thread", {"uid": 2}),
+                   ("mail_brief", {"since_uid": 40, "uidvalidity": GATE_VALIDITY})]
 
 
 def forwarded(inner, depth):
@@ -5832,7 +6028,7 @@ def gates_tool_list(srv, work, key_file):
                   set(changing) == set(MUTATING_CALLS) | more and not missing, (sorted(changing), missing))
         open_world = {t["name"] for t in tool_list(srv) if t["annotations"]["readOnlyHint"]
                       and t["annotations"]["openWorldHint"]}
-        check("gates: of the reads, the four Jev may annotate are marked open-world",
+        check("gates: exactly the annotatable reads are marked open-world",
               open_world == {name for name, _ in ANNOTATED_READS}, open_world)
     finally:
         ts.stop()
@@ -6161,7 +6357,7 @@ def gates_annotations(srv, work, key_file):
         check("gates: suspected_injection is shown only where Jev suspects it", flagged == {GATE_INJECTION}, listed)
         missing = [(name, r) for name, args in ANNOTATED_READS[1:] for c, r in [tool(srv, name, args, **env)]
                    if c != 0 or not has_key(r, "jev")]
-        check("gates: mail_get, mail_get_new and mail_get_thread carry jev objects", not missing, missing)
+        check("gates: all other annotatable reads carry jev objects", not missing, missing)
         extra = [(name, r) for name in ("mail_probe", "mail_list_folders") for c, r in [tool(srv, name, {}, **env)]
                  if c != 0 or has_key(r, "jev")]
         check("gates: the other reads carry no jev object", not extra, extra)

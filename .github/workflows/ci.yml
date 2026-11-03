@@ -21,7 +21,7 @@ on:
         type: boolean
         default: false
       record_scale:
-        description: Record a candidate baseline without comparing or replacing the committed baseline
+        description: Manual evidence only (not a paired comparison or baseline acceptance)
         type: boolean
         default: false
 
@@ -63,7 +63,11 @@ jobs:
           sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Scale harness contracts
-        run: python3 tests/test-scale-contract.py
+        run: |
+          python3 tests/test-scale-contract.py
+          python3 -I tests/test-scale-pair.py
+      - name: Selected scale baselines match source
+        run: python3 tests/test-scale-baseline.py
       - name: Offline posture native egress inventory
         run: python3 tests/test-posture-inventory.py
       - name: Generated schema is up to date
@@ -117,29 +121,6 @@ jobs:
             echo "the send gate's request is not a plain cargo" >&2
             exit 1
           fi
-      - name: Install Lean (scripts/install-lean.sh, for --verdict)
-        run: sh scripts/install-lean.sh
-      - name: Safety proofs, rechecked by the proven kernel
-        run: |
-          bend PROOF.bend --verdict
-          bend src/tools.bend --verdict
-          bend tests/formal/tool-laws.bend --verdict
-      - name: Bounded SMTP model mutation checks
-        run: python3 tests/formal/check-smtp-tls.py
-      - name: Policy proof boundaries and mutation checks
-        run: python3 tests/formal/check-policy.py
-      - name: Role-folder resolution mutation checks
-        run: python3 tests/formal/check-role-folders.py
-
-      - name: Response and image budget proof mutation checks
-        run: python3 tests/formal/check-response-image-budgets.py
-
-      - name: Writing-laws guide snippets and rejected production mutation
-        run: |
-          python3 tests/test-writing-laws.py
-          python3 tests/formal/check-writing-laws.py
-      - name: Change-plan and UID wire mutation checks
-        run: python3 tests/formal/check-plan-wire-mutations.py
       - name: Unit tests
         run: sh tests/run-unit.sh
       - name: Image request cap and the fake TypeSafe's image rules
@@ -150,6 +131,69 @@ jobs:
         run: |
           python3 tests/formal/search-pagination-model.py
           python3 tests/formal/check-search-contract-mutations.py
+  # The kernel-rechecked proofs (the only steps that need Lean) and the
+  # mutation checks (Bend only) run beside source-checks, not after it.
+  proofs:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+      - name: Install Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Install Lean (scripts/install-lean.sh, for --verdict)
+        run: sh scripts/install-lean.sh
+      - name: Safety proofs, rechecked by the proven kernel
+        run: |
+          bend PROOF.bend --verdict
+          bend src/tools.bend --verdict
+          bend tests/formal/tool-laws.bend --verdict
+      - name: Bounded SMTP model mutation checks
+        run: python3 tests/formal/check-smtp-tls.py
+      - name: Role-folder resolution mutation checks
+        run: python3 tests/formal/check-role-folders.py
+      - name: Writing-laws guide snippets and rejected production mutation
+        run: |
+          python3 tests/test-writing-laws.py
+          python3 tests/formal/check-writing-laws.py
+  mutations:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+      - name: Install Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Policy proof boundaries and mutation checks
+        run: python3 tests/formal/check-policy.py
+      - name: Response and image budget proof mutation checks
+        run: python3 tests/formal/check-response-image-budgets.py
+      - name: Change-plan and UID wire mutation checks
+        run: python3 tests/formal/check-plan-wire-mutations.py
   runtime:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ubuntu-24.04
@@ -293,6 +337,8 @@ jobs:
     timeout-minutes: 5
     needs:
       - source-checks
+      - proofs
+      - mutations
       - runtime
       - rust
       - fuzz
@@ -301,12 +347,16 @@ jobs:
       - name: Every required lane passed
         env:
           SOURCE_RESULT: ${{ needs.source-checks.result }}
+          PROOFS_RESULT: ${{ needs.proofs.result }}
+          MUTATIONS_RESULT: ${{ needs.mutations.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
         run: |
           set -eu
           test "$SOURCE_RESULT" = success
+          test "$PROOFS_RESULT" = success
+          test "$MUTATIONS_RESULT" = success
           test "$RUNTIME_RESULT" = success
           test "$RUST_RESULT" = success
           test "$FUZZ_RESULT" = success
@@ -314,49 +364,102 @@ jobs:
   scale:
     if: github.event_name == 'schedule' || inputs.scale
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Refuse evidence-only mode outside explicit manual dispatch
+        env:
+          RECORD_SCALE: ${{ inputs.record_scale }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$RECORD_SCALE" = true ] && [ "$EVENT_NAME" != workflow_dispatch ]; then
+            echo 'Evidence recording cannot replace a paired comparison.' >&2
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+      - name: Checkout the immutable reviewed reference
+        if: ${{ !inputs.record_scale }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: 8ae04b1b3c773d14dea78e167e0047adab1e7cb5
+          path: reference
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential clang openssl time
           rustup toolchain install 1.99 --profile minimal
-          sh scripts/install-bend.sh
-          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Install the pinned scale Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13.18'
-      - name: Build the pinned compiled core
-        run: scripts/install.sh
-      - name: Measure only local synthetic workloads
-        timeout-minutes: 16
+      - name: Fetch the named immutable reference tag without moving it
+        if: ${{ !inputs.record_scale }}
+        run: |
+          git -C reference fetch --no-tags origin tag scale-reference-v1
+          git -C candidate fetch --no-tags origin tag scale-reference-v1
+      - name: Validate paired sources and immutable apparatus before building
+        if: ${{ !inputs.record_scale }}
+        run: |
+          python3 -I candidate/tests/scale_pair.py preflight --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+      - name: Install the verified pinned Bend toolchain
         env:
           RECORD_SCALE: ${{ inputs.record_scale }}
         run: |
-          python3 tests/test-scale-contract.py
           if [ "$RECORD_SCALE" = true ]; then
-            python3 tests/test-scale.py --record --output scale-results.json
+            sh candidate/scripts/install-bend.sh
           else
-            if ! baseline=$(python3 tests/scale_baseline.py); then
-              echo "::error::Unreviewed CPU: collecting evidence, never accepting this run"
-              python3 tests/test-scale.py --output scale-results.json
-              exit 1
-            fi
-            python3 tests/test-scale.py --baseline "$baseline" --output scale-results.json
+            sh reference/scripts/install-bend.sh
           fi
-      - name: Log measurements, including failed and incomplete runs
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Build the reference in its own tree
+        if: ${{ !inputs.record_scale }}
+        run: reference/scripts/install.sh
+      - name: Build the candidate in its own tree
+        run: candidate/scripts/install.sh
+      - name: Check contracts and capture exact paired build identities
+        env:
+          RECORD_SCALE: ${{ inputs.record_scale }}
+        run: |
+          python3 candidate/tests/test-scale-contract.py
+          python3 -I candidate/tests/test-scale-pair.py
+          mkdir -p scale-results
+          if [ "$RECORD_SCALE" != true ]; then
+            python3 -I candidate/tests/scale_pair.py identities --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+          fi
+      - name: Interleave fixed-reference and candidate sample pairs
+        if: ${{ !inputs.record_scale }}
+        timeout-minutes: 31
+        run: |
+          python3 -I candidate/tests/scale_pair.py run --reference "$GITHUB_WORKSPACE/reference" --candidate "$GITHUB_WORKSPACE/candidate" --candidate-sha "$CANDIDATE_SHA" --output-dir "$GITHUB_WORKSPACE/scale-results"
+      - name: Manual evidence recording only (not a comparison)
+        if: ${{ inputs.record_scale && github.event_name == 'workflow_dispatch' }}
+        timeout-minutes: 16
+        run: python3 candidate/tests/test-scale.py --record --output "$GITHUB_WORKSPACE/scale-results/candidate-results.json"
+      - name: Log complete reports and identities, including failed runs
         if: always()
         run: |
-          if [ -f scale-results.json ]; then
-            sha256sum scale-results.json
-            printf '%s\n' SCALE_RESULT_JSON_BEGIN
-            cat scale-results.json
-            printf '%s\n' SCALE_RESULT_JSON_END
-          else
-            echo "No scale result was produced."
-          fi
+          log_error=0
+          for name in paired-identities reference-results candidate-results paired-result; do
+            file="scale-results/$name.json"
+            if [ -f "$file" ]; then
+              # Refuse oversized output rather than silently truncating evidence.
+              if [ "$(wc -c < "$file")" -gt 1048576 ]; then
+                echo "Report too large to emit completely: $file" >&2
+                log_error=1
+                continue
+              fi
+              sha256sum "$file"
+              printf '%s\n' "SCALE_${name}_JSON_BEGIN"
+              cat "$file"
+              printf '\n%s\n' "SCALE_${name}_JSON_END"
+            else
+              printf 'No %s report was produced.\n' "$name"
+            fi
+          done
+          exit "$log_error"
