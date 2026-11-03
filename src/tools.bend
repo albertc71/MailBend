@@ -1767,6 +1767,27 @@ def new_messages.finish(
       oldest_first(List.append(&2, I.Msg, ms,
         new_empty.unique(requested(new_empty.lines(lines), uids), msg_uids(ms))))
 
+# Keep the post-fallback missing set with the messages for cursor validation.
+type NewCoverage is Data:
+  NewCoverage{messages: List<&2, I.Msg>, missing: List<&2, U32>}
+
+def new_messages.coverage_finish(
+  missing: List<&2, U32>, +lines: List<&2, I.RLine>,
+  +uids: List<&2, U32>, +ms: List<&2, I.Msg>
+) -> NewCoverage:
+  match missing:
+    case Nil{}:
+      NewCoverage{ms, []}
+    case _:
+      +all = new_messages.finish(missing, lines, uids, ms)
+      NewCoverage{all, unseen(uids, msg_uids(all))}
+
+def new_messages.coverage(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> NewCoverage:
+  +ms = fetched_msgs(lines, uids, False{})
+  new_messages.coverage_finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
+
+# Brief needs exact UID sequence equality, so keep its existing path and avoid
+# computing the missing set a second time there.
 def new_messages(+lines: List<&2, I.RLine>, +uids: List<&2, U32>) -> List<&2, I.Msg>:
   +ms = fetched_msgs(lines, uids, False{})
   new_messages.finish(unseen(uids, msg_uids(ms)), lines, uids, ms)
@@ -1787,6 +1808,11 @@ def new_headers.complete(
     case h <> t:
       Listed{Policy.Err{"FETCH did not return every requested message; retry the same checkpoint"}, []}
 
+def new_headers.coverage(coverage: NewCoverage, folder: String, uidv: U32,
+  next: U32, more: Bool) -> Shown:
+  NewCoverage{ms, missing} = coverage
+  new_headers.complete(missing, ms, folder, uidv, next, more)
+
 def new_headers.if(
   same: Bool,
   lines: List<&2, I.RLine>,
@@ -1799,8 +1825,7 @@ def new_headers.if(
 ) -> Shown:
   match same:
     case True{}:
-      +ms = new_messages(lines, uids)
-      new_headers.complete(unseen(uids, msg_uids(ms)), ms, folder, uidv, next, more)
+      new_headers.coverage(new_messages.coverage(lines, uids), folder, uidv, next, more)
     case False{}:
       Listed{new_out(folder, Maybe.default(&2, U32, now, 0), True{}, 0, True{}, []), []}
 
