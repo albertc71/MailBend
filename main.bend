@@ -192,11 +192,15 @@ def listed_result(id: J.Json, names: List<&2, String>) -> String:
   "{\"jsonrpc\":\"2.0\",\"id\":" ++ J.show(id) ++
   ",\"result\":{\"tools\":" ++ Schema.tool_defs_for(names) ++ "}}"
 
+# Shared pure envelope for the production parsed path and its differential oracle.
+def parsed_listed_result(modern: Bool, structured: Bool, id: J.Json, ts: J.Json) -> String:
+  rpc_result(id, MCP.cacheable_result(modern,
+    J.obj([J.kv("tools", tools_for(structured, ts))]), version()))
+
 def list_tools.parsed(modern: Bool, structured: Bool, id: J.Json) -> IO(Unit):
   do IO<Unit>:
     ts : J.Json <- offered_tools()
-    IO.print(rpc_result(id, MCP.cacheable_result(modern,
-      J.obj([J.kv("tools", tools_for(structured, ts))]), version())))
+    IO.print(parsed_listed_result(modern, structured, id, ts))
 
 def list_tools.legacy(structured: Bool, id: J.Json) -> IO(Unit):
   match structured:

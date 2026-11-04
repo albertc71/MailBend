@@ -5,6 +5,7 @@ import ../../main.bend as Main
 import ../../src/json.bend as J
 import ../../src/schema.bend as Schema
 import ../../src/tools.bend as T
+import ../../src/ops.bend as Ops
 
 def equal(a: String, b: String, ok: Bool) -> Bool:
   match a b:
@@ -19,6 +20,15 @@ def same(+names: List<&2, String>) -> Bool:
   original = Maybe.default(&2, J.Json, J.parse(Schema.tool_defs()), J.arr([]))
   selected = Maybe.default(&2, J.Json, J.parse(Schema.tool_defs_for(names)), J.JNull{})
   equal(J.show(selected), J.show(T.offered_in(original, names)), True{})
+
+# Pin the entire envelope to the original response helpers, not just tools.
+# One hostile ID is enough here: both paths use the same J.show encoder, and
+# the runtime regression covers the remaining ID types independently.
+def envelope(+parsed: J.Json, ro: Bool, drafts: Bool, jev: Bool) -> Bool:
+  +names = Ops.listed_names(Ops.all_ops(), ro, drafts, jev)
+  +id = J.str("quote\"\\\nline")
+  original = Main.parsed_listed_result(False{}, True{}, id, T.offered_in(parsed, names))
+  equal(Main.listed_result(id, names), original, True{})
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -55,9 +65,26 @@ def main() -> IO(Unit):
       "mail_send",
       "mail_reply",
       "mail_forward"])))
+    +parsed : J.Json = Maybe.default(&2, J.Json, J.parse(Schema.tool_defs()), J.arr([]))
+    IO.print(Bool.show(envelope(parsed, False{}, False{}, False{})))
+    IO.print(Bool.show(envelope(parsed, False{}, False{}, True{})))
+    IO.print(Bool.show(envelope(parsed, False{}, True{}, False{})))
+    IO.print(Bool.show(envelope(parsed, False{}, True{}, True{})))
+    IO.print(Bool.show(envelope(parsed, True{}, False{}, False{})))
+    IO.print(Bool.show(envelope(parsed, True{}, False{}, True{})))
+    IO.print(Bool.show(envelope(parsed, True{}, True{}, False{})))
+    IO.print(Bool.show(envelope(parsed, True{}, True{}, True{})))
     IO.print(Main.listed_result(J.str("quote\"\\\nline"), []))
     IO.print(Main.listed_result(J.JNull{}, []))
     return Unit{}
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
 #|True
 #|True
 #|True

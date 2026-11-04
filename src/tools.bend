@@ -9087,6 +9087,7 @@ def offered_tools(ts: J.Json) -> IO(J.Json):
 # A value of the wrong type, or a misspelt name, is refused rather than read as
 # absent: "as_draft": "true" must not fall back to false and send the mail.
 
+# Retained as the full-list selection oracle for tests; keep out of the call hot path.
 def tool_named(ts: J.Json, +name: String) -> Maybe<&2, J.Json>:
   match ts:
     case J.JCons{+t, rest}:

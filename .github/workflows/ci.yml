@@ -236,7 +236,9 @@ jobs:
       - name: Install result-schema test dependency
         run: python3 -m pip install jsonschema==4.26.0
       - name: Install Rust 1.99 (native/rust-toolchain.toml)
-        run: sh scripts/install-rust.sh
+        run: |
+          sh scripts/install-rust.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install Bend
         run: |
           sh scripts/install-bend.sh
@@ -298,7 +300,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust 1.99 (the MSRV, native/rust-toolchain.toml)
-        run: sh ../scripts/install-rust.sh
+        run: |
+          sh ../scripts/install-rust.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

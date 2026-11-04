@@ -33,31 +33,24 @@ stateDiagram-v2
     Closed --> [*]
 ```
 
-Tool-call schema selection follows the existing validation order:
+Tool-call schema selection follows the existing validation order. The extra
+projection and response-byte-budget check applies to `mail_get`, `mail_search`,
+`mail_get_new`, `mail_brief` and `mail_get_thread`:
 
 ```mermaid
 stateDiagram-v2
     [*] --> NamedDefinition: tool name selects generated JSON
     NamedDefinition --> Arguments: parse inputSchema
     Arguments --> Refused: invalid arguments
-    Arguments --> Dispatch: valid arguments or unknown tool name
+    Arguments --> Projection: valid arguments for the five read tools
+    Arguments --> Dispatch: other valid arguments or unknown tool name
+    Projection --> Refused: invalid projection or response byte budget
+    Projection --> Dispatch: valid projection and response byte budget
     Dispatch --> Refused: unknown operation
     Dispatch --> Policy: known operation
     Policy --> Refused: policy blocks operation
     Policy --> Run: permitted operation
 ```
-
-The `MCP schema comparison` workflow builds a reference and candidate on the
-same standard Linux runner for each of x86-64 and ARM64, then runs two
-alternating pairs of the immutable
-500-request short soak from PR #257. Both retain its 180-second deadline and
-all memory, reply and latency gates. Startup-to-first-reply time and RSS are
-reported separately, so moving work to initialization is visible. A reference
-timeout is reported as incomplete evidence, not a successful full workload;
-any candidate failure fails the comparison. Reports stay in the job log.
-The workflow runs when its comparison driver changes and can be dispatched
-manually with a baseline commit. A single matched run does not establish
-performance across all machines or long-lived sessions.
 
 Modern requests include `params._meta` with
 `io.modelcontextprotocol/protocolVersion: "2026-07-28"` and

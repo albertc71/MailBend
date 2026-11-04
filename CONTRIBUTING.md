@@ -35,7 +35,8 @@ discuss larger changes before writing them.
 ## Checks
 
 Run these before opening a pull request. CI runs proofs, unit tests, runtime suites and Rust checks on Linux x86_64
-and aarch64 (Linux 5.6+ and glibc 2.34+). Fuzzing, the dedicated mutations job and the
+and aarch64. MailBend needs Linux 5.6+ and glibc 2.34+ on either architecture.
+Fuzzing, the dedicated mutations job and the
 secret scan stay on x86_64. Both architectures run `cargo deny check` and
 the source checks in
 [.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
@@ -53,6 +54,7 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
+python3 tests/test-toolchain-installers.py        # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
 bend src/tools.bend --verdict                     # retain tool-layer kernel coverage
@@ -206,6 +208,75 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) messages
 (`fix:`, `feat:`, `docs:`, ...). By contributing you agree that your work is
 licensed under the [MIT License](LICENSE).
 
+## Bump an installer pin
+
+For an installer or compiler pin update, change the version and both
+architecture checksums together in the corresponding script:
+
+- Bend: always follow the [Bend upgrade runbook](#upgrade-bend).
+  `BEND_VERSION` selects the compiler itself, not a separate installer. Update
+  it and both `BEND_SHA256` values in `scripts/install-bend.sh` through that runbook.
+- elan: `ELAN_VERSION` and both `ELAN_SHA256` values in `scripts/install-lean.sh`.
+- rustup: `RUSTUP_VERSION` and both `RUSTUP_SHA256` values in `scripts/install-rust.sh`.
+
+Verify each downloaded x86_64 and aarch64 asset against an upstream-published
+SHA256 for that exact version and asset:
+
+- Bend and elan: inspect the matching asset's `digest` field in the official
+  GitHub release API for [bendlang/bend](https://api.github.com/repos/bendlang/bend/releases)
+  or [leanprover/elan](https://api.github.com/repos/leanprover/elan/releases).
+- rustup: fetch `rustup-init.sha256` beside `rustup-init` under
+  `https://static.rust-lang.org/rustup/archive/<version>/<target>/`, for each
+  of `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
+
+Do not assume a future release publishes both digests. If either is missing,
+stop the bump and record the missing upstream evidence for review. A locally
+computed checksum alone is not upstream verification; compare it with the
+published value. These HTTPS sources are not an independent signature check.
+
+Update the corresponding expected URLs and checksums in
+`tests/test-toolchain-installers.py`, keeping those expectations independent
+of the installer source. Run that test and the [contributor checks](#checks),
+then require exact-head native x86_64 and aarch64 CI before review completion.
+A passing mock test checks selection and refusal paths, not upstream provenance.
+
+Changing elan or rustup does not by itself change the installed Lean or Rust
+version. Keep `LEAN_TOOLCHAIN` and `RUST_TOOLCHAIN` unchanged unless that
+compiler upgrade is also intended and verified. For Bend compiler changes,
+follow the full [Bend upgrade runbook](#upgrade-bend) below. Installer scripts
+are also pinned by the paired-scale preflight. Complete its separately reviewed
+policy migration before treating a helper update as ready:
+
+1. Replace the complete literal `CANDIDATE_HELPER_TUPLE` in
+   `tests/scale_pair.py` with the reviewed SHA256 values in path order:
+   `scripts/install-bend.sh`, `scripts/install-rust.sh`, then
+   `scripts/install-lean.sh`. Review all three files as one revision, including
+   unchanged helpers. Never derive approved hashes dynamically from candidate
+   files or bypass the refusal of unreviewed or mixed tuples.
+2. Update [Reviewed candidate installer migration](tests/SCALE.md#reviewed-candidate-installer-migration-148)
+   with the source revision and scope. Preserve the historical #148 record;
+   for a new migration, rename the section to cover all reviewed migrations,
+   append the new record, and update this link to the renamed heading.
+   Update the literal tuple assertion in `tests/test-scale-pair.py` and any
+   other controls that depend on that tuple. Keep rejection and alias controls.
+   Run `python3 tests/test-scale-pair.py`.
+3. Require the paired comparison to pass on the exact proposed PR head, as
+   well as native CI. Editing `tests/scale_pair.py` triggers
+   `.github/workflows/scale-compare.yml` on the PR; editing installer scripts
+   alone does not. The normal `checks` aggregate excludes `scale`, so green
+   ordinary CI alone cannot validate a helper migration. If policy and helper
+   changes use separate PRs, each needs review, and the final combined helper
+   head needs its own paired pass before it lands. If that helper PR does not
+   trigger the comparison, dispatch `.github/workflows/ci.yml` at its candidate
+   ref with `scale=true` and `record_scale=false`. Keep the fixed reference and
+   verify that the run tested the exact proposed head.
+
+Keep the fixed reference, frozen apparatus, launcher and `install.sh` checks
+intact. The paired job installs Bend from the reference helper for both builds;
+admitting candidate helper bytes does not validate a new compiler in that
+paired run. Compiler acceptance still requires the full Bend runbook and
+native checks on the intended compiler.
+
 ## Upgrade Bend
 
 Use the [Bend upgrade canary](.github/workflows/bend-canary.yml) as an early
@@ -250,7 +321,9 @@ checkout credential.
 5. When the candidate checks pass, update `BEND_VERSION` and both architecture-specific `BEND_SHA256`
    values together in `scripts/install-bend.sh`. Verify the downloaded Linux
    x86_64 and aarch64 archives against their official release digests. Set `LEAN_TOOLCHAIN` in
-   `scripts/install-lean.sh` to the version the candidate requests.
+   `scripts/install-lean.sh` to the version the candidate requests. Follow
+   [Bump an installer pin](#bump-an-installer-pin) to update the independent
+   URL and checksum expectations and review any paired-scale pin migration.
 6. Run every [contributor check](#checks) on the proposed pins, including
    `bend PROOF.bend --verdict`. Require `ALL PROOFS CHECK`. Run normal CI on
    the exact PR commit. Do not weaken laws, expected output, or security
@@ -345,3 +418,23 @@ stateDiagram-v2
 
 Run `python3 tests/test-soak-contract.py` for inexpensive negative controls
 that reject bad IDs, false successes, excessive RSS and latency drift.
+## MCP schema comparison
+
+The `MCP schema comparison` workflow builds a reference and candidate on the
+same standard Linux runner for each of x86-64 and ARM64, then runs two
+alternating pairs of the immutable
+500-request short soak from PR #257. Both retain its 180-second deadline and
+all memory, reply and latency gates. Startup-to-first-reply time and RSS are
+reported separately, so moving work to initialization is visible. A reference
+timeout is reported as incomplete evidence, not a successful full workload;
+any candidate failure fails the comparison. Reports stay in the job log.
+A single matched run does not establish performance across all machines or
+long-lived sessions.
+
+The automatic pull-request path filter covers only the comparison workflow
+and its driver and control tests; pushes to `main` do not trigger it. Edits to
+`main.bend`, `src/tools.bend`, or the generated selector alone do not trigger it.
+When a later measured-code change needs fresh performance evidence, run the
+workflow manually, selecting the candidate branch/ref and an explicit reference
+commit in the `baseline` input. Retain both exact source identities. A prior
+comparison is evidence for its tested head only, not later revisions.
