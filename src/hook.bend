@@ -96,7 +96,7 @@ def event.fields(name: Maybe<&2, String>, args: Maybe<&2, J.Json>) -> Decision:
     case _ _:
       uncertain()
 
-def event.kind(kind: Maybe<&2, String>, event: J.Json) -> Decision:
+def event.kind(kind: Maybe<&2, String>, +event: J.Json) -> Decision:
   match kind:
     case Some{"PreToolUse"}:
       event.fields(J.as_str(J.get(event, "tool_name")), J.get(event, "tool_input"))
