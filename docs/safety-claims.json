@@ -1,0 +1,773 @@
+{
+  "version": 1,
+  "claims": [
+    {
+      "id": "read-plans",
+      "claim": "Read plans contain no mailbox-writing commands for every argument.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "plan_quota_writes_nothing",
+        "probe_writes_nothing",
+        "folders_write_nothing",
+        "roles_write_nothing",
+        "folder_scan_writes_nothing",
+        "search_writes_nothing",
+        "parts_write_nothing",
+        "part_writes_nothing",
+        "part_guarded",
+        "search_page_writes_nothing",
+        "search_page_examines",
+        "search_continuation_pins_identity",
+        "get_writes_nothing",
+        "get_checked_writes_nothing",
+        "get_checked_pins_identity",
+        "get_checked_without_identity_unchanged",
+        "headers_write_nothing",
+        "preflight_writes_nothing",
+        "get_new_writes_nothing",
+        "get_new_now_examines_only",
+        "refresh_plan",
+        "thread_plans_write_nothing",
+        "awaiting_sent_writes_nothing",
+        "reread_flags_writes_nothing",
+        "classify_writes_nothing",
+        "checked_headers_pin_identity",
+        "checked_classify_pin_identity",
+        "checked_reads_without_identity_unchanged",
+        "checked_read_expectation",
+        "checked_read_session_order",
+        "checked_read_preserves_writes",
+        "checked_read_without_identities_unchanged",
+        "checked_headers_write_nothing",
+        "checked_classify_writes_nothing"
+      ],
+      "tests": [
+        "tests/test-e2e.py#reads",
+        "tests/test-e2e.py#selected_parts",
+        "tests/test-e2e.py#refresh_known"
+      ],
+      "code": [
+        "src/ops.bend#plan_get"
+      ],
+      "mutation": {
+        "id": "read-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "[I.CGetQuotaRoot{\"INBOX\"}]",
+        "after": "[I.CGetQuotaRoot{\"INBOX\"}, I.CStore{[1], True{}, I.FSeen{}}]",
+        "proof": "PROOF.bend#Laws.plan_quota_writes_nothing"
+      }
+    },
+    {
+      "id": "read-wire",
+      "claim": "Read renderers use EXAMINE and non-marking BODY.PEEK fetches.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "examine_renders_examine",
+        "search_script_examines",
+        "get_script_examines",
+        "fetch_items_never_set_seen",
+        "search_headers_render_exactly",
+        "full_fetch_renders_exactly"
+      ],
+      "tests": [
+        "tests/test-e2e.py#reads",
+        "tests/test-e2e.py#search_pagination"
+      ],
+      "code": [
+        "src/imap.bend#item_str"
+      ],
+      "mutation": {
+        "id": "read-wire-negative-control",
+        "path": "src/imap.bend",
+        "before": "\"BODY.PEEK[]<0.\" ++ U32.show(max) ++ \">\"",
+        "after": "\"BODY[]<0.\" ++ U32.show(max) ++ \">\"",
+        "proof": "PROOF.bend#Laws.fetch_items_never_set_seen"
+      }
+    },
+    {
+      "id": "flag-plans",
+      "claim": "Mark and flag plans change only their documented flags.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "mark_never_deletes",
+        "flag_never_deletes",
+        "mark_changes_only_seen",
+        "flag_changes_only_flag_and_colour",
+        "flag_changes_exactly",
+        "unflag_clears_flag_and_colour"
+      ],
+      "tests": [
+        "tests/test-e2e.py#flag_basics"
+      ],
+      "code": [
+        "src/ops.bend#plan_mark"
+      ],
+      "mutation": {
+        "id": "flag-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "[I.CStore{uids, seen, I.FSeen{}}]",
+        "after": "[I.CStore{uids, seen, I.FDeleted{}}]",
+        "proof": "PROOF.bend#Laws.mark_never_deletes"
+      }
+    },
+    {
+      "id": "move-delete-plans",
+      "claim": "Move, trash and confirmed delete plans have the stated exact UID changes, copy-before-expunge order and capability guards.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "move_never_loses_mail",
+        "trash_never_loses_mail",
+        "move_expunges_only_copied",
+        "trash_expunges_only_copied",
+        "delete_expunges_only_marked",
+        "delete_expunges_given_uids",
+        "move_changes_exactly",
+        "copy_move_changes_exactly",
+        "trash_changes_exactly",
+        "copy_trash_changes_exactly",
+        "delete_changes_exactly",
+        "expunge_renders_uid_expunge",
+        "expunge_renders_exact_uid_set",
+        "delete_needs_confirmation",
+        "delete_checks_uidplus",
+        "copy_move_checks_uidplus"
+      ],
+      "tests": [
+        "tests/test-e2e.py#mutations",
+        "tests/test-e2e.py#fallback"
+      ],
+      "code": [
+        "src/ops.bend#plan_move",
+        "src/ops.bend#plan_delete"
+      ],
+      "mutation": {
+        "id": "move-delete-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "plan_delete.if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)",
+        "after": "plan_delete.if(True{}, mbox, uids, uidplus, uidv)",
+        "proof": "PROOF.bend#Laws.delete_expunges_only_marked"
+      }
+    },
+    {
+      "id": "uid-wire",
+      "claim": "UID commands preserve the supplied UID order, folder, flag and STORE operation.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "uid_set_is_comma_joined",
+        "select_renders_callers_folder",
+        "copy_renders_exactly",
+        "move_renders_exactly",
+        "fetch_renders_exactly",
+        "search_renders_uid_search",
+        "guard_search_renders_exact_uids",
+        "store_renders_exactly",
+        "expunge_renders_uid_expunge",
+        "expunge_renders_exact_uid_set"
+      ],
+      "tests": [
+        "tests/test-e2e.py#mutations",
+        "tests/test-e2e.py#flag_basics"
+      ],
+      "code": [
+        "src/imap.bend#cmd_str"
+      ],
+      "mutation": {
+        "id": "uid-wire-negative-control",
+        "path": "src/imap.bend",
+        "before": "\"UID STORE \" ++ uid_set(us)",
+        "after": "\"STORE \" ++ uid_set(us)",
+        "proof": "PROOF.bend#Laws.store_renders_exactly"
+      }
+    },
+    {
+      "id": "uidvalidity",
+      "claim": "Change plans open the caller folder and check its exact UIDVALIDITY before changing the caller UIDs.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "mark_is_pinned",
+        "flag_is_pinned",
+        "move_is_pinned",
+        "trash_is_pinned",
+        "delete_is_pinned",
+        "mark_pins_callers_uidvalidity",
+        "flag_pins_callers_uidvalidity",
+        "move_pins_callers_uidvalidity",
+        "trash_pins_callers_uidvalidity",
+        "delete_pins_callers_uidvalidity",
+        "mark_opens_callers_folder",
+        "flag_opens_callers_folder",
+        "unflag_opens_callers_folder",
+        "move_opens_callers_folder",
+        "trash_opens_callers_folder",
+        "label_opens_callers_folder",
+        "delete_opens_callers_folder"
+      ],
+      "tests": [
+        "tests/test-e2e.py#mutations",
+        "tests/test-e2e.py#flag_session_only"
+      ],
+      "code": [
+        "src/ops.bend#guarded"
+      ],
+      "mutation": {
+        "id": "uidvalidity-negative-control",
+        "path": "src/ops.bend",
+        "before": "[I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]",
+        "after": "[I.CSelect{\"Other\"}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]",
+        "proof": "PROOF.bend#Laws.mark_opens_callers_folder"
+      }
+    },
+    {
+      "id": "draft-plans",
+      "claim": "A draft is exactly one APPEND with Draft and Seen flags, with no removal.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "draft_never_removes",
+        "draft_is_exact_append"
+      ],
+      "tests": [
+        "tests/test-e2e.py#compose",
+        "tests/test-e2e.py#draft_paths"
+      ],
+      "code": [
+        "src/ops.bend#plan_draft"
+      ],
+      "mutation": {
+        "id": "draft-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "[I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]",
+        "after": "[I.CAppend{drafts, [I.FSeen{}], msg}]",
+        "proof": "PROOF.bend#Laws.draft_is_exact_append"
+      }
+    },
+    {
+      "id": "send-allowlist",
+      "claim": "An unlisted recipient at any position refuses the entire envelope; no allowlist preserves the plain envelope. This does not prove the native daily counter.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "allowlist_refuses_unlisted",
+        "no_allowlist_is_unchanged"
+      ],
+      "tests": [
+        "tests/test-e2e.py#allowlist",
+        "tests/test-e2e.py#allowlist_reply_all"
+      ],
+      "code": [
+        "src/smtp.bend#outbound"
+      ],
+      "mutation": {
+        "id": "send-allowlist-negative-control",
+        "path": "src/smtp.bend",
+        "before": "outbound.if(all_allowed(allow, rcpts), rcpts, from, msg)",
+        "after": "outbound.if(True{}, rcpts, from, msg)",
+        "proof": "PROOF.bend#Laws.allowlist_refuses_unlisted"
+      }
+    },
+    {
+      "id": "sent-copy",
+      "claim": "A Sent copy is exactly one APPEND of the message with Seen set.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "sent_copy_only_appends"
+      ],
+      "tests": [
+        "tests/test-e2e.py#sent_copies"
+      ],
+      "code": [
+        "src/ops.bend#plan_sent_copy"
+      ],
+      "mutation": {
+        "id": "sent-copy-negative-control",
+        "path": "src/ops.bend",
+        "before": "[I.CAppend{sent, [I.FSeen{}], msg}]",
+        "after": "[I.CAppend{sent, [], msg}]",
+        "proof": "PROOF.bend#Laws.sent_copy_only_appends"
+      }
+    },
+    {
+      "id": "folder-plans",
+      "claim": "Folder creation and rename plans change folders and subscriptions only, and expunge nothing.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "create_changes_exactly",
+        "create_changes_no_mail",
+        "rename_changes_exactly",
+        "rename_subscribes_each_moved_folder",
+        "rename_unsubscribes_each_moved_folder",
+        "rename_subscribes_before_unsubscribing",
+        "rename_changes_no_mail",
+        "folder_plans_destroy_nothing"
+      ],
+      "tests": [
+        "tests/test-e2e.py#folder_create",
+        "tests/test-e2e.py#folder_rename"
+      ],
+      "code": [
+        "src/ops.bend#plan_create",
+        "src/ops.bend#plan_rename"
+      ],
+      "mutation": {
+        "id": "folder-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "[I.CCapability{}, I.CCreate{mbox}, I.CSubscribe{mbox}]",
+        "after": "[I.CCapability{}, I.CCreate{mbox}]",
+        "proof": "PROOF.bend#Laws.create_changes_exactly"
+      }
+    },
+    {
+      "id": "label-plans",
+      "claim": "A label uses the same move plan and creates no folder.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "label_is_move",
+        "label_creates_no_folder",
+        "label_opens_callers_folder"
+      ],
+      "tests": [
+        "tests/test-e2e.py#folder_label"
+      ],
+      "code": [
+        "src/ops.bend#plan_label"
+      ],
+      "mutation": {
+        "id": "label-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "plan_move(mbox, uids, label, move, uidplus, uidv)",
+        "after": "plan_move(mbox, uids, \"Other\", move, uidplus, uidv)",
+        "proof": "PROOF.bend#Laws.label_opens_callers_folder"
+      }
+    },
+    {
+      "id": "triage-plans",
+      "claim": "Triage changes no folder, moves each UID at most once to an offered safe destination, and follows the documented filing table.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "triage_moves_only_to_known_folders",
+        "triage_creates_no_mailbox",
+        "triage_one_move_per_message",
+        "triage_expunges_only_moved",
+        "filing_matches_table",
+        "uncertain_changes_nothing"
+      ],
+      "tests": [
+        "tests/test-e2e.py#triage_body",
+        "tests/test-e2e.py#triage_protections"
+      ],
+      "code": [
+        "src/ops.bend#plan_triage",
+        "src/jev.bend#filing"
+      ],
+      "mutation": {
+        "id": "triage-plans-negative-control",
+        "path": "src/ops.bend",
+        "before": "plan_triage.if(dests_ok(mbox, cats, reserved, ms) && Bool.not(repeats(uids_per_move(ms))),",
+        "after": "plan_triage.if(True{},",
+        "proof": "PROOF.bend#Laws.triage_moves_only_to_known_folders"
+      }
+    },
+    {
+      "id": "dry-run",
+      "claim": "An APPEND preview contains the message size, never its content.",
+      "anchor": "safety",
+      "status": "tested",
+      "laws": [
+        "append_preview_hides_message"
+      ],
+      "tests": [
+        "tests/test-e2e.py#compose",
+        "tests/test-e2e.py#triage_dry_run"
+      ],
+      "code": [
+        "src/imap.bend#preview"
+      ]
+    },
+    {
+      "id": "jev-privacy",
+      "claim": "Headers-mode states exclude message text and image references; ordinary entries have no images.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "headers_state_has_no_body",
+        "state_images_on_headers_is_state",
+        "state_images_body_without_refs_is_state",
+        "cargo_of_without_images",
+        "entry_at_sends_no_images",
+        "outgoing_headers_state_has_no_body"
+      ],
+      "tests": [
+        "tests/test-e2e.py#jev_images",
+        "tests/test-e2e.py#triage_headers"
+      ],
+      "code": [
+        "src/jev.bend#state_of"
+      ],
+      "mutation": {
+        "id": "jev-privacy-negative-control",
+        "path": "src/jev.bend",
+        "before": "case Headers{}:\n      header_state(f)",
+        "after": "case Headers{}:\n      J.obj(List.append(&2, J.Json, fact_kvs(f), [J.kv(\"text\", J.str(text))]))",
+        "proof": "PROOF.bend#Laws.headers_state_has_no_body"
+      }
+    },
+    {
+      "id": "jev-answers",
+      "claim": "Missing answers and answers from another model take the documented cautious paths.",
+      "anchor": "safety",
+      "status": "tested",
+      "laws": [
+        "missing_answer_is_cautious",
+        "only_the_pinned_model_answers",
+        "unpinned_reply_is_no_answer"
+      ],
+      "tests": [
+        "tests/test-e2e.py#gates_unpinned",
+        "tests/test-e2e.py#gates_failure"
+      ],
+      "code": [
+        "src/jev.bend#answered_by_pin"
+      ]
+    },
+    {
+      "id": "jev-gates",
+      "claim": "Jev vetoes and missing decisions can only remove a send or delete; the local secret scan can block sending.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "send_veto_only_subtracts",
+        "delete_veto_only_subtracts",
+        "failure_blocks_outbound",
+        "secret_scan_blocks"
+      ],
+      "tests": [
+        "tests/test-e2e.py#gates_vetoes",
+        "tests/test-e2e.py#gates_delete_vetoes",
+        "tests/test-e2e.py#gates_secret_scan"
+      ],
+      "code": [
+        "src/jev.bend#outbound_checked",
+        "src/jev.bend#delete_checked"
+      ],
+      "mutation": {
+        "id": "jev-gates-negative-control",
+        "path": "src/jev.bend",
+        "before": "case Vetoed{reasons}:\n      []\n    case Failed{reason}:\n      []",
+        "after": "case Vetoed{reasons}:\n      plan\n    case Failed{reason}:\n      []",
+        "proof": "PROOF.bend#Laws.delete_veto_only_subtracts"
+      }
+    },
+    {
+      "id": "smtp-outcome",
+      "claim": "Unconfirmed SMTP delivery remains unknown, while confirmed acceptance survives later process failure.",
+      "anchor": "safety",
+      "status": "tested",
+      "laws": [
+        "smtp_unconfirmed_is_unknown",
+        "smtp_acceptance_survives_exit"
+      ],
+      "tests": [
+        "tests/test-e2e.py#smtp_outcomes"
+      ],
+      "code": [
+        "src/smtp.bend"
+      ]
+    },
+    {
+      "id": "response-budget",
+      "claim": "Response projection preserves non-body fields. Prefix proofs bound escaped scalar and wire bytes, with whole-string preservation when room suffices.",
+      "anchor": "what-the-proofs-cover",
+      "status": "proven",
+      "laws": [
+        "projection_keeps_nonbody",
+        "response_body_fields_are_exact",
+        "response_preserves_nonbody",
+        "prefix_is_prefix",
+        "prefix_conserves_scalar_allowance",
+        "prefix_whole_when_scalar_room",
+        "prefix_fits_allowance",
+        "prefix_whole_when_room"
+      ],
+      "tests": [
+        "tests/test-e2e.py#selected_parts"
+      ],
+      "code": [
+        "src/response.bend#keep",
+        "src/response.bend#prefix"
+      ],
+      "mutation": {
+        "id": "response-budget-negative-control",
+        "path": "src/response.bend",
+        "before": "    case False{}:\n      Prefix{\"\", left}",
+        "after": "    case False{}:\n      Prefix{SCon{c, tail}, left}",
+        "proof": "tests/formal/budget-proofs.bend#prefix_conserves.put"
+      }
+    },
+    {
+      "id": "image-budget",
+      "claim": "The pure admission and production binding transitions preserve count and byte budgets under the documented byte-counter premise.",
+      "anchor": "what-the-proofs-cover",
+      "status": "proven",
+      "laws": [
+        "image_used_only_with_clear_ref",
+        "image_admission_count_cap",
+        "image_admission_byte_cap",
+        "image_bind_count_cap",
+        "image_bind_byte_cap"
+      ],
+      "tests": [
+        "tests/test-e2e.py#jev_image_quota",
+        "tests/test-e2e.py#jev_images"
+      ],
+      "code": [
+        "src/image.bend#bind_next"
+      ],
+      "mutation": {
+        "id": "image-budget-negative-control",
+        "path": "src/image.bend",
+        "before": "BMint{4n, corpus, still, room, rest, acc}",
+        "after": "BMint{4n, corpus, still, room_new(), rest, acc}",
+        "proof": "tests/formal/budget-bind-proofs.bend#bind_admit_conserved"
+      }
+    },
+    {
+      "id": "json-bytes",
+      "claim": "The JSON serializer and response counter have U32 modular equality, not an unbounded response-size theorem.",
+      "anchor": "what-the-proofs-cover",
+      "status": "proven",
+      "laws": [
+        "json_serialized_bytes"
+      ],
+      "tests": [
+        "tests/test-e2e.py#reads"
+      ],
+      "code": [
+        "src/json.bend#show",
+        "src/response.bend#bytes"
+      ],
+      "mutation": {
+        "id": "json-bytes-negative-control",
+        "path": "src/json.bend",
+        "before": "\"[\" ++ show(items) ++ \"]\"",
+        "after": "\"[\" ++ show(items) ++ \"\"",
+        "proof": "tests/formal/json-size-proofs.bend#show_bytes"
+      }
+    },
+    {
+      "id": "policy-gates",
+      "claim": "Read-only, drafts-only and Jev-off gates reject every forbidden operation; malformed switches fail closed.",
+      "anchor": "what-the-proofs-cover",
+      "status": "proven",
+      "laws": [
+        "read_is_read_only",
+        "search_is_read_only",
+        "delete_is_not_read_only",
+        "download_is_not_read_only",
+        "trash_is_not_destructive",
+        "read_only_tools_are_exactly_twelve",
+        "tools_listed_per_config",
+        "from_name_inverts_name",
+        "sending_calls_are_exact",
+        "read_only_refuses_writes",
+        "drafts_only_refuses_sends",
+        "jev_off_refuses_jev_calls",
+        "malformed_switch_is_bad",
+        "bad_read_only_rejects_config",
+        "bad_drafts_only_rejects_config",
+        "bad_typesafe_rejects_config",
+        "bad_zero_retention_rejects_config",
+        "bad_images_rejects_config",
+        "resolved_role_names_selectable_folder"
+      ],
+      "tests": [
+        "tests/test-e2e.py#read_only",
+        "tests/test-e2e.py#gates_tool_list",
+        "tests/test-e2e.py#gates_jev_off"
+      ],
+      "code": [
+        "src/policy.bend#refusal"
+      ],
+      "mutation": {
+        "id": "policy-gates-negative-control",
+        "path": "src/policy.bend",
+        "before": "ro && Bool.not(Ops.is_read_only(op))",
+        "after": "False{}",
+        "proof": "PROOF.bend#Laws.read_only_refuses_writes"
+      }
+    },
+    {
+      "id": "effect-classifiers",
+      "claim": "Every mutating constructor is classified as writing, and the plan classifier inspects every command.",
+      "anchor": "what-the-proofs-cover",
+      "status": "proven",
+      "laws": [
+        "store_classifies_as_writing",
+        "copy_classifies_as_writing",
+        "move_classifies_as_writing",
+        "expunge_classifies_as_writing",
+        "append_classifies_as_writing",
+        "create_classifies_as_writing",
+        "rename_classifies_as_writing",
+        "subscribe_classifies_as_writing",
+        "unsubscribe_classifies_as_writing",
+        "select_classifies_as_writing",
+        "any_writes_checks_each_command"
+      ],
+      "tests": [
+        "tests/test-e2e.py#mutations"
+      ],
+      "code": [
+        "src/imap.bend#effect",
+        "src/imap.bend#any_writes"
+      ],
+      "mutation": {
+        "id": "effect-classifiers-negative-control",
+        "path": "src/imap.bend",
+        "before": "writes(effect(c)) || any_writes(t)",
+        "after": "writes(effect(c))",
+        "proof": "PROOF.bend#thread_searches_add_no_write"
+      }
+    },
+    {
+      "id": "role-resolution",
+      "claim": "Each role follows override, unique selectable advertised role, then unique conventional name precedence; unresolved roles stay unresolved.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "resolved_role_names_selectable_folder",
+        "tests/formal/role-folders.bend#override_decides_the_role",
+        "tests/formal/role-folders.bend#override_takes_its_listed_folder",
+        "tests/formal/role-folders.bend#override_naming_two_folders_takes_no_role",
+        "tests/formal/role-folders.bend#override_naming_unselectable_folder_takes_no_role",
+        "tests/formal/role-folders.bend#override_naming_no_folder_takes_no_role",
+        "tests/formal/role-folders.bend#two_advertised_folders_take_no_role",
+        "tests/formal/role-folders.bend#unselectable_advertised_folder_takes_no_role",
+        "tests/formal/role-folders.bend#sole_advertised_folder_takes_the_role",
+        "tests/formal/role-folders.bend#two_conventional_folders_take_no_role",
+        "tests/formal/role-folders.bend#other_role_folder_never_takes_the_role",
+        "tests/formal/role-folders.bend#each_role_has_its_own_attribute_and_names",
+        "tests/formal/role-folders.bend#selectable_is_neither_noselect_nor_nonexistent",
+        "tests/formal/role-folders.bend#recognized_roles_are_the_special_use_attributes"
+      ],
+      "tests": [
+        "tests/test-e2e.py#generic_folders"
+      ],
+      "code": [
+        "src/policy.bend#resolved_role"
+      ],
+      "mutation": {
+        "id": "role-resolution-negative-control",
+        "path": "src/policy.bend",
+        "before": "resolved_role.if(String.is_empty(override), fs, override, attr, a, b)",
+        "after": "resolved_role.if(True{}, fs, override, attr, a, b)",
+        "proof": "tests/formal/role-folders.bend#override_example"
+      }
+    },
+    {
+      "id": "attachment-boundaries",
+      "claim": "Native attachment reads and downloads are confined to their configured directories, with download overwrite and unsafe-path refusal.",
+      "anchor": "safety",
+      "status": "tested",
+      "laws": [],
+      "tests": [
+        "tests/test-e2e.py#attach_dir_guards",
+        "tests/test-e2e.py#downloads"
+      ],
+      "code": [
+        "native/mailbend-attach/src/main.rs"
+      ]
+    },
+    {
+      "id": "native-boundaries",
+      "claim": "TLS verification, literal framing and credential separation are native implementation boundaries, checked by tests and code review rather than Bend proofs.",
+      "anchor": "safety",
+      "status": "tested",
+      "laws": [],
+      "tests": [
+        "tests/test-e2e.py#implicit_smtp",
+        "tests/test-e2e.py#password_file",
+        "tests/test-e2e.py#failures"
+      ],
+      "code": [
+        "native/mailbend-tls/src/main.rs"
+      ]
+    },
+    {
+      "id": "interrupted-changes",
+      "claim": "The live core distinguishes a helper refusal from a possible partial mailbox change. Stopping the core can still lose its result.",
+      "anchor": "safety",
+      "status": "tested",
+      "laws": [
+        "refused_helper_is_not_lost"
+      ],
+      "tests": [
+        "tests/test-e2e.py#folder_cut_off",
+        "tests/test-e2e.py#flag_cut_off",
+        "tests/test-e2e.py#flag_helper_failures"
+      ],
+      "code": [
+        "src/policy.bend"
+      ]
+    },
+    {
+      "id": "client-prompts",
+      "claim": "The pure client-side hook prints no decision or the specified ask envelope, and its call classifier asks for real sends and permanent deletes unless dry_run is exactly Boolean true. Unparseable text, text rejected by the byte-cap check, unknown tool names with object arguments and missing tool names print ask. Client enforcement and native input handling remain tested boundaries.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "hook_never_allows_or_denies",
+        "hook_real_send_asks",
+        "hook_real_delete_asks",
+        "hook_printed_output_contract",
+        "hook_unparseable_input_asks",
+        "hook_oversized_input_asks",
+        "hook_unknown_tool_asks",
+        "hook_missing_name_asks"
+      ],
+      "tests": [
+        "tests/test-hook.py#test_change_truth_table",
+        "tests/test-hook.py#test_malformed_or_unknown_events_ask",
+        "tests/formal/check-hook.py#main"
+      ],
+      "code": [
+        "src/hook.bend#response",
+        "src/hook.bend#call",
+        "src/hook.bend#output",
+        "src/hook.bend#raw",
+        "src/hook.bend#event.fields"
+      ],
+      "mutation": {
+        "id": "client-prompts-negative-control",
+        "path": "src/hook.bend",
+        "before": "J.str(\"ask\")",
+        "after": "J.str(\"allow\")",
+        "proof": "PROOF.bend#hook_output_safe"
+      }
+    }
+  ],
+  "unclaimed": {
+    "awaiting_incomplete_is_unknown": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "contact_plans": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_preserves_selected_uids": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_partitions_selected_uids": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_plans_write_nothing": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "awaiting_disabled_filters_keep_candidate": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_complete_unseen_highwater": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_partial_unseen_prefix": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_arrivals_keep_prefix": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_range_writes_nothing": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_range_wire": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_completed_has_no_continuation": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
+    "brief_unseen_filter_interval": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here."
+  }
+}
