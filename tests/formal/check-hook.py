@@ -9,6 +9,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 SECTION = "# Client-side prompts\n# -------------------\n"
 IMPORTS = ("import Base\nimport ./src/hook.bend as Hook\n"
+           "import ./src/codec.bend as C\n"
            "import ./src/json.bend as J\nimport ./src/ops.bend as Ops\n"
            "import ./src/policy.bend as Policy\n")
 MUTATIONS = (
@@ -16,6 +17,13 @@ MUTATIONS = (
     ("real changes stay quiet", 'Ask{reason}\n    case _ _:', 'Quiet{}\n    case _ _:'),
     ("deletes omit the prompt", 'Policy.sends(op, args) || Ops.is_destructive(op)',
      'Policy.sends(op, args)'),
+    ("printed output diverges", 'J.show(response(d))', '"allow"'),
+    ("uncertain input stays quiet", 'Ask{"MailBend could not inspect this tool call. '
+     'Check its arguments before continuing."}', 'Quiet{}'),
+    ("unknown tool stays quiet", 'case None{}:\n      uncertain()\n    case Some{o}:',
+     'case None{}:\n      Quiet{}\n    case Some{o}:'),
+    ("oversized input stays quiet", 'case True{}:\n      uncertain()\n    case False{}:',
+     'case True{}:\n      Quiet{}\n    case False{}:'),
 )
 
 

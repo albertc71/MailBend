@@ -2516,3 +2516,39 @@ def Laws.hook_real_delete_asks(args, real):
     {Laws.hook_decision(Hook.choose(_, True{}, Hook.summary(Ops.ODelete{}, args))) ==
       Some{"ask"} : Maybe<&2, String>}
   {==}
+
+def Laws.hook_printed_output_contract(d):
+  match d:
+    case Hook.Quiet{}:
+      {==}
+    case Hook.Ask{reason}:
+      {==}
+
+def hook_unparseable_if(over: Bool, -text: String,
+  invalid: {J.parse(text) == None{} : Maybe<&2, J.Json>})
+  -> {Laws.hook_printed_decision(Hook.raw.if(over, text)) == Some{"ask"} : Maybe<&2, String>}:
+  match over:
+    case True{}:
+      {==}
+    case False{}:
+      %Equal.sym(Maybe<&2, J.Json>, J.parse(text), None{}, invalid) :
+        {Laws.hook_printed_decision(Hook.parsed(_)) == Some{"ask"} : Maybe<&2, String>}
+      {==}
+
+def Laws.hook_unparseable_input_asks(text, invalid):
+  +t = text
+  hook_unparseable_if(U32.is_gt(C.byte_len(t), Hook.input_cap()), t, invalid)
+
+def Laws.hook_oversized_input_asks(text, over):
+  %Equal.sym(Bool, U32.is_gt(C.byte_len(text), Hook.input_cap()), True{}, over) :
+    {Laws.hook_printed_decision(Hook.raw.if(_, text)) == Some{"ask"} : Maybe<&2, String>}
+  {==}
+
+def Laws.hook_unknown_tool_asks(name, items, unknown):
+  %Equal.sym(Maybe<&2, Ops.Op>, Ops.from_name(Hook.tool_name(name)), None{}, unknown) :
+    {Laws.hook_printed_decision(Hook.event.call(_, J.JObj{items})) ==
+      Some{"ask"} : Maybe<&2, String>}
+  {==}
+
+def Laws.hook_missing_name_asks(args):
+  {==}
