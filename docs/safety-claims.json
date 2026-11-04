@@ -635,7 +635,7 @@
         "path": "src/imap.bend",
         "before": "writes(effect(c)) || any_writes(t)",
         "after": "writes(effect(c))",
-        "proof": "PROOF.bend#Laws.any_writes_checks_each_command"
+        "proof": "PROOF.bend#thread_searches_add_no_write"
       }
     },
     {

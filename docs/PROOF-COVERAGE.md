@@ -248,7 +248,7 @@ It does not report an individual job or certify a pending pull request.
 - Laws: [`store_classifies_as_writing`](../LAWS.bend#L1639), [`copy_classifies_as_writing`](../LAWS.bend#L1648), [`move_classifies_as_writing`](../LAWS.bend#L1656), [`expunge_classifies_as_writing`](../LAWS.bend#L1664), [`append_classifies_as_writing`](../LAWS.bend#L1671), [`create_classifies_as_writing`](../LAWS.bend#L1680), [`rename_classifies_as_writing`](../LAWS.bend#L1687), [`subscribe_classifies_as_writing`](../LAWS.bend#L1695), [`unsubscribe_classifies_as_writing`](../LAWS.bend#L1702), [`select_classifies_as_writing`](../LAWS.bend#L1709), [`any_writes_checks_each_command`](../LAWS.bend#L1716)
 - Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1229)
 - Code: [`src/imap.bend#effect`](../src/imap.bend#L114), [`src/imap.bend#any_writes`](../src/imap.bend#L252)
-- Seeded bug: `effect-classifiers-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#Laws.any_writes_checks_each_command`.
+- Seeded bug: `effect-classifiers-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#thread_searches_add_no_write`.
 
 ## role-resolution
 
