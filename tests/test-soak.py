@@ -132,6 +132,13 @@ def stop(proc):
         proc.wait(timeout=10)
 
 
+def phase_reply(replies, timeout, failure):
+    try:
+        return replies.get(timeout=timeout)
+    except queue.Empty:
+        raise AssertionError(failure) from None
+
+
 def next_reply(replies, deadline):
     remaining = deadline - time.monotonic()
     assert remaining > 0, "soak time budget exceeded"
@@ -200,7 +207,7 @@ def run(profile):
                     "protocolVersion": "2025-06-18", "capabilities": {},
                     "clientInfo": {"name": "synthetic-soak", "version": "1"}}}
                 write_batch(session, [hello], 10)
-                _, response = replies.get(timeout=30)
+                _, response = phase_reply(replies, 30, "no initialize reply within 30 seconds")
                 assert response and response.get("id") == 0 and "result" in response, "initialization failed"
                 # Pipe stdin makes the adapter exec the core, retaining this PID.
                 assert Path(f"/proc/{session.pid}/exe").resolve() == core.resolve(), "RSS target is not the compiled core"
@@ -249,7 +256,7 @@ def run(profile):
                 elapsed = time.monotonic() - started
                 assert elapsed <= budget, "soak time budget exceeded"
                 session.stdin.close()
-                _, trailing = replies.get(timeout=10)
+                _, trailing = phase_reply(replies, 10, "core did not close stdout after EOF")
                 assert trailing is None, "extra reply after last request"
                 assert session.wait(timeout=10) == 0, "core failed at EOF"
                 reader.join(timeout=2)
