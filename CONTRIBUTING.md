@@ -67,6 +67,8 @@ python3 tests/test-writing-laws.py                # malformed guide fences fail 
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 sh tests/run-unit.sh
+python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
+python3 tests/test-soak.py --profile short         # synthetic session soak after build
 python3 tests/test-mcp-schema-comparison.py        # bounded comparison startup and descendant cleanup
 python3 tests/test-scale-contract.py               # bounded scale lifecycle and comparison controls
 python3 tests/test-scale-baseline.py               # historical selected baselines match apparatus
@@ -357,10 +359,70 @@ Lean pin. This first observation is a local report, not a claim that the
 scheduled GitHub workflow has run. Retain the workflow run summary and logs
 when reproducing it on GitHub.
 
+## MCP session soak
+
+After building, run `python3 tests/test-soak.py --profile short` (CI) or
+`python3 tests/test-soak.py --profile long` (manual). These use one compiled
+MCP core and the local TLS fake server, never a provider account. Existing
+mail settings are removed from the child environment. The test password and
+mail are synthetic, and the output contains only measurements.
+
+Each profile warms up with 50 requests, then measures 500 or 5,000 requests.
+Every ten-request burst is written before replies are read, with the same mix
+of tool discovery, probe, search, get, flag/unflag and expected failures.
+This is a synthetic stress pattern; real clients' concurrent request behavior
+has not been verified. All replies must arrive once, in request order, with
+the expected operation result. Extra replies after the final request fail.
+
+The core's RSS is sampled every 100 ms. After warm-up it must stay at most
+1 GiB and within 256 MiB of the warm-up peak. The last tenth's p95 latency
+must not exceed three times the first tenth's p95. Latency includes queueing
+from the burst write; both comparison windows have the same request mix.
+The short run has a 180-second request budget, the long run 1,800 seconds,
+plus bounded setup and shutdown. A missing reply fails after 30 seconds even
+when the total budget remains. Earlier hosted runs approached or exceeded
+180 seconds. A [matched x86-64 comparison](https://github.com/albertc71/MailBend/actions/runs/41594093738)
+after generated tool-list emission completed in 115.14/114.49 seconds versus
+160.23/155.12 seconds for its reference, with the workload and all bounds
+unchanged. Two short runs do not establish a universal flake rate or ARM
+performance; both architectures must pass their own required lane.
+CI runs four separate required runtime lanes per architecture, allowing all
+eight matrix entries in parallel rather than serializing soak after MCP
+scenarios. Runner availability can still cause queueing. This adds a build per
+architecture but does not guarantee a particular overall CI duration. JSON
+output records the RSS curve, p50/p95,
+drift ratio and elapsed time. Both success and failure output include counts
+and reply-gap summaries by fixed synthetic operation. Gaps span consecutive
+replies within a burst (the first starts at the burst write); they help locate
+slow work but are not isolated CPU timings. They include warm-up and exclude
+unvalidated or unfinished replies. These are regression bounds, not evidence of
+memory stability over days or a promise about a provider's latency.
+
+The session follows this state model:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Initialize
+    Initialize --> Warmup: core PID verified
+    Warmup --> Measure: 50 replies checked
+    Measure --> Drain: all measured replies checked
+    Drain --> Pass: EOF, RSS and latency bounds hold
+    Initialize --> Fail: startup error
+    Warmup --> Fail: timeout or wrong reply
+    Measure --> Fail: timeout, wrong reply or sampling error
+    Drain --> Fail: extra reply, exit error or failed bound
+    Fail --> Cleanup
+    Pass --> Cleanup
+    Cleanup --> [*]
+```
+
+Run `python3 tests/test-soak-contract.py` for inexpensive negative controls
+that reject bad IDs, false successes, excessive RSS and latency drift.
 ## MCP schema comparison
 
 The `MCP schema comparison` workflow builds a reference and candidate on the
-same standard Linux runner, then runs two alternating pairs of the immutable
+same standard Linux runner for each of x86-64 and ARM64, then runs two
+alternating pairs of the immutable
 500-request short soak from PR #257. Both retain its 180-second deadline and
 all memory, reply and latency gates. Startup-to-first-reply time and RSS are
 reported separately, so moving work to initialization is visible. A reference

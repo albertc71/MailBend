@@ -17,7 +17,9 @@ using the same current policy as the parsed listing path. Only generated schema
 bytes enter that tools/list-specific envelope; request IDs are JSON-encoded.
 No parsed schema or filtered response is retained between requests. Modern and
 older legacy projections retain the original parsed-schema path. CLI listing
-and tool-call validation are unchanged.
+is unchanged. Tool-call validation parses only the named generated definition,
+then applies the same input-schema and policy checks. Every known tool must
+retain its original input schema; unknown names keep the unknown-tool refusal.
 
 ```mermaid
 stateDiagram-v2
@@ -29,6 +31,25 @@ stateDiagram-v2
     Parsed --> Serve: filter and project original schema
     Serve --> Closed: EOF or framing limit
     Closed --> [*]
+```
+
+Tool-call schema selection follows the existing validation order. The extra
+projection and response-byte-budget check applies to `mail_get`, `mail_search`,
+`mail_get_new`, `mail_brief` and `mail_get_thread`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> NamedDefinition: tool name selects generated JSON
+    NamedDefinition --> Arguments: parse inputSchema
+    Arguments --> Refused: invalid arguments
+    Arguments --> Projection: valid arguments for the five read tools
+    Arguments --> Dispatch: other valid arguments or unknown tool name
+    Projection --> Refused: invalid projection or response byte budget
+    Projection --> Dispatch: valid projection and response byte budget
+    Dispatch --> Refused: unknown operation
+    Dispatch --> Policy: known operation
+    Policy --> Refused: policy blocks operation
+    Policy --> Run: permitted operation
 ```
 
 Modern requests include `params._meta` with
