@@ -35,6 +35,8 @@ CANDIDATE_HELPER_TUPLE = (
     "0396875e0f8c09599c9badbe4fbde259b61138308977835fbf0c8b4c198c7a17",
     "4b30ca5f48136b481243ea0c819c970563e13e96ef660b8bd7ad8c738ce14374",
 )
+# The hook-only launcher revision in PR #272 at 2920a261a1361e1631631b4f218707a9ffbb52dc.
+CANDIDATE_LAUNCHER_SHA256 = "68cf6c6e6c671585d8752b653d8e76728d00306a1cd76b6f7723257d1546ffd8"
 EXECUTABLES = ("bin/mailbend-core", "bin/mailbend-tls", "bin/mailbend-attach",
                "bin/mailbend-typesafe", "bin/mailbend-stdio", "scripts/mailbend")
 
@@ -109,7 +111,10 @@ def preflight(reference, candidate, candidate_sha):
         for side, root in enumerate(roots):
             path, _ = regular(root, name)
             actual = sha(path.read_bytes())
-            if side == 1 and name in INSTALLERS[1:]:
+            if side == 1 and name == "scripts/mailbend":
+                require(actual in (expected, CANDIDATE_LAUNCHER_SHA256),
+                        f"candidate launcher is not a reviewed revision: {path}")
+            elif side == 1 and name in INSTALLERS[1:]:
                 original_helpers.append(expected)
                 candidate_helpers.append(actual)
             else:

@@ -300,7 +300,7 @@ class PairTests(unittest.TestCase):
                             "changed-lean": "not a reviewed complete revision",
                             "reference-new": "fixed launcher/installer changed",
                             "launcher-reference": "fixed launcher/installer changed",
-                            "launcher-candidate": "fixed launcher/installer changed",
+                            "launcher-candidate": "candidate launcher is not a reviewed revision",
                             "install-reference": "fixed launcher/installer changed",
                             "install-candidate": "fixed launcher/installer changed",
                             "apparatus-reference": "apparatus changed",
@@ -321,6 +321,83 @@ class PairTests(unittest.TestCase):
             "57c7d071b6f0155c69058a883e83b97f6a76a17d438d9cce1d2b870576c2af1b",
             "0396875e0f8c09599c9badbe4fbde259b61138308977835fbf0c8b4c198c7a17",
             "4b30ca5f48136b481243ea0c819c970563e13e96ef660b8bd7ad8c738ce14374"))
+
+    def test_reviewed_launcher_hash_is_literal(self):
+        self.assertEqual(pair.CANDIDATE_LAUNCHER_SHA256,
+                         "68cf6c6e6c671585d8752b653d8e76728d00306a1cd76b6f7723257d1546ffd8")
+
+    def test_candidate_launcher_migration_through_real_preflight(self):
+        names = ("scripts/mailbend", *pair.INSTALLERS)
+        original = {name: (ROOT / name).read_bytes() for name in names}
+        original["scripts/mailbend"] = b"#!/bin/sh\n# historical launcher fixture\n"
+        revised = b"#!/bin/sh\n# independently approved launcher fixture\n"
+        for case in ("original", "approved", "tampered", "reference-approved",
+                     "symlink", "hardlink", "missing", "dirty", "post-run-drift"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                roots = tuple(pathlib.Path(tmp) / side for side in pair.SIDES)
+                for root in roots:
+                    for name in (*pair.PINNED, *names):
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(original[name] if name in original else
+                                         (ROOT / name).read_bytes())
+                launcher = roots[1] / "scripts/mailbend"
+                if case != "original":
+                    launcher.write_bytes(revised)
+                if case == "tampered":
+                    launcher.write_bytes(revised + b"changed")
+                elif case == "reference-approved":
+                    (roots[0] / "scripts/mailbend").write_bytes(revised)
+                elif case in ("symlink", "hardlink", "missing"):
+                    launcher.unlink()
+                    target = pathlib.Path(tmp) / "approved-launcher"
+                    target.write_bytes(revised)
+                    if case == "symlink":
+                        launcher.symlink_to(target)
+                    elif case == "hardlink":
+                        launcher.hardlink_to(target)
+                def git(root, *args):
+                    if args == ("rev-parse", "HEAD"):
+                        return (pair.REFERENCE_SHA if root == roots[0] else "a" * 40).encode()
+                    if args[0] == "status":
+                        return b" M scripts/mailbend" if case == "dirty" else b""
+                    if args[0] == "rev-parse":
+                        return pair.REFERENCE_SHA.encode()
+                    self.assertEqual(args[0], "show")
+                    return original[args[1].split(":", 1)[1]]
+                with mock.patch.object(pair, "git", side_effect=git), \
+                        mock.patch.object(pair, "CANDIDATE_LAUNCHER_SHA256", pair.sha(revised)):
+                    if case in ("original", "approved", "post-run-drift"):
+                        self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                        if case == "post-run-drift":
+                            for root in roots:
+                                for name in pair.EXECUTABLES:
+                                    path = root / name
+                                    path.parent.mkdir(parents=True, exist_ok=True)
+                                    if not path.exists():
+                                        path.write_bytes(name.encode())
+                                    path.chmod(0o755)
+                            output = pathlib.Path(tmp) / "reports"
+                            output.mkdir()
+                            pair.write_json(output / "paired-identities.json",
+                                            pair.identities(roots, "a" * 40))
+                            pair.unchanged(roots, "a" * 40, output)
+                            launcher.write_bytes(original["scripts/mailbend"])
+                            with self.assertRaisesRegex(ValueError, "identities changed"):
+                                pair.unchanged(roots, "a" * 40, output)
+                    elif case == "missing":
+                        with self.assertRaises(FileNotFoundError):
+                            pair.preflight(*roots, "a" * 40)
+                    else:
+                        expected = {
+                            "tampered": "candidate launcher is not a reviewed revision",
+                            "reference-approved": "fixed launcher/installer changed",
+                            "symlink": "symlink forbidden",
+                            "hardlink": "not an unaliased regular file",
+                            "dirty": "tracked source is dirty",
+                        }[case]
+                        with self.assertRaisesRegex(ValueError, expected):
+                            pair.preflight(*roots, "a" * 40)
 
     def test_paired_setup_uses_reference_toolchain_and_unflagged_builds(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()

@@ -273,8 +273,10 @@ policy migration before treating a helper update as ready:
    ref with `scale=true` and `record_scale=false`. Keep the fixed reference and
    verify that the run tested the exact proposed head.
 
-Keep the fixed reference, frozen apparatus, launcher and `install.sh` checks
-intact. The paired job installs Bend from the reference helper for both builds;
+Keep the fixed reference, frozen apparatus and `install.sh` checks intact.
+Launcher revisions require a separately reviewed exact-byte migration, as in
+[the candidate hook launcher migration](tests/SCALE.md#reviewed-candidate-launcher-migration-110).
+The paired job installs Bend from the reference helper for both builds;
 admitting candidate helper bytes does not validate a new compiler in that
 paired run. Compiler acceptance still requires the full Bend runbook and
 native checks on the intended compiler.
