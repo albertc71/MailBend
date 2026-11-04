@@ -8,6 +8,7 @@
 #   mailbend setup --provider <name> --email <address>   print configuration only
 #   mailbend setup --help          list providers and setup usage
 #   mailbend setup --check         check applied settings; local folder suggestions
+#   mailbend hook claude-pretooluse   client-side prompt from a bounded stdin event
 
 import Base
 import ./src/codec.bend as C
@@ -19,6 +20,7 @@ import ./src/mcp-protocol.bend as MCP
 import ./src/ops.bend as Ops
 import ./src/diagnostics.bend as Diagnostics
 import ./src/providers.bend as Providers
+import ./src/hook.bend as Hook
 
 def version() -> String:
   "0.1.0"
@@ -612,7 +614,7 @@ def usage() -> String:
   "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -] | " ++
     "mailbend diagnose [--imap] [--smtp] | mailbend diagnose --posture | " ++
     "mailbend setup --provider <name> --email <address> | mailbend setup --check | " ++
-    "mailbend setup --help | mailbend version"
+    "mailbend setup --help | mailbend hook claude-pretooluse | mailbend version"
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -760,6 +762,76 @@ def call_stdin(name: String) -> IO(Unit):
     r : Result<&1, &1, U32 & String, File> <- File.open("/dev/stdin", "r")
     call_stdin.opened(name, r)
 
+def hook_print(d: Hook.Decision) -> IO(Unit):
+  match d:
+    case Hook.Quiet{}:
+      IO.pure(Unit, Unit{})
+    case Hook.Ask{reason}:
+      IO.print(Hook.output(Hook.Ask{reason}))
+
+def hook_finish(+st: C.Utf8State) -> IO(Unit):
+  C.Utf8State{_, need, _, _} = st
+  match need:
+    case 0:
+      hook_print(Hook.raw(C.utf8_decode.fin(st)))
+    case _:
+      hook_print(Hook.uncertain())
+
+@unsafe
+def hook_read(f: File, n: U32, st: C.Utf8State) -> IO(Unit):
+  do IO<Unit>:
+    m : StdinRead() <- File.read_bytes(f, 4096)
+    hook_read.result(m, n, st)
+
+@unsafe
+def hook_read.result(m: StdinRead(), n: U32, st: C.Utf8State) -> IO(Unit):
+  (f, r) = m
+  match r:
+    case Fail{_}:
+      do IO<Unit>:
+        File.close(f)
+        hook_print(Hook.uncertain())
+    case Done{xs}:
+      match xs:
+        case Nil{}:
+          do IO<Unit>:
+            File.close(f)
+            hook_finish(st)
+        case b <> rest:
+          hook_read.next(f, call_stdin.chunk(b <> rest, Done{CallInput{n, st}}))
+
+@unsafe
+def hook_read.within(f: File, n: U32, st: C.Utf8State, over: Bool) -> IO(Unit):
+  match over:
+    case True{}:
+      do IO<Unit>:
+        File.close(f)
+        hook_print(Hook.uncertain())
+    case False{}:
+      hook_read(f, n, st)
+
+@unsafe
+def hook_read.next(f: File, r: Result<&2, &2, String, CallInput>) -> IO(Unit):
+  match r:
+    case Fail{_}:
+      do IO<Unit>:
+        File.close(f)
+        hook_print(Hook.uncertain())
+    case Done{CallInput{+n, st}}:
+      hook_read.within(f, n, st, U32.is_gt(n, Hook.input_cap()))
+
+def hook_opened(r: Result<&1, &1, U32 & String, File>) -> IO(Unit):
+  match r:
+    case Done{f}:
+      hook_read(f, 0, C.Utf8State{0, 0, 0, ""})
+    case Fail{_}:
+      hook_print(Hook.uncertain())
+
+def hook_cli() -> IO(Unit):
+  do IO<Unit>:
+    r : Result<&1, &1, U32 & String, File> <- File.open("/dev/stdin", "r")
+    hook_opened(r)
+
 # Copies the arguments into a reusable list for the dispatch below.
 def share(xs: List<String>) -> List<&2, String>:
   match xs:
@@ -795,6 +867,8 @@ def posture_cli() -> IO(Unit):
 
 def cli(args: List<&2, String>) -> IO(Unit):
   match args:
+    case "hook" <> "claude-pretooluse" <> Nil{}:
+      hook_cli()
     case "diagnose" <> "--posture" <> Nil{}:
       posture_cli()
     case "setup" <> "--check" <> Nil{}:

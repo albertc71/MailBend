@@ -84,6 +84,8 @@ python3 tests/test-posture-inventory.py           # native egress changes need a
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
+python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
+python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP

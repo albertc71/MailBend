@@ -271,6 +271,7 @@ notes; a TypeSafe failure leaves the read working, marked `unchecked`.
 
 ```text
 main.bend            CLI and the MCP stdio server (JSON-RPC lines)
+src/hook.bend        pure Claude Code client-side ask-or-quiet prompt decisions
 src/providers.bend   reviewed print-only setup presets, prerequisites, and configuration rendering
 src/diagnostics.bend redacted checks (network only when requested), offline posture and local-only setup folder suggestions
 src/mcp-protocol.bend MCP version metadata, envelopes and protocol limits

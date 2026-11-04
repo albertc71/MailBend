@@ -3,9 +3,16 @@
 # helper, the attachment reader and the TypeSafe helper next to it. Falls back to
 # `bend main.bend` (slower start) when the core was not compiled.
 # MCP uses the stdio helper to adapt inherited sockets before starting the core.
-# Usage: scripts/mailbend mcp | tools | call <tool> [json or -] | diagnose [--imap] [--smtp] | setup | version
+# Usage: scripts/mailbend mcp | tools | call <tool> [json or -] | diagnose [--imap] [--smtp] | setup | hook claude-pretooluse | version
 set -eu
 ulimit -c 0
+# Bend may reuse a closed fd 0 for an internal pipe before opening /dev/stdin.
+if [ "$#" -eq 2 ] && [ "$1" = hook ] && [ "$2" = claude-pretooluse ]; then
+  if [ ! -e /dev/stdin ]; then
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"MailBend could not read this tool call. Check its arguments before continuing."}}'
+    exit 0
+  fi
+fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${MAILBEND_TLS_HELPER:=$root/bin/mailbend-tls}"
 : "${MAILBEND_ATTACH_HELPER:=$root/bin/mailbend-attach}"
@@ -13,7 +20,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export MAILBEND_TLS_HELPER MAILBEND_ATTACH_HELPER MAILBEND_TYPESAFE_HELPER
 export BEND_NO_TELEMETRY=1
 case "${1:-}:${2:-}" in
-  setup:--provider|setup:--email|setup:--help) ;;
+  setup:--provider|setup:--email|setup:--help|hook:claude-pretooluse) ;;
   *)
     if [ -n "${MAILBEND_CA_FILE:-}" ]; then
       echo "mailbend: warning: MAILBEND_CA_FILE replaces the system trust store; it is meant for local tests" >&2
