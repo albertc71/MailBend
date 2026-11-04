@@ -84,6 +84,8 @@ python3 tests/test-posture-inventory.py           # native egress changes need a
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
+python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
+python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
@@ -271,8 +273,10 @@ policy migration before treating a helper update as ready:
    ref with `scale=true` and `record_scale=false`. Keep the fixed reference and
    verify that the run tested the exact proposed head.
 
-Keep the fixed reference, frozen apparatus, launcher and `install.sh` checks
-intact. The paired job installs Bend from the reference helper for both builds;
+Keep the fixed reference, frozen apparatus and `install.sh` checks intact.
+Launcher revisions require a separately reviewed exact-byte migration, as in
+[the candidate hook launcher migration](tests/SCALE.md#reviewed-candidate-launcher-migration-110).
+The paired job installs Bend from the reference helper for both builds;
 admitting candidate helper bytes does not validate a new compiler in that
 paired run. Compiler acceptance still requires the full Bend runbook and
 native checks on the intended compiler.
@@ -381,11 +385,13 @@ from the burst write; both comparison windows have the same request mix.
 The short run has a 180-second request budget, the long run 1,800 seconds,
 plus bounded setup and shutdown. A missing reply fails after 30 seconds even
 when the total budget remains. Earlier hosted runs approached or exceeded
-180 seconds. A [matched x86-64 comparison](https://github.com/albertc71/MailBend/actions/runs/41594093738)
-after generated tool-list emission completed in 115.14/114.49 seconds versus
-160.23/155.12 seconds for its reference, with the workload and all bounds
-unchanged. Two short runs do not establish a universal flake rate or ARM
-performance; both architectures must pass their own required lane.
+180 seconds. After #262's generated tool listing and #264's named input-schema
+selection, the
+[integrated required CI run](https://github.com/albertc71/MailBend/actions/runs/41903506215)
+completed the same 50 warm-up plus 500 measured requests in 7.623 seconds on
+x86-64 and 10.591 seconds on ARM64. The workload and every bound were unchanged.
+These are observations from one short-run campaign, not a universal flake rate
+or a guarantee for other runners; both architectures must pass their own lane.
 CI runs four separate required runtime lanes per architecture, allowing all
 eight matrix entries in parallel rather than serializing soak after MCP
 scenarios. Runner availability can still cause queueing. This adds a build per

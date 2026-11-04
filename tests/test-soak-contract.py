@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Negative controls for the soak's verdict, without launching mail or Bend."""
+import ast
 import importlib.util
 from pathlib import Path
 import unittest
@@ -65,6 +66,59 @@ class SoakContract(unittest.TestCase):
             with patch.object(soak.time, "monotonic", side_effect=clock):
                 with self.assertRaisesRegex(AssertionError, reason):
                     soak.next_reply(replies, deadline)
+
+    def test_phase_wait_success_timeout_and_reader_failure(self):
+        for timeout, failure in ((30, "no initialize reply within 30 seconds"),
+                                 (10, "core did not close stdout after EOF")):
+            for reply in ((1, {"id": 0, "result": {}}), (2, None),
+                          (3, {"reader_failed": True})):
+                replies = Mock()
+                replies.get.return_value = reply
+                self.assertIs(soak.phase_reply(replies, timeout, failure), reply)
+                replies.get.assert_called_once_with(timeout=timeout)
+            replies = Mock()
+            replies.get.side_effect = queue.Empty
+            with self.assertRaisesRegex(AssertionError, "^" + failure + "$"):
+                soak.phase_reply(replies, timeout, failure)
+            replies.get.assert_called_once_with(timeout=timeout)
+            replies.get.side_effect = OSError("reader error")
+            with self.assertRaisesRegex(OSError, "reader error"):
+                soak.phase_reply(replies, timeout, failure)
+
+    def test_phase_waits_use_diagnostic_wrapper(self):
+        # Pin the real run() boundary: testing the wrapper alone cannot detect
+        # a call-site regression back to a bare Queue.get().
+        def check(source):
+            tree = ast.parse(source)
+            for function in tree.body:
+                if not isinstance(function, ast.FunctionDef):
+                    continue
+                raw_gets = [node for node in ast.walk(function)
+                            if isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Attribute)
+                            and isinstance(node.func.value, ast.Name)
+                            and node.func.value.id == "replies" and node.func.attr == "get"]
+                if function.name not in ("phase_reply", "next_reply"):
+                    self.assertEqual(raw_gets, [], "reply wait bypasses timeout diagnostics")
+            run = next(node for node in tree.body
+                       if isinstance(node, ast.FunctionDef) and node.name == "run")
+            waits = sorted((node for node in ast.walk(run)
+                            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                            and node.func.id == "phase_reply"), key=lambda node: node.lineno)
+            self.assertEqual(len(waits), 2)
+            for call, timeout in zip(waits, (30, 10)):
+                self.assertEqual(ast.dump(call.args[0]), ast.dump(ast.Name(id="replies", ctx=ast.Load())))
+                self.assertEqual(ast.literal_eval(call.args[1]), timeout)
+
+        source = Path(soak.__file__).read_text()
+        check(source)
+        for timeout, reason in ((30, "no initialize reply within 30 seconds"),
+                                (10, "core did not close stdout after EOF")):
+            call = f'phase_reply(replies, {timeout}, "{reason}")'
+            self.assertEqual(source.count(call), 1)
+            mutant = source.replace(call, f"replies.get(timeout={timeout})")
+            with self.assertRaisesRegex(AssertionError, "bypasses timeout diagnostics"):
+                check(mutant)
 
     def test_cleanup_does_not_signal_reaped_leader(self):
         proc = Mock(pid=1234, returncode=0)

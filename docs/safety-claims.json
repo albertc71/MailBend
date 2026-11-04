@@ -718,6 +718,33 @@
       "code": [
         "src/policy.bend"
       ]
+    },
+    {
+      "id": "client-prompts",
+      "claim": "The pure client-side hook response envelope permits only ask or no decision, and its call classifier asks for real sends and permanent deletes unless dry_run is exactly Boolean true. Client enforcement and native input handling remain tested boundaries.",
+      "anchor": "safety",
+      "status": "proven",
+      "laws": [
+        "hook_never_allows_or_denies",
+        "hook_real_send_asks",
+        "hook_real_delete_asks"
+      ],
+      "tests": [
+        "tests/test-hook.py#test_change_truth_table",
+        "tests/test-hook.py#test_malformed_or_unknown_events_ask",
+        "tests/formal/check-hook.py#main"
+      ],
+      "code": [
+        "src/hook.bend#response",
+        "src/hook.bend#call"
+      ],
+      "mutation": {
+        "id": "client-prompts-negative-control",
+        "path": "src/hook.bend",
+        "before": "J.str(\"ask\")",
+        "after": "J.str(\"allow\")",
+        "proof": "PROOF.bend#hook_output_safe"
+      }
     }
   ],
   "unclaimed": {

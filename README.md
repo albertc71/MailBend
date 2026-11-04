@@ -704,6 +704,11 @@ questions. Never post credentials or real mail.
   `MAILBEND_READ_ONLY=1` when writes are not needed and
   `MAILBEND_DRAFTS_ONLY=1` to keep a person in front of every send, and
   have your MCP client ask before it runs a tool that changes mail.
+  Claude Code users can add the [client-side send/delete prompt](docs/CLAUDE-HOOK.md).
+  The hook's pure response envelope permits only `ask` or no decision; <!-- claim:client-prompts -->
+  its pure call classifier asks for real sends and permanent deletes unless
+  `dry_run` is exactly Boolean `true`. Client enforcement and native input handling
+  remain tested boundaries.
 - **Sending can be fenced.** With `MAILBEND_ALLOWED_RECIPIENTS`, a message <!-- claim:send-allowlist -->
   goes only when every envelope recipient is allowed: `LAWS.bend` states, and
   `PROOF.bend` proves, that the envelope is refused whenever any one

@@ -411,7 +411,7 @@ tree, so any change to `scale_pair.py` or its allow-list is itself a reviewed
 policy change, not enforcement by a separately trusted checker. The scale PR
 workflow triggers on that path. Future migrations need their own reviewed change.
 
-The reference helpers, both launchers, both `install.sh` files and all frozen
+In the #148 migration, the reference helpers, both launchers, both `install.sh` files and all frozen
 measurement files retain their original exact-byte checks. The paired job stays
 on the standard x86-64 runner, installs Bend from the verified reference helper,
 and builds both source trees with unflagged `install.sh`. Candidate ARM helper
@@ -425,3 +425,30 @@ mutated, misplaced, reference-side, linked, missing and dirty-source cases.
 Their synthetic approved tuple tests policy behavior; independent review of
 the three published helper blobs establishes the real tuple's provenance.
 The literal tuple assertion is a pin-change alarm, not that provenance proof.
+
+### Reviewed candidate launcher migration (#110)
+
+The hook launcher revision in #272 at
+`2920a261a1361e1631631b4f218707a9ffbb52dc` has SHA256
+`68cf6c6e6c671585d8752b653d8e76728d00306a1cd76b6f7723257d1546ffd8`.
+The candidate may use either the original launcher or these exact bytes.
+The reference launcher still must match the fixed reference exactly. Both
+`install.sh` files, the helper-tuple policy, and frozen measurement files keep
+their existing checks. No hash is derived from candidate bytes for admission.
+
+This revision adds the hook usage entry, a closed-stdin check before Bend starts
+for the exact hook command, and suppression of irrelevant trust-store warnings
+for that offline command. The measured `call` route is unchanged. The hook
+guard does not execute for `call` or MCP.
+
+Synthetic controls run the real preflight and accept both candidate revisions.
+They reject unreviewed candidate bytes, the approved bytes on the reference
+side, symlinks, hardlinks, missing launchers, and dirty source. A post-run
+control switches between the two approved revisions and still fails the
+recorded-identity check. The literal hash assertion is a pin-change alarm;
+independent review of the published launcher establishes its scope.
+
+The candidate-provided policy still requires independent review. This narrow
+migration does not change the fixed reference, toolchain, sample count,
+profiling, deadlines, absolute limits, or ratio gates. The final combined head
+needs its own fresh paired comparison before review completion.
