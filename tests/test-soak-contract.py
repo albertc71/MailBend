@@ -119,6 +119,11 @@ class SoakContract(unittest.TestCase):
         # Formatting and message changes are irrelevant to this wiring guard.
         reformatted = ast.parse(ast.unparse(reformatted).replace(
             "phase_reply(replies,", "phase_reply(\n                    replies,"))
+        # Both actual call sites must be wrapped, not just the helper definition.
+        # Otherwise a no-op replacement would silently drop this positive control.
+        for call in check(reformatted):
+            self.assertGreater(call.args[0].lineno, call.lineno,
+                               "positive fixture no longer wraps phase_reply arguments")
         for tree in (original, reformatted):
             check(tree)
             for index in (0, 1):
