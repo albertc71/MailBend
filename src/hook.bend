@@ -17,8 +17,12 @@ def input_cap() -> U32:
 def reason_cap() -> Nat:
   1024n
 
+def bounded(+s: String, +cap: Nat) -> String:
+  Bool.pick(String, Nat.is_gt(String.length(s), cap),
+    String.take(s, Nat.sub(cap, 12n)) ++ " [truncated]", s)
+
 def clean(s: String) -> String:
-  String.take(M.drop_hidden(s), reason_cap())
+  bounded(M.drop_hidden(s), reason_cap())
 
 def uncertain() -> Decision:
   Ask{"MailBend could not inspect this tool call. Check its arguments before continuing."}
@@ -40,12 +44,12 @@ def field.put(value: Maybe<&2, J.Json>) -> String:
     case None{}:
       "(not supplied)"
     case Some{j}:
-      String.take(M.drop_hidden(J.show(j)), 160n)
+      bounded(M.drop_hidden(J.show(j)), 160n)
 
 def field(args: J.Json, key: String) -> String:
   field.put(J.get(args, key))
 
-def attachment_count(value: Maybe<&2, J.Json>) -> String:
+def array_count(value: Maybe<&2, J.Json>) -> String:
   match value:
     case None{}:
       "0"
@@ -53,6 +57,9 @@ def attachment_count(value: Maybe<&2, J.Json>) -> String:
       Nat.show(List.length(&2, J.Json, J.unchain(items)))
     case _:
       "(invalid)"
+
+def recipients(+args: J.Json, +key: String) -> String:
+  key ++ "_count=" ++ array_count(J.get(args, key)) ++ "; " ++ key ++ "=" ++ field(args, key)
 
 def context(op: Ops.Op) -> String:
   match op:
@@ -65,9 +72,9 @@ def context(op: Ops.Op) -> String:
 
 def summary(+op: Ops.Op, +args: J.Json) -> String:
   clean("MailBend " ++ Ops.name(op) ++ "." ++ context(op) ++
-    " to=" ++ field(args, "to") ++ "; cc=" ++ field(args, "cc") ++
-    "; bcc=" ++ field(args, "bcc") ++ "; subject=" ++ field(args, "subject") ++
-    "; attachments=" ++ attachment_count(J.get(args, "attachments")) ++
+    " " ++ recipients(args, "to") ++ "; " ++ recipients(args, "cc") ++
+    "; " ++ recipients(args, "bcc") ++ "; subject=" ++ field(args, "subject") ++
+    "; attachments=" ++ array_count(J.get(args, "attachments")) ++
     "; reply_all=" ++ Bool.pick(String, Policy.bool_arg(args, "reply_all", False{}),
       "true", "false"))
 
