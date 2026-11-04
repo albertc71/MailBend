@@ -66,6 +66,24 @@ class SoakContract(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, reason):
                     soak.next_reply(replies, deadline)
 
+    def test_phase_wait_success_timeout_and_reader_failure(self):
+        for timeout, failure in ((30, "no initialize reply within 30 seconds"),
+                                 (10, "core did not close stdout after EOF")):
+            for reply in ((1, {"id": 0, "result": {}}), (2, None),
+                          (3, {"reader_failed": True})):
+                replies = Mock()
+                replies.get.return_value = reply
+                self.assertIs(soak.phase_reply(replies, timeout, failure), reply)
+                replies.get.assert_called_once_with(timeout=timeout)
+            replies = Mock()
+            replies.get.side_effect = queue.Empty
+            with self.assertRaisesRegex(AssertionError, "^" + failure + "$"):
+                soak.phase_reply(replies, timeout, failure)
+            replies.get.assert_called_once_with(timeout=timeout)
+            replies.get.side_effect = OSError("reader error")
+            with self.assertRaisesRegex(OSError, "reader error"):
+                soak.phase_reply(replies, timeout, failure)
+
     def test_cleanup_does_not_signal_reaped_leader(self):
         proc = Mock(pid=1234, returncode=0)
         with patch.object(soak.os, "killpg") as kill:
