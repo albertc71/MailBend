@@ -14,7 +14,9 @@
 #                                 TypeSafe service (tests/fake_typesafe.py)
 set -eu
 
-outdir="${1:?usage: gen-test-certs.sh OUTDIR}"
+outdir="${1:?usage: gen-test-certs.sh OUTDIR [--demo]}"
+mode="${2:-}"
+case "$mode" in ""|--demo) ;; *) echo "unknown certificate mode" >&2; exit 2 ;; esac
 mkdir -p "$outdir"
 cd "$outdir"
 
@@ -68,6 +70,12 @@ EOF
 }
 
 gen_leaf server "DNS:localhost,DNS:mailbend.test" 2
+# The demo needs only this leaf. Do not generate negative test certificates
+# (notably the expired fixture) when starting a user-facing demo.
+if [ "$mode" = --demo ]; then
+  rm -f ca-key.pem ca.srl
+  exit 0
+fi
 gen_leaf ip-address "IP:127.0.0.1,IP:::1" 2
 gen_leaf wronghost "DNS:not-localhost.invalid" 2
 gen_leaf expired "DNS:localhost" -1

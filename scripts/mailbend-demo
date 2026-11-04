@@ -1,0 +1,313 @@
+#!/usr/bin/env -S python3 -I
+"""Run a temporary, account-free MailBend mailbox on loopback only.
+
+Keep this command running, and copy its stdout JSON into an MCP client.
+The --session mode is a stdio relay: the owner starts and supervises every
+MailBend process, so exiting the demo also disconnects its clients.
+"""
+import os
+import sys
+
+# Re-exec before starting anything else. This also removes inherited secrets
+# from /proc/self/environ, not only from the environment passed to children.
+BASE_ENV = {"PATH": os.defpath, "LANG": "C.UTF-8", "BEND_NO_TELEMETRY": "1"}
+if __name__ == "__main__" and (not sys.flags.isolated or dict(os.environ) != BASE_ENV):
+    os.execve(sys.executable, [sys.executable, "-I", os.path.abspath(__file__),
+                              *sys.argv[1:]], BASE_ENV)
+
+import argparse
+import contextlib
+import json
+from pathlib import Path
+import re
+import select
+import signal
+import socket
+import stat
+import subprocess
+import tempfile
+import threading
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "scripts/mailbend-demo"
+FIXTURE = ROOT / "tests/fixtures/demo-mailbox.json"
+START_TIMEOUT = 30
+STOP_TIMEOUT = 3
+HEADER_LIMIT = 65536
+MAX_CLIENTS = 8
+
+
+class DemoError(Exception):
+    pass
+
+
+def stop(proc):
+    """Stop an owned process group, including descendants of an exited leader."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=STOP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        pass
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
+def private_session(path):
+    path = Path(path).absolute()
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise DemoError("the session directory must be private and owned by you")
+    endpoint = path / "client.sock"
+    info = endpoint.lstat()
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+        raise DemoError("the demo session is not running")
+    return endpoint
+
+
+def relay(session, argv):
+    if argv != ["mcp"]:
+        raise DemoError("session mode accepts only mcp")
+    header = json.dumps(argv).encode() + b"\n"
+    if len(header) > HEADER_LIMIT:
+        raise DemoError("the demo command is too large")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+        channel.connect(str(private_session(session)))
+        channel.sendall(header)
+        # A daemon reader permits clean exit when the owner closes the socket,
+        # even if the MCP client keeps stdin open and never sends another byte.
+        def feed():
+            try:
+                while data := os.read(sys.stdin.fileno(), 65536):
+                    channel.sendall(data)
+                channel.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+        threading.Thread(target=feed, daemon=True).start()
+        while data := channel.recv(65536):
+            sys.stdout.buffer.write(data)
+            sys.stdout.buffer.flush()
+    return 0
+
+
+class Demo:
+    def __init__(self, work):
+        self.work = Path(work)
+        self.env = {**BASE_ENV, "HOME": work, "TMPDIR": work}
+        self.children = set()
+        self.clients = set()
+        self.threads = []
+        self.lock = threading.Lock()
+        self.stopping = False
+        self.listener = None
+
+    def interrupted(self, _signum, _frame):
+        # A plain assignment is safe even for repeated signals. Never raise
+        # between Popen's spawn and ownership registration, or lock in a handler.
+        self.stopping = True
+
+    def start(self, argv, **kwargs):
+        with self.lock:
+            if self.stopping:
+                raise KeyboardInterrupt
+            proc = subprocess.Popen(argv, env=self.env, start_new_session=True, **kwargs)
+            self.children.add(proc)
+        return proc
+
+    def cleanup(self):
+        self.stopping = True
+        if self.listener is not None:
+            self.listener.close()
+        with self.lock:
+            children = list(self.children)
+            clients = list(self.clients)
+        for proc in children:
+            stop(proc)
+        for client in clients:
+            with contextlib.suppress(OSError):
+                client.shutdown(socket.SHUT_RDWR)
+            client.close()
+        for thread in self.threads:
+            thread.join(STOP_TIMEOUT)
+
+    def certificates(self):
+        proc = self.start(["/bin/sh", str(ROOT / "tests/gen-test-certs.sh"),
+                           str(self.work / "certs"), "--demo"], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + START_TIMEOUT
+        while proc.poll() is None:
+            if self.stopping:
+                raise KeyboardInterrupt
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DemoError("certificate generation timed out")
+            try:
+                proc.wait(min(0.1, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+        code = proc.returncode
+        if code:
+            raise DemoError("certificate generation failed; check that OpenSSL is installed")
+        with self.lock:
+            self.children.remove(proc)
+
+    def server(self):
+        self.certificates()
+        proc = self.start([sys.executable, "-I", str(ROOT / "tests/fake_mail_server.py"),
+                           "--bind-host", "127.0.0.1", "--certdir", str(self.work / "certs"),
+                           "--fixture", str(FIXTURE), "--state", str(self.work / "state.json"),
+                           "--log", str(self.work / "commands.jsonl")],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        ready = bytearray()
+        deadline = time.monotonic() + START_TIMEOUT
+        while b"\n" not in ready and len(ready) < 128:
+            remaining = deadline - time.monotonic()
+            if self.stopping:
+                raise KeyboardInterrupt
+            if remaining <= 0:
+                raise DemoError("the demo server did not become ready in time")
+            if not select.select([proc.stdout], [], [], min(0.1, remaining))[0]:
+                continue
+            chunk = os.read(proc.stdout.fileno(), 128)
+            if not chunk:
+                raise DemoError("the demo server exited before it was ready")
+            ready.extend(chunk)
+        match = re.fullmatch(rb"READY imap=([0-9]+) smtp=([0-9]+)\n", ready)
+        if not match or any(not 1 <= int(port) <= 65535 for port in match.groups()):
+            raise DemoError("the demo server returned invalid ports")
+        fixture = json.loads(FIXTURE.read_text())
+        self.mail_env = {
+            **self.env,
+            "MAILBEND_EMAIL": fixture["user"],
+            "MAILBEND_APP_PASSWORD": fixture["password"],
+            "MAILBEND_IMAP_HOST": "localhost", "MAILBEND_SMTP_HOST": "localhost",
+            "MAILBEND_IMAP_CONNECT_IP": "127.0.0.1",
+            "MAILBEND_SMTP_CONNECT_IP": "127.0.0.1",
+            "MAILBEND_IMAP_PORT": match[1].decode(),
+            "MAILBEND_SMTP_PORT": match[2].decode(),
+            "MAILBEND_SMTP_TLS_MODE": "starttls",
+            "MAILBEND_CA_FILE": str(self.work / "certs/ca.pem"),
+            "MAILBEND_TIMEOUT_MS": "10000",
+            "MAILBEND_ALLOWED_RECIPIENTS": "friend@example.com",
+            "MAILBEND_TYPESAFE": "0",
+            "MAILBEND_STATE_DIR": str(self.work / "counter"),
+            "MAILBEND_MAX_SENDS_PER_DAY": "20",
+        }
+        return proc
+
+    def serve_client(self, client):
+        proc = None
+        try:
+            deadline = time.monotonic() + START_TIMEOUT
+            header = bytearray()
+            # Read exactly the header: never consume a pipelined MCP byte.
+            while len(header) < HEADER_LIMIT and not header.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                client.settimeout(remaining)
+                byte = client.recv(1)
+                if not byte:
+                    return
+                header.extend(byte)
+            argv = json.loads(header)
+            if (not header.endswith(b"\n") or not isinstance(argv, list) or not argv
+                    or not all(isinstance(arg, str) and "\0" not in arg for arg in argv)
+                    or argv != ["mcp"]):
+                return
+            client.settimeout(None)
+            with self.lock:
+                if self.stopping:
+                    return
+                proc = subprocess.Popen([str(ROOT / "scripts/mailbend"), *argv],
+                                        env=self.mail_env, stdin=client, stdout=client,
+                                        stderr=subprocess.DEVNULL, start_new_session=True)
+                self.children.add(proc)
+            proc.wait()
+        except (OSError, ValueError, RecursionError, DemoError):
+            pass  # Never return raw input or inherited environment to the client.
+        finally:
+            if proc is not None:
+                stop(proc)
+                with self.lock:
+                    self.children.discard(proc)
+            with self.lock:
+                self.clients.discard(client)
+            with contextlib.suppress(OSError):
+                client.shutdown(socket.SHUT_RDWR)
+            client.close()
+
+    def run(self):
+        server = self.server()
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(str(self.work / "client.sock"))
+        self.listener.listen(8)
+        self.listener.settimeout(0.2)
+        config = {"mcpServers": {"mailbend-demo": {
+            "command": str(SCRIPT), "args": ["--session", str(self.work), "--", "mcp"]}}}
+        print(json.dumps(config), flush=True)
+        print("Demo ready: synthetic mail only; Jev is off. Keep this terminal open.\n"
+              f"State: {self.work / 'state.json'}\n"
+              "Copy the JSON into your MCP client; Ctrl-C stops and removes the demo.",
+              file=sys.stderr, flush=True)
+        while not self.stopping:
+            if server.poll() is not None:
+                raise DemoError("the demo mail server stopped")
+            try:
+                client, _ = self.listener.accept()
+            except socket.timeout:
+                continue
+            with self.lock:
+                if len(self.clients) >= MAX_CLIENTS:
+                    client.close()
+                    continue
+                self.clients.add(client)
+            self.threads = [thread for thread in self.threads if thread.is_alive()]
+            thread = threading.Thread(target=self.serve_client, args=(client,), daemon=True)
+            self.threads.append(thread)
+            thread.start()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--session", help="connect to a running private demo session")
+    parser.add_argument("--host", default="localhost", choices=("localhost", "127.0.0.1"),
+                        help="loopback only; TLS always verifies localhost")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if args.session:
+        return relay(args.session, command)
+    if command:
+        parser.error("commands need --session; start the demo without arguments first")
+    for name in ("core", "tls", "attach", "stdio", "typesafe"):
+        if not os.access(ROOT / f"bin/mailbend-{name}", os.X_OK):
+            raise DemoError("build this checkout first with scripts/install.sh")
+    os.umask(0o077)
+    # Never honor an inherited TMPDIR or put demo keys in the user's home.
+    with tempfile.TemporaryDirectory(prefix="mailbend-demo-", dir="/tmp") as work:
+        demo = Demo(work)
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, demo.interrupted)
+        try:
+            demo.run()
+        finally:
+            # Repeated signals cannot interrupt the bounded child cleanup.
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                signal.signal(sig, signal.SIG_IGN)
+            demo.cleanup()
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except (DemoError, OSError) as error:
+        # Fixed guidance only; OSError can carry arbitrary paths from the caller.
+        message = str(error) if isinstance(error, DemoError) else "session unavailable or I/O failed"
+        print(f"mailbend-demo: {message}", file=sys.stderr)
+        sys.exit(2)
