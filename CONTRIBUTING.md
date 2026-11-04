@@ -381,7 +381,8 @@ from the burst write; both comparison windows have the same request mix.
 The short run has a 180-second request budget, the long run 1,800 seconds,
 plus bounded setup and shutdown. A missing reply fails after 30 seconds even
 when the total budget remains. Earlier hosted runs approached or exceeded
-180 seconds. After the named input-schema selection change in #264, the
+180 seconds. After #262's generated tool listing and #264's named input-schema
+selection, the
 [integrated required CI run](https://github.com/albertc71/MailBend/actions/runs/41903506215)
 completed the same 50 warm-up plus 500 measured requests in 7.623 seconds on
 x86-64 and 10.591 seconds on ARM64. The workload and every bound were unchanged.
