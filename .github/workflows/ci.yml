@@ -132,6 +132,8 @@ jobs:
           fi
       - name: Unit tests
         run: sh tests/run-unit.sh
+      - name: Client-side prompt proof mutations
+        run: python3 tests/formal/check-hook.py
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
           python3 tests/test-image-budget.py
@@ -271,7 +273,9 @@ jobs:
         if: matrix.suite == 'support'
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
-        run: python3 tests/test-e2e.py
+        run: |
+          python3 tests/test-hook.py
+          python3 tests/test-e2e.py
       - name: Short synthetic MCP soak
         if: matrix.suite == 'soak'
         timeout-minutes: 6

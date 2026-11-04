@@ -29,6 +29,7 @@ import ./src/brief.bend as Brief
 import ./src/contacts.bend as Contacts
 import ./src/smtp.bend as S
 import ./src/response.bend as Response
+import ./src/hook.bend as Hook
 import ./src/policy.bend as Policy
 import ./tests/formal/smtp-tls.bend as SmtpTls
 import ./tests/formal/role-folders.bend as RoleFolders
@@ -2485,4 +2486,33 @@ def Laws.brief_completed_has_no_continuation(window, folder, uidv, last):
       {==}
 
 def Laws.brief_unseen_filter_interval(after, high, uid):
+  {==}
+
+# Client-side prompts
+# -------------------
+
+def hook_output_safe(d: Hook.Decision)
+  -> {Laws.hook_ask_or_none(Laws.hook_decision(d)) == True{} : Bool}:
+  match d:
+    case Hook.Quiet{}:
+      {==}
+    case Hook.Ask{reason}:
+      {==}
+
+def Laws.hook_never_allows_or_denies(text):
+  hook_output_safe(Hook.raw(text))
+
+def Laws.hook_real_send_asks(op, args, sending, real):
+  %Equal.sym(Bool, Policy.bool_arg(args, "dry_run", False{}), False{}, real) :
+    {Laws.hook_decision(Hook.choose(_, Policy.sends(op, args) || Ops.is_destructive(op),
+      Hook.summary(op, args))) == Some{"ask"} : Maybe<&2, String>}
+  %Equal.sym(Bool, Policy.sends(op, args), True{}, sending) :
+    {Laws.hook_decision(Hook.choose(False{}, _ || Ops.is_destructive(op),
+      Hook.summary(op, args))) == Some{"ask"} : Maybe<&2, String>}
+  {==}
+
+def Laws.hook_real_delete_asks(args, real):
+  %Equal.sym(Bool, Policy.bool_arg(args, "dry_run", False{}), False{}, real) :
+    {Laws.hook_decision(Hook.choose(_, True{}, Hook.summary(Ops.ODelete{}, args))) ==
+      Some{"ask"} : Maybe<&2, String>}
   {==}

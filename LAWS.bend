@@ -32,6 +32,7 @@ import ./src/awaiting.bend as Await
 import ./src/thread.bend as AwaitThread
 
 import ./src/response.bend as Response
+import ./src/hook.bend as Hook
 
 # Tool classes
 # ------------
@@ -2023,3 +2024,37 @@ law brief_unseen_filter_interval:
   for uid: U32
   {Brief.window_contains(Brief.UnseenWindow{after, high}, uid) ==
     (U32.is_gt(uid, after) && U32.is_le(uid, high)) : Bool}
+
+# Client-side prompts
+# -------------------
+
+# Observe the rendered envelope rather than a separate decision classifier.
+def hook_decision(d: Hook.Decision) -> Maybe<&2, String>:
+  inner = Maybe.default(&2, J.Json, J.get(Hook.response(d), "hookSpecificOutput"), J.obj([]))
+  J.as_str(J.get(inner, "permissionDecision"))
+
+def hook_ask_or_none(m: Maybe<&2, String>) -> Bool:
+  match m:
+    case None{}:
+      True{}
+    case Some{s}:
+      String.eq(s, "ask")
+
+# LAW: every bounded event produces either an ask decision or no decision
+law hook_never_allows_or_denies:
+  for text: String
+  {hook_ask_or_none(hook_decision(Hook.raw(text))) == True{} : Bool}
+
+# LAW: every real send that is not an exact Boolean dry run asks
+law hook_real_send_asks:
+  for +op: Ops.Op
+  for +args: J.Json
+  for sending: {Policy.sends(op, args) == True{} : Bool}
+  for real: {Policy.bool_arg(args, "dry_run", False{}) == False{} : Bool}
+  {hook_decision(Hook.call(op, args)) == Some{"ask"} : Maybe<&2, String>}
+
+# LAW: every permanent delete that is not an exact Boolean dry run asks
+law hook_real_delete_asks:
+  for +args: J.Json
+  for real: {Policy.bool_arg(args, "dry_run", False{}) == False{} : Bool}
+  {hook_decision(Hook.call(Ops.ODelete{}, args)) == Some{"ask"} : Maybe<&2, String>}
