@@ -721,13 +721,18 @@
     },
     {
       "id": "client-prompts",
-      "claim": "The pure client-side hook response envelope permits only ask or no decision, and its call classifier asks for real sends and permanent deletes unless dry_run is exactly Boolean true. Client enforcement and native input handling remain tested boundaries.",
+      "claim": "The pure client-side hook prints no decision or the specified ask envelope, and its call classifier asks for real sends and permanent deletes unless dry_run is exactly Boolean true. Unparseable text, text rejected by the byte-cap check, unknown tool names with object arguments and missing tool names print ask. Client enforcement and native input handling remain tested boundaries.",
       "anchor": "safety",
       "status": "proven",
       "laws": [
         "hook_never_allows_or_denies",
         "hook_real_send_asks",
-        "hook_real_delete_asks"
+        "hook_real_delete_asks",
+        "hook_printed_output_contract",
+        "hook_unparseable_input_asks",
+        "hook_oversized_input_asks",
+        "hook_unknown_tool_asks",
+        "hook_missing_name_asks"
       ],
       "tests": [
         "tests/test-hook.py#test_change_truth_table",
@@ -736,7 +741,10 @@
       ],
       "code": [
         "src/hook.bend#response",
-        "src/hook.bend#call"
+        "src/hook.bend#call",
+        "src/hook.bend#output",
+        "src/hook.bend#raw",
+        "src/hook.bend#event.fields"
       ],
       "mutation": {
         "id": "client-prompts-negative-control",

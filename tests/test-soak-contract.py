@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Negative controls for the soak's verdict, without launching mail or Bend."""
 import ast
+import copy
 import importlib.util
 from pathlib import Path
 import unittest
@@ -88,8 +89,7 @@ class SoakContract(unittest.TestCase):
     def test_phase_waits_use_diagnostic_wrapper(self):
         # Pin the real run() boundary: testing the wrapper alone cannot detect
         # a call-site regression back to a bare Queue.get().
-        def check(source):
-            tree = ast.parse(source)
+        def check(tree):
             for function in tree.body:
                 if not isinstance(function, ast.FunctionDef):
                     continue
@@ -110,15 +110,26 @@ class SoakContract(unittest.TestCase):
                 self.assertEqual(ast.dump(call.args[0]), ast.dump(ast.Name(id="replies", ctx=ast.Load())))
                 self.assertEqual(ast.literal_eval(call.args[1]), timeout)
 
-        source = Path(soak.__file__).read_text()
-        check(source)
-        for timeout, reason in ((30, "no initialize reply within 30 seconds"),
-                                (10, "core did not close stdout after EOF")):
-            call = f'phase_reply(replies, {timeout}, "{reason}")'
-            self.assertEqual(source.count(call), 1)
-            mutant = source.replace(call, f"replies.get(timeout={timeout})")
-            with self.assertRaisesRegex(AssertionError, "bypasses timeout diagnostics"):
-                check(mutant)
+            return waits
+
+        original = ast.parse(Path(soak.__file__).read_text())
+        reformatted = copy.deepcopy(original)
+        for call in check(reformatted):
+            call.args[2] = ast.Constant(value="Reworded phase diagnostic")
+        # Formatting and message changes are irrelevant to this wiring guard.
+        reformatted = ast.parse(ast.unparse(reformatted).replace(
+            "phase_reply(replies,", "phase_reply(\n                    replies,"))
+        for tree in (original, reformatted):
+            check(tree)
+            for index in (0, 1):
+                mutant = copy.deepcopy(tree)
+                call = check(mutant)[index]
+                queue_arg, timeout = call.args[:2]
+                call.func = ast.Attribute(value=queue_arg, attr="get", ctx=ast.Load())
+                call.args = []
+                call.keywords = [ast.keyword(arg="timeout", value=timeout)]
+                with self.assertRaisesRegex(AssertionError, "bypasses timeout diagnostics"):
+                    check(mutant)
 
     def test_cleanup_does_not_signal_reaped_leader(self):
         proc = Mock(pid=1234, returncode=0)

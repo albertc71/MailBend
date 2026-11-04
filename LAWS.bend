@@ -2028,7 +2028,7 @@ law brief_unseen_filter_interval:
 # Client-side prompts
 # -------------------
 
-# Observe the rendered envelope rather than a separate decision classifier.
+# The printed-output contract below binds this envelope to the CLI's bytes.
 def hook_decision(d: Hook.Decision) -> Maybe<&2, String>:
   inner = Maybe.default(&2, J.Json, J.get(Hook.response(d), "hookSpecificOutput"), J.obj([]))
   J.as_str(J.get(inner, "permissionDecision"))
@@ -2058,3 +2058,49 @@ law hook_real_delete_asks:
   for +args: J.Json
   for real: {Policy.bool_arg(args, "dry_run", False{}) == False{} : Bool}
   {hook_decision(Hook.call(Ops.ODelete{}, args)) == Some{"ask"} : Maybe<&2, String>}
+
+def hook_expected_output(d: Hook.Decision) -> String:
+  match d:
+    case Hook.Quiet{}:
+      ""
+    case Hook.Ask{reason}:
+      J.show(J.obj([J.kv("hookSpecificOutput", J.obj([
+        J.kv("hookEventName", J.str("PreToolUse")),
+        J.kv("permissionDecision", J.str("ask")),
+        J.kv("permissionDecisionReason", J.str(Hook.clean(reason)))
+      ]))]))
+
+def hook_printed_decision(d: Hook.Decision) -> Maybe<&2, String>:
+  value = Maybe.default(&2, J.Json, J.parse(Hook.output(d)), J.obj([]))
+  inner = Maybe.default(&2, J.Json, J.get(value, "hookSpecificOutput"), J.obj([]))
+  J.as_str(J.get(inner, "permissionDecision"))
+
+# LAW: actual printed output is empty or exactly the specified ask envelope
+law hook_printed_output_contract:
+  for +d: Hook.Decision
+  {Hook.output(d) == hook_expected_output(d) : String}
+
+# LAW: unparseable input prints an ask decision, whether within or over the cap
+law hook_unparseable_input_asks:
+  for +text: String
+  for invalid: {J.parse(text) == None{} : Maybe<&2, J.Json>}
+  {hook_printed_decision(Hook.raw(text)) == Some{"ask"} : Maybe<&2, String>}
+
+# LAW: input over the byte cap prints an ask decision regardless of its contents
+law hook_oversized_input_asks:
+  for +text: String
+  for over: {U32.is_gt(C.byte_len(text), Hook.input_cap()) == True{} : Bool}
+  {hook_printed_decision(Hook.raw(text)) == Some{"ask"} : Maybe<&2, String>}
+
+# LAW: an unrecognized operation prints an ask decision regardless of its arguments
+law hook_unknown_tool_asks:
+  for +name: String
+  for items: J.Json
+  for unknown: {Ops.from_name(Hook.tool_name(name)) == None{} : Maybe<&2, Ops.Op>}
+  {hook_printed_decision(Hook.event.fields(Some{name}, Some{J.JObj{items}})) ==
+    Some{"ask"} : Maybe<&2, String>}
+
+# LAW: a missing or non-string tool name prints an ask decision for any input
+law hook_missing_name_asks:
+  for args: Maybe<&2, J.Json>
+  {hook_printed_decision(Hook.event.fields(None{}, args)) == Some{"ask"} : Maybe<&2, String>}

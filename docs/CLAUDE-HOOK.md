@@ -64,8 +64,13 @@ no new timeout; the producer must close its pipe. Socket stdin is unsupported
 and produces `ask` through the public launcher.
 
 The reason lists the tool, input `to`, `cc`, `bcc`, and subject, attachment
-count, and effective `reply_all` value. Each text field is limited to 160
-Unicode characters. The complete reason is limited to 1,024 characters and
+count, and effective `reply_all` value. Each recipient array has a count before
+its details, including entries omitted from the summary. An absent array counts
+as zero; a non-array value has an invalid count. These count supplied entries,
+not validated addresses or the recipients inferred from an original message.
+Each text field is limited to 160 Unicode characters. A shortened field ends
+with ` [truncated]`, included in that limit. The complete reason is limited to
+1,024 characters with the same marker if shortened, and
 contains no control or Unicode format characters, including bidi controls.
 Bodies, attachment paths, and unrelated event fields are omitted. The summary
 can be incomplete after truncation; inspect the full arguments before acting.
@@ -105,7 +110,9 @@ stateDiagram-v2
     Quiet --> [*]: no output, exit 0
 ```
 
-The laws prove ask-or-none output and prompts for non-dry-run sends and
-permanent deletes. CLI tests exercise input framing, sanitization, byte caps,
+The laws prove ask-or-none output, bind the printed string to its specified
+ask envelope, and require prompts for non-dry-run sends and permanent deletes.
+Further laws inspect parsed printed output for unparseable or oversized input,
+unknown tools, and missing tool names. CLI tests exercise input framing, sanitization, byte caps,
 and the no-helper boundary. The chart describes the adapter, not a verified
 Claude Code runtime or a proof of human consent.

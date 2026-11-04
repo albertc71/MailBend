@@ -116,6 +116,42 @@ class Hook(unittest.TestCase):
         self.assertIn("Recipients come from the original message", reply)
         self.assertIn("dry_run", reply)
 
+    def test_recipient_counts_and_truncated_fields_are_visible(self):
+        args = {key: [f"{key}{index:03}@example.test" for index in range(count)]
+                for key, count in (("to", 48), ("cc", 23), ("bcc", 12))}
+        args["subject"] = "界" * 300
+        reason = self.ask(encoded(event("mail_reply", **args)))
+        for key in ("to", "cc", "bcc"):
+            self.assertIn(f"{key}_count={len(args[key])}; {key}=", reason)
+            self.assertNotIn(args[key][-1], reason)
+        for key in ("to", "cc", "bcc", "subject"):
+            field = reason.split(f"{key}=", 1)[1].split(";", 1)[0]
+            self.assertEqual(len(field), 160)
+            self.assertTrue(field.endswith(" [truncated]"), field)
+        self.assertIn("Recipients come from the original message", reason)
+        self.assertIn("attachments=0", reason)
+        self.assertIn("reply_all=false", reason)
+
+    def test_field_truncation_boundary_and_recipient_count_shapes(self):
+        for char in ("x", "界", "😀"):
+            for length in (157, 158, 159):
+                with self.subTest(char=char, length=length):
+                    reason = self.ask(encoded(event(subject=char * length)))
+                    field = reason.split("subject=", 1)[1].split(";", 1)[0]
+                    if length <= 158:
+                        self.assertEqual(field, json.dumps(char * length, ensure_ascii=False))
+                        self.assertNotIn("[truncated]", reason)
+                    else:
+                        self.assertEqual(len(field), 160)
+                        self.assertTrue(field.endswith(" [truncated]"))
+        reason = self.ask(encoded(event(to=[], cc=["one@example.test"], bcc="invalid")))
+        self.assertIn("to_count=0; to=[]", reason)
+        self.assertIn('cc_count=1; cc=["one@example.test"]', reason)
+        self.assertIn('bcc_count=(invalid); bcc="invalid"', reason)
+        missing = self.ask(encoded(event()))
+        for key in ("to", "cc", "bcc"):
+            self.assertIn(f"{key}_count=0; {key}=(not supplied)", missing)
+
     def test_file_multiline_and_byte_cap(self):
         raw = json.dumps(event("mail_get"), indent=2).encode()
         for size in (CAP - 1, CAP):
