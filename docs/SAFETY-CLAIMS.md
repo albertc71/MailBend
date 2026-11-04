@@ -63,6 +63,8 @@ and a temporary copy. Each mutation changes one production module in the copy,
 then runs `bend PROOF.bend --check-only`. A success verdict, timeout, parse error,
 wrong failure location or missing expected/observed comparison fails the suite.
 A semantic rejection at the expected definition passes that negative control.
+After an unexpected verdict, the runner restores the source and tries the
+remaining independent controls, then fails with every unexpected result.
 
 The runner restores each changed file, checks the restored copy, and compares
 source hashes with the checkout. It never writes to the checkout or edits laws

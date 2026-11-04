@@ -263,6 +263,19 @@ class Mutations(unittest.TestCase):
             run_mutations(root, [self.mutation], lambda _: self.result(0, 'ALL PROOFS CHECK'))
         self.assertEqual((root / 'src/model.bend').read_text(), 'safe\n')
 
+    def test_survivor_does_not_hide_later_controls(self):
+        root = self.fixture()
+        observed = []
+        second = dict(self.mutation, id='second', after='second-bug')
+        def check(path):
+            text = (path / 'src/model.bend').read_text().strip()
+            observed.append(text)
+            return self.result() if text == 'second-bug' else self.result(0, 'ALL PROOFS CHECK')
+        with self.assertRaisesRegex(ValueError, 'expected semantic rejection'):
+            run_mutations(root, [self.mutation, second], check)
+        self.assertEqual(observed, ['safe', 'safe', 'broken', 'second-bug', 'safe'])
+        self.assertEqual((root / 'src/model.bend').read_text(), 'safe\n')
+
     def test_missing_target_cannot_pass(self):
         root = self.fixture()
         mutation = dict(self.mutation, before='absent')

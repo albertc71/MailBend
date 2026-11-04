@@ -53,7 +53,7 @@ It does not report an individual job or certify a pending pull request.
 - Laws: [`move_never_loses_mail`](../LAWS.bend#L525), [`trash_never_loses_mail`](../LAWS.bend#L536), [`move_expunges_only_copied`](../LAWS.bend#L547), [`trash_expunges_only_copied`](../LAWS.bend#L559), [`delete_expunges_only_marked`](../LAWS.bend#L572), [`delete_expunges_given_uids`](../LAWS.bend#L583), [`move_changes_exactly`](../LAWS.bend#L591), [`copy_move_changes_exactly`](../LAWS.bend#L602), [`trash_changes_exactly`](../LAWS.bend#L612), [`copy_trash_changes_exactly`](../LAWS.bend#L623), [`delete_changes_exactly`](../LAWS.bend#L634), [`expunge_renders_uid_expunge`](../LAWS.bend#L642), [`expunge_renders_exact_uid_set`](../LAWS.bend#L647), [`delete_needs_confirmation`](../LAWS.bend#L653), [`delete_checks_uidplus`](../LAWS.bend#L663), [`copy_move_checks_uidplus`](../LAWS.bend#L673)
 - Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1229), [`tests/test-e2e.py#fallback`](../tests/test-e2e.py#L2288)
 - Code: [`src/ops.bend#plan_move`](../src/ops.bend#L577), [`src/ops.bend#plan_delete`](../src/ops.bend#L625)
-- Seeded bug: `move-delete-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.delete_needs_confirmation`.
+- Seeded bug: `move-delete-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.delete_expunges_only_marked`.
 
 ## uid-wire
 

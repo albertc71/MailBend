@@ -59,6 +59,7 @@ def run_mutations(root, mutations, run_check=check):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((root / relative).read_bytes())
         require_baseline(run_check(copy), "copied checkout")
+        failures = []
         for mutation in mutations:
             relative = Path(mutation["path"])
             require(relative in before and relative.parts[0] == "src",
@@ -72,9 +73,13 @@ def run_mutations(root, mutations, run_check=check):
             try:
                 require_rejection(run_check(copy), mutation)
                 print(f"PASS {mutation['id']}: rejected at {mutation['proof']}", flush=True)
+            except ValueError as error:
+                failures.append(str(error))
+                print(f"FAIL {mutation['id']}: {str(error).splitlines()[0]}", flush=True)
             finally:
                 target.write_text(original, encoding="utf-8")
         require_baseline(run_check(copy), "restored copy")
         require(fingerprint(copy) == before, "restored copy differs from the checkout")
     require(fingerprint(root) == before, "checkout changed during mutation checks")
+    require(not failures, "\n\n".join(failures))
     print(f"PASS {len(mutations)}/{len(mutations)} claim mutations rejected; checkout unchanged", flush=True)

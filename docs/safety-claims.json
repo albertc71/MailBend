@@ -149,7 +149,7 @@
         "path": "src/ops.bend",
         "before": "plan_delete.if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)",
         "after": "plan_delete.if(True{}, mbox, uids, uidplus, uidv)",
-        "proof": "PROOF.bend#Laws.delete_needs_confirmation"
+        "proof": "PROOF.bend#Laws.delete_expunges_only_marked"
       }
     },
     {
