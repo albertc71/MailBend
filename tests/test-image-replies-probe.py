@@ -2,6 +2,7 @@
 """Keep the optional image comparison probe buildable without benchmarking."""
 import importlib.util
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -31,7 +32,7 @@ class ImageRepliesProbe(unittest.TestCase):
                 with self.subTest(anchor_count=count):
                     template.write_text(original.replace(anchor, anchor * count))
                     with mock.patch.object(probe, "TEMPLATE", template):
-                        with self.assertRaisesRegex(ValueError, "exactly one"):
+                        with self.assertRaisesRegex(ValueError, re.escape(repr(anchor))):
                             probe.probe_source(probe.ROOT, True, work)
 
     def test_generated_variants_compile_and_count_tiny_replies(self):
