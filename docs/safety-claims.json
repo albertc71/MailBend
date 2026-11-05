@@ -45,7 +45,9 @@
         "brief_range_writes_nothing",
         "contact_plans",
         "image_round_guarded",
+        "image_round_fetch_empty",
         "image_round_fetch_exact",
+        "image_round_section_empty",
         "image_round_section_exact",
         "image_round_writes_nothing"
       ],
@@ -679,7 +681,7 @@
         "unsubscribe_classifies_as_writing",
         "select_classifies_as_writing",
         "any_writes_checks_each_command",
-        "image_round_writes_nothing"
+        "any_writes_after_read"
       ],
       "tests": [
         "tests/test-e2e.py#mutations"
@@ -693,9 +695,9 @@
         "path": "src/imap.bend",
         "before": "writes(effect(c)) || any_writes(t)",
         "after": "writes(effect(c))",
-        "proof": "PROOF.bend#image_reads_write_nothing",
-        "law": "image_round_writes_nothing",
-        "observer_reason": "The root image-round no-write proof calls image_reads_write_nothing. Its inductive step relies on any_writes recursively inspecting the command tail. The tail-removal mutant breaks that step before the direct classifier proofs are checked; this observer is a read-safety consequence of the classifier."
+        "proof": "PROOF.bend#Laws.any_writes_after_read",
+        "law": "any_writes_after_read",
+        "observer_reason": "The direct concrete law requires EXAMINE followed by SELECT to be classified as writing. Ignoring the tail makes this command list return False instead of True."
       }
     },
     {
