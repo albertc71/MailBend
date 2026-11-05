@@ -59,6 +59,8 @@ def main() -> IO(Unit):
       shared()), 7, 4))
     IO.print("unrelated malformed " ++ read(reply("* 1 FETCH (UID 9 BODYSTRUCTURE ())\r\n" ++
       shared()), 7, 4))
+    # Legacy compatibility only: the section parser drops the first two bytes.
+    # Accepting a non-"* " prefix is not a required protocol contract.
     IO.print("section prefix " ++ read(reply(metadata(7, 4) ++
       "xx1 FETCH (UID 7 BODY[1]<0> \"QUJD\")\r\n"), 7, 4))
     IO.print("metadata prefix " ++ read(reply(

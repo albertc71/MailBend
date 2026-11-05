@@ -75,6 +75,7 @@ python3 tests/test-scale-baseline.py               # historical selected baselin
 python3 -I tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
+python3 tests/test-image-replies-probe.py           # compile both image probe variants, tiny smoke only
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
 python3 tests/test-stdio.py
