@@ -104,8 +104,12 @@ Keep the entrypoint under 300 lines, use portable frontmatter without
 The documentation check validates tool-scoped names and arguments against
 `tools/gen-schema.py`; it is not a behavioral evaluation of an agent.
 
-When changing `.claude-plugin/` or `hooks/hooks.json`, also run these checks
-with Claude Code 2.1.295 or later:
+When changing shipped plugin behavior, including `.claude-plugin/` or
+`hooks/`, bump `version` in `.claude-plugin/plugin.json` and update the version
+assertion in `tests/test-plugin.py` and the plugin guide. The
+[upstream version contract](https://code.claude.com/docs/en/plugins-reference#version)
+keeps repository-marketplace users on the declared version until it changes.
+Also run these checks with Claude Code 2.1.295 or later:
 
 ```sh
 claude plugin validate . --strict
@@ -113,10 +117,13 @@ claude plugin validate .claude-plugin/marketplace.json --strict
 ```
 
 Plugin tests never start Claude or use a live account. The lightweight suite
-resolves manifest commands against a temporary fake installation, including
-paths with shell metacharacters. The runtime suite uses this checkout's
-launcher, its built binaries, and the loopback mail fixture. Neither these
-tests nor the validator proves client loading or prompt display. Follow the
+guards manifest declarations and uses a Python harness to substitute paths
+and merge environments against a fake installation. Shell-metacharacter
+paths exercise Python's argv handling, not Claude's interpolation, process
+launching or environment inheritance. The runtime suite uses that same
+harness with this checkout's real launcher, built binaries, and loopback mail
+fixture. Neither these tests nor the validator proves client loading or prompt
+display. Follow the
 [manual plugin checks](docs/CLAUDE-PLUGIN.md#verify-the-connection-and-prompt)
 before relying on a particular client version.
 

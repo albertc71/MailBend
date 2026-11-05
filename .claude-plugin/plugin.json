@@ -1,6 +1,6 @@
 {
   "name": "mailbend",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Use an installed MailBend server with its mail skill and optional send/delete prompt.",
   "author": {
     "name": "Minh Quang Tran"
@@ -49,6 +49,7 @@
       "env": {
         "MAILBEND_EMAIL": "${user_config.email}",
         "MAILBEND_LOGIN": "",
+        "MAILBEND_APP_PASSWORD": "",
         "MAILBEND_PASSWORD_FILE": "${user_config.password_file}",
         "MAILBEND_READ_ONLY": "${user_config.read_only}",
         "MAILBEND_DRAFTS_ONLY": "${user_config.drafts_only}",
