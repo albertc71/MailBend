@@ -288,6 +288,70 @@ class ProcessLifetime(unittest.TestCase):
             self.assertFalse(observer.is_alive())
             self.assertEqual(errors, [])
 
+    def test_concurrent_stopper_waits_for_grace_owner(self):
+        proc, lines = self.start('import signal, time\n'
+                                 'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                                 'print(1, flush=True)\n'
+                                 'time.sleep(300)\n')
+        self.assertEqual(lines.json(), 1)
+        grace = threading.Event()
+        release = threading.Event()
+        contended = threading.Event()
+        finished = threading.Event()
+        results = []
+        errors = []
+        def grace_sleep(_delay):
+            grace.set()
+            if not release.wait(5):
+                raise AssertionError('second stopper did not wait for owner')
+        def stop(second=False):
+            try:
+                results.append(self.demo.stop(proc))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                if second:
+                    finished.set()
+        with mock.patch.object(self.module.time, 'sleep', grace_sleep), \
+             mock.patch.object(self.module, 'STOP_TIMEOUT', .05), \
+             mock.patch.object(self.module.os, 'killpg', wraps=os.killpg) as kill_mock, \
+             mock.patch.object(proc, 'wait', wraps=proc.wait) as wait_mock:
+            owner = threading.Thread(target=stop)
+            other = threading.Thread(target=stop, args=(True,))
+            owner.start()
+            try:
+                self.assertTrue(grace.wait(5))
+                with self.demo.lock:
+                    pending = self.demo.stop_owners[proc]
+                real_wait = pending.wait
+                def observed_wait(*args, **kwargs):
+                    contended.set()
+                    return real_wait(*args, **kwargs)
+                with mock.patch.object(pending, 'wait', observed_wait):
+                    other.start()
+                    self.assertTrue(contended.wait(5))
+                    self.assertFalse(finished.is_set())
+                    self.assertEqual(kill_mock.call_args_list,
+                                     [mock.call(proc.pid, signal.SIGTERM)])
+                    wait_mock.assert_not_called()
+                    release.set()
+                    owner.join(5)
+                    other.join(5)
+            finally:
+                release.set()
+                owner.join(5)
+                if other.ident is not None:
+                    other.join(5)
+            self.assertFalse(owner.is_alive())
+            self.assertFalse(other.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(results, [-signal.SIGKILL, -signal.SIGKILL])
+            self.assertEqual(wait_mock.call_count, 1)
+            self.assertEqual(kill_mock.call_args_list,
+                             [mock.call(proc.pid, signal.SIGTERM),
+                              mock.call(proc.pid, signal.SIGKILL)])
+            self.assertEqual(self.demo.stop_owners, {})
+
     def test_already_reaped_leader_is_never_signaled(self):
         for use_popen in (True, False):
             with self.subTest(use_popen=use_popen):
