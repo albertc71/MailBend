@@ -3,6 +3,13 @@
 Thanks for helping. MailBend is small on purpose; please open an issue to
 discuss larger changes before writing them.
 
+Start with the [issue chooser](https://github.com/albertc71/MailBend/issues/new/choose)
+for a bug report, feature request, or provider conformance report. Report suspected
+vulnerabilities privately through [SECURITY.md](SECURITY.md).
+Documentation fixes, tests, and synthetic fixtures are useful first contributions.
+[Governance](GOVERNANCE.md) explains proposals, owner approval for every pull
+request, and law changes.
+
 ## Ground rules
 
 - Read [AGENTS.md](AGENTS.md): it holds the invariants every change must keep
@@ -156,6 +163,12 @@ links whose labels are the exact law names and whose targets are `LAWS.bend`.
 The check also recognizes `law` or `laws` followed by backtick names, a backtick
 name followed by `law`, and `Laws.`-qualified references. It checks names, not whether
 prose claims follow from the laws.
+
+The bug and feature forms and issue chooser configuration use JSON syntax,
+which is valid YAML, so the same offline check can parse them without another
+dependency. It checks required fields, privacy warnings, and the private security
+route. The documentation tests reject broken declarations and contributor links.
+These source checks do not submit issues or verify GitHub's rendered form.
 
 Environment coverage uses exact `MAILBEND_*` string literals in `main.bend`,
 `src/*.bend`, and native Rust source, excluding comments and `cfg(test)` modules.
