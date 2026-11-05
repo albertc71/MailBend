@@ -42,19 +42,6 @@ class DemoError(Exception):
     pass
 
 
-def stop(proc):
-    """Stop an owned process group, including descendants of an exited leader."""
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGTERM)
-    try:
-        proc.wait(timeout=STOP_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        pass
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGKILL)
-    proc.wait()
-
-
 def private_session(path):
     path = Path(path).absolute()
     info = path.lstat()
@@ -116,6 +103,47 @@ class Demo:
             self.children.add(proc)
         return proc
 
+    def exited(self, proc):
+        """Observe exit without reaping, so the group ID remains reserved."""
+        with self.lock:
+            if proc not in self.children:
+                return True
+            try:
+                return os.waitid(os.P_PID, proc.pid,
+                                 os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None
+            except ChildProcessError:
+                return True  # Ownership was lost; stop() must not signal it.
+
+    def stop(self, proc):
+        """Signal an owned group before its one final, serialized reap."""
+        with self.lock:
+            if proc not in self.children:
+                return proc.returncode
+            if proc.returncode is not None:
+                self.children.remove(proc)
+                return proc.returncode
+            try:
+                os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            except ChildProcessError:
+                self.children.remove(proc)
+                return None  # Never signal a group whose leader was reaped.
+            # Every other observer uses WNOWAIT. Even an exited leader keeps
+            # this PID/PGID reserved until both group signals have been sent.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGTERM)
+            deadline = time.monotonic() + STOP_TIMEOUT
+            while os.waitid(os.P_PID, proc.pid,
+                            os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.05, remaining))
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            code = proc.wait()
+            self.children.remove(proc)
+            return code
+
     def cleanup(self):
         self.stopping = True
         if self.listener is not None:
@@ -124,7 +152,7 @@ class Demo:
             children = list(self.children)
             clients = list(self.clients)
         for proc in children:
-            stop(proc)
+            self.stop(proc)
         for client in clients:
             with contextlib.suppress(OSError):
                 client.shutdown(socket.SHUT_RDWR)
@@ -137,21 +165,16 @@ class Demo:
                            str(self.work / "certs"), "--demo"], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + START_TIMEOUT
-        while proc.poll() is None:
+        while not self.exited(proc):
             if self.stopping:
                 raise KeyboardInterrupt
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise DemoError("certificate generation timed out")
-            try:
-                proc.wait(min(0.1, remaining))
-            except subprocess.TimeoutExpired:
-                pass
-        code = proc.returncode
-        if code:
+            time.sleep(min(0.1, remaining))
+        code = self.stop(proc)
+        if code != 0:
             raise DemoError("certificate generation failed; check that OpenSSL is installed")
-        with self.lock:
-            self.children.remove(proc)
 
     def server(self):
         self.certificates()
@@ -225,14 +248,13 @@ class Demo:
                                         env=self.mail_env, stdin=client, stdout=client,
                                         stderr=subprocess.DEVNULL, start_new_session=True)
                 self.children.add(proc)
-            proc.wait()
+            while not self.exited(proc):
+                time.sleep(0.05)
         except (OSError, ValueError, RecursionError, DemoError):
             pass  # Never return raw input or inherited environment to the client.
         finally:
             if proc is not None:
-                stop(proc)
-                with self.lock:
-                    self.children.discard(proc)
+                self.stop(proc)
             with self.lock:
                 self.clients.discard(client)
             with contextlib.suppress(OSError):
@@ -253,7 +275,7 @@ class Demo:
               "Copy the JSON into your MCP client; Ctrl-C stops and removes the demo.",
               file=sys.stderr, flush=True)
         while not self.stopping:
-            if server.poll() is not None:
+            if self.exited(server):
                 raise DemoError("the demo mail server stopped")
             try:
                 client, _ = self.listener.accept()
@@ -273,8 +295,6 @@ class Demo:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session", help="connect to a running private demo session")
-    parser.add_argument("--host", default="localhost", choices=("localhost", "127.0.0.1"),
-                        help="loopback only; TLS always verifies localhost")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -285,6 +305,9 @@ def main():
     for name in ("core", "tls", "attach", "stdio", "typesafe"):
         if not os.access(ROOT / f"bin/mailbend-{name}", os.X_OK):
             raise DemoError("build this checkout first with scripts/install.sh")
+    # An inherited SIGCHLD=SIG_IGN auto-reaps children on Linux. Restore the
+    # default so WNOWAIT can reserve each leader's PID until group cleanup.
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     os.umask(0o077)
     # Never honor an inherited TMPDIR or put demo keys in the user's home.
     with tempfile.TemporaryDirectory(prefix="mailbend-demo-", dir="/tmp") as work:
