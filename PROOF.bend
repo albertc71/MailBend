@@ -151,6 +151,26 @@ def Laws.part_writes_nothing(mbox, uid, uidv, section, max):
 def Laws.part_guarded(mbox, uid, uidv, section, max):
   {==}
 
+def Laws.image_round_guarded(mbox, uidv, reads):
+  {==}
+
+def Laws.image_round_fetch_exact(uid, ranges, rest):
+  {==}
+
+def Laws.image_round_section_exact(section, max, rest):
+  {==}
+
+def image_reads_write_nothing(reads: List<&2, Ops.PartRead>)
+  -> {I.any_writes(Ops.image_reads(reads)) == False{} : Bool}:
+  match reads:
+    case Nil{}:
+      {==}
+    case Ops.PartRead{uid, ranges} <> rest:
+      image_reads_write_nothing(rest)
+
+def Laws.image_round_writes_nothing(mbox, uidv, reads):
+  image_reads_write_nothing(reads)
+
 def Laws.search_page_writes_nothing(mbox, keys, cursor):
   match cursor:
     case SC.Start{}:
@@ -2551,4 +2571,72 @@ def Laws.hook_unknown_tool_asks(name, items, unknown):
   {==}
 
 def Laws.hook_missing_name_asks(args):
+  {==}
+
+def Laws.hook_wrong_kind_asks(kind, event, wrong):
+  match kind:
+    case None{}:
+      {==}
+    case Some{name}:
+      %Equal.sym(Bool, String.eq(name, "PreToolUse"), False{}, wrong) :
+        {Laws.hook_printed_decision(Hook.event.kind.if(_, event)) ==
+          Some{"ask"} : Maybe<&2, String>}
+      {==}
+
+def Laws.hook_nonobject_input_asks(name, args, nonobject):
+  match args:
+    case Some{J.JObj{items}}:
+      Empty.absurd(
+        {Laws.hook_printed_decision(Hook.event.fields(Some{name}, Some{J.JObj{items}})) ==
+          Some{"ask"} : Maybe<&2, String>}, nonobject)
+    case None{}:
+      {==}
+    case Some{J.JNull{}}:
+      {==}
+    case Some{J.JBool{b}}:
+      {==}
+    case Some{J.JNum{raw}}:
+      {==}
+    case Some{J.JStr{s}}:
+      {==}
+    case Some{J.JArr{items}}:
+      {==}
+    case Some{J.JCons{head, tail}}:
+      {==}
+    case Some{J.JEnd{}}:
+      {==}
+    case Some{J.JKv{key, val}}:
+      {==}
+
+# Concrete premise witnesses and the contrasting accepted event are kernel-checked here.
+
+def hook_wrong_kind_witness() -> Laws.hook_wrong_kind(Some{"PostToolUse"}):
+  {==}
+
+def hook_missing_kind_witness() -> Laws.hook_wrong_kind(None{}):
+  Unit{}
+
+def hook_nonobject_input_witness() -> Laws.hook_nonobject_input(Some{J.JArr{J.JEnd{}}}):
+  Unit{}
+
+def hook_missing_input_witness() -> Laws.hook_nonobject_input(None{}):
+  Unit{}
+
+def hook_wrong_kind_printed_ask()
+  -> {Laws.hook_printed_decision(Hook.event.kind(Some{"PostToolUse"},
+    J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]))) ==
+      Some{"ask"} : Maybe<&2, String>}:
+  Laws.hook_wrong_kind_asks(Some{"PostToolUse"},
+    J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]),
+    hook_wrong_kind_witness())
+
+def hook_nonobject_input_printed_ask()
+  -> {Laws.hook_printed_decision(Hook.event.fields(Some{"mail_get"},
+    Some{J.JArr{J.JEnd{}}})) == Some{"ask"} : Maybe<&2, String>}:
+  Laws.hook_nonobject_input_asks("mail_get", Some{J.JArr{J.JEnd{}}}, hook_nonobject_input_witness())
+
+def hook_pretool_read_is_quiet()
+  -> {Laws.hook_printed_decision(Hook.event.kind(Some{"PreToolUse"},
+    J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]))) ==
+      None{} : Maybe<&2, String>}:
   {==}

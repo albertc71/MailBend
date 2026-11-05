@@ -4662,6 +4662,7 @@ def jev(work):
     jev_image_batches(work, key_file)
     jev_image_refusals(work, key_file)
     jev_image_quota(work, key_file)
+    jev_image_rounds(work, key_file)
     jev_image_kinds(work, key_file)
     jev_image_metadata(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
@@ -4932,8 +4933,8 @@ def images_message(uid, parts):
 
 
 def part_fetches(lines):
-    """The image part fetches in a server log: BODY.PEEK of one section."""
-    return [l for l in lines if re.search(r"BODY\.PEEK\[\d+(\.\d+)*\]<0\.", l)]
+    """One entry per selected image section, including multi-section FETCHes."""
+    return [line for line in lines for _ in re.findall(r"BODY\.PEEK\[\d+(?:\.\d+)*\]<0\.", line)]
 
 
 def jev_image_quota(work, key_file):
@@ -4976,6 +4977,148 @@ def jev_image_quota(work, key_file):
             srv.stop()
     check("images quota: the realistic still is sent byte for byte",
           any(base64.b64decode(a.get("data_base64", "")) == big for a in assets.values()), len(assets))
+
+
+def image_sessions(records):
+    sessions, current = [], None
+    for record in records:
+        if record["proto"] != "imap":
+            continue
+        if " LOGIN " in record["line"] or "AUTHENTICATE" in record["line"]:
+            current = []
+            sessions.append(current)
+        if current is not None:
+            current.append(record)
+    return [session for session in sessions
+            if part_fetches([record["line"] for record in session])]
+
+
+def jev_image_rounds(work, key_file):
+    on = {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+          "MAILBEND_TYPESAFE_IMAGES": "1"}
+    png, small = png_still(), IMAGES.png(100, 100)
+    cap = 1572864
+    exact = png[:-12] + IMAGES.png_chunk(b"paDd", bytes(cap - len(png) - 12)) + png[-12:]
+    assert len(exact) == cap
+    cases = [
+        ("cross-message first round", [[IMAGES.png(280 + uid, 280)] for uid in range(1, 7)],
+         ["used"] * 4 + ["skipped:over_count"] * 2, 1, 4),
+        ("five replacement rounds", [[png]] * 3 + [[small]] * 6,
+         ["used"] * 3 + ["skipped:dimensions"] * 5 + ["skipped:over_count"], 5, 8),
+        ("all rejected", [[small] * 9],
+         ["skipped:dimensions"] * 8 + ["skipped:over_count"], 2, 8),
+        ("exact zero bytes", [[exact, png, png, png, png]],
+         ["used"] + ["skipped:over_budget"] * 4, 1, 4),
+    ]
+    for title, groups, expected, rounds, fetched in cases:
+        fixture = copy.deepcopy(FIX)
+        fixture["mailboxes"]["INBOX"]["messages"] = []
+        for uid, parts in enumerate(groups, 1):
+            # Distinct bytes, names and section paths expose cross-UID swaps.
+            prefix = [(f"lead{j}.txt", "text/plain", b"lead") for j in range(uid - 1)] \
+                if title == "cross-message first round" else []
+            fixture["mailboxes"]["INBOX"]["messages"].append(images_message(
+                uid, prefix + [(f"p{uid}-{i}.png", "image/png", data)
+                               for i, data in enumerate(parts)]))
+        srv, ts = Server(work, fixture=fixture, extra=("--flags-first",)), TypeSafe(work)
+        try:
+            before = srv.st()
+            code, result = classify(srv, ts, key_file, {"uids": list(range(1, len(groups) + 1))}, **on)
+            notes = [note for msg in result.get("messages", []) for note in msg.get("images", [])]
+            fates = [note["fate"] + (":" + note["reason"] if "reason" in note else "") for note in notes]
+            sessions = image_sessions(srv.log_records())
+            image_records = [record for session in sessions for record in session]
+            part_lines = part_fetches([record["line"] for record in image_records])
+            sent = ts.requests()
+            check(f"images rounds, {title}: exact fates and bounded sessions",
+                  code == 0 and fates == expected and len(sent) == 1
+                  and logins(image_records) == rounds and len(part_lines) == fetched,
+                  (result.get("error"), fates, logins(image_records), len(part_lines), len(sent)))
+            check(f"images rounds, {title}: reads leave the mailbox unchanged",
+                  srv.st() == before and not any(" SELECT " in line or any(op in line for op in MUTATING_COMMANDS)
+                                                for line in srv.log_lines()), srv.log_lines())
+            if title == "cross-message first round":
+                body = sent[0]["body"] if sent else {}
+                entries = body.get("state", {}).get("emails", [])
+                assets = body.get("assets", {})
+                check("images rounds: each message keeps its own section and asset reference",
+                      [msg["uid"] for msg in result.get("messages", [])] == list(range(1, 7))
+                      and all(len(msg.get("images", [])) == 1 for msg in result.get("messages", []))
+                      and all(msg["images"][0]["section"] == str(msg["uid"] + 1)
+                              and msg["images"][0]["name"] == f'p{msg["uid"]}-0.png'
+                              for msg in result.get("messages", []))
+                      and len(entries) == 6 and len(assets) == 4
+                      and all(len(entry.get("images", [])) == (1 if entry["uid"] <= 4 else 0)
+                              and all(assets.get(ref) == {
+                                  "type": "image", "format": "png",
+                                  "data_base64": base64.b64encode(groups[entry["uid"] - 1][0]).decode("ascii")}
+                                      for ref in entry.get("images", [])) for entry in entries), result)
+            if title == "exact zero bytes":
+                assets = sent[0]["body"].get("assets", {}) if sent else {}
+                check("images rounds: exact-zero in-flight parts are omitted from TypeSafe",
+                      len(assets) == 1 and base64.b64decode(next(iter(assets.values()))["data_base64"]) == exact,
+                      list(assets))
+        finally:
+            ts.stop()
+            srv.stop()
+
+    fixture = copy.deepcopy(FIX)
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        images_message(uid, [(f"p{i}.png", "image/png", png) for i in range(20)])
+        for uid in range(1, 51)]
+    srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+    try:
+        before = srv.st()
+        code, result = classify(srv, ts, key_file, {"uids": list(range(1, 51))}, **on)
+        sessions, sent = image_sessions(srv.log_records()), ts.requests()
+        records = [record for session in sessions for record in session]
+        check("images rounds: 50 messages with 20 candidates need one image login per request",
+              code == 0 and len(result.get("messages", [])) == 50 and sent
+              and logins(records) == len(sent) and srv.st() == before,
+              (result.get("error"), len(result.get("messages", [])), logins(records), len(sent)))
+        check("images rounds: every request stops at its fourth image in one UID FETCH",
+              all(len(part_fetches([record["line"] for record in session])) == 4
+                  and sum(bool(part_fetches([record["line"]])) for record in session) == 1
+                  for session in sessions)
+              and all(len(request["body"].get("assets", {})) == 4 for request in sent),
+              [len(part_fetches([record["line"] for record in session])) for session in sessions])
+    finally:
+        ts.stop()
+        srv.stop()
+
+    for title in ("stale identity", "changed metadata", "removed message", "cut literal"):
+        fixture = copy.deepcopy(FIX)
+        original = images_message(1, [("old.png", "image/png", png)])
+        fixture["mailboxes"]["INBOX"]["messages"] = [original, images_message(2, [("p.png", "image/png", png)])]
+        if title == "stale identity":
+            fixture["examine_changes"] = [{"at": 2, "uidvalidity": 99}]
+        elif title == "changed metadata":
+            changed = copy.deepcopy(original)
+            changed["raw"] = changed["raw"].replace("old.png", "new.png")
+            fixture["examine_changes"] = [{"at": 2, "replace_messages": [changed]}]
+        elif title == "removed message":
+            fixture["examine_changes"] = [{"at": 2, "remove_uids": [1]}]
+        else:
+            original["cut_section_literal"] = True
+        srv, ts = Server(work, fixture=fixture), TypeSafe(work)
+        try:
+            code, result = classify(srv, ts, key_file, {"uids": [1, 2]}, **on)
+            sent = ts.requests()
+            if title in ("stale identity", "cut literal"):
+                check(f"images rounds, {title}: no TypeSafe request after transport failure",
+                      code != 0 and not sent, result)
+                if title == "stale identity":
+                    check("images rounds: stale identity stops before any image part fetch",
+                          not part_fetches(srv.log_lines()), srv.log_lines())
+            else:
+                notes = {msg["uid"]: msg.get("images", []) for msg in result.get("messages", [])}
+                check(f"images rounds, {title}: only the changed part is unreadable",
+                      code == 0 and notes.get(1, [{}])[0].get("reason") == "unreadable"
+                      and notes.get(2, [{}])[0].get("fate") == "used"
+                      and len(sent) == 1 and len(sent[0]["body"].get("assets", {})) == 1, result)
+        finally:
+            ts.stop()
+            srv.stop()
 
 
 def jev_image_kinds(work, key_file):

@@ -432,6 +432,31 @@ def plan_part(
     I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
         I.IStructure{}, I.IPart{section, max}]}]
 
+type PartRange is Data:
+  PartRange{section: List<&2, U32>, max: U32}
+
+type PartRead is Data:
+  PartRead{uid: U32, ranges: List<&2, PartRange>}
+
+def image_read_items(rs: List<&2, PartRange>) -> List<&2, I.Item>:
+  match rs:
+    case Nil{}:
+      []
+    case PartRange{section, max} <> t:
+      I.IPart{section, max} <> image_read_items(t)
+
+def image_reads(rs: List<&2, PartRead>) -> List<&2, I.Cmd>:
+  match rs:
+    case Nil{}:
+      []
+    case PartRead{uid, ranges} <> t:
+      I.CFetch{[uid], List.append(&2, I.Item,
+        [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}],
+        image_read_items(ranges))} <> image_reads(t)
+
+def plan_image_round(mbox: String, uidv: U32, reads: List<&2, PartRead>) -> List<&2, I.Cmd>:
+  I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> image_reads(reads)
+
 # A conversation is read in sessions of several folders each: one searches
 # every folder for the thread's message IDs, the next fetches the summaries
 # of what it found.

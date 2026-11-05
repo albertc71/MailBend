@@ -175,6 +175,37 @@ law part_guarded:
       I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
         I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
 
+# LAW: a round pins the folder before its exact per-message selected reads.
+law image_round_guarded:
+  for mbox: String
+  for uidv: U32
+  for reads: List<&2, Ops.PartRead>
+  {Ops.plan_image_round(mbox, uidv, reads) ==
+    I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> Ops.image_reads(reads)
+    : List<&2, I.Cmd>}
+
+law image_round_fetch_exact:
+  for uid: U32
+  for ranges: List<&2, Ops.PartRange>
+  for rest: List<&2, Ops.PartRead>
+  {Ops.image_reads(Ops.PartRead{uid, ranges} <> rest) ==
+    I.CFetch{[uid], List.append(&2, I.Item,
+      [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}],
+      Ops.image_read_items(ranges))} <> Ops.image_reads(rest) : List<&2, I.Cmd>}
+
+law image_round_section_exact:
+  for section: List<&2, U32>
+  for max: U32
+  for rest: List<&2, Ops.PartRange>
+  {Ops.image_read_items(Ops.PartRange{section, max} <> rest) ==
+    I.IPart{section, max} <> Ops.image_read_items(rest) : List<&2, I.Item>}
+
+law image_round_writes_nothing:
+  for mbox: String
+  for uidv: U32
+  for reads: List<&2, Ops.PartRead>
+  {I.any_writes(Ops.plan_image_round(mbox, uidv, reads)) == False{} : Bool}
+
 # LAW: every search page is read-only, including its UIDVALIDITY expectation.
 law search_page_writes_nothing:
   for mbox: String
@@ -2104,3 +2135,33 @@ law hook_unknown_tool_asks:
 law hook_missing_name_asks:
   for args: Maybe<&2, J.Json>
   {hook_printed_decision(Hook.event.fields(None{}, args)) == Some{"ask"} : Maybe<&2, String>}
+
+# These predicates are inhabited exactly for the two invalid input shapes.
+# They depend only on input values, not on the production decision.
+def hook_wrong_kind(kind: Maybe<&2, String>) -> Type:
+  match kind:
+    case None{}:
+      Unit
+    case Some{name}:
+      {String.eq(name, "PreToolUse") == False{} : Bool}
+
+def hook_nonobject_input(args: Maybe<&2, J.Json>) -> Type:
+  match args:
+    case Some{J.JObj{items}}:
+      Empty
+    case _:
+      Unit
+
+# LAW: every missing or non-PreToolUse kind prints ask for any event payload
+law hook_wrong_kind_asks:
+  for +kind: Maybe<&2, String>
+  for event: J.Json
+  for wrong: hook_wrong_kind(kind)
+  {hook_printed_decision(Hook.event.kind(kind, event)) == Some{"ask"} : Maybe<&2, String>}
+
+# LAW: a present tool name with missing or non-object input prints ask
+law hook_nonobject_input_asks:
+  for name: String
+  for +args: Maybe<&2, J.Json>
+  for nonobject: hook_nonobject_input(args)
+  {hook_printed_decision(Hook.event.fields(Some{name}, args)) == Some{"ask"} : Maybe<&2, String>}

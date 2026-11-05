@@ -247,6 +247,10 @@ class DriftChecks(unittest.TestCase):
         self.replace(".env.example", "MAILBEND_TYPESAFE_IMAGES=", "REMOVED_IMAGES=")
         self.check(".env.example: missing MAILBEND_TYPESAFE_IMAGES")
 
+    def test_provider_guide_rejects_unknown_environment_name(self):
+        self.append("docs/PROVIDERS.md", "\nSet `MAILBEND_SMTP_TLS_MDOE=implicit`.\n")
+        self.check("docs/PROVIDERS.md: unknown environment variable MAILBEND_SMTP_TLS_MDOE")
+
     def test_comments_strings_and_test_modules_are_not_config(self):
         self.append("src/tools.bend", '\n# IO.get_env("MAILBEND_COMMENT_ONLY")\n')
         self.append("native/mailbend-tls/src/settings.rs", '''

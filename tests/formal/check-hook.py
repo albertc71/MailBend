@@ -24,7 +24,23 @@ MUTATIONS = (
      'case None{}:\n      Quiet{}\n    case Some{o}:'),
     ("oversized input stays quiet", 'case True{}:\n      uncertain()\n    case False{}:',
      'case True{}:\n      Quiet{}\n    case False{}:'),
+    ("wrong event kind stays quiet", 'case False{}:\n      uncertain()\n\ndef event.kind(',
+     'case False{}:\n      Quiet{}\n\ndef event.kind('),
+    ("missing event kind stays quiet", 'case None{}:\n      uncertain()\n    case Some{name}:',
+     'case None{}:\n      Quiet{}\n    case Some{name}:'),
+    ("nonobject tool input stays quiet", 'case _ _:\n      uncertain()\n\ndef event.kind.if(',
+     'case Some{_} _:\n      Quiet{}\n    case _ _:\n      uncertain()\n\ndef event.kind.if('),
+    ("accepted event never classified",
+     'event.fields(J.as_str(J.get(event, "tool_name")), J.get(event, "tool_input"))',
+     'uncertain()'),
 )
+
+EXPECTED_OBSERVERS = {
+    "wrong event kind stays quiet": "Laws.hook_wrong_kind_asks",
+    "missing event kind stays quiet": "Laws.hook_wrong_kind_asks",
+    "nonobject tool input stays quiet": "Laws.hook_nonobject_input_asks",
+    "accepted event never classified": "hook_pretool_read_is_quiet",
+}
 
 
 def check(root):
@@ -54,6 +70,8 @@ def main():
             output = result.stdout + result.stderr
             assert result.returncode != 0 and "SOME PROOFS FAIL" in output, (name, output)
             assert "expected" in output and "observed" in output, (name, output)
+            if name in EXPECTED_OBSERVERS:
+                assert f"Location: {EXPECTED_OBSERVERS[name]}" in output, (name, output)
             for syntax_error in ("Error parsing", "consumed more than once", "a defined name"):
                 assert syntax_error not in output, (name, output)
             print(f"PASS rejected {name}")
