@@ -131,6 +131,24 @@ class RunningDemo:
         self.proc.stderr.close()
 
 
+class ObservedLock:
+    """Signal a real failed acquisition, optionally for one selected thread."""
+
+    def __init__(self, lock, contended, thread=None):
+        self.lock = lock
+        self.contended = contended
+        self.thread = thread
+
+    def __enter__(self):
+        if not self.lock.acquire(blocking=False):
+            if self.thread is None or threading.current_thread() is self.thread:
+                self.contended.set()
+            self.lock.acquire()
+
+    def __exit__(self, *_args):
+        self.lock.release()
+
+
 class ProcessLifetime(unittest.TestCase):
     def setUp(self):
         loader = importlib.machinery.SourceFileLoader('mailbend_demo_lifetime', str(DEMO))
@@ -191,15 +209,7 @@ class ProcessLifetime(unittest.TestCase):
         reaping = threading.Event()
         release = threading.Event()
         contended = threading.Event()
-        original_lock = self.demo.lock
-        class ObservedLock:
-            def __enter__(self):
-                if not original_lock.acquire(blocking=False):
-                    contended.set()  # A real failed acquisition, not thread entry.
-                    original_lock.acquire()
-            def __exit__(self, *_args):
-                original_lock.release()
-        self.demo.lock = ObservedLock()
+        self.demo.lock = ObservedLock(self.demo.lock, contended)
         errors = []
         real_wait = proc.wait
         def delayed_wait(*args, **kwargs):
@@ -273,10 +283,10 @@ class ProcessLifetime(unittest.TestCase):
                 observed.set()
             except Exception as error:
                 errors.append(error)
+        stopper = threading.Thread(target=stop)
+        observer = threading.Thread(target=observe)
         with mock.patch.object(self.module.time, 'sleep', grace_sleep), \
              mock.patch.object(self.module, 'STOP_TIMEOUT', .05):
-            stopper = threading.Thread(target=stop)
-            observer = threading.Thread(target=observe)
             stopper.start()
             try:
                 self.assertTrue(waiting.wait(5))
@@ -307,16 +317,6 @@ class ProcessLifetime(unittest.TestCase):
         errors = []
         real_sleep = time.sleep
         real_event = threading.Event
-        original_lock = self.demo.lock
-        class ObservedLock:
-            def __enter__(self):
-                if not original_lock.acquire(blocking=False):
-                    if threading.current_thread() is other:
-                        contended.set()
-                    original_lock.acquire()
-            def __exit__(self, *_args):
-                original_lock.release()
-        self.demo.lock = ObservedLock()
         def observed_event():
             event = real_event()
             real_wait = event.wait
@@ -343,9 +343,12 @@ class ProcessLifetime(unittest.TestCase):
                 if second:
                     finished.set()
         # Observe either an event wait or lock contention, without depending on
-        # the private reservation registry. Construct Thread's own events first.
+        # the private reservation registry. A lock-held grace wait is caught by
+        # test_grace_wait_does_not_block_other_children, not by this test.
+        # Construct Thread's own events before patching Event.
         owner = threading.Thread(target=stop)
         other = threading.Thread(target=stop, args=(True,))
+        self.demo.lock = ObservedLock(self.demo.lock, contended, thread=other)
         with mock.patch.object(self.module.time, 'sleep', grace_sleep), \
              mock.patch.object(self.module.threading, 'Event', observed_event), \
              mock.patch.object(self.module, 'STOP_TIMEOUT', .05), \
