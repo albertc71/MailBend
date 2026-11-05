@@ -462,6 +462,8 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
+For an application built with the OpenAI Agents SDK, use the optional
+[framework recipe](docs/FRAMEWORKS.md) with per-call human approval.
 
 Claude Code users can install the [optional MailBend plugin](docs/CLAUDE-PLUGIN.md)
 to connect an existing installation with the skill and send/delete prompt.
