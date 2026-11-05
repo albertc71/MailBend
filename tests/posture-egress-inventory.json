@@ -35,7 +35,7 @@
     },
     {
       "path": "native/README.md",
-      "sha256": "aaaf5629b10788f99e7aaa253c056cae900ae464f5dc7e1bd752327a3660b84d"
+      "sha256": "9d8291952fa74d234e76acdd156e30fbe629130eac9661be485d5d18dedba270"
     },
     {
       "path": "native/clippy.toml",
