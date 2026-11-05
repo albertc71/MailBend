@@ -7,7 +7,7 @@ import re
 import sys
 
 from law_catalogue import (ROOT, bend_names, generated, laws, load_json, local_path,
-                           proof_files, reference, require)
+                           observer_names, proof_files, reference, require)
 
 MARKER = re.compile(r"<!-- claim:([a-z][a-z0-9-]*) -->")
 
@@ -97,7 +97,7 @@ def validate(root):
         mutation = claim.get("mutation")
         if claim["status"] == "proven":
             require(isinstance(mutation, dict), f"{name}: proven claim needs a mutation")
-            require(set(mutation) == {"id", "path", "before", "after", "proof"},
+            require(set(mutation) == {"id", "path", "before", "after", "proof", "law", "observer_reason"},
                     f"{name}: invalid mutation fields")
             require(re.fullmatch(r"[a-z][a-z0-9-]*", mutation["id"]) is not None
                     and mutation["id"] not in mutation_ids, f"{name}: invalid or duplicate mutation id")
@@ -112,9 +112,12 @@ def validate(root):
                     f"{name}: invalid mutation replacement")
             require(source.count(before) == 1, f"{name}: mutation target must occur exactly once")
             path, proof_name = reference(root, mutation["proof"], "proof", source_names)
+            require(mutation["law"] in claim["laws"], f"{name}: mutation rejects an uncited law")
+            require(isinstance(mutation["observer_reason"], str) and mutation["observer_reason"].strip(),
+                    f"{name}: mutation observer needs a relationship explanation")
             if path == "PROOF.bend" and proof_name.startswith("Laws."):
-                require(proof_name[5:] in claim["laws"], f"{name}: mutation rejects an uncited law")
-            require(local_path(root, path) in reachable, f"{name}: mutation proof is not reachable")
+                require(proof_name[5:] == mutation["law"], f"{name}: mutation observer and law disagree")
+            observer_names(root, mutation["proof"])
         else:
             require(mutation is None, f"{name}: only proven claims have proof mutations")
     unclaimed = manifest["unclaimed"]
@@ -168,6 +171,10 @@ def coverage(root):
               "`reviewed` records a code boundary without a formal guarantee. None is independent certification.",
               "The README badge reports the complete CI workflow, including `bend PROOF.bend --verdict`.",
               "It does not report an individual job or certify a pending pull request.", ""]
+    output.extend(["Each mutation names a cited law and explains how its first failing observer relates",
+                   "to that law. These relationships are reviewed source mappings, not additional proofs.",
+                   "The checker validates the references and rejects ambiguous observer names across",
+                   "the root proof's local import closure; Bend's diagnostic contains no source path.", ""])
     for claim in claims:
         output.extend([f"## {claim['id']}", "", f"**{claim['status']}**. {claim['claim']}", "",
                        f"[README statement](../README.md#{claim['anchor']}).", ""])
@@ -176,6 +183,7 @@ def coverage(root):
         if "mutation" in claim:
             mutation = claim["mutation"]
             output.append(f"- Seeded bug: `{mutation['id']}` in `{mutation['path']}`. Expected rejection at `{mutation['proof']}`.")
+            output.append(f"- Observer relationship to {link(mutation['law'], 'law', records, root)}: {mutation['observer_reason']}")
         output.append("")
     output.extend(["## Laws without a public claim", ""])
     for name, reason in manifest["unclaimed"].items():
