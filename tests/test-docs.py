@@ -29,6 +29,7 @@ class DriftChecks(unittest.TestCase):
         self.root = Path(self.temp.name)
         files = [*ROOT.glob("*.md"), ROOT / "LAWS.bend", ROOT / "main.bend",
                  ROOT / ".env.example", ROOT / "scripts/mailbend", ROOT / "tools/gen-schema.py",
+                 ROOT / "tests/test-transport.sh", ROOT / ".github/ISSUE_TEMPLATE/provider-report.yml",
                  *ROOT.glob("src/*.bend"), *ROOT.glob("native/*/src/**/*.rs"),
                  *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md")]
         for source in files:
@@ -92,6 +93,28 @@ class DriftChecks(unittest.TestCase):
     def test_missing_skill_reference_fails(self):
         (self.root / "skills/mailbend/references/cli.md").unlink()
         self.check("references/cli.md: missing skill file")
+
+    def test_provider_jev_heading_rename_is_rejected(self):
+        self.replace("README.md", "## Jev (optional)", "## Jev renamed")
+        self.check("docs/PROVIDERS.md: missing linked heading ../README.md#jev-optional")
+
+    def test_provider_file_and_heading_links_are_checked(self):
+        self.append("docs/PROVIDERS.md", "\n[Absent](not-there.md)\n")
+        self.check("docs/PROVIDERS.md: missing linked file not-there.md")
+        self.append("docs/PROVIDERS.md", "\n[Absent](../README.md#not-a-heading)\n")
+        self.check("docs/PROVIDERS.md: missing linked heading ../README.md#not-a-heading")
+
+    def test_provider_same_document_anchor_is_checked(self):
+        self.replace("docs/PROVIDERS.md", "](#gmail)", "](#not-gmail)")
+        self.check("docs/PROVIDERS.md: missing linked heading #not-gmail")
+
+    def test_provider_foreign_links_remain_offline(self):
+        self.append("docs/PROVIDERS.md", "\n[Foreign](https://example.test/absent.md#absent)\n")
+        self.check()
+
+    def test_provider_repository_url_cannot_leave_checkout(self):
+        self.append("docs/PROVIDERS.md", "\n[Outside](https://github.com/albertc71/MailBend/blob/main/../outside.md#title)\n")
+        self.check("docs/PROVIDERS.md: linked file outside repository")
 
     def test_skill_local_file_and_heading_links(self):
         self.append("skills/mailbend/SKILL.md", "\n[Missing](references/not-there.md)\n")
