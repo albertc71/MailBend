@@ -47,6 +47,11 @@ class PlanCoverage(unittest.TestCase):
         self.append("src/tools.bend", "\ndef missing() -> List<I.Cmd>:\n  Ops.plan_missing()\n")
         self.check(1, "plan_missing")
 
+    def test_production_cannot_call_non_plan_command_wrapper(self):
+        self.append("src/ops.bend", "\ndef store_cmd() -> List<I.Cmd>:\n  [I.CStore{7}]\n")
+        self.append("src/tools.bend", "\ndef bypass() -> List<I.Cmd>:\n  Ops.store_cmd()\n")
+        self.check(1, "store_cmd")
+
     def test_production_cannot_construct_commands(self):
         self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.CStore{7}\n")
         self.check(1, "src/tools.bend")
