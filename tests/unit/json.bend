@@ -2,6 +2,8 @@
 
 import Base
 import ../../src/json.bend as J
+import ../../src/codec.bend as C
+import ../formal/json-size-reference.bend as Reference
 
 def parsed_output(m: Maybe<&2, J.Json>) -> String:
   match m:
@@ -84,6 +86,53 @@ def check_show() -> IO(Unit):
     IO.print(J.show(J.str("")) ++ " " ++ J.show(J.kv("a\"b", J.str("\u{1A}"))))
     IO.print(Bool.show(String.eq(J.show(J.str("\u{7F}")), "\"\u{7F}\"")))
 
+# The public Json type also admits chains and members outside containers.
+def check_chain_shapes() -> IO(Unit):
+  do IO<Unit>:
+    IO.print(String.join([
+      J.show(J.JCons{J.JEnd{}, J.JEnd{}}),
+      J.show(J.JCons{J.JEnd{}, J.JNull{}}),
+      J.show(J.JCons{J.JNull{}, J.JStr{"tail"}}),
+      J.show(J.JArr{J.JNum{"-0.00E+007"}}),
+      J.show(J.JObj{J.JCons{J.JStr{"x"}, J.JEnd{}}}),
+      J.show(J.JKv{"\"\n", J.JCons{J.JBool{False{}}, J.JNum{"raw"}}})], "|"))
+    IO.print(J.show(J.JNum{"raw\"\n😀"}))
+
+def same_bytes(a: String, b: String, matched: Bool) -> Bool:
+  match a b:
+    case SNil{} SNil{}:
+      matched
+    case SCon{ha, ta} SCon{hb, tb}:
+      same_bytes(ta, tb, matched && U32.is_eq(Char.to_u32(ha), Char.to_u32(hb)))
+    case _ _:
+      False{}
+
+def agrees(+j: J.Json) -> Bool:
+  same_bytes(J.show(j), Reference.show(j), True{})
+
+def nested(n: Nat, j: J.Json) -> J.Json:
+  match n:
+    case 0n:
+      j
+    case 1n+p:
+      nested(p, J.obj([J.kv("data", J.arr([j, J.JNull{}]))]))
+
+def image_data(n: Nat, acc: String) -> String:
+  match n:
+    case 0n:
+      acc
+    case 1n+p:
+      image_data(p, "Ab0+/xY7" ++ acc)
+
+def check_nested_and_image_compatibility() -> IO(Unit):
+  +data = image_data(349525n, "YWI=")
+  do IO<Unit>:
+    IO.print(Bool.show(agrees(nested(12n, J.obj([
+      J.kv("\"\n😀", J.str("é\u{0}\t\\")),
+      J.kv("n", J.JNum{"-0.00E+007"}),
+      J.kv("b", J.JBool{False{}})])))))
+    IO.print(U32.show(C.utf8_len(data)) ++ " " ++ Bool.show(agrees(J.str(data))))
+
 # Numbers, words and container structure.
 def check_parse() -> IO(Unit):
   do IO<Unit>:
@@ -151,6 +200,8 @@ def main() -> IO(Unit):
     IO.print(String.join([round_trip("[1,\u{C}2]"), round_trip("\u{B}[]"), round_trip("\t[1,\r\n2]\n")], " "))
     check_accessors(Maybe.default(&2, J.Json, J.parse("{\"uid\": 42, \"name\": \"INBOX\", \"flag\": true, \"list\": [\"a\",\"b\"]}"), J.JNull{}))
     check_show()
+    check_chain_shapes()
+    check_nested_and_image_compatibility()
     check_parse()
     check_strings()
     check_access()
@@ -180,6 +231,11 @@ def main() -> IO(Unit):
 #|"q\" b\\ n\n r\r t\t nul\u0000 us\u001f vt\u000b bs\u0008 ff\u000c é 😀 /"
 #|"" "a\"b":"\u001a"
 #|True
+#||,null|null,"tail"|[-0.00E+007]|{"x"}|"\"\n":false,raw
+#|raw"
+#|😀
+#|True
+#|2796204 True
 #|1 -0 0.0e0 1E+2 0e1 12345678901234567890 "s" true false null
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
