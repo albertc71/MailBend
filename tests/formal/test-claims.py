@@ -13,12 +13,42 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from law_catalogue import catalogue, generated, load_json
+from law_catalogue import catalogue, generated, load_json, proof_files
 from mutation_runner import require_baseline, require_rejection, run_mutations
 
 SPEC = importlib.util.spec_from_file_location("claim_checks", ROOT / "tools/check-claims.py")
 CHECKS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKS)
+
+IMPORT_FORMS = (
+    'import {path} as Other',
+    '  import {path} as Other',
+    'import {path} as Other # observer module',
+    '\timport\t{path}\tas\tOther\t# observer module',
+    ' import {path} as Other  ',
+)
+
+DEFINITION_FORMS = (
+    '  def {name}() -> Bool:\n    True{{}}\n',
+    'def\t{name}() -> Bool:\n  True{{}}\n',
+    'def\n{name}() -> Bool:\n  True{{}}\n',
+    'def {name}\n() -> Bool:\n  True{{}}\n',
+)
+
+
+def add_observer_import(root, declaration, name, transitive):
+    """Reach the collision directly or through a differently formatted import."""
+    (root / 'tests/formal').mkdir(parents=True, exist_ok=True)
+    (root / 'tests/formal/other-observer.bend').write_text(
+        f'def {name}() -> Bool:\n  True{{}}\n')
+    if transitive:
+        (root / 'tests/formal/observer-bridge.bend').write_text(
+            declaration.format(path='./other-observer.bend') + '\n')
+        declaration = '  import ./tests/formal/observer-bridge.bend as Bridge # transitive'
+    else:
+        declaration = declaration.format(path='./tests/formal/other-observer.bend')
+    with (root / 'PROOF.bend').open('a') as out:
+        out.write('\n' + declaration + '\n')
 
 
 class Claims(unittest.TestCase):
@@ -183,11 +213,39 @@ class Claims(unittest.TestCase):
         self.rejected("mutation observer needs a relationship explanation")
 
     def test_same_named_reachable_observer_is_ambiguous(self):
-        path = self.root / 'tests/formal/other-observer.bend'
-        path.write_text('def plan_quota_writes_nothing() -> Bool:\n  True{}\n')
+        original = (self.root / 'PROOF.bend').read_text()
+        for declaration in IMPORT_FORMS:
+            for transitive in (False, True):
+                with self.subTest(declaration=declaration, transitive=transitive):
+                    (self.root / 'PROOF.bend').write_text(original)
+                    add_observer_import(self.root, declaration, 'plan_quota_writes_nothing',
+                                        transitive)
+                    self.rejected("ambiguous mutation observer")
+
+    def test_unknown_import_syntax_fails_closed(self):
         with (self.root / 'PROOF.bend').open('a') as out:
-            out.write('\nimport ./tests/formal/other-observer.bend as Other\n')
-        self.rejected("ambiguous mutation observer")
+            out.write('\n  import ./tests/formal/other-observer.bend as Other extra\n')
+        self.rejected("unsupported Bend import")
+
+    def test_reachable_observer_declaration_whitespace_is_ambiguous(self):
+        add_observer_import(self.root, IMPORT_FORMS[0], 'plan_quota_writes_nothing', False)
+        path = self.root / 'tests/formal/other-observer.bend'
+        for definition in DEFINITION_FORMS:
+            with self.subTest(definition=definition):
+                path.write_text(definition.format(name='plan_quota_writes_nothing'))
+                self.rejected("ambiguous mutation observer")
+
+    def test_unknown_observer_declaration_syntax_fails_closed(self):
+        add_observer_import(self.root, IMPORT_FORMS[0], 'plan_quota_writes_nothing', False)
+        (self.root / 'tests/formal/other-observer.bend').write_text(
+            'def # unsupported comment between declaration tokens\n'
+            'plan_quota_writes_nothing() -> Bool:\n  True{}\n')
+        self.rejected("unsupported Bend def declaration")
+
+    def test_import_comments_are_not_dependencies(self):
+        with (self.root / 'PROOF.bend').open('a') as out:
+            out.write('\n  # import ./missing.bend as Missing\n')
+        CHECKS.validate(self.root)
 
     def test_same_named_unreachable_observer_is_not_ambiguous(self):
         path = self.root / 'tests/formal/other-observer.bend'
@@ -267,22 +325,54 @@ class Mutations(unittest.TestCase):
         require_rejection(self.result(text='SOME PROOFS FAIL\nLocation: fixture\n- expected : True\n- observed : False\n'), self.mutation, root)
 
     def test_rejection_cannot_select_same_name_in_another_file(self):
-        root = self.fixture()
-        (root / 'src/other.bend').write_text('def fixture() -> Bool:\n  True{}\n')
-        with (root / 'PROOF.bend').open('a') as out:
-            out.write('\nimport ./src/other.bend as Other\n')
-        with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
-            require_rejection(self.result(), self.mutation, root)
+        for declaration in IMPORT_FORMS:
+            for transitive in (False, True):
+                with self.subTest(declaration=declaration, transitive=transitive):
+                    root = self.fixture()
+                    add_observer_import(root, declaration, 'fixture', transitive)
+                    with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
+                        require_rejection(self.result(), self.mutation, root)
 
     def test_runner_rejects_ambiguous_observer_before_running_bend(self):
-        root = self.fixture()
-        (root / 'src/other.bend').write_text('def Laws.fixture() -> Bool:\n  True{}\n')
-        with (root / 'PROOF.bend').open('a') as out:
-            out.write('\nimport ./src/other.bend as Other\n')
         def unexpected_check(path):
             self.fail('an ambiguous observer must fail before a proof check')
-        with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
-            run_mutations(root, [self.mutation], unexpected_check)
+        for declaration in IMPORT_FORMS:
+            for transitive in (False, True):
+                with self.subTest(declaration=declaration, transitive=transitive):
+                    root = self.fixture()
+                    add_observer_import(root, declaration, 'Laws.fixture', transitive)
+                    with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
+                        run_mutations(root, [self.mutation], unexpected_check)
+
+    def test_runner_rejects_unknown_import_syntax_before_running_bend(self):
+        for declaration in ('import ./src/model.bend as Model extra', 'import ./src/model',
+                            'import "./src/model.bend"', 'import package@1.0.0/main.bend'):
+            with self.subTest(declaration=declaration):
+                root = self.fixture()
+                with (root / 'PROOF.bend').open('a') as out:
+                    out.write('\n  ' + declaration + '\n')
+                def unexpected_check(path):
+                    self.fail('unsupported import syntax must fail before a proof check')
+                with self.assertRaisesRegex(ValueError, 'unsupported Bend import'):
+                    run_mutations(root, [self.mutation], unexpected_check)
+
+    def test_runner_rejects_observer_declaration_whitespace_before_running_bend(self):
+        for definition in DEFINITION_FORMS:
+            with self.subTest(definition=definition):
+                root = self.fixture()
+                add_observer_import(root, IMPORT_FORMS[0], 'fixture', False)
+                (root / 'tests/formal/other-observer.bend').write_text(
+                    definition.format(name='fixture'))
+                def unexpected_check(path):
+                    self.fail('an ambiguous observer must fail before a proof check')
+                with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
+                    run_mutations(root, [self.mutation], unexpected_check)
+
+    def test_reachability_retains_parent_imports_and_cycles(self):
+        root = self.fixture()
+        (root / 'PROOF.bend').write_text(' import ./src/model.bend as Model # child\n')
+        (root / 'src/model.bend').write_text(' import ../PROOF.bend as Proof # cycle\n')
+        self.assertEqual(proof_files(root), {root / 'PROOF.bend', root / 'src/model.bend'})
 
     def test_survivor_and_unrelated_failures_rejected(self):
         root = self.fixture()
