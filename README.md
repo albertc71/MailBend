@@ -537,11 +537,11 @@ The server reads `MAILBEND_EMAIL` and `MAILBEND_APP_PASSWORD` (or
 `MAILBEND_PASSWORD_FILE`) from its environment.
 
 MCP supports `2026-07-28` discovery and per-request metadata, alongside legacy
-initialization for `2025-06-18`, `2025-03-26` and `2024-11-05`. It advertises only
+initialization for `2025-11-25`, `2025-06-18`, `2025-03-26` and `2024-11-05`. It advertises only
 tools. See [MCP compatibility](docs/MCP.md) for request requirements, errors,
 capabilities and the conformance test mapping.
 
-MCP revisions `2025-06-18` and `2026-07-28` return the same JSON object in `structuredContent`
+MCP revisions `2025-06-18`, `2025-11-25` and `2026-07-28` return the same JSON object in `structuredContent`
 and serialized text, and advertise a per-tool `outputSchema`. The older
 `2025-03-26` and `2024-11-05` revisions
 retain text-only results and omit output schemas. The CLI result is unchanged.

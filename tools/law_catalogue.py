@@ -84,7 +84,16 @@ def laws(root):
 
 
 def bend_names(path, kind):
-    return set(re.findall(rf"^{kind} ({IDENTIFIER})[(:]", path.read_text(encoding="utf-8"), re.M))
+    source = path.read_text(encoding="utf-8")
+    names = set()
+    header = re.compile(rf"\s+({IDENTIFIER})\s*[(:]")
+    for start in re.finditer(rf"^[ \t]*{kind}\b", source, re.M):
+        declaration = header.match(source, start.end())
+        if declaration is None:
+            number = source.count("\n", 0, start.start()) + 1
+            raise ValueError(f"unsupported Bend {kind} declaration at {path}:{number}")
+        names.add(declaration[1])
+    return names
 
 
 def reference(root, value, kind, cache=None):
@@ -108,6 +117,25 @@ def reference(root, value, kind, cache=None):
     return relative, name
 
 
+def local_imports(path):
+    """Read the supported Bend module imports, rejecting unknown syntax.
+
+    Whitespace and trailing comments are accepted by Bend, including before
+    an import. Keep this intentionally smaller than a Bend parser: only Base
+    and repository-local .bend modules are supported by this source reader.
+    New import forms must not silently shrink the observer search closure.
+    """
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        declaration = line.partition("#")[0].strip()
+        if not re.match(r"import\b", declaration):
+            continue
+        match = re.fullmatch(
+            r"import[ \t]+(Base|\.[\w./-]+\.bend)(?:[ \t]+as[ \t]+\w+)?", declaration)
+        require(match is not None, f"unsupported Bend import at {path}:{number}")
+        if match[1] != "Base":
+            yield match[1]
+
+
 def proof_files(root):
     pending = [local_path(root, "PROOF.bend")]
     visited = set()
@@ -116,8 +144,7 @@ def proof_files(root):
         if path in visited:
             continue
         visited.add(path)
-        for relative in re.findall(r"^import (\.[\w./-]+\.bend)(?: as \w+)?\s*$",
-                                   path.read_text(encoding="utf-8"), re.M):
+        for relative in local_imports(path):
             child = (path.parent / relative).resolve()
             local_path(root, child.relative_to(root.resolve()).as_posix())
             pending.append(child)

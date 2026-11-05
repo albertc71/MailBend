@@ -1,7 +1,7 @@
 # MCP compatibility
 
 MailBend serves newline-delimited JSON-RPC on stdio. It supports modern MCP
-`2026-07-28`, plus initialization-based `2025-06-18`, `2025-03-26` and
+`2026-07-28`, plus initialization-based `2025-11-25`, `2025-06-18`, `2025-03-26` and
 `2024-11-05`. The CLI is independent of MCP negotiation.
 
 Register `scripts/mailbend mcp` (or `scripts/mailbend-cloud mcp` in cloud
@@ -62,7 +62,7 @@ and the `tools` capability. Discovery is optional: a valid `tools/list` or
 
 Legacy clients first send `initialize`; the returned revision applies to
 subsequent requests without modern metadata in that process. An unsupported
-legacy initialization version is offered `2025-06-18`. Modern requests can
+legacy initialization version is offered `2025-11-25`. Modern requests can
 interleave with that legacy session, but never inherit its version, identity or
 capabilities and never change its negotiated revision. Before initialization,
 a metadata-free tool request fails with invalid params. Legacy `ping` is also
@@ -99,7 +99,7 @@ Malformed modern envelopes omit unreadable IDs even after legacy initialization.
 The tool list is deterministic for the process configuration. It uses JSON
 Schema 2020-12-compatible object input schemas and tool annotations. Results
 contain JSON serialized in a text content block. Modern requests and negotiated
-`2025-06-18` sessions also expose the identical `structuredContent` value and
+`2025-06-18` and `2025-11-25` sessions also expose the identical `structuredContent` value and
 per-tool output schemas; older sessions omit those fields.
 Read-only, drafts-only and Jev settings determine availability through the same
 code used by the CLI. Client capability claims cannot widen that availability.
@@ -119,6 +119,47 @@ cancellation is consumed after the active call completes; there is no promise
 of interrupting a mail operation already in progress. Notifications receive no
 reply, and closing stdin exits after pending work.
 
+## Client prompts and tool annotations
+
+Every tool has a human-readable title and explicit boolean MCP annotations.
+All tools have `openWorldHint: true` because they interact with an external
+mailbox or mail service. This also covers sender-controlled content in read
+results, whether Jev is on or off. It does not mean every call contacts TypeSafe.
+
+`readOnlyHint` follows MailBend's operation policy. `destructiveHint` means a
+non-additive change: flag changes, moves, labels, Trash, permanent deletion,
+folder renames and Jev triage. Sends, replies, forwards, new drafts, new folders
+and new attachment files are additive, so their destructive hint is false.
+This hint is not an assessment of an operation's overall risk. MailBend's
+permanent-delete classifier, hook and safety gates are unchanged.
+
+The tool definitions for `mail_send`, `mail_reply`, `mail_forward` and
+`mail_delete` always include `_meta["anthropic/requiresUserInteraction"]: true`.
+The flag is static: it also covers `dry_run: true` and `as_draft: true` calls.
+Use `mail_save_draft` when an unattended workflow only needs a draft.
+
+[Claude Code documents](https://code.claude.com/docs/en/mcp#require-approval-for-a-specific-tool)
+that this flag prompts on each call, including in `bypassPermissions`, and
+prevents allow rules from skipping the prompt. In `dontAsk` mode the call is
+denied instead. Its non-interactive `--permission-prompt-tool` cannot approve a
+flagged tool. The Agent SDK's `canUseTool` callback can approve it, so the SDK
+application must show the request to a person.
+
+These are client-side behaviors, not proven human approval. MailBend cannot
+attest who answered a client prompt, and other clients may ignore the metadata.
+The CLI does not read this MCP metadata. The `permanently-delete` confirmation
+word remains a mistake guard, not approval. The argument-sensitive
+[Claude Code hook](CLAUDE-HOOK.md) remains available, but it cannot remove the
+static metadata prompt for a draft or dry run. Vendor client UIs have not been
+tested as part of this metadata change.
+
+Server discovery, initialization and modern tool listings include a title,
+a description and the project's website URL. Ordinary tool results retain the
+compact server name and version, so display metadata does not inflate every
+reply or its byte budget. Icons and a larger
+`anthropic/maxResultSizeChars` are not advertised. Existing response budgets
+remain in force.
+
 ## Conformance mapping
 
 The fixed [2026-07-28 TypeScript schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/271ecc9accafdd9b83a3c869fa67c22953b2af80/schema/2026-07-28/schema.ts)
@@ -132,7 +173,7 @@ vendor application compatibility has not been separately exercised.
 | --- | --- |
 | [Discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/discover): `DiscoverRequest`, `DiscoverResultResponse/discover-result-response.json` | `mcp_modern`: discovery identity, versions, tools-only capability and complete result |
 | [Caching](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching): complete cacheable results | `tests/unit/mcp-protocol.bend`; `mcp_modern`: private five-minute hints on discovery and lists across read-only, drafts-only and Jev settings; no hints on legacy results or calls |
-| [Versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning): unsupported version error and dual-era matrix | `mcp_modern`: unknown, empty and legacy modern-version strings; all three legacy initializations and interleaved modern calls |
+| [Versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning): unsupported version error and dual-era matrix | `mcp_modern`: unknown, empty and legacy modern-version strings; all four legacy initializations and interleaved modern calls |
 | [Base protocol](https://modelcontextprotocol.io/specification/2026-07-28/basic/index): required metadata, result type and request ids | `tests/unit/mcp-protocol.bend`; `mcp_modern`: absent/null/scalar/object/array version values, capabilities, optional identity, null/fractional ids, integer-valued decimal/exponent ids and independent requests |
 | [Tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools): `ListToolsRequest/list-tools-request.json`, `CallToolRequest/call-tool-request.json`, `CallToolResult/invalid-tool-input-error.json` | `mcp_modern`: real synthetic-mail search, schema-bearing list, input failure, malformed/unknown tool, safety switches, invalid cursor |
 | [stdio](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio): framing, notifications, shutdown | `mcp_framing` and `mcp_modern`: multibyte UTF-8, multiple lines per read, unfinished final line, blank lines, 8 MiB cap, notifications and clean EOF |

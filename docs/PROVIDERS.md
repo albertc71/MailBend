@@ -125,11 +125,15 @@ the message. Do not rely on `mail_delete` as proof of global deletion while
 [#101](https://github.com/albertc71/MailBend/issues/101) remains unresolved.
 
 Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
-`[Gmail]/Important`, but no Archive role. MailBend reserves folders advertising
+`[Gmail]/Important`, but no Archive role. MailBend keeps folders advertising
 `\Important` (see [#123](https://github.com/albertc71/MailBend/issues/123)) or
-`\All` from classification and label destinations. Choose `MAILBEND_ARCHIVE_FOLDER` only after
-reviewing the actual folder list and intended archive semantics. Do not
-silently substitute All Mail. Names and visibility can differ by account.
+`\All`, and their descendants, out of classification, triage and `mail_label`
+destinations. It refuses create/rename destinations there and refuses renaming
+a reserved folder or any parent containing it. `mail_move` can still use such
+a folder when explicitly named, subject to the normal move checks.
+Choose `MAILBEND_ARCHIVE_FOLDER` only after reviewing the actual folder list and
+intended archive semantics. Do not silently substitute All Mail. Names and
+visibility can differ by account.
 
 ## Google Workspace
 
@@ -210,10 +214,11 @@ SMTP. Create an [app password with mail access](https://www.fastmail.help/hc/en-
 the regular account password does not work.
 
 Fastmail documents an empty IMAP path prefix and `/` as the separator.
-MailBend has no prefix setting: use the exact decoded LIST names,
-including any namespace prefix. This guide has no live evidence for
-role attributes or Sent filing. Discover role folders and test the Sent-copy
-choice before enabling writes.
+MailBend has no prefix setting. In `MAILBEND_*_FOLDER` overrides and folder
+arguments, use the exact decoded LIST names, including any namespace prefix
+(see [Role folder resolution](../README.md#role-folder-resolution)). This guide
+has no live evidence for role attributes or Sent filing. Discover role folders
+and test the Sent-copy choice before enabling writes.
 
 ## Zoho Mail
 
