@@ -502,7 +502,9 @@
       "tests": [
         "tests/test-e2e.py#gates_vetoes",
         "tests/test-e2e.py#gates_delete_vetoes",
-        "tests/test-e2e.py#gates_secret_scan"
+        "tests/test-e2e.py#gates_secret_scan",
+        "tests/test-e2e.py#gates_local_scan",
+        "tests/unit/local-secret-scan.bend#main"
       ],
       "code": [
         "src/jev.bend#outbound_checked",

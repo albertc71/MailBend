@@ -272,10 +272,12 @@ Exact categories and image limitations are in the [privacy policy](PRIVACY.md#wh
 `gates_delete_vetoes`, `gates_failure`, and `gates_secret_scan`.
 Those tests use deterministic answers, not evidence of Jev's accuracy.
 
-Jev is off by default. With Jev off, the local secret scan and TypeSafe request
-are skipped. With it on, the scan is best effort, not an arbitrary-exfiltration
-boundary. Classification and triage use Jev's answers among offered folders
-and `To Delete`; a wrong answer can still produce a wrong filing decision.
+Jev is off by default. With Jev off, TypeSafe requests are skipped. Outgoing
+sends require the local scan when Jev is on or `MAILBEND_SECRET_SCAN` is
+enabled; drafts remain unscanned. The scan is best effort, not an
+arbitrary-exfiltration boundary. Classification and triage use Jev's answers
+among offered folders and `To Delete`; a wrong answer can still produce a
+wrong filing decision.
 Jev never grants human approval or makes untrusted mail safe to follow.
 
 ### C7. Results preserve uncertainty and work has finite local bounds
