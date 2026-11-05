@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Outgoing clock refusal through the compiled CLI/MCP and synthetic mail server."""
+"""Clock failures through the compiled CLI/MCP and synthetic mail server."""
+import copy
 import importlib.util
 import json
 import os
@@ -16,7 +17,7 @@ spec.loader.exec_module(e2e)
 SEND = {'to': ['friend@example.com'], 'subject': 'Synthetic clock test', 'body': 'Synthetic.'}
 
 
-class ClockTests(unittest.TestCase):
+class ClockTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix='mailbend-clock-')
@@ -56,7 +57,7 @@ class ClockTests(unittest.TestCase):
     def setUp(self):
         self.cell = Path(tempfile.mkdtemp(dir=self.work))
         (self.cell / 'certs').symlink_to(self.work / 'certs', target_is_directory=True)
-        self.srv = e2e.Server(str(self.cell))
+        self.srv = e2e.Server(str(self.cell), fixture=self.mailbox_fixture())
         self.addCleanup(self.srv.stop)
         self.date_log = self.cell / 'date.log'
         self.helper_log = self.cell / 'helper.jsonl'
@@ -80,6 +81,9 @@ class ClockTests(unittest.TestCase):
             'MAILBEND_ATTACH_HELPER': str(recorder), 'MAILBEND_SAVE_SENT': '0',
             'MAILBEND_MAX_SENDS_PER_DAY': '3', 'MAILBEND_STATE_DIR': str(self.counter),
         }
+
+    def mailbox_fixture(self):
+        return None
 
     def call(self, tool='mail_send', args=None, settings=None, wire='cli'):
         self.date_log.unlink(missing_ok=True)
@@ -122,6 +126,8 @@ class ClockTests(unittest.TestCase):
         self.assertFalse(self.helper_log.exists(), 'attachment/counter helper was invoked')
         self.assertFalse(self.counter.exists(), 'counter directory was created')
 
+
+class ClockTests(ClockTestCase):
     def test_date_interposition_and_other_commands(self):
         for mode in ('exec', 'spawn', 'spawnp'):
             for unavailable in (False, True):
@@ -260,7 +266,6 @@ class ClockTests(unittest.TestCase):
         drafts = self.srv.st()['mailboxes']['Drafts']['messages']
         self.assertIn('Date: Sun, 7 Feb 2106 06:28:15 +0000\r\n', drafts[-1]['raw'])
 
-
     def test_reservation_uses_second_day_after_midnight(self):
         failed, result = self.call(settings={'CLOCK_TEST_FIRST_OUTPUT': '1700006399\n',
                                              'CLOCK_TEST_OUTPUT': '1700006400\n'})
@@ -280,13 +285,61 @@ class ClockTests(unittest.TestCase):
                          (result['smtp_outcome'], result['smtp_phase'], result['smtp_reason']))
         self.assert_no_effects(before)
 
-
     def test_date_timeout_refuses_without_mail_or_counter(self):
         before = self.srv.st()
         failed, result = self.call(settings={'CLOCK_TEST_DELAY': '6'}, wire='mcp')
         self.assertTrue(failed, result)
         self.assertIn('clock', result['error'])
         self.assert_no_effects(before)
+
+
+class BriefClockTests(ClockTestCase):
+    def mailbox_fixture(self):
+        fixture = copy.deepcopy(e2e.FIX)
+        fixture['mailboxes']['INBOX']['messages'] = [{
+            'uid': 1, 'flags': [], 'internaldate': '14-Nov-2023 00:00:00 +0000',
+            'raw': 'From: known@example.test\r\nTo: tester@example.com\r\n'
+                   'Date: Tue, 14 Nov 2023 00:00:00 +0000\r\n'
+                   'Message-ID: <brief-clock@example.test>\r\nSubject: Brief\r\n\r\nSynthetic.',
+        }]
+        fixture['mailboxes']['Sent Messages']['messages'] = [{
+            'uid': 1, 'flags': [], 'internaldate': '13-Nov-2023 00:00:00 +0000',
+            'raw': 'From: tester@example.com\r\nTo: known@example.test\r\n'
+                   'Date: Mon, 13 Nov 2023 00:00:00 +0000\r\n'
+                   'Message-ID: <previous-clock@example.test>\r\nSubject: Previous\r\n\r\nSynthetic.',
+        }]
+        return fixture
+
+    def test_unknown_clock_keeps_selected_brief_without_correspondence_scan(self):
+        for wire in ('cli', 'mcp'):
+            with self.subTest(wire=wire):
+                before = self.srv.st()
+                failed, result = self.call('mail_brief', {'since_uid': 0},
+                                           {'CLOCK_TEST_MODE': 'unavailable',
+                                            'MAILBEND_READ_ONLY': '1'}, wire)
+                self.assertFalse(failed, result)
+                self.assertEqual([1], [m['uid'] for m in result['messages']])
+                self.assertEqual('Brief', result['messages'][0]['subject'])
+                self.assertEqual('unknown_people', result['messages'][0]['group'])
+                self.assertEqual(1, result['next_since_uid'])
+                self.assertTrue(result['selected_complete'])
+                self.assertFalse(result['has_more'])
+                self.assertIsNone(result['next_continuation'])
+                correspondence = result['correspondence']
+                self.assertEqual('', correspondence['since'])
+                self.assertEqual((1, 1), (correspondence['selected_senders'],
+                                          correspondence['total_senders']))
+                coverage = correspondence['coverage']
+                self.assertFalse(coverage['complete'])
+                self.assertEqual(0, coverage['sampled_headers'])
+                self.assertIn('clock', coverage['reason'])
+                self.assertIn('window', coverage['reason'])
+                commands = [r['line'] for r in self.srv.log_records()[self.log_start:]]
+                self.assertFalse(any(' LIST ' in line or ' LSUB ' in line or
+                                     'Sent Messages' in line or ' SINCE ' in line
+                                     for line in commands), commands)
+                self.assertTrue(any(' UID FETCH ' in line for line in commands), commands)
+                self.assert_no_effects(before)
 
 
 if __name__ == '__main__':
