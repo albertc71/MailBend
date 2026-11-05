@@ -1,0 +1,10 @@
+{
+  "blank_issues_enabled": false,
+  "contact_links": [
+    {
+      "name": "Report a security vulnerability privately",
+      "url": "https://github.com/albertc71/MailBend/security/advisories/new",
+      "about": "Use private vulnerability reporting for suspected security issues. Never include real credentials, account addresses, or mail."
+    }
+  ]
+}

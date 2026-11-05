@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check documented source names without compiling or connecting to a service."""
+"""Check documentation and contributor declarations without compiling or connecting."""
 
 import argparse
 import importlib.util
@@ -187,8 +187,91 @@ def skill_references(root):
     return errors
 
 
+def contributor_onramps(root):
+    errors = []
+    security_url = "https://github.com/albertc71/MailBend/security/advisories/new"
+    if security_url not in (root / "SECURITY.md").read_text():
+        errors.append("SECURITY.md: missing private security route")
+    config = json.loads((root / ".github/ISSUE_TEMPLATE/config.yml").read_text())
+    if (not isinstance(config, dict) or not isinstance(config.get("contact_links"), list)
+            or any(not isinstance(link, dict)
+                   or any(not isinstance(link.get(key), str) or not link[key].strip()
+                          for key in ("name", "url", "about"))
+                   for link in config["contact_links"])):
+        raise ValueError(".github/ISSUE_TEMPLATE/config.yml: invalid issue chooser declaration")
+    if config.get("blank_issues_enabled") is not False:
+        errors.append(".github/ISSUE_TEMPLATE/config.yml: blank issues must be disabled")
+    if not any(link.get("url") == security_url for link in config.get("contact_links", [])):
+        errors.append(".github/ISSUE_TEMPLATE/config.yml: missing private security route")
+    contracts = {
+        "bug-report.yml": {"revision": "input", "distribution": "input", "diagnose": "textarea",
+                           "reproduction": "textarea", "behavior": "textarea"},
+        "feature-request.yml": {"problem": "textarea", "outcome": "textarea", "constraints": "textarea"},
+    }
+    for filename, contract in contracts.items():
+        path = root / ".github/ISSUE_TEMPLATE" / filename
+        form = json.loads(path.read_text())
+        invalid = f"{path.relative_to(root)}: invalid issue form declaration"
+        if (not isinstance(form, dict) or not isinstance(form.get("body"), list)
+                or any(not isinstance(form.get(key), str) or not form[key].strip()
+                       for key in ("name", "description"))):
+            raise ValueError(invalid)
+        for field in form["body"]:
+            if not isinstance(field, dict) or not isinstance(field.get("attributes"), dict):
+                raise ValueError(invalid)
+            kind, attributes = field.get("type"), field["attributes"]
+            if kind not in ("markdown", "input", "textarea", "checkboxes"):
+                raise ValueError(invalid)
+            visible = attributes.get("value" if kind == "markdown" else "label")
+            if not isinstance(visible, str) or not visible.strip():
+                raise ValueError(invalid)
+            if kind != "markdown":
+                if (not isinstance(field.get("id"), str) or not re.fullmatch(r"[\w-]+", field["id"])
+                        or not isinstance(field.get("validations", {}), dict)):
+                    raise ValueError(invalid)
+            elif "id" in field:
+                raise ValueError(invalid)
+            if kind == "checkboxes":
+                options = attributes.get("options")
+                if (not isinstance(options, list) or not options
+                        or any(not isinstance(option, dict) or not isinstance(option.get("label"), str)
+                               or not option["label"].strip() for option in options)):
+                    raise ValueError(invalid)
+        notice = "\n".join(field.get("attributes", {}).get("value", "")
+                           for field in form["body"] if field.get("type") == "markdown")
+        if f"]({security_url})" not in notice:
+            errors.append(f"{path.relative_to(root)}: missing visible private security route")
+        # Check visible wording, not tokens supplied by simple inline-link targets.
+        visible_notice = re.sub(r"\]\([^)\n]*\)", "]", notice).lower()
+        if (not all(term in visible_notice for term in ("never include real credentials", "account addresses"))
+                or not re.search(r"\bmail\b", visible_notice)):
+            errors.append(f"{path.relative_to(root)}: missing visible privacy warning")
+        fields = {}
+        for field in form["body"]:
+            if name := field.get("id"):
+                if name in fields:
+                    errors.append(f"{path.relative_to(root)}: duplicate issue field id {name}")
+                fields[name] = field
+        privacy = fields.get("privacy", {})
+        if (privacy.get("type") != "checkboxes"
+                or not any(option.get("required") is True and option.get("label")
+                           for option in privacy.get("attributes", {}).get("options", []))):
+            errors.append(f"{path.relative_to(root)}: missing required privacy acknowledgement")
+        for name, kind in contract.items():
+            field = fields.get(name, {})
+            if (field.get("type") != kind or not field.get("attributes", {}).get("label")
+                    or field.get("validations", {}).get("required") is not True):
+                errors.append(f"{path.relative_to(root)}: missing required {kind} {name}")
+        if filename == "bug-report.yml":
+            guidance = fields.get("diagnose", {}).get("attributes", {}).get("description", "")
+            if (not isinstance(guidance, str) or "scripts/mailbend diagnose with no flags" not in guidance
+                    or re.search(r"\bdiagnose\s+--", guidance)):
+                errors.append(f"{path.relative_to(root)}: bug diagnostics must use the offline command with no flags")
+    return errors
+
+
 def check(root):
-    errors = skill_references(root)
+    errors = skill_references(root) + contributor_onramps(root)
     laws = required(set(re.findall(r"^law (" + NAME + r")\s*:", (root / "LAWS.bend").read_text(), re.M)), "law declarations")
     docs = (sorted(root.glob("*.md")) + sorted((root / "docs").rglob("*.md"))
             + sorted((root / "skills/mailbend").rglob("*.md")))
@@ -256,7 +339,8 @@ def main():
     if errors:
         print("Documentation drift:\n" + "\n".join(errors), file=sys.stderr)
         return 1
-    print("Documentation names resolve: laws, environment, CLI usage, source layers, and skill tools")
+    print("Documentation checks pass: laws, environment, CLI usage, source layers, skill tools, "
+          "issue chooser and bug/feature form contracts (provider form not parsed)")
     return 0
 
 

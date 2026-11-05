@@ -7,7 +7,7 @@ import re
 import sys
 
 from law_catalogue import (ROOT, bend_names, generated, laws, load_json, local_path,
-                           observer_names, proof_files, reference, require)
+                           observer_names, proof_files, reference, reference_location, require)
 
 MARKER = re.compile(r"<!-- claim:([a-z][a-z0-9-]*) -->")
 
@@ -151,10 +151,7 @@ def link(value, kind, records, root):
     path, _, name = value.partition("#")
     suffix = ""
     if name:
-        source = local_path(root, path).read_text(encoding="utf-8").splitlines()
-        pattern = (rf"^law {re.escape(name)}:" if kind == "law"
-                   else rf"^\s*(?:async )?def {re.escape(name)}\(")
-        number = next(i for i, line in enumerate(source, 1) if re.search(pattern, line))
+        _, _, number = reference_location(root, value, kind)
         suffix = f"#L{number}"
     return f"[`{value}`](../{path}{suffix})"
 

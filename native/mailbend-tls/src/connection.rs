@@ -82,6 +82,7 @@ pub struct Connection {
     reader: BufReader<Transport>,
     transcript: Transcript,
     pub(crate) stage: &'static str,
+    report_auth: bool,
 }
 
 impl Connection {
@@ -96,13 +97,21 @@ impl Connection {
                 redacted: false,
             },
             stage: "connect",
+            report_auth: false,
         }
     }
 
-    pub(crate) fn diagnostic(sock: TcpStream) -> Self {
+    pub(crate) fn diagnostic(sock: TcpStream, report: bool) -> Self {
         let mut conn = Self::new(sock);
         conn.transcript.redacted = true;
+        conn.report_auth = report;
         conn
+    }
+
+    pub(crate) fn report_smtp_auth(&self, ehlo: &[u8]) {
+        if self.report_auth {
+            print!("{}", crate::smtp::reply::auth_facts(ehlo));
+        }
     }
 
     /// Only fixed transport facts escape a diagnostic session.

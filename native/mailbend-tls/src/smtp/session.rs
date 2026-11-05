@@ -51,6 +51,7 @@ pub fn run(
     steps: &[Step<'_>],
 ) -> Result<Outcome, Exit> {
     let ehlo = negotiate_tls(conn, tls, host, mode)?;
+    conn.report_smtp_auth(&ehlo);
     conn.enter_stage("authentication");
     authenticate(conn, &ehlo, &creds)?;
     drop(creds);

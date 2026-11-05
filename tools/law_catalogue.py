@@ -8,6 +8,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTIFIER = r"[A-Za-z_][A-Za-z_0-9.]*"
+UNSAFE_DEF = re.compile(r"unsafe\s+def\b")
 
 
 def require(condition, detail):
@@ -44,7 +45,9 @@ class Law:
 
 
 def laws(root):
-    lines = local_path(root, "LAWS.bend").read_text(encoding="utf-8").splitlines()
+    path = local_path(root, "LAWS.bend")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    declarations = {line: name for name, line in bend_headers(path, "law").items()}
     supplements = load_json(local_path(root, "docs/law-summaries.json"))
     require(isinstance(supplements, dict), "law summaries must be an object")
     section = "Laws"
@@ -62,11 +65,8 @@ def laws(root):
                 comments.append(lines[following][2:].strip())
                 following += 1
             summary = " ".join(comments)
-        match = re.fullmatch(rf"law ({IDENTIFIER}):", line)
-        require(not line.startswith("law ") or match is not None,
-                f"unsupported law declaration at line {index + 1}")
-        if match:
-            name = match[1]
+        if index + 1 in declarations:
+            name = declarations[index + 1]
             require(name not in result, f"duplicate law {name}")
             description = summary
             # Supplements cover missing prose without editing the law contract.
@@ -83,29 +83,154 @@ def laws(root):
     return result
 
 
+def bend_headers(path, kind):
+    """Read supported declaration names and their first source line together.
+
+    This is deliberately not a Bend parser. Recognize whitespace and the
+    documented @unsafe prefix, and fail closed on unknown attributes/headers
+    rather than silently omit a possible observer or catalogue entry.
+    """
+    require(kind in ("law", "def"), f"unsupported Bend declaration kind: {kind}")
+    source = path.read_text(encoding="utf-8")
+    starts = re.compile(r"^[ \t]*(?P<token>@|def\b|law\b)", re.M)
+    header = re.compile(rf"\s+({IDENTIFIER})\s*(?P<delimiter>[(:])")
+    names = {}
+    offset = 0
+    line = 1
+    while start := starts.search(source, offset):
+        number = line + source.count("\n", offset, start.start())
+        token = start["token"]
+        end = start.end()
+        if token == "@":
+            attribute = UNSAFE_DEF.match(source, end)
+            require(attribute is not None,
+                    f"unsupported Bend attribute/header at {path}:{number}")
+            token = "def"
+            end = attribute.end()
+        declaration = header.match(source, end)
+        require(declaration is not None
+                and (token != "law" or declaration["delimiter"] == ":"),
+                f"unsupported Bend {token} declaration at {path}:{number}")
+        line = number + source.count("\n", start.start(), declaration.end())
+        offset = declaration.end()
+        if token == kind:
+            name = declaration[1]
+            require(name not in names, f"duplicate Bend {kind} {name} at {path}:{number}")
+            names[name] = number
+    return names
+
+
 def bend_names(path, kind):
-    return set(re.findall(rf"^{kind} ({IDENTIFIER})[(:]", path.read_text(encoding="utf-8"), re.M))
+    return set(bend_headers(path, kind))
 
 
-def reference(root, value, kind, cache=None):
+def python_headers(path):
+    """Collect function lines and conservative static collisions for bare names.
+
+    Functions, methods and nested defs are valid targets only when their name
+    is unique across the file. Same-named classes anywhere, and Assign/AnnAssign
+    name stores in module or class scope (including control-flow blocks), add
+    collisions but never become targets themselves. Class bodies count file-wide,
+    including classes nested inside functions. Annotation-only statements do not bind.
+    Unrelated duplicates do not reject a uniquely named test. Decorators do not
+    move links away from the def/async def line reported by the AST.
+
+    This is not Python name resolution: imports, other binding statements,
+    ordinary function-local assignments and dynamic effects are not modeled.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    positions = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            positions.setdefault(node.name, []).append(node.lineno)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name in positions:
+            positions[node.name].append(node.lineno)
+
+    class ScopeAssignments(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            pass  # Function locals are excluded; class bodies are visited separately.
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_ClassDef = visit_FunctionDef
+
+        def target(self, node):
+            if isinstance(node, ast.Name) and node.id in positions:
+                positions[node.id].append(node.lineno)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for element in node.elts:
+                    self.target(element)
+            elif isinstance(node, ast.Starred):
+                self.target(node.value)
+
+        def visit_Assign(self, node):
+            for target in node.targets:
+                self.target(target)
+
+        def visit_AnnAssign(self, node):
+            if node.value is not None:
+                self.target(node.target)
+
+    assignments = ScopeAssignments()
+    assignments.visit(tree)
+    # Visit every class body once, even below a function that the visitor skips.
+    # Nested class bodies are skipped here and reached independently by ast.walk.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for statement in node.body:
+                assignments.visit(statement)
+    return {name: tuple(sorted(lines)) for name, lines in positions.items()}
+
+
+def reference_location(root, value, kind, cache=None):
+    """Resolve validation and generated links to the same unique declaration."""
     require(isinstance(value, str), f"{kind} reference must be a string")
     relative, separator, name = value.partition("#")
     path = local_path(root, relative)
     require(separator and name, f"{kind} reference needs path#name: {value}")
     key = (path, kind)
     if cache is not None and key in cache:
-        names = cache[key]
+        positions = cache[key]
     elif path.suffix == ".bend":
-        names = bend_names(path, "law" if kind == "law" else "def")
+        positions = {name: (line,) for name, line in
+                     bend_headers(path, "law" if kind == "law" else "def").items()}
     elif path.suffix == ".py" and kind == "test":
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        names = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        positions = python_headers(path)
     else:
         raise ValueError(f"unsupported {kind} reference: {value}")
     if cache is not None:
-        cache[key] = names
-    require(name in names, f"missing {kind} name: {value}")
-    return relative, name
+        cache[key] = positions
+    require(name in positions, f"missing {kind} name: {value}")
+    lines = positions[name]
+    require(len(lines) == 1,
+            f"ambiguous {kind} reference: {value}; declarations or bindings at lines "
+            + ", ".join(map(str, sorted(set(lines)))))
+    return relative, name, lines[0]
+
+
+def reference(root, value, kind, cache=None):
+    return reference_location(root, value, kind, cache)[:2]
+
+
+def local_imports(path):
+    """Read the supported Bend module imports, rejecting unknown syntax.
+
+    Whitespace and trailing comments are accepted by Bend, including before
+    an import. Keep this intentionally smaller than a Bend parser: only Base
+    and repository-local .bend modules are supported by this source reader.
+    New import forms must not silently shrink the observer search closure.
+    """
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        declaration = line.partition("#")[0].strip()
+        if not re.match(r"import\b", declaration):
+            continue
+        match = re.fullmatch(
+            r"import[ \t]+(Base|\.[\w./-]+\.bend)(?:[ \t]+as[ \t]+\w+)?", declaration)
+        require(match is not None, f"unsupported Bend import at {path}:{number}; "
+                "only Base and repository-local .bend module imports are supported "
+                "by this source reader (not foreign effect-body imports)")
+        if match[1] != "Base":
+            yield match[1]
 
 
 def proof_files(root):
@@ -116,8 +241,7 @@ def proof_files(root):
         if path in visited:
             continue
         visited.add(path)
-        for relative in re.findall(r"^import (\.[\w./-]+\.bend)(?: as \w+)?\s*$",
-                                   path.read_text(encoding="utf-8"), re.M):
+        for relative in local_imports(path):
             child = (path.parent / relative).resolve()
             local_path(root, child.relative_to(root.resolve()).as_posix())
             pending.append(child)

@@ -23,6 +23,18 @@ MUTATIONS = (
      '[I.CExpect{I.uidv_line(uidv)}])', "image_round_guarded"),
     ("image round selects writable folder", "src/ops.bend", IMAGE_ROUND,
      IMAGE_ROUND.replace('CExamine', 'CSelect'), "image_round_guarded"),
+    ("image round appends an unchosen UID fetch", "src/ops.bend",
+     'def image_reads(rs: List<&2, PartRead>) -> List<&2, I.Cmd>:\n'
+     '  match rs:\n    case Nil{}:\n      []',
+     'def image_reads(rs: List<&2, PartRead>) -> List<&2, I.Cmd>:\n'
+     '  match rs:\n    case Nil{}:\n      [I.CFetch{[99], [I.IUid{}]}]',
+     "image_round_fetch_empty"),
+    ("image round appends an unchosen section", "src/ops.bend",
+     'def image_read_items(rs: List<&2, PartRange>) -> List<&2, I.Item>:\n'
+     '  match rs:\n    case Nil{}:\n      []',
+     'def image_read_items(rs: List<&2, PartRange>) -> List<&2, I.Item>:\n'
+     '  match rs:\n    case Nil{}:\n      [I.IPart{[99], 4096}]',
+     "image_round_section_empty"),
     ("image round fetches another UID", "src/ops.bend",
      'I.CFetch{[uid], List.append(&2, I.Item,',
      'I.CFetch{[99], List.append(&2, I.Item,', "image_round_fetch_exact"),

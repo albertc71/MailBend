@@ -134,12 +134,12 @@ def config() -> IO(Policy.Config):
 # Send settings
 # -------------
 
-# What sending must also do: keep a Sent copy; refuse recipients outside
-# the allowlist (empty for none); and stay within the daily limit (0 for
-# none), counted in a file in `state_dir`. Only sending reads them, so a bad
-# value refuses every send and leaves drafts and reads alone.
+# Send settings cover the Sent copy, recipient allowlist, daily limit and
+# independent local secret scan. An empty allowlist and a zero limit mean
+# unrestricted. Only sending reads them, so a bad value refuses every send
+# and leaves drafts and reads alone.
 type Sending is Data:
-  Sending{save_sent: Bool, allow: List<&2, String>, limit: U32, state_dir: String}
+  Sending{save_sent: Bool, allow: List<&2, String>, limit: U32, state_dir: String, scan: Bool}
 
 def Sends() -> Data:
   Result<&2, &2, String, Sending>
@@ -230,14 +230,16 @@ def sending_of(
   max: String,
   dir: String,
   xdg: String,
-  home: String
+  home: String,
+  scan: String
 ) -> Sends():
   do Result<&2, &2, String, Sending>:
     save_sent : Bool <- Policy.flag_on(Policy.flag_value("MAILBEND_SAVE_SENT", save))
+    scan_on : Bool <- Policy.flag_on(Policy.flag_value("MAILBEND_SECRET_SCAN", scan))
     entries : List<&2, String> <- allowlist(allow)
     limit : U32 <- send_limit(max)
     state : String <- state_dir(dir, xdg, home)
-    return Sending{save_sent, entries, limit, state}
+    return Sending{save_sent, entries, limit, state, scan_on}
 
 def sending() -> IO(Sends()):
   do IO<Sends()>:
@@ -247,7 +249,8 @@ def sending() -> IO(Sends()):
     dir : String <- env_or("MAILBEND_STATE_DIR", "")
     xdg : String <- env_or("XDG_STATE_HOME", "")
     home : String <- env_or("HOME", "")
-    return sending_of(save, allow, max, dir, xdg, home)
+    scan : String <- env_or("MAILBEND_SECRET_SCAN", "")
+    return sending_of(save, allow, max, dir, xdg, home, scan)
 
 # Every helper is started only from an absolute path, which
 # scripts/mailbend sets, never from a path relative to the working
@@ -1432,17 +1435,50 @@ def part_raw(v: Maybe<&2, String>) -> Result<&2, &2, String, String>:
     case None{}:
       Fail{"missing selected section or unexpected partial origin"}
 
-def part_bytes(r: Run(), +uid: U32, +uidv: U32, +p: Part.Part, max: U32)
-  -> Result<&2, &2, String, String>:
-  do Result<&2, &2, String, String>:
+type PartReply is Data:
+  PartReply{messages: List<&2, I.Msg>, values: List<&2, List<&2, I.Value>>}
+
+def part_tokens(lines: List<&2, I.RLine>) -> List<&2, List<&2, I.Value>>:
+  match lines:
+    case Nil{}:
+      []
+    case I.RLine{text, lits} <> rest:
+      I.tokens(String.drop(text, 2n), lits) <> part_tokens(rest)
+
+def part_prepare(r: Run(), uidv: U32) -> Result<&2, &2, String, PartReply>:
+  do Result<&2, &2, String, PartReply>:
     +lines : List<&2, I.RLine> <- r
     Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
-    ps : List<&2, Part.Part> <- part_metadata(lines, uid)
+    return PartReply{I.fetched(lines), part_tokens(lines)}
+
+def part_values(vs: List<&2, List<&2, I.Value>>, +uid: U32, +key: String) ->
+  Maybe<&2, String>:
+  match vs:
+    case Nil{}:
+      None{}
+    case row <> rest:
+      Part.fetched.put(Part.response(row, uid, key), part_values(rest, uid, key))
+
+def part_prepared.read(reply: PartReply, +uid: U32, +p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  PartReply{messages, values} = reply
+  do Result<&2, &2, String, String>:
+    ps : List<&2, Part.Part> <- part_metadata.first(part_metadata.filter(messages, uid))
     current : Part.Part <- part_found(Part.select(ps, I.section_str(Part.path(p))))
     Part.check(part_same(p, current), "MIME section metadata changed between sessions")
-    raw : String <- part_raw(Part.fetched(lines, uid,
+    raw : String <- part_raw(part_values(values, uid,
       "BODY[" ++ I.section_str(Part.path(p)) ++ "]<0>"))
     Part.decode(p, raw, max)
+
+def part_prepared(r: Result<&2, &2, String, PartReply>, uid: U32, p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  do Result<&2, &2, String, String>:
+    reply : PartReply <- r
+    part_prepared.read(reply, uid, p, max)
+
+def part_bytes(r: Run(), uid: U32, uidv: U32, p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  part_prepared(part_prepare(r, uidv), uid, p, max)
 
 def part_content.fields(text: Bool, ct: String, bytes: String) -> List<&2, J.Json>:
   match text:
@@ -4643,7 +4679,7 @@ type Stamp is Data:
 
 # What the tools want composed; Bcc goes only into the SMTP envelope. With
 # `draft` the message is saved instead of sent; with `dry` that is only shown.
-# `about` is what the message answers, and `jev` whether the gates check a
+# `about` is what the message answers, and `jev` whether TypeSafe checks a
 # send.
 type Want is Data:
   Want{
@@ -4661,12 +4697,24 @@ type Want is Data:
     jev: Jev.Switch
   }
 
+def secs_of.number(n: Maybe<&2, U32>, raw: String) -> U32:
+  match n:
+    case Some{+v}:
+      Bool.pick(U32, U32.is_gt(v, 0) && String.eq(raw, U32.show(v)), v, 0)
+    case None{}:
+      0
+
 def secs_of(p: Policy.Proc) -> U32:
   match p:
     case Policy.ProcOk{code, out, err}:
-      Maybe.default(&2, U32, U32.read(String.trim(out)), 0)
+      +raw = String.trim(out)
+      Bool.pick(U32, U32.is_eq(code, 0), secs_of.number(U32.read(raw), raw), 0)
     case _:
       0
+
+def clock_checked(+secs: U32) -> Result<&2, &2, String, U32>:
+  Bool.pick(Result<&2, &2, String, U32>, U32.is_eq(secs, 0),
+    Fail{"system clock is unavailable or invalid"}, Done{secs})
 
 def rand_of(r: Result<&1, &1, U32 & String, U32>) -> Result<&2, &2, String, U32>:
   match r:
@@ -4684,9 +4732,10 @@ def stamp_checked(
   b: Result<&1, &1, U32 & String, U32>
 ) -> Result<&2, &2, String, Stamp>:
   do Result<&2, &2, String, Stamp>:
+    now : U32 <- clock_checked(secs)
     x : U32 <- rand_of(a)
     y : U32 <- rand_of(b)
-    return stamp_of(secs, x, y)
+    return stamp_of(now, x, y)
 
 # The time in seconds since the epoch; 0 when it cannot be read.
 def now_seconds() -> IO(U32):
@@ -5428,6 +5477,17 @@ def brief_roles(r: Run(), p: BriefPage, me: String, since: String, now: U32) -> 
           merge_folders(I.folders(lines), []))
         brief_sent_role(fs, p, me, since, now)
 
+def brief_contacts.clock(valid: Bool, p: BriefPage, me: String, +now: U32) -> IO(Shown):
+  match valid:
+    case False{}:
+      IO.pure(Shown, brief_output(p, contacts_failed("",
+        "not scanned: system clock cannot support the 30-day correspondence window"), me, ""))
+    case True{}:
+      do IO<Shown>:
+        r : Run() <- await_raw(Ops.plan_probe())
+        brief_roles(r, p, me, Maybe.default(&2, String,
+          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+
 def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
   match empty:
     case True{}:
@@ -5435,9 +5495,7 @@ def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
     case False{}:
       do IO<Shown>:
         +now : U32 <- now_seconds()
-        r : Run() <- await_raw(Ops.plan_probe())
-        brief_roles(r, p, me, Maybe.default(&2, String,
-          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+        brief_contacts.clock(U32.is_ge(now, 2592000), p, me, now)
 
 def brief_contacts(+p: BriefPage) -> IO(Shown):
   BriefPage{folder, uidv, next, more, window, ms} = p
@@ -6073,13 +6131,27 @@ def unlisted_msg(refused: List<&2, String>) -> String:
   "MAILBEND_ALLOWED_RECIPIENTS does not allow sending to " ++ String.join(refused, ", ") ++
     "; nothing was sent"
 
+def send_allowed.clock(
+  clock: Result<&2, &2, String, U32>,
+  envelope: String,
+  limit: U32,
+  dir: String,
+  s: Sent
+) -> IO(Policy.Out):
+  match clock:
+    case Fail{problem}:
+      send_allowed.if(problem, envelope, s)
+    case Done{secs}:
+      do IO<Policy.Out>:
+        problem : String <- reserve(limit, dir, M.iso_date(secs))
+        send_allowed.if(problem, envelope, s)
+
 # The send counts against the UTC day read just before its reservation,
 # after the gates, which may take a while.
 def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(Policy.Out):
   do IO<Policy.Out>:
     secs : U32 <- now_seconds()
-    problem : String <- reserve(limit, dir, M.iso_date(secs))
-    send_allowed.if(problem, envelope, s)
+    send_allowed.clock(clock_checked(secs), envelope, limit, dir, s)
 
 # A message ready to send once the gates pass it: the bare sender and
 # recipients, the message, the allowlist and daily limit it goes under,
@@ -6114,7 +6186,7 @@ def send_refused(
 
 # The send itself: only an envelope lets it go, and only then is a place in
 # the daily count reserved. A dry run reserves none and shows what the
-# envelope is built from. `report` is what the gates found, with Jev on.
+# envelope is built from. `report` is what the enabled gates found.
 def send_allowed(
   envelope: Maybe<&2, String>,
   blocked: String,
@@ -6246,10 +6318,21 @@ def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Policy.Out)
   Ready{f, rcpts, m, allow, l, dr, s, y, p} = r
   send_jev.put(S.refused(allow, rcpts), c, w, from, r)
 
-def send_gated(jev: Jev.Switch, w: Want, from: String, r: Ready) -> IO(Policy.Out):
+def send_local(on: Bool, w: Want, from: String, r: Ready) -> IO(Policy.Out):
+  match on:
+    case False{}:
+      send_checked(Secrets.Clean{}, Jev.JevOff{}, [], r)
+    case True{}:
+      Want{to, cc, bcc, subject, text, irt, refs, atts, draft, dry, about, jev} = w
+      fields = outgoing_fields(from, to, cc, bcc, subject)
+      +scan = Secrets.secret_scan(List.append(&2, M.Hdr, fields,
+        [M.Hdr{"in-reply-to", irt}, M.Hdr{"references", refs}]), text, atts)
+      send_checked(scan, Jev.JevOff{}, scan_kvs(scan), r)
+
+def send_gated(jev: Jev.Switch, scan: Bool, w: Want, from: String, r: Ready) -> IO(Policy.Out):
   match jev:
     case Jev.Off{}:
-      send_checked(Secrets.Clean{}, Jev.JevOff{}, [], r)
+      send_local(scan, w, from, r)
     case Jev.On{c}:
       send_jev(c, w, from, r)
 
@@ -6257,12 +6340,12 @@ def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Policy.Ou
   match cfg:
     case Fail{m}:
       pure_out(Policy.Err{"configuration error: " ++ m})
-    case Done{Sending{+save, allow, limit, dir}}:
+    case Done{Sending{+save, allow, limit, dir, scan}}:
       +d = draft_of(w, from, st, False{})
       +rcpts = specs(all_rcpts(w))
       +sender = M.addr_spec(from)
       +msg = M.compose(d, boundary_of(st))
-      send_gated(want_jev(w), w, from, Ready{sender, rcpts, msg, allow, limit, dir,
+      send_gated(want_jev(w), scan, w, from, Ready{sender, rcpts, msg, allow, limit, dir,
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
           draft_of(w, from, st, True{}), boundary_of(st)},
         is_dry(w), SmtpPreview{sender, rcpts, msg, save}})
@@ -7469,8 +7552,8 @@ def round_reads(ps: List<&2, ImgFetch>) -> List<&2, Ops.PartRead>:
 def see_fuel(ps: List<&2, ImgPart>) -> Nat:
   Nat.add(Nat.mul(List.length(&2, ImgPart, ps), 4n), 2n)
 
-def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat, +run: Run(), st: ImgSee) ->
-  IO(ImgSee):
+def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat,
+  +run: Result<&2, &2, String, PartReply>, st: ImgSee) -> IO(ImgSee):
   match fuel cached st:
     case 0n _ _:
       IO.pure(ImgSee, SeeStop{"image survey exceeded its part budget"})
@@ -7487,11 +7570,11 @@ def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat, +run: Run(), st
       +ps = round_parts(ImgPart{uid, p} <> rest, U32.to_nat(Image.quota_round(quota)))
       do IO<ImgSee>:
         reply : Run() <- imap_run(Ops.plan_image_round(folder, uidv, round_reads(ps)))
-        see_run(f, folder, uidv, List.length(&2, ImgFetch, ps), reply,
+        see_run(f, folder, uidv, List.length(&2, ImgFetch, ps), part_prepare(reply, uidv),
           SeeFetch{rest, acc, quota, uid, p, format, max})
     case 1n+f 1n+n SeeFetch{rest, acc, quota, uid, +p, format, max}:
       see_run(f, folder, uidv, n, run,
-        fetch_end(part_bytes(run, uid, uidv, p, max), rest, acc, Image.quota_fetched(quota),
+        fetch_end(part_prepared(run, uid, p, max), rest, acc, Image.quota_fetched(quota),
           Part.path(p), image_name_of(p), format))
 
 type Bat is Data:
@@ -7510,7 +7593,7 @@ def batch_seen(seen: ImgSee, counts: List<&2, Nat>) -> Bat:
 def batch_run(folder: String, uidv: U32, q: ImgQueue) -> IO(Bat):
   ImgQueue{counts, +ps} = q
   do IO<Bat>:
-    seen : ImgSee <- see_run(see_fuel(ps), folder, uidv, 0n, Done{[]},
+    seen : ImgSee <- see_run(see_fuel(ps), folder, uidv, 0n, Done{PartReply{[], []}},
       SeeParts{ps, [], Image.quota_new()})
     return batch_seen(seen, counts)
 
@@ -9000,7 +9083,7 @@ def posture(c: Policy.Config, sending: Sending, endpoints: PostureEndpoints) -> 
     case Policy.ConfigBad{msg}:
       Policy.Err{"configuration error: " ++ msg}
     case Policy.Config{+ro, +drafts, +jev, +images}:
-      Sending{save_sent, +allow, +limit, state_dir} = sending
+      Sending{save_sent, +allow, +limit, state_dir, scan} = sending
       PostureEndpoints{imap, smtp, tls, doh, proxy, proxy_set, doh_proxy, typesafe_proxy,
         imap_ip, smtp_ip, attach, download, trust} = endpoints
       +on = Jev.is_on(jev)

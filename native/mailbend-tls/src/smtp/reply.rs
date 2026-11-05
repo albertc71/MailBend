@@ -1,7 +1,7 @@
 //! Parsing SMTP replies and the extensions an EHLO reply lists.
 
 use crate::Exit;
-use crate::text::{has_word, lines, starts_with_ignore_case};
+use crate::text::{lines, starts_with_ignore_case};
 
 /// One line of a (possibly multi-line) reply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,18 +43,72 @@ pub fn has_extension(ehlo: &[u8], keyword: &[u8]) -> bool {
     })
 }
 
-/// Whether the EHLO reply's AUTH line lists the mechanism `mechanism`.
+/// Exact tokens from AUTH lines. Keep the space after AUTH mandatory (no
+/// legacy AUTH=), and use the report's ASCII-whitespace separation for both
+/// observations and authentication. IMAP's closing `]` is not a separator.
+fn auth_tokens(ehlo: &[u8]) -> impl Iterator<Item = &[u8]> {
+    lines(ehlo)
+        .map(text)
+        .filter(|line| starts_with_ignore_case(line, b"AUTH "))
+        .flat_map(|line| {
+            line[5..]
+                .split(u8::is_ascii_whitespace)
+                .filter(|token| !token.is_empty())
+        })
+}
+
+/// Whether the EHLO reply's AUTH line lists the exact mechanism `mechanism`.
 pub fn has_auth(ehlo: &[u8], mechanism: &[u8]) -> bool {
-    lines(ehlo).any(|line| {
-        let text = text(line);
-        // From the space after "AUTH", so the first mechanism is a word too.
-        starts_with_ignore_case(text, b"AUTH ") && has_word(&text[4..], mechanism)
-    })
+    auth_tokens(ehlo).any(|token| token.eq_ignore_ascii_case(mechanism))
+}
+
+/// Fixed AUTH observations for a protected diagnostic EHLO reply.
+pub fn auth_facts(ehlo: &[u8]) -> String {
+    const ALLOWED: [&str; 4] = ["PLAIN", "LOGIN", "XOAUTH2", "OAUTHBEARER"];
+    let mut offered = [false; ALLOWED.len()];
+    let mut unknown = 0;
+    for token in auth_tokens(ehlo) {
+        if let Some(index) = ALLOWED
+            .iter()
+            .position(|known| token.eq_ignore_ascii_case(known.as_bytes()))
+        {
+            offered[index] = true;
+        } else {
+            unknown += 1;
+        }
+    }
+    let mut facts = String::new();
+    for (mechanism, present) in ALLOWED.into_iter().zip(offered) {
+        if present {
+            facts.push_str("smtp_auth ");
+            facts.push_str(mechanism);
+            facts.push('\n');
+        }
+    }
+    facts.push_str(&format!("smtp_auth_other {unknown}\n"));
+    facts
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_report_redacts_unknown_mechanisms_and_deduplicates_known_ones() {
+        assert_eq!(
+            auth_facts(b"250-private.example\r\n250-AUTH plain LOGIN XOAUTH2 OAUTHBEARER private@example.com PLAIN\r\n250 AUTH strange-secret\r\n"),
+            "smtp_auth PLAIN\nsmtp_auth LOGIN\nsmtp_auth XOAUTH2\nsmtp_auth OAUTHBEARER\nsmtp_auth_other 2\n"
+        );
+        assert_eq!(auth_facts(b"250 AUTHX PLAIN\r\n"), "smtp_auth_other 0\n");
+    }
+
+    #[test]
+    fn report_mechanisms_are_exact_tokens() {
+        assert_eq!(
+            auth_facts(b"250 AUTH PLAIN] LOGIN@example.com XOAUTH2x\r\n"),
+            "smtp_auth_other 3\n"
+        );
+    }
 
     #[test]
     fn reply_lines_carry_a_code_and_a_continuation_mark() {
@@ -96,5 +150,74 @@ mod tests {
         assert!(!has_auth(ehlo, b"XOAUTH2"));
         assert!(!has_auth(b"250 AUTH PLAINX\r\n", b"PLAIN"));
         assert!(!has_auth(b"250 AUTHX PLAIN\r\n", b"PLAIN"));
+    }
+
+    #[test]
+    fn authentication_requires_exact_mechanism_tokens() {
+        for token in [
+            "PLAIN]",
+            "[PLAIN",
+            "PLAINX",
+            "XPLAIN",
+            "PLAIN=",
+            "PLAIN,",
+            "PLAIN.LOGIN",
+            "PLAIN@example.com",
+            "PLAIN\0",
+            "PLAIN\u{a0}",
+        ] {
+            let ehlo = format!("250 AUTH {token} LOGIN\r\n");
+            assert!(!has_auth(ehlo.as_bytes(), b"PLAIN"), "{token:?}");
+            assert!(has_auth(ehlo.as_bytes(), b"LOGIN"), "{token:?}");
+            assert_eq!(
+                auth_facts(ehlo.as_bytes()),
+                "smtp_auth LOGIN\nsmtp_auth_other 1\n"
+            );
+        }
+        assert!(!has_auth(b"250 AUTH LOGIN]\r\n", b"LOGIN"));
+        assert!(!has_auth(b"250 AUTH \r\n", b""));
+    }
+
+    #[test]
+    fn authentication_preserves_case_spaces_lines_and_end_of_input() {
+        for ehlo in [
+            &b"250 AUTH PLAIN"[..],
+            b"250-AuTh   pLaIn  LOGIN \r\n250 SIZE 1000\r\n",
+            b"250-smtp.test\r\n250-AUTH LOGIN\r\n250 AUTH PLAIN\r\n",
+            b"250 AUTH PLAIN PLAIN\r\n",
+        ] {
+            assert!(has_auth(ehlo, b"PLAIN"));
+            assert!(has_auth(ehlo, b"plain"));
+        }
+    }
+
+    #[test]
+    fn authentication_and_reporting_use_the_same_token_spacing() {
+        for separator in [b' ', b'\t', b'\r', 0x0c] {
+            let mut ehlo = b"250 AUTH LOGIN".to_vec();
+            ehlo.push(separator);
+            ehlo.extend_from_slice(b"pLaIn\r\n");
+            assert!(has_auth(&ehlo, b"PLAIN"), "{separator:?}");
+            assert_eq!(
+                auth_facts(&ehlo),
+                "smtp_auth PLAIN\nsmtp_auth LOGIN\nsmtp_auth_other 0\n"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_keyword_still_requires_a_space_and_legacy_equals_is_ignored() {
+        for ehlo in [
+            &b"250 AUTH=PLAIN LOGIN\r\n"[..],
+            b"250 AUTHX PLAIN LOGIN\r\n",
+            b"250 AUTH\tPLAIN LOGIN\r\n",
+            b"250 XAUTH PLAIN LOGIN\r\n",
+            b"250 SIZE PLAIN LOGIN\r\n",
+            b"250 AUTH\r\n",
+        ] {
+            assert!(!has_auth(ehlo, b"PLAIN"));
+            assert!(!has_auth(ehlo, b"LOGIN"));
+            assert_eq!(auth_facts(ehlo), "smtp_auth_other 0\n");
+        }
     }
 }

@@ -3,6 +3,20 @@
 Thanks for helping. MailBend is small on purpose; please open an issue to
 discuss larger changes before writing them.
 
+Start with the [issue chooser](https://github.com/albertc71/MailBend/issues/new/choose)
+for a bug report, feature request, or provider conformance report. Report suspected
+vulnerabilities privately through [SECURITY.md](SECURITY.md).
+Documentation fixes, tests, and synthetic fixtures are useful first contributions.
+[Governance](GOVERNANCE.md) explains proposals, owner approval for every pull
+request, and law changes.
+
+The offline documentation checker validates selected declaration contracts for the
+issue chooser and bug/feature forms, including their visible privacy warnings.
+It does not parse `provider-report.yml`, validate every GitHub form field, or
+verify GitHub's rendered forms. Review the provider form separately when changing
+it; its diagnostic/report workflow is described in
+[Provider reports](docs/PROVIDER-REPORTS.md).
+
 ## Ground rules
 
 - Read [AGENTS.md](AGENTS.md): it holds the invariants every change must keep
@@ -54,6 +68,7 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
+python3 tests/test-plugin.py                      # plugin declarations and isolated launcher fixture
 python3 tests/test-toolchain-installers.py        # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
@@ -66,6 +81,8 @@ python3 tests/formal/check-response-image-budgets.py # budget proofs reject brok
 python3 tests/test-writing-laws.py                # malformed guide fences fail closed
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
+python3 tests/formal/check-plan-coverage.py        # public plan references and command construction
+python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
 sh tests/run-unit.sh
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
@@ -75,6 +92,7 @@ python3 tests/test-scale-baseline.py               # historical selected baselin
 python3 -I tests/test-scale-pair.py                   # fixed-reference paired provenance and failure controls
 python3 tests/test-image-budget.py                 # helper MAX_REQUEST equals Bend's image cap
 python3 tests/test-image-assets.py                 # the fake TypeSafe's image rules
+python3 tests/test-image-replies-probe.py           # compile both image probe variants, tiny smoke only
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
 python3 tests/test-stdio.py
@@ -83,9 +101,12 @@ python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
 python3 tests/test-posture.py                     # offline capability report and redaction
+python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
+python3 tests/test-cli-tools.py                   # credential-free filtered CLI discovery
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
+python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
@@ -100,6 +121,29 @@ Keep the entrypoint under 300 lines, use portable frontmatter without
 `allowed-tools`, and retain explicit human approval before sends and deletes.
 The documentation check validates tool-scoped names and arguments against
 `tools/gen-schema.py`; it is not a behavioral evaluation of an agent.
+
+When changing shipped plugin behavior, including `.claude-plugin/` or
+`hooks/`, bump `version` in `.claude-plugin/plugin.json` and update the version
+assertion in `tests/test-plugin.py` and the plugin guide. The
+[upstream version contract](https://code.claude.com/docs/en/plugins-reference#version)
+keeps repository-marketplace users on the declared version until it changes.
+Also run these checks with Claude Code 2.1.295 or later:
+
+```sh
+claude plugin validate . --strict
+claude plugin validate .claude-plugin/marketplace.json --strict
+```
+
+Plugin tests never start Claude or use a live account. The lightweight suite
+guards manifest declarations and uses a Python harness to substitute paths
+and merge environments against a fake installation. Shell-metacharacter
+paths exercise Python's argv handling, not Claude's interpolation, process
+launching or environment inheritance. The runtime suite uses that same
+harness with this checkout's real launcher, built binaries, and loopback mail
+fixture. Neither these tests nor the validator proves client loading or prompt
+display. Follow the
+[manual plugin checks](docs/CLAUDE-PLUGIN.md#verify-the-connection-and-prompt)
+before relying on a particular client version.
 
 The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
 checks. The second repeats the tool scenarios through structured MCP without
@@ -123,6 +167,42 @@ abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
 The transport suite exercises the actual helper.
 
+The plan-coverage check runs offline without Bend. Every `plan_*` definition in
+`src/ops.bend` referenced by `main.bend` or a file under `src/` must also have a
+reference inside a `law` statement in `LAWS.bend`. Internal-only helpers are
+excluded. An externally referenced dotted helper still needs coverage. Comments
+and string literals do not count, and a function-value reference counts even
+without a call.
+This checks the presence of a reference, not the strength of a law or its proof.
+A tautological law referencing the plan satisfies this check.
+
+The same check rejects IMAP command construction in production files outside
+`src/ops.bend` and `src/imap.bend`. It derives constructor names from `I.Cmd`,
+resolves import aliases, and permits constructor patterns before a `case` colon.
+It also rejects external references to command-returning defs in `src/ops.bend`
+unless their names start with `plan_`. External references to command-returning
+defs in `src/imap.bend` are rejected even if their names start with `plan_`:
+plans belong in `src/ops.bend`. This uses declared return types that name the
+IMAP `Cmd` type, directly or inside a container. Every def in `src/ops.bend` and
+`src/imap.bend` must have an explicit, nonempty return annotation. This requirement
+does not apply to other modules or proof files. A `Cmd` parameter alone does
+not make a def command-returning. Return annotations support named types and
+generic containers with numeric multiplicities such as `List<&2, I.Cmd>`.
+Other return-type syntax fails closed. The check does not infer return types,
+expand type aliases, inspect user-defined data types or their fields, or follow
+higher-order values and call chains. It does not prove that plan output reaches
+the transport unchanged.
+
+Proof and test files remain free to construct expected commands. This source
+reader is not a Bend parser or type checker. It supports the repository's
+explicitly aliased local imports and fails on an unsupported import or relevant
+declaration. Qualified plan bindings are
+rejected. A qualified plan name immediately before a colon is also rejected
+as an ambiguous binding or annotation. Helper definitions in `LAWS.bend` do
+not supply coverage. Add a fixture to
+`tests/formal/test-plan-coverage.py` when extending its supported syntax.
+The existing proof and mutation checks remain necessary.
+
 The documentation check runs offline with Python 3.11 or later. It checks law
 references, environment-variable names, CLI verbs in both usage texts, and every
 `src/*.bend` path in the architecture's Layers section. Cite laws with Markdown
@@ -130,6 +210,12 @@ links whose labels are the exact law names and whose targets are `LAWS.bend`.
 The check also recognizes `law` or `laws` followed by backtick names, a backtick
 name followed by `law`, and `Laws.`-qualified references. It checks names, not whether
 prose claims follow from the laws.
+
+The bug and feature forms and issue chooser configuration use JSON syntax,
+which is valid YAML, so the same offline check can parse them without another
+dependency. It checks required fields, privacy warnings, and the private security
+route. The documentation tests reject broken declarations and contributor links.
+These source checks do not submit issues or verify GitHub's rendered form.
 
 Environment coverage uses exact `MAILBEND_*` string literals in `main.bend`,
 `src/*.bend`, and native Rust source, excluding comments and `cfg(test)` modules.

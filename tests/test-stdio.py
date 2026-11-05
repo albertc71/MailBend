@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import contextlib
 import ctypes
+import itertools
 import json
 import os
 import pathlib
@@ -17,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import fake_mail_server as fake
 
@@ -62,11 +64,24 @@ def wait_until(predicate, timeout=10):
     raise AssertionError("condition did not become true within timeout")
 
 
+def process_state(pid):
+    # comm can contain ") "; the fields begin after its final closing parenthesis.
+    return pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+
+
+def stopped(pid):
+    # An exited or vanished core must fail the barrier, not satisfy or outwait it.
+    state = process_state(pid)
+    if state in "ZXx":
+        raise AssertionError(f"process {pid} exited before being observed stopped (state {state})")
+    return state == "T"
+
+
 def live(pid):
     # Z is an unreaped zombie and X a task its reaper is releasing; both have
     # exited, and kill() on an X task already fails with ESRCH.
     try:
-        return pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] not in "ZXx"
+        return process_state(pid) not in "ZXx"
     except (FileNotFoundError, ProcessLookupError):
         return False
 
@@ -753,7 +768,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
-                wait_until(lambda: pathlib.Path(f"/proc/{core}/stat").read_text().split(") ", 1)[1][0] == "T")
+                wait_until(lambda: stopped(core))
                 session.proc.kill()
                 self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                 # Exercise the real core; the separate input-independent child
@@ -779,7 +794,7 @@ class StdioTests(unittest.TestCase):
                 child = session.core_pid()
                 os.kill(child, signal.SIGSTOP)
                 try:
-                    wait_until(lambda: pathlib.Path(f"/proc/{child}/stat").read_text().split(") ", 1)[1][0] == "T")
+                    wait_until(lambda: stopped(child))
                     session.proc.kill()
                     self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                     # Orphan groups receive HUP+CONT. This child ignores HUP and
@@ -807,6 +822,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
+                wait_until(lambda: stopped(core))
                 session.peer.setblocking(False)
                 while True:
                     try:
@@ -820,7 +836,8 @@ class StdioTests(unittest.TestCase):
                     return int(pending, 16) & (1 << (signal.SIGTERM - 1))
                 wait_until(term_pending)
             finally:
-                os.kill(core, signal.SIGCONT)
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(core, signal.SIGCONT)
             self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
             self.assertFalse(live(core))
 
@@ -872,6 +889,115 @@ class StdioTests(unittest.TestCase):
             self.assertEqual(session.proc.wait(timeout=10), 6)
             self.assertEqual(session.proc.stdout.read(), b"")
             self.assertIn(b"use scripts/mailbend mcp", session.proc.stderr.read())
+
+
+class ProcessStateTests(unittest.TestCase):
+    # These synthetic controls need neither built binaries nor visible /proc children.
+    def test_state_uses_final_comm_delimiter(self):
+        for comm in ("mailbend-core", "name) T fake", "name) Z fake", "(nested) ) X"):
+            for state in "RSDTtZXx":
+                with self.subTest(comm=comm, state=state), mock.patch.object(
+                        pathlib.Path, "read_text", autospec=True,
+                        return_value=f"123 ({comm}) {state} 1 2 3\n") as read:
+                    self.assertEqual(process_state(123), state)
+                    if state in "ZXx":
+                        with self.assertRaisesRegex(AssertionError, "exited before being observed stopped"):
+                            stopped(123)
+                    else:
+                        self.assertEqual(stopped(123), state == "T")
+                    self.assertEqual(live(123), state not in "ZXx")
+                    self.assertEqual(read.call_args_list,
+                                     [mock.call(pathlib.Path("/proc/123/stat"))] * 3)
+
+    def test_disappearance_fails_stop_barrier_but_is_not_live(self):
+        for error in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=error), mock.patch.object(
+                    pathlib.Path, "read_text", side_effect=error):
+                with self.assertRaises(error):
+                    wait_until(lambda: stopped(123))
+                self.assertFalse(live(123))
+
+    def test_other_read_errors_are_not_hidden(self):
+        with mock.patch.object(pathlib.Path, "read_text", side_effect=PermissionError):
+            for predicate in (stopped, live):
+                with self.subTest(predicate=predicate.__name__), self.assertRaises(PermissionError):
+                    predicate(123)
+
+    def test_exited_core_fails_stop_barrier_without_polling(self):
+        for state in "ZXx":
+            with self.subTest(state=state), mock.patch.object(
+                    pathlib.Path, "read_text", return_value=f"123 (core) {state} 1\n") as read, \
+                    mock.patch.object(time, "monotonic", side_effect=itertools.count()), \
+                    mock.patch.object(time, "sleep") as sleep:
+                with self.assertRaisesRegex(
+                        AssertionError, f"process 123 exited before being observed stopped \\(state {state}\\)"):
+                    wait_until(lambda: stopped(123))
+                read.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_stop_barrier_keeps_default_deadline(self):
+        now = 0.0
+        clock_reads = 0
+
+        def monotonic():
+            nonlocal clock_reads
+            clock_reads += 1
+            # Allow extra observations without advancing time, but fail a busy
+            # loop even when a regression removes the sleep that moves the clock.
+            self.assertLessEqual(clock_reads, 10_000, "polling clock made no bounded progress")
+            return now
+
+        def advance(seconds):
+            nonlocal now
+            now += seconds
+
+        predicate = mock.Mock(side_effect=lambda: stopped(123))
+        with mock.patch.object(pathlib.Path, "read_text", return_value="123 (core) S 1\n"), \
+                mock.patch.object(time, "monotonic", side_effect=monotonic), \
+                mock.patch.object(time, "sleep", side_effect=advance) as sleep:
+            with self.assertRaisesRegex(AssertionError, "within timeout"):
+                wait_until(predicate)
+            self.assertGreater(predicate.call_count, 0)
+            self.assertEqual(predicate.call_count, sleep.call_count)
+            self.assertGreaterEqual(now, 10)
+            self.assertLessEqual(now, 10 + 0.01 + 1e-9)
+
+    def test_backpressure_waits_for_observed_stop_before_flood_and_term(self):
+        events = []
+        states = iter("RST")
+
+        def read(path):
+            if path == pathlib.Path("/proc/123/stat"):
+                state = "Z" if (123, signal.SIGCONT) in events else next(states, "T")
+                events.append(state)
+                return f"123 (name) T fake) {state} 1\n"
+            self.assertEqual(path, pathlib.Path("/proc/123/status"))
+            events.append("pending")
+            return f"ShdPnd:\t{1 << (signal.SIGTERM - 1):x}\n"
+
+        def flood(_):
+            self.assertIn("T", events, "input reached a core not observed stopped")
+            events.append("flood")
+            raise BlockingIOError
+
+        with mock.patch(f"{__name__}.Session") as session_class, \
+                mock.patch.object(pathlib.Path, "read_text", autospec=True, side_effect=read), \
+                mock.patch.object(time, "sleep"), \
+                mock.patch.object(os, "kill", side_effect=lambda pid, sig: events.append((pid, sig))):
+            session = session_class.return_value.__enter__.return_value
+            session.core_pid.return_value = 123
+            session.peer.send.side_effect = flood
+            session.proc.terminate.side_effect = lambda: events.append("terminate")
+            session.proc.wait.return_value = -signal.SIGTERM
+            case = StdioTests("test_backpressure_still_forwards_signals")
+            case.test_backpressure_still_forwards_signals()
+            session.proc.wait.assert_called_once_with(timeout=10)
+        required = [(123, signal.SIGSTOP), "T", "flood", "terminate",
+                    "pending", (123, signal.SIGCONT), "Z"]
+        for event in ((123, signal.SIGSTOP), "flood", "terminate", (123, signal.SIGCONT)):
+            self.assertEqual(events.count(event), 1, events)
+        for before, after in zip(required, required[1:]):
+            self.assertLess(events.index(before), events.index(after), events)
 
 
 if __name__ == "__main__":

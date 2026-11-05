@@ -228,6 +228,7 @@ class State:
         self.quota_status = fixture.get('quota_status', 'OK')
         self.quota_refusals = fixture.get('quota_refusals', {})
         self.smtp_auth = fixture.get('smtp_auth', 'PLAIN LOGIN')
+        self.smtp_auth_before_tls = fixture.get('smtp_auth_before_tls', '')
         self.smtp_greeting = fixture.get('smtp_greeting', 'fake ESMTP')
         self.seen = {}
         self.examine_count = 0
@@ -1058,8 +1059,10 @@ class IMAPSession:
                 self.send(f'{tag} BAD unknown search key {unknown}\r\n')
                 return
             matched = sorted(m['uid'] for m in messages if all(p(m) for p in preds))
-        response = '* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n'
         mode = self.state.search_responses.get(mbox, self.state.search_response)
+        if mode == 'duplicate-uids':
+            matched = [uid for uid in matched for _ in range(2)]
+        response = '* SEARCH' + (' ' + ' '.join(str(u) for u in matched) if matched else '') + '\r\n'
         if mode == 'malformed':
             self.send('* SEARCH invalid\r\n')
         elif mode != 'missing':
@@ -1550,6 +1553,8 @@ class SMTPSession:
             lines.append('STARTTLS')
         if self.tls_active:
             lines.append('AUTH ' + self.state.smtp_auth)
+        elif self.state.smtp_auth_before_tls:
+            lines.append('AUTH ' + self.state.smtp_auth_before_tls)
         for line in lines[:-1]:
             self.send(f'250-{line}\r\n')
         self.send(f'250 {lines[-1]}\r\n')
@@ -1723,7 +1728,8 @@ def main():
                     help='answer every STORE with FETCH updates and repeat FETCH answers')
     ap.add_argument('--flags-first', action='store_true',
                     help='precede every FETCH answer with an unsolicited update holding only UID and FLAGS')
-    ap.add_argument('--search-response', choices=['normal', 'missing', 'malformed', 'duplicate'],
+    ap.add_argument('--search-response', choices=['normal', 'missing', 'malformed', 'duplicate',
+                                                'duplicate-uids'],
                     default='normal')
     ap.add_argument('--remove-after-fetch', type=lambda v: {int(u) for u in v.split(',')}, default=set())
     ap.add_argument('--measure-responses', action='store_true')

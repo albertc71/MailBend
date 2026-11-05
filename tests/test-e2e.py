@@ -45,7 +45,7 @@ FIX = json.loads(FIXTURE.read_text(encoding="utf-8"))
 PASSWORD = FIX["password"]
 FOLDER_ROLES = ("drafts", "trash", "sent", "junk", "archive")
 SEND_SETTINGS = ("MAILBEND_SAVE_SENT", "MAILBEND_ALLOWED_RECIPIENTS", "MAILBEND_MAX_SENDS_PER_DAY",
-                 "MAILBEND_STATE_DIR")
+                 "MAILBEND_STATE_DIR", "MAILBEND_SECRET_SCAN")
 TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEND_TYPESAFE_API_KEY",
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
@@ -582,6 +582,99 @@ def setup_diagnostics(work):
             srv.stop()
 
 
+def provider_reports(work):
+    fixture = copy.deepcopy(FIX)
+    private_folder = "private-folder@example.com"
+    fixture["mailboxes"][private_folder] = fixture["mailboxes"].pop("Sent Messages")
+    fixture["smtp_auth"] = "PLAIN LOGIN XOAUTH2 private-mechanism@example.com"
+    fixture["smtp_auth_before_tls"] = "OAUTHBEARER private-plaintext@example.com"
+    caps = "MOVE,UIDPLUS,SPECIAL-USE,CONDSTORE,X-GM-EXT-1,private-cap@example.com"
+    for mode in ([], ["--smtp-implicit"]):
+        srv = Server(work, caps=caps, fixture=fixture, extra=mode)
+        try:
+            before = srv.st()
+            env = srv.env(MAILBEND_READ_ONLY="1", MAILBEND_DRAFTS_ONLY="1")
+            def invoke(*flags):
+                p = subprocess.run([LAUNCHER, "diagnose", *flags], env=env,
+                                   capture_output=True, text=True, timeout=135)
+                outputs.extend([p.stdout, p.stderr])
+                return p
+
+            local = invoke("--report")
+            report = json.loads(local.stdout).get("server_facts", {})
+            check("provider report: flag alone never authorizes network",
+                  local.returncode == 0 and not srv.log_lines() and report == {
+                      "mailbend_version": "0.1.0", "imap_capabilities": None,
+                      "roles": None, "smtp_auth": None}, report)
+            ordinary = invoke("--imap", "--smtp")
+            log_before = srv.log_records()
+            reported = invoke("--report", "--smtp", "--imap")
+            log_after = srv.log_records()[len(log_before):]
+            body = json.loads(reported.stdout)
+            facts = body.pop("server_facts", {})
+            check("provider report: default JSON remains byte-identical without added facts",
+                  ordinary.returncode == reported.returncode == 0
+                  and json.dumps(body, separators=(",", ":"), ensure_ascii=False) + "\n" == ordinary.stdout)
+            observed = lambda records: [(r["proto"], r["line"]) for r in records]
+            check("provider report: opt-in sends exactly the existing diagnostic commands",
+                  observed(log_after) == observed(log_before), observed(log_after))
+            check("provider report: fixed capability tokens and counted unknown",
+                  facts.get("imap_capabilities") == {"tokens": ["IMAP4REV1", "UIDPLUS", "MOVE",
+                      "CONDSTORE", "X-GM-EXT-1", "SPECIAL-USE"], "unknown_count": 1}, facts)
+            check("provider report: reports protected SMTP mechanisms only",
+                  facts.get("smtp_auth") == {"mechanisms": ["PLAIN", "LOGIN", "XOAUTH2"],
+                      "unknown_count": 1}, facts)
+            check("provider report: role names and address-shaped folders remain private",
+                  facts.get("roles") == {"inbox": "name", "drafts": "advertised", "trash": "advertised",
+                      "sent": "advertised", "junk": "advertised", "archive": "advertised"}
+                  and all(secret not in reported.stdout for secret in (private_folder,
+                      "private-cap", "private-mechanism", FIX["user"], PASSWORD,
+                      "localhost", str(srv.imap), str(srv.smtp))), facts)
+            check("provider report: read-only and drafts-only checks leave mail unchanged", srv.st() == before)
+            env["MAILBEND_SENT_FOLDER"] = private_folder
+            override = json.loads(invoke("--imap", "--report").stdout)["server_facts"]
+            check("provider report: explicit role override is identified without its value",
+                  override["roles"]["sent"] == "override" and override["smtp_auth"] is None)
+            env["MAILBEND_SMTP_HOST"] = "untrusted.example"
+            env["MAILBEND_SMTP_CONNECT_IP"] = "127.0.0.1"
+            refused = invoke("--smtp", "--report")
+            refused_body = json.loads(refused.stdout)
+            check("provider report: TLS failure never reports plaintext AUTH offers",
+                  refused.returncode != 0 and refused_body["server_facts"]["smtp_auth"] is None
+                  and diagnosed(refused_body["checks"], "smtp", "tls", "failed"))
+            env.pop("MAILBEND_SMTP_CONNECT_IP")
+            env["MAILBEND_SMTP_HOST"] = "localhost"
+            start = len(srv.log_records())
+            for flags in (("--report", "--report"), ("--imap", "--imap", "--report"),
+                          ("--report=false", "--smtp"), ("--posture", "--report")):
+                invalid = invoke(*flags)
+                check("provider report: invalid flags fail before network", invalid.returncode == 2
+                      and len(srv.log_records()) == start, flags)
+        finally:
+            srv.stop()
+    fixture = copy.deepcopy(FIX)
+    fixture["smtp_auth"] = "XOAUTH2 private-mechanism@example.com"
+    fixture["mailboxes"]["Sent Messages"]["special"] = []
+    fixture["mailboxes"]["Drafts"]["special"] = []
+    fixture["mailboxes"]["Trash"] = copy.deepcopy(fixture["mailboxes"]["Deleted Messages"])
+    fixture["mailboxes"]["Junk"]["special"] = ["\\Junk", "\\Noselect"]
+    srv = Server(work, caps="SPECIAL-USE", fixture=fixture)
+    try:
+        p = subprocess.run([LAUNCHER, "diagnose", "--imap", "--smtp", "--report"],
+                           env=srv.env(), capture_output=True, text=True, timeout=135)
+        outputs.extend([p.stdout, p.stderr])
+        body = json.loads(p.stdout)
+        facts = body.get("server_facts", {})
+        check("provider report: failed AUTH still describes the protected offer",
+              p.returncode != 0 and facts.get("smtp_auth") == {"mechanisms": ["XOAUTH2"], "unknown_count": 1}
+              and diagnosed(body["checks"], "smtp", "authentication", "failed", "unsupported_auth"))
+        check("provider report: conventional, ambiguous and unselectable roles are distinguished",
+              facts.get("roles") == {"inbox": "name", "drafts": "name", "trash": "ambiguous",
+                  "sent": "name", "junk": "unresolved", "archive": "advertised"}, facts)
+    finally:
+        srv.stop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool-scenarios-only", action="store_true",
@@ -618,6 +711,7 @@ def run_all(work, *, tool_scenarios_only=False):
         setup_profiles(work)
         setup_folder_suggestions(work)
         setup_diagnostics(work)
+        provider_reports(work)
     srv = Server(work)
     try:
         reads(srv)
@@ -1707,9 +1801,29 @@ def no_cache_hints(result):
     return "ttlMs" not in result and "cacheScope" not in result
 
 
+def mcp_metadata(tools):
+    names = {tool["name"] for tool in tools}
+    interactions = {"mail_send", "mail_reply", "mail_forward", "mail_delete"}
+    destructive = {"mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag",
+                   "mail_move", "mail_label", "mail_trash", "mail_delete",
+                   "mail_rename_folder", "mail_triage"}
+    check("MCP tools have titles and explicit boolean annotations", bool(tools) and all(
+        isinstance(tool.get("title"), str) and tool["title"].strip() and
+        all(type(tool.get("annotations", {}).get(key)) is bool for key in
+            ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"))
+        for tool in tools), tools)
+    check("MCP requests interaction exactly for offered send and delete tools",
+          {tool["name"] for tool in tools if tool.get("_meta", {}).get(
+              "anthropic/requiresUserInteraction") is True} == names & interactions)
+    check("MCP describes external mail and non-additive changes", all(
+        tool["annotations"]["openWorldHint"] is True and
+        tool["annotations"]["destructiveHint"] == (tool["name"] in destructive)
+        for tool in tools))
+
+
 def mcp_modern(srv):
     # Official schema examples and normative requirements are mapped in docs/MCP.md.
-    versions = ["2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"]
+    versions = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
     reqs = [modern_request(1), modern_request(2, "tools/list"),
             modern_request(3, "tools/call", name="mail_search", arguments={"limit": 1}),
             modern_request(4, "tools/call", name="mail_delete", arguments={}),
@@ -1734,11 +1848,19 @@ def mcp_modern(srv):
         for r in res if "result" in r), res)
     check("modern MCP: discovery and list have private five-minute cache hints",
           all(cache_hints_ok(by_id[i]["result"]) for i in [1, 2]), res)
+    check("modern MCP: cacheable metadata includes display identity", all(
+        by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"].get("title") == "MailBend" and
+        by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"].get("websiteUrl") ==
+        "https://github.com/albertc71/MailBend" for i in (1, 2)))
+    check("modern MCP: tool calls retain compact server identity", all(
+        set(by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]) == {"name", "version"}
+        for i in (3, 4)))
     check("modern MCP: calls and protocol errors carry no cache hints",
           all(no_cache_hints(r) and no_cache_hints(r.get("result", {}))
               and no_cache_hints(r.get("error", {})) for r in res
               if r.get("id") not in [1, 2]), res)
     tools = by_id[2]["result"]["tools"]
+    mcp_metadata(tools)
     check("modern MCP: tool list and successful call", len(tools) == TOOL_COUNT and all(
         t["inputSchema"].get("type") == "object" for t in tools) and
         by_id[3]["result"].get("isError") is False, res)
@@ -1815,6 +1937,7 @@ def mcp_modern(srv):
     check("modern MCP: notification or malformed initialization cannot create legacy state",
           len(res) == 2 and all(r.get("error", {}).get("code") == -32602 for r in res), res)
 
+    june_november_tools = []
     for version in versions[1:]:
         init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": version}}
         reqs = [init, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
@@ -1825,6 +1948,9 @@ def mcp_modern(srv):
                 modern_request(7, "tools/list"),
                 {"jsonrpc": "2.0", "id": 8, "method": "tools/list"}]
         res, _ = mcp_session(srv, reqs, legacy=False)
+        mcp_metadata(res[1]["result"]["tools"])
+        if version in ("2025-11-25", "2025-06-18"):
+            june_november_tools.append(res[1]["result"]["tools"])
         check(f"MCP legacy {version}: initialization, list, call and modern interleaving",
               res[0].get("result", {}).get("protocolVersion") == version and
               len(res[1]["result"]["tools"]) == TOOL_COUNT and "resultType" not in res[1]["result"] and
@@ -1841,6 +1967,9 @@ def mcp_modern(srv):
               [t["name"] for t in res[6]["result"].get("tools", [])] ==
               [t["name"] for t in res[1]["result"]["tools"]] and
               res[7].get("result") == res[5]["result"], res)
+
+    check("June and November 2025 return identical tool shapes",
+          len(june_november_tools) == 2 and june_november_tools[0] == june_november_tools[1])
 
     # Availability is configuration-dependent, so every cacheable result must
     # remain private. These requests need no mail or TypeSafe session.
@@ -1860,6 +1989,7 @@ def mcp_modern(srv):
                                       and (drafts_only == "0" or t["name"] != "mail_send")]
                 res, code = mcp_session(srv, [modern_request(1), modern_request(2, "tools/list")],
                                         legacy=False, **env)
+                mcp_metadata(res[1]["result"]["tools"])
                 check(f"modern MCP: private cache hints with configuration {env}",
                       code == 0 and len(res) == 2 and all(
                           cache_hints_ok(r.get("result", {})) for r in res) and
@@ -1908,9 +2038,9 @@ def mcp(srv):
     names = [t["name"] for t in tools]
     check(f"mcp: tools/list has all {TOOL_COUNT} tools with schemas", len(tools) == TOOL_COUNT and all("inputSchema" in t for t in tools), names)
     ann = {t["name"]: t.get("annotations", {}) for t in tools}
-    check("mcp: read tools are marked read-only, delete destructive",
+    check("mcp: read tools are read-only, delete and trash are non-additive",
           all(ann[n]["readOnlyHint"] for n in READ_TOOLS)
-          and ann["mail_delete"]["destructiveHint"] and not ann["mail_trash"]["destructiveHint"], ann)
+          and ann["mail_delete"]["destructiveHint"] and ann["mail_trash"]["destructiveHint"], ann)
     call = by_id.get(3, {}).get("result", {})
     payload = json.loads(call.get("content", [{}])[0].get("text", "{}"))
     check("mcp: tools/call returns the result", call.get("isError") is False and [m["uid"] for m in payload.get("messages", [])] == [3] or
@@ -1952,7 +2082,7 @@ def mcp_structured(srv):
         ("mail_mark_read", {"uids": [3], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
         ("mail_send", {"to": ["test@example.net"], "body": 'A "quote"\n\t雪', "dry_run": True}),
     ]
-    for version in ("2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05", "unknown"):
+    for version in ("2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "unknown"):
         requests = [{"jsonrpc": "2.0", "id": 0, "method": "initialize",
                      "params": {"protocolVersion": version}},
                     {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
@@ -1964,7 +2094,7 @@ def mcp_structured(srv):
             requests += [modern_request(i + 2, "tools/call", name=name, arguments=args)
                          for i, (name, args) in enumerate(calls)]
         replies, code = mcp_session(srv, requests, legacy=False)
-        modern = version in ("2026-07-28", "2025-06-18", "unknown")
+        modern = version in ("2026-07-28", "2025-11-25", "2025-06-18", "unknown")
         check(f"mcp: {version} output schemas follow negotiated version",
               all(("outputSchema" in t) == modern for t in replies[1]["result"]["tools"]))
         if modern:
@@ -2025,16 +2155,22 @@ def cli(srv, *args):
     return p
 
 
-USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -]"
+USAGE = ("usage: mailbend mcp | mailbend tools [--names | <tool>] | "
+         "mailbend call <tool> [json-arguments or -]")
 
 
 def cli_front_end(srv):
     p = cli(srv, "version")
     check("cli: version", p.returncode == 0 and p.stdout == "mailbend 0.1.0\n", (p.returncode, p.stdout))
-    for args in [(), ("help",), ("tools", "x"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
+    for args in [(), ("help",), ("tools", "x", "y"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
         p = cli(srv, *args)
         check(f"cli: {list(args)} prints the usage and exits 2",
               p.returncode == 2 and USAGE in p.stderr and p.stdout == "", (p.returncode, p.stdout, p.stderr))
+    p = cli(srv, "tools", "x")
+    check("cli: an unknown tool name exits 2 with the unavailable diagnostic",
+          p.returncode == 2 and p.stdout == "" and USAGE not in p.stderr
+          and p.stderr.splitlines()[-1:] == ["mailbend: unknown or unavailable tool"],
+          (p.returncode, p.stdout, p.stderr))
     p = cli(srv, "call", "mail_probe", "{not json")
     check("cli: arguments that are not JSON exit 2", p.returncode == 2 and p.stdout == ""
           and "the arguments are not valid JSON" in p.stderr, (p.returncode, p.stdout, p.stderr))
@@ -4441,7 +4577,8 @@ def dry_runs(work):
 # TypeSafe's Jev (mail_classify), against tests/fake_typesafe.py
 # ---------------------------------------------------------------
 
-TYPESAFE_KEY = "ts_test_key_0123456789"
+# Runtime-built synthetic key shared only with the local fake TypeSafe server.
+TYPESAFE_KEY = "_".join(("ts", "test", "key", "".join(str(n) for n in range(10))))
 JEV_PHRASE = "ignore previous instructions"
 
 
@@ -6016,10 +6153,13 @@ def triage_protections(work, key_file):
 GATE_VALIDITY = FIX["mailboxes"]["INBOX"]["uidvalidity"]
 GATE_SECRET, GATE_TWO_DEEP, GATE_FOUR_DEEP, GATE_UNDECODABLE, GATE_DISPOSABLE, GATE_PREVIEWED, GATE_DEADLINE, \
     GATE_INJECTION, GATE_BINARY_PART, GATE_WIDE_ALIAS, GATE_GLOBAL, GATE_HEADER_TOKEN, GATE_RACE = range(41, 54)
-GATE_PASSWORD = "Password: hunter22"
-GATE_TOKEN = "ghp_" + "a1B2c3D4" * 4
-GATE_PEM = ("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAfakefakefakefakefake\n"
-            "-----END RSA PRIVATE KEY-----\n")
+# Build detector inputs at runtime so source does not embed complete credentials
+# or private-key armour. These values are synthetic and never authenticate.
+GATE_PASSWORD = "".join(("Password: ", "hunter", str(22)))
+GATE_TOKEN = "".join(("gh", "p_", "a1B2c3D4" * 4))
+GATE_PEM = "\n".join((" ".join(("-----BEGIN", "RSA", "PRIVATE", "KEY-----")),
+                       "MIIEowIBAAKCAQEA" + "fake" * 5,
+                       " ".join(("-----END", "RSA", "PRIVATE", "KEY-----")), ""))
 GATE_TEXT = "the gated body text"
 ARCHIVE_VALIDITY = FIX["mailboxes"]["Archive"]["uidvalidity"]
 ANNOTATED_READS = [("mail_search", {}), ("mail_get", {"uid": GATE_PREVIEWED}), ("mail_get_new", {"since_uid": 40, "uidvalidity": GATE_VALIDITY}),
@@ -6150,6 +6290,7 @@ def gates(work):
     try:
         gates_tool_list(srv, work, key_file)
         gates_jev_off(srv)
+        gates_local_scan(srv, attach_dir)
         gates_secret_scan(srv, work, key_file, attach_dir)
         gates_vetoes(srv, work, key_file, attach_dir)
         gates_failure(srv, work, key_file)
@@ -6171,8 +6312,8 @@ def gates_tool_list(srv, work, key_file):
                   set(changing) == set(MUTATING_CALLS) | more and not missing, (sorted(changing), missing))
         open_world = {t["name"] for t in tool_list(srv) if t["annotations"]["readOnlyHint"]
                       and t["annotations"]["openWorldHint"]}
-        check("gates: exactly the annotatable reads are marked open-world",
-              open_world == {name for name, _ in ANNOTATED_READS}, open_world)
+        check("gates: all external mailbox reads are marked open-world with Jev off",
+              open_world == set(READ_TOOLS), open_world)
     finally:
         ts.stop()
 
@@ -6187,10 +6328,92 @@ def gates_jev_off(srv):
     check("gates, jev off: no read carries a jev object", not shown, shown)
 
 
+def gates_local_scan(srv, attach_dir):
+    env = {"MAILBEND_SECRET_SCAN": "1", "MAILBEND_ATTACH_DIR": attach_dir}
+    original = {"uidvalidity": GATE_VALIDITY, "to": FRIEND}
+    cases = [
+        ("body", "mail_send", {**SEND, "body": GATE_PASSWORD}, "found", "in the body"),
+        ("runtime-built token", "mail_send", {**SEND, "body": GATE_TOKEN}, "found", "in the body"),
+        ("runtime-built private key", "mail_send", {**SEND, "body": GATE_PEM}, "found", "in the body"),
+        ("subject", "mail_send", {**SEND, "subject": GATE_TOKEN}, "found", "in the subject field"),
+        ("recipient", "mail_send", {**SEND, "to": f'"{GATE_TOKEN}" <{FRIEND}>'}, "found", "in the to field"),
+        ("thread reference", "mail_send", {**SEND, "references": f"<{GATE_TOKEN}@example.com>"},
+         "found", "in the references field"),
+        ("attachment name", "mail_send", {**SEND, "attachments": [{"path": f"{GATE_TOKEN}.txt"}]},
+         "found", "in the name of attachment 1"),
+        ("attachment content", "mail_send", {**SEND, "attachments": [{"path": "keys.txt"}]},
+         "found", "attachment 1 > text/plain"),
+        ("reply body", "mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY, "body": GATE_PASSWORD},
+         "found", "in the body"),
+        ("quoted reply", "mail_reply", {"uid": GATE_SECRET, "uidvalidity": GATE_VALIDITY, "body": "thanks"},
+         "found", "in the body"),
+        ("forwarded original", "mail_forward", {**original, "uid": GATE_SECRET},
+         "found", "attachment 1 > message/rfc822 > text/plain"),
+        ("unreadable text", "mail_forward", {**original, "uid": GATE_UNDECODABLE},
+         "incomplete", "cannot be decoded"),
+        ("nested original", "mail_forward", {**original, "uid": GATE_FOUR_DEEP},
+         "incomplete", "more than 3 levels deep"),
+        ("over-limit text", "mail_send", {**SEND, "attachments": [{"path": "big.txt"}]},
+         "incomplete", "more than 1 MB of text"),
+        ("dry run", "mail_send", {**SEND, "body": GATE_PASSWORD, "dry_run": True}, "found", "in the body"),
+    ]
+    for title, name, args, scan, reason in cases:
+        before = len(srv.log_records())
+        c, r = tool(srv, name, args, **env)
+        logged = srv.log_records()[before:]
+        check("local scan, Jev off: " + title + " blocks before SMTP",
+              c != 0 and r.get("secret_scan") == scan and r.get("smtp_outcome") == "not_sent"
+              and reason in r.get("error", "") and "jev" not in r
+              and not any(x["proto"] == "smtp" for x in logged)
+              and GATE_PASSWORD not in json.dumps(r) and GATE_TOKEN not in json.dumps(r), r)
+    for title, body in [
+            ("token below the 20-character minimum", GATE_TOKEN[:19]),
+            ("token with an unrecognised prefix", "ghq" + GATE_TOKEN[3:]),
+            ("public key armour", GATE_PEM.replace("PRIVATE", "PUBLIC")),
+            ("password instruction", "".join(("Password: ", "required")))]:
+        before = sent_count(srv)
+        c, r = tool(srv, "mail_send", {**SEND, "body": body, "dry_run": True}, **env)
+        check("local scan: " + title + " is clean",
+              c == 0 and r.get("dry_run") is True and r.get("secret_scan") == "clean"
+              and "jev" not in r and sent_count(srv) == before, r)
+    for value in ("1", "true"):
+        before = sent_count(srv)
+        c, r = tool(srv, "mail_send", SEND, **{**env, "MAILBEND_SECRET_SCAN": value})
+        check("local scan: clean content sends with " + value,
+              c == 0 and r.get("secret_scan") == "clean" and "jev" not in r
+              and sent_count(srv) == before + 1, r)
+    for value in (None, "", "0", "false"):
+        before = sent_count(srv)
+        c, r = tool(srv, "mail_send", {**SEND, "body": GATE_PASSWORD}, MAILBEND_SECRET_SCAN=value)
+        check("local scan: off preserves sending for " + repr(value),
+              c == 0 and "secret_scan" not in r and "jev" not in r and sent_count(srv) == before + 1, r)
+    for value in ("yes", " false "):
+        for name, args in [("mail_send", SEND),
+                           ("mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY, "body": "thanks"}),
+                           ("mail_forward", {**original, "uid": 2})]:
+            before = sent_count(srv)
+            c, r = tool(srv, name, args, MAILBEND_SECRET_SCAN=value)
+            check("local scan: malformed setting refuses " + name + " for " + repr(value),
+                  c != 0 and "MAILBEND_SECRET_SCAN must be" in r.get("error", "")
+                  and sent_count(srv) == before, r)
+    for value in ("1", "yes"):
+        before = sent_count(srv)
+        for name, args in [("mail_save_draft", {**SEND, "body": GATE_PASSWORD}),
+                           ("mail_reply", {"uid": GATE_SECRET, "uidvalidity": GATE_VALIDITY,
+                                           "body": GATE_PASSWORD, "as_draft": True}),
+                           ("mail_forward", {**original, "uid": GATE_SECRET, "as_draft": True})]:
+            c, r = tool(srv, name, args, MAILBEND_SECRET_SCAN=value)
+            check("local scan: " + name + " draft ignores " + value,
+                  c == 0 and r.get("saved_to") == "Drafts" and "secret_scan" not in r and "jev" not in r, r)
+        c, r = tool(srv, "mail_get", {"uid": GATE_SECRET}, MAILBEND_SECRET_SCAN=value)
+        check("local scan: reads ignore " + value,
+              c == 0 and "secret_scan" not in r and "jev" not in r and sent_count(srv) == before, r)
+
+
 def gates_secret_scan(srv, work, key_file, attach_dir):
     ts = TypeSafe(work)
     try:
-        env = jev_env(ts, key_file, MAILBEND_ATTACH_DIR=attach_dir)
+        env = jev_env(ts, key_file, MAILBEND_ATTACH_DIR=attach_dir, MAILBEND_SECRET_SCAN="0")
         original = {"uidvalidity": GATE_VALIDITY, "to": FRIEND}
         n = sent_count(srv)
         bad = []

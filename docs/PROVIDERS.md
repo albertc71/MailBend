@@ -23,6 +23,14 @@ The [synthetic transport suite](../tests/test-transport.sh) covers verified
 TLS and both SMTP modes. It does not make every provider below fake-tested.
 No provider has a community-reported entry in this guide yet.
 
+Collect evidence with `mailbend diagnose --imap --smtp --report` and the
+[provider-report form](../.github/ISSUE_TEMPLATE/provider-report.yml).
+Promote a provider to community-reported only when a linked report shows
+`ok` for every applicable IMAP and SMTP stage. Protocol-inapplicable skipped
+stages do not establish a check. See [report interpretation and the separate
+write checklist](PROVIDER-REPORTS.md). No tier changes without a recorded
+qualifying report or authorized live run.
+
 ## Shared setup rules
 
 Start with `MAILBEND_READ_ONLY=1`. The print-only
@@ -43,7 +51,7 @@ before applying anything. It does not prove that an account works.
   a port number never selects it. There is no plaintext fallback or
   certificate-verification bypass.
 - After the account owner authorizes a connection,
-  `mailbend diagnose --imap --smtp` checks the configured transports without reading messages. Share
+  `mailbend diagnose --imap --smtp --report` checks the configured transports without reading messages. Share
   only its redacted output. `mailbend setup --check` and `mail_probe` can expose
   local folder names, so their output is not a public report.
 - Discover folders before choosing overrides. MailBend uses an explicit
@@ -117,10 +125,18 @@ the message. Do not rely on `mail_delete` as proof of global deletion while
 [#101](https://github.com/albertc71/MailBend/issues/101) remains unresolved.
 
 Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
-`[Gmail]/Important`, but no Archive role. MailBend reserves `\Important`
-from filing destinations. Choose `MAILBEND_ARCHIVE_FOLDER` only after
-reviewing the actual folder list and intended archive semantics. Do not
-silently substitute All Mail. Names and visibility can differ by account.
+`[Gmail]/Important`, but no Archive role. MailBend reserves every folder
+advertising a recognized special-use role, including `\Important`
+(see [#123](https://github.com/albertc71/MailBend/issues/123)), `\All`, and
+`\Flagged` (Starred), and their descendants. These are excluded from
+classification and triage categories, [Jev read-annotation categories](../README.md#jev-optional),
+and `mail_label` destinations. MailBend refuses create/rename destinations there and
+refuses renaming a reserved folder or any parent containing it. `mail_move`
+can still use such a folder when explicitly named, subject to the normal
+move checks.
+Choose `MAILBEND_ARCHIVE_FOLDER` only after reviewing the actual folder list and
+intended archive semantics. Do not silently substitute All Mail. Names and
+visibility can differ by account.
 
 ## Google Workspace
 
@@ -164,8 +180,10 @@ remain unverified. Inspect LIST and the resolved roles before setting
 
 ## AOL Mail
 
-Tier: **unverified**. Sources checked 2026-11-05, using indexed AOL help
-content because direct pages had no readable text.
+Tier: **unverified**. Sources checked 2026-11-05. The endpoints and login
+format below come from [Thunderbird ISPDB](https://github.com/thunderbird/autoconfig/blob/master/ispdb/aol.com.xml),
+not verified AOL server documentation; the direct AOL help pages had no
+readable text.
 
 | Setting | Value |
 | --- | --- |
@@ -174,9 +192,9 @@ content because direct pages had no readable text.
 | Login | Full AOL Mail address |
 | Sent copy | Start with `MAILBEND_SAVE_SENT=0`; automatic filing is unverified |
 
-[AOL's server settings](https://help.aol.com/articles/how-do-i-use-other-email-applications-to-send-and-receive-my-aol-mail)
-and [app-password instructions](https://help.aol.com/articles/create-and-manage-app-password)
-describe this profile. App-password eligibility is controlled by AOL.
+Follow [AOL's app-password instructions](https://help.aol.com/articles/create-and-manage-app-password);
+app-password eligibility is controlled by AOL. The app-password guidance
+was checked through indexed AOL help content, not the unreadable direct page.
 These are not settings for a Verizon.net account.
 
 Drafts and junk names and special-use attributes remain unverified. Discover
@@ -198,8 +216,11 @@ also permits SMTP `587` with `starttls`. Basic plans do not include IMAP or
 SMTP. Create an [app password with mail access](https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords);
 the regular account password does not work.
 
-Leave the IMAP path prefix empty, as Fastmail documents. This guide has no
-live evidence for role attributes or Sent filing. Discover role folders
+Fastmail documents an empty IMAP path prefix and `/` as the separator.
+MailBend has no prefix setting. In `MAILBEND_*_FOLDER` overrides and folder
+arguments, use the exact decoded LIST names, including any namespace prefix
+(see [Role folder resolution](../README.md#role-folder-resolution)). This guide
+has no live evidence for role attributes or Sent filing. Discover role folders
 and test the Sent-copy choice before enabling writes.
 
 ## Zoho Mail

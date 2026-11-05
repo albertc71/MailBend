@@ -73,6 +73,10 @@ flags does not test login or delivery. Network checks require an explicit
 
 ## Claude Code
 
+For the server, skill, and send/delete prompt together, use the
+[optional Claude Code plugin](CLAUDE-PLUGIN.md). Choose either the plugin or
+the manual server registration below for the same account.
+
 Register a personal stdio server. The `--transport` option separates the
 environment pairs from the server name because `--env` accepts multiple pairs.
 See [Claude Code's MCP configuration](https://code.claude.com/docs/en/mcp).

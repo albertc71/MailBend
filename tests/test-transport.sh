@@ -103,15 +103,22 @@ stop_server() {
 # (path), CODE (exit status), and tracks password leaks. Protocol-specific
 # defaults precede caller overrides, so failure cases can replace them.
 call_helper() {
-  local protocol="$1" script="$2"
+  local protocol="$1" script="$2" password="$PASSWORD" assignment
   shift 2
+  # env uses the last assignment, including negative cases that replace the
+  # fixture password. Inspect that actual input without printing it.
+  for assignment in "$@"; do
+    case "$assignment" in
+      MAILBEND_APP_PASSWORD=*) password="${assignment#*=}" ;;
+    esac
+  done
   printf '%s' "$script" >"$WORK/in.txt"
   OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
   env -u MAILBEND_SMTP_TLS_MODE -u MAILBEND_LOGIN MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
       MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
       "$@" "$HELPER" "$protocol" <"$WORK/in.txt" >"$OUT" 2>"$ERR"
   CODE=$?
-  check_leak
+  check_leak "$password"
 }
 
 # call_imap SCRIPT_TEXT [ENV_ASSIGNMENT...]
@@ -131,8 +138,49 @@ call_smtp() {
 }
 
 check_leak() {
-  if grep -aq -- "$PASSWORD" "$OUT" "$ERR" 2>/dev/null; then
+  local password="$1"
+  # Empty passwords have no bytes to leak. Use a literal, option-protected
+  # match so punctuation in synthetic credentials cannot change the check.
+  if [ -n "$password" ] && grep -aFq -- "$password" "$OUT" "$ERR" 2>/dev/null; then
     GLOBAL_LEAK=1
+    return 1
+  fi
+  return 0
+}
+
+# Negative controls for the checker itself. All values and output here are
+# synthetic; shadow the aggregate so intentional leaks cannot poison it.
+case_password_leak_check() {
+  local GLOBAL_LEAK=0 PASSWORD="fixture-synthetic-password"
+  local HELPER="$WORK/synthetic-leak-helper" OUT ERR CODE
+  local password stream expected status ok=1
+  cat >"$HELPER" <<'SH'
+#!/usr/bin/env bash
+case "$SYNTHETIC_LEAK_STREAM" in
+  stdout) printf '%s\n' "$MAILBEND_APP_PASSWORD" ;;
+  stderr) printf '%s\n' "$MAILBEND_APP_PASSWORD" >&2 ;;
+  none) printf '%s\n' 'ordinary output' ;;
+  near) printf '%s\n' '-synthetic-any-password' ;;
+esac
+SH
+  chmod +x "$HELPER"
+  for password in "$PASSWORD" "wrong-synthetic-password" '-[synthetic].*password'; do
+    for stream in stdout stderr none near; do
+      GLOBAL_LEAK=0
+      expected=0
+      case "$stream" in stdout|stderr) expected=1 ;; esac
+      call_helper imap '' MAILBEND_APP_PASSWORD="overridden-synthetic-password" \
+          MAILBEND_APP_PASSWORD="$password" SYNTHETIC_LEAK_STREAM="$stream"
+      status=$?
+      if [ "$CODE" -ne 0 ] || [ "$status" -ne "$expected" ] || [ "$GLOBAL_LEAK" -ne "$expected" ]; then
+        ok=0
+      fi
+    done
+  done
+  if [ "$ok" -eq 1 ]; then
+    pass "password leak checker detects actual input on stdout/stderr literally"
+  else
+    fail "password leak checker" "synthetic detection or clean-output control failed"
   fi
 }
 
@@ -666,7 +714,71 @@ PY
   done
 }
 
+# Exercise authenticate through the actual helper, not only has_auth. The
+# fake server redacts every AUTH command and LOGIN challenge response: one
+# redacted line is PLAIN, three are LOGIN. Check the complete wire sequence
+# so retries, premature AUTH and mail commands cannot hide behind success.
+case_smtp_auth_selection() {
+  local base_fixture="$FIXTURE" FIXTURE="$WORK/smtp-auth-fixture.json"
+  local mode extra name offer mechanism expected password
+  for mode in starttls implicit; do
+    extra=""
+    [ "$mode" = implicit ] && extra="--smtp-implicit"
+    while IFS='|' read -r name offer mechanism expected; do
+      python3 - "$base_fixture" "$FIXTURE" "$offer" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    fixture = json.load(source)
+fixture['smtp_auth'] = sys.argv[3]
+# In STARTTLS mode, a conflicting unprotected offer must be ignored.
+# Implicit TLS has no unprotected EHLO and never uses this fixture field.
+fixture['smtp_auth_before_tls'] = 'PLAIN OAUTHBEARER'
+with open(sys.argv[2], 'w', encoding='utf-8') as target:
+    json.dump(fixture, target)
+PY
+      if [ "$?" -ne 0 ]; then fail "SMTP AUTH fixture" "could not write fixture"; return; fi
+      start_server "smtp-auth-$mode-$name" $extra || {
+        fail "$mode AUTH $name" "server did not start"; return;
+      }
+      password="$PASSWORD"
+      [ "$name" = rejected-plain ] && password="wrong-synthetic-password"
+      if ! call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode" MAILBEND_APP_PASSWORD="$password"; then
+        fail "$mode AUTH $name" "password leaked to stdout/stderr"
+      elif [ "$CODE" -ne "$expected" ]; then
+        fail "$mode AUTH $name expects $mechanism" "exit=$CODE expected=$expected"
+      elif python3 - "$LOG_FILE" "$STATE_FILE" "$mode" "$mechanism" "$expected" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    lines = [json.loads(line)['line'] for line in source]
+mode, mechanism, code = sys.argv[3], sys.argv[4], int(sys.argv[5])
+hello = 'EHLO [127.0.0.1]'
+expected = [hello, 'STARTTLS', hello] if mode == 'starttls' else [hello]
+auth_lines = {'PLAIN': 1, 'LOGIN': 3, 'none': 0}[mechanism]
+expected += ['AUTH <redacted>'] * auth_lines
+if code == 0:
+    expected.append('QUIT')
+assert lines == expected, f'expected {mechanism} authentication sequence (wire mismatch)'
+with open(sys.argv[2], encoding='utf-8') as source:
+    assert not json.load(source).get('sent'), 'authentication test sent mail'
+PY
+      then
+        pass "$mode AUTH $name selects $mechanism without retry"
+      else
+        fail "$mode AUTH $name expects $mechanism" "wire sequence or sent-state mismatch (exit=$CODE matched expected)"
+      fi
+      stop_server
+    done <<'CASES'
+malformed-plain|PLAIN] LOGIN|LOGIN|0
+plain-first|PLAIN LOGIN|PLAIN|0
+plain-last|LOGIN PLAIN|PLAIN|0
+malformed-only|PLAIN] LOGIN]|none|4
+rejected-plain|PLAIN LOGIN|PLAIN|4
+CASES
+  done
+}
+
 # --- run every case -------------------------------------------------------
+case_password_leak_check
 case1
 case3
 case4
@@ -691,6 +803,7 @@ case_smtp_progress
 case_selected_section
 case_refresh
 case_smtp_modes
+case_smtp_auth_selection
 case2
 if python3 "$ROOT/tests/test-process-protection.py"; then
   pass "secret helpers refuse dumps and external environment reads"

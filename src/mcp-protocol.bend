@@ -7,10 +7,17 @@ def modern_version() -> String:
   "2026-07-28"
 
 def latest_legacy_version() -> String:
-  "2025-06-18"
+  "2025-11-25"
+
+# Keep the supported structured legacy revisions beside the negotiation list.
+def structured_versions() -> List<&2, String>:
+  [latest_legacy_version(), "2025-06-18"]
 
 def legacy_versions() -> List<&2, String>:
-  [latest_legacy_version(), "2025-03-26", "2024-11-05"]
+  List.append(&2, String, structured_versions(), ["2025-03-26", "2024-11-05"])
+
+def is_structured(v: String) -> Bool:
+  List.contains(~String, ~String.eq, structured_versions(), v)
 
 def versions() -> J.Json:
   J.strs(modern_version() <> legacy_versions())
@@ -97,12 +104,16 @@ def requested(p: J.Json) -> String:
   Maybe.default(&2, String, J.as_str(J.get(meta(p), field("protocolVersion"))), "")
 
 def server_info(v: String) -> J.Json:
-  J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(v))])
+  J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(v)),
+    J.kv("title", J.str("MailBend")),
+    J.kv("description",
+      J.str("Read and manage mail over IMAP and SMTP with bounded plans and safety gates.")),
+    J.kv("websiteUrl", J.str("https://github.com/albertc71/MailBend"))])
 
-def complete_result(j: J.Json, v: String) -> J.Json:
+def complete_result(j: J.Json, server: J.Json) -> J.Json:
   match j:
     case J.JObj{items}:
-      m = J.obj([J.kv(field("serverInfo"), server_info(v))])
+      m = J.obj([J.kv(field("serverInfo"), server)])
       J.JObj{J.JCons{J.kv("resultType", J.str("complete")),
         J.JCons{J.kv("_meta", m), items}}}
     case _:
@@ -111,7 +122,7 @@ def complete_result(j: J.Json, v: String) -> J.Json:
 def result(modern: Bool, j: J.Json, v: String) -> J.Json:
   match modern:
     case True{}:
-      complete_result(j, v)
+      complete_result(j, J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(v))]))
     case False{}:
       j
 
@@ -121,7 +132,7 @@ def cacheable_result(modern: Bool, j: J.Json, v: String) -> J.Json:
   match modern j:
     case True{} J.JObj{items}:
       complete_result(J.JObj{J.JCons{J.kv("ttlMs", J.JNum{"300000"}),
-        J.JCons{J.kv("cacheScope", J.str("private")), items}}}, v)
+        J.JCons{J.kv("cacheScope", J.str("private")), items}}}, server_info(v))
     case _ _:
       j
 

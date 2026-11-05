@@ -2,9 +2,11 @@
 #
 #   mailbend mcp                   MCP server on stdin/stdout (JSON-RPC lines)
 #   mailbend tools                 print the tool list as JSON
+#   mailbend tools --names         print available tool names as JSON
+#   mailbend tools <tool>          print one available tool's schema as JSON
 #   mailbend call <tool> [json or -] run one tool and print its JSON result
 #   mailbend version               print the version
-#   mailbend diagnose [--imap] [--smtp]   redacted setup checks; network is opt-in
+#   mailbend diagnose [--imap] [--smtp] [--report]   redacted setup checks; network is opt-in
 #   mailbend setup --provider <name> --email <address>   print configuration only
 #   mailbend setup --help          list providers and setup usage
 #   mailbend setup --check         check applied settings; local folder suggestions
@@ -307,7 +309,7 @@ def legacy_after(
 def legacy_structured(legacy: Maybe<&2, String>) -> Bool:
   match legacy:
     case Some{v}:
-      String.eq(v, MCP.latest_legacy_version())
+      MCP.is_structured(v)
     case None{}:
       False{}
 
@@ -611,10 +613,30 @@ def mcp() -> IO(Unit):
 # ===
 
 def usage() -> String:
-  "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -] | " ++
-    "mailbend diagnose [--imap] [--smtp] | mailbend diagnose --posture | " ++
+  "usage: mailbend mcp | mailbend tools [--names | <tool>] | " ++
+    "mailbend call <tool> [json-arguments or -] | " ++
+    "mailbend diagnose [--imap] [--smtp] [--report] | mailbend diagnose --posture | " ++
     "mailbend setup --provider <name> --email <address> | mailbend setup --check | " ++
     "mailbend setup --help | mailbend hook claude-pretooluse | mailbend version"
+
+def tool_cli.parsed(parsed: Maybe<&2, J.Json>) -> IO(Unit):
+  match parsed:
+    case Some{J.JObj{items}}:
+      IO.print(J.show(J.obj(legacy_fields(J.unchain(items)))))
+    case _:
+      IO.die(Unit, 2, "mailbend: unknown or unavailable tool")
+
+def tool_cli.if(available: Bool, name: String) -> IO(Unit):
+  match available:
+    case False{}:
+      IO.die(Unit, 2, "mailbend: unknown or unavailable tool")
+    case True{}:
+      tool_cli.parsed(J.parse(Schema.tool_defs.named(name)))
+
+def tool_cli(+name: String) -> IO(Unit):
+  do IO<Unit>:
+    c : Policy.Config <- T.config()
+    tool_cli.if(C.is_in(name, T.offered_names(c)), name)
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -848,10 +870,38 @@ def command_args(xs: List<String>) -> List<&2, String>:
     case prog <> t:
       share(t)
 
-def diagnose_cli(imap: Bool, smtp: Bool) -> IO(Unit):
-  do IO<Unit>:
-    o : Policy.Out <- Diagnostics.run(imap, smtp)
-    print_out(o)
+type DiagnosticFlags is Data:
+  DiagnosticFlags{imap: Bool, smtp: Bool, report: Bool}
+
+def diagnostic_flags(args: List<&2, String>, imap: Bool, smtp: Bool, report: Bool) ->
+  Maybe<&2, DiagnosticFlags>:
+  match args:
+    case Nil{}:
+      Some{DiagnosticFlags{imap, smtp, report}}
+    case "--imap" <> t:
+      Bool.pick(Maybe<&2, DiagnosticFlags>, imap, None{},
+        diagnostic_flags(t, True{}, smtp, report))
+    case "--smtp" <> t:
+      Bool.pick(Maybe<&2, DiagnosticFlags>, smtp, None{},
+        diagnostic_flags(t, imap, True{}, report))
+    case "--report" <> t:
+      Bool.pick(Maybe<&2, DiagnosticFlags>, report, None{},
+        diagnostic_flags(t, imap, smtp, True{}))
+    case _:
+      None{}
+
+def diagnose_cli(flags: Maybe<&2, DiagnosticFlags>) -> IO(Unit):
+  match flags:
+    case Some{DiagnosticFlags{imap, smtp, False{}}}:
+      do IO<Unit>:
+        o : Policy.Out <- Diagnostics.run(imap, smtp)
+        print_out(o)
+    case Some{DiagnosticFlags{imap, smtp, True{}}}:
+      do IO<Unit>:
+        o : Policy.Out <- Diagnostics.run_report(imap, smtp, version())
+        print_out(o)
+    case None{}:
+      IO.die(Unit, 2, usage())
 
 def setup_print(r: Result<&2, &2, String, String>) -> IO(Unit):
   match r:
@@ -882,22 +932,20 @@ def cli(args: List<&2, String>) -> IO(Unit):
     case "setup" <> "--help" <> Nil{}:
       IO.print(usage() ++ "\nProviders: " ++
         String.join(Providers.names(Providers.presets()), ", "))
-    case "diagnose" <> Nil{}:
-      diagnose_cli(False{}, False{})
-    case "diagnose" <> "--imap" <> Nil{}:
-      diagnose_cli(True{}, False{})
-    case "diagnose" <> "--smtp" <> Nil{}:
-      diagnose_cli(False{}, True{})
-    case "diagnose" <> "--imap" <> "--smtp" <> Nil{}:
-      diagnose_cli(True{}, True{})
-    case "diagnose" <> "--smtp" <> "--imap" <> Nil{}:
-      diagnose_cli(True{}, True{})
+    case "diagnose" <> flags:
+      diagnose_cli(diagnostic_flags(flags, False{}, False{}, False{}))
     case "mcp" <> Nil{}:
       mcp()
     case "tools" <> Nil{}:
       do IO<Unit>:
         ts : J.Json <- offered_tools()
         IO.print(J.show(tools_for(False{}, ts)))
+    case "tools" <> "--names" <> Nil{}:
+      do IO<Unit>:
+        c : Policy.Config <- T.config()
+        IO.print(J.show(J.strs(T.offered_names(c))))
+    case "tools" <> name <> Nil{}:
+      tool_cli(name)
     case "call" <> name <> Nil{}:
       call_cli(name, "{}")
     case "call" <> name <> "-" <> Nil{}:

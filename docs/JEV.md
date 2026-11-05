@@ -3,7 +3,8 @@
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. With `MAILBEND_TYPESAFE`
 on, MailBend asks Jev typed questions about messages, and MailBend's own code
 decides what the answers mean. The [README](../README.md#jev-optional) lists
-which tools ask Jev; with Jev off, no tool asks it and no result changes.
+which tools ask Jev. With Jev off, no tool asks it. The independent
+[local secret scan](../README.md#local-secret-scan) can still block sends.
 
 Read the [privacy and data-handling statement](PRIVACY.md) before enabling Jev.
 It covers provider terms, retention statements and unresolved account checks.
@@ -171,9 +172,12 @@ the bounded session-count check.
 
 ## Sends
 
-`mail_send`, and `mail_reply` and `mail_forward` without `as_draft`, first
-pass a local secret scan, in either content mode and without asking
-TypeSafe. It looks for private-key blocks (PEM or PGP armour), tokens with a
+`mail_send`, and `mail_reply` and `mail_forward` without `as_draft`, pass a
+local secret scan when Jev is on or `MAILBEND_SECRET_SCAN=1` is set. The
+independent setting accepts `1`/`true` and defaults to off with
+`0`/`false`/empty. A malformed value refuses sends, not reads or drafts. It
+never disables the scan that Jev requires. The scan runs in either content
+mode without asking TypeSafe. It looks for private-key blocks (PEM or PGP armour), tokens with a
 well-known prefix (AWS, Google, GitHub, GitLab, Slack, Stripe, Anthropic,
 OpenAI, npm) and password lines (`Password: ...` with a digit, also when
 quoted with `>`). It reads the header fields, the body, attachment names,
@@ -188,11 +192,12 @@ A block names the part by position (`attachment 1 > text/plain`), never by
 file name, and TypeSafe is not asked. The scan catches mistakes; it is not a
 boundary against an agent set on leaking.
 
-A clean message then goes to Jev, which is asked whether a recipient does
+With Jev on, a clean message then goes to Jev, which is asked whether a recipient does
 not belong and whether the message shares confidential information; for
 reply-all, whether it should go only to the sender; for a forward, whether
 the original asks not to be shared. The result holds `secret_scan`
-(`clean`, `found` or `incomplete`) and the `jev` object. A blocked send says
+(`clean`, `found` or `incomplete`), and the `jev` object only when Jev is on.
+The independent scan makes no TypeSafe request. A blocked send says
 so and suggests `mail_save_draft`, which is never checked.
 
 ## Deletes
@@ -206,8 +211,8 @@ reported in `missing`, even if a message took it meanwhile.
 
 ## Reads
 
-`mail_search`, `mail_get`, `mail_get_new` and `mail_get_thread` (marked
-`openWorldHint` for this reason) add the `jev` object to each message shown.
+`mail_search`, `mail_get`, `mail_get_new` and `mail_get_thread` add the `jev`
+object to each message shown.
 Its `signals` are `reply_needed`, `action_required`, `priority`, `category`
 (chosen from the folder list), `suggested_action`, and `suspected_injection`
 only when Jev suspects one.
