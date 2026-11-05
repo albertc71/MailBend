@@ -117,8 +117,9 @@ the message. Do not rely on `mail_delete` as proof of global deletion while
 [#101](https://github.com/albertc71/MailBend/issues/101) remains unresolved.
 
 Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
-`[Gmail]/Important`, but no Archive role. MailBend reserves `\Important`
-from filing destinations. Choose `MAILBEND_ARCHIVE_FOLDER` only after
+`[Gmail]/Important`, but no Archive role. MailBend reserves folders advertising
+`\Important` (see [#123](https://github.com/albertc71/MailBend/issues/123)) or
+`\All` from classification and label destinations. Choose `MAILBEND_ARCHIVE_FOLDER` only after
 reviewing the actual folder list and intended archive semantics. Do not
 silently substitute All Mail. Names and visibility can differ by account.
 
@@ -164,8 +165,10 @@ remain unverified. Inspect LIST and the resolved roles before setting
 
 ## AOL Mail
 
-Tier: **unverified**. Sources checked 2026-11-05, using indexed AOL help
-content because direct pages had no readable text.
+Tier: **unverified**. Sources checked 2026-11-05. The endpoints and login
+format below come from [Thunderbird ISPDB](https://github.com/thunderbird/autoconfig/blob/master/ispdb/aol.com.xml),
+not verified AOL server documentation; the direct AOL help pages had no
+readable text.
 
 | Setting | Value |
 | --- | --- |
@@ -174,9 +177,9 @@ content because direct pages had no readable text.
 | Login | Full AOL Mail address |
 | Sent copy | Start with `MAILBEND_SAVE_SENT=0`; automatic filing is unverified |
 
-[AOL's server settings](https://help.aol.com/articles/how-do-i-use-other-email-applications-to-send-and-receive-my-aol-mail)
-and [app-password instructions](https://help.aol.com/articles/create-and-manage-app-password)
-describe this profile. App-password eligibility is controlled by AOL.
+Follow [AOL's app-password instructions](https://help.aol.com/articles/create-and-manage-app-password);
+app-password eligibility is controlled by AOL. The app-password guidance
+was checked through indexed AOL help content, not the unreadable direct page.
 These are not settings for a Verizon.net account.
 
 Drafts and junk names and special-use attributes remain unverified. Discover
@@ -198,9 +201,11 @@ also permits SMTP `587` with `starttls`. Basic plans do not include IMAP or
 SMTP. Create an [app password with mail access](https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords);
 the regular account password does not work.
 
-Leave the IMAP path prefix empty, as Fastmail documents. This guide has no
-live evidence for role attributes or Sent filing. Discover role folders
-and test the Sent-copy choice before enabling writes.
+Fastmail documents an empty IMAP path prefix and `/` as the separator.
+MailBend has no prefix setting: use the exact decoded LIST names,
+including any namespace prefix. This guide has no live evidence for
+role attributes or Sent filing. Discover role folders and test the Sent-copy
+choice before enabling writes.
 
 ## Zoho Mail
 
