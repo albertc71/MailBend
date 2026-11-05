@@ -125,18 +125,52 @@ def bend_names(path, kind):
 
 
 def python_headers(path):
-    """Keep every function's declaration line, including methods and nested defs.
+    """Collect function lines and conservative static collisions for bare names.
 
-    References use bare function names, so only the cited name must be unique
-    across this file. Unrelated duplicate helpers (for example __init__ methods)
-    do not make a different, uniquely named test ambiguous. Decorators do not
-    move a link away from the def/async def line reported by the AST.
+    Functions, methods and nested defs are valid targets only when their name
+    is unique across the file. Same-named classes anywhere, and Assign/AnnAssign
+    name stores in module scope (including control-flow blocks), add collisions
+    but never become targets themselves. Annotation-only statements do not bind.
+    Unrelated duplicates do not reject a uniquely named test. Decorators do not
+    move links away from the def/async def line reported by the AST.
+
+    This is not Python name resolution: imports, other binding statements,
+    assignments inside functions/classes and dynamic effects are not modeled.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     positions = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             positions.setdefault(node.name, []).append(node.lineno)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name in positions:
+            positions[node.name].append(node.lineno)
+
+    class ModuleAssignments(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            pass  # Do not count stores in a function or class scope.
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_ClassDef = visit_FunctionDef
+
+        def target(self, node):
+            if isinstance(node, ast.Name) and node.id in positions:
+                positions[node.id].append(node.lineno)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for element in node.elts:
+                    self.target(element)
+            elif isinstance(node, ast.Starred):
+                self.target(node.value)
+
+        def visit_Assign(self, node):
+            for target in node.targets:
+                self.target(target)
+
+        def visit_AnnAssign(self, node):
+            if node.value is not None:
+                self.target(node.target)
+
+    ModuleAssignments().visit(tree)
     return {name: tuple(sorted(lines)) for name, lines in positions.items()}
 
 
@@ -161,7 +195,7 @@ def reference_location(root, value, kind, cache=None):
     require(name in positions, f"missing {kind} name: {value}")
     lines = positions[name]
     require(len(lines) == 1,
-            f"ambiguous Python {kind} reference: {value}; definitions at lines "
+            f"ambiguous {kind} reference: {value}; declarations or bindings at lines "
             + ", ".join(map(str, lines)))
     return relative, name, lines[0]
 
