@@ -55,6 +55,11 @@ jobs:
         run: |
           python3 scripts/check-docs.py
           python3 tests/test-docs.py
+      - name: Law catalogue and public safety claims
+        run: |
+          python3 tools/gen-laws.py --check
+          python3 tools/check-claims.py --check
+          python3 tests/formal/test-claims.py
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -209,6 +214,28 @@ jobs:
         run: python3 tests/formal/check-response-image-budgets.py
       - name: Change-plan and UID wire mutation checks
         run: python3 tests/formal/check-plan-wire-mutations.py
+  claim-mutations:
+    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+      - name: Install Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Public safety claim mutations against the root proofs
+        run: python3 tests/formal/check-law-mutations.py
   runtime:
     if: ${{ github.event_name != 'schedule' && !inputs.scale }}
     runs-on: ${{ matrix.runner }}
@@ -270,6 +297,9 @@ jobs:
         if: matrix.suite == 'support'
       - name: MCP inherited-descriptor and lifecycle tests
         run: python3 tests/test-stdio.py
+        if: matrix.suite == 'support'
+      - name: Credential-free demo boundaries and MCP flow
+        run: python3 tests/test-demo.py
         if: matrix.suite == 'support'
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
@@ -370,6 +400,7 @@ jobs:
       - source-checks
       - proofs
       - mutations
+      - claim-mutations
       - runtime
       - rust
       - fuzz
@@ -380,6 +411,7 @@ jobs:
           SOURCE_RESULT: ${{ needs.source-checks.result }}
           PROOFS_RESULT: ${{ needs.proofs.result }}
           MUTATIONS_RESULT: ${{ needs.mutations.result }}
+          CLAIM_MUTATIONS_RESULT: ${{ needs.claim-mutations.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
@@ -388,6 +420,7 @@ jobs:
           test "$SOURCE_RESULT" = success
           test "$PROOFS_RESULT" = success
           test "$MUTATIONS_RESULT" = success
+          test "$CLAIM_MUTATIONS_RESULT" = success
           test "$RUNTIME_RESULT" = success
           test "$RUST_RESULT" = success
           test "$FUZZ_RESULT" = success

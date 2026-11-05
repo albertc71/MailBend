@@ -1,8 +1,10 @@
 # MailBend
 
+[![CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main)](docs/LAWS.md)
+
 MailBend gives AI agents a mailbox as MCP tools (stdio) and a CLI: a Linux
 IMAP/SMTP connector with iCloud Mail as the default, live-tested profile,
-whose safety rules are proven by the compiler for every input.
+whose safety rules are proven by the compiler for every input. <!-- claim:read-plans -->
 
 ```sh
 sudo apt-get install -y build-essential clang ca-certificates curl
@@ -13,9 +15,40 @@ scripts/install.sh --install-bend --install-rust
 Then [configure](#configure) your account and [register the MCP
 server](#use). Details of the install are [below](#install-linux).
 
+## Try it without an account
+
+From a built checkout, run `scripts/mailbend-demo` (Python 3 and OpenSSL are
+required). Keep that terminal open and copy its JSON into a separate MCP client
+configuration. No account, app password or TypeSafe key is needed. Ask the client
+to search the demo inbox, read the invoice, move the newsletter to Trash, or send
+a synthetic message to `friend@example.com`. Only that recipient is allowlisted.
+
+The mailbox has three synthetic messages: a newsletter, an invoice and a clearly
+labelled prompt injection. Treat the injection as untrusted mail, never as
+instructions. Use an isolated client session without real accounts or unrelated
+powerful tools: this demo isolates MailBend, not the rest of your agent's tools.
+Jev stays off, so its classification and triage tools are not offered. Use a
+trusted machine: the fixture password is public, and other users on the same
+host can reach the synthetic IMAP/SMTP ports.
+
+The demo discards inherited account, helper, proxy, trust-store and TypeSafe
+settings. Mail sockets connect only to `127.0.0.1`, with TLS still verifying
+`localhost` against a new throwaway CA. The temporary `MAILBEND_CA_FILE` applies
+only to this demo; it is never installed into the system trust store or copied
+into your regular configuration. The printed MCP command relays over a private
+local socket, so the MCP client's environment cannot override these settings.
+
+The terminal shows the temporary fake-server state file where synthetic sends
+and folder changes can be inspected. Ctrl-C, SIGTERM or SIGHUP stops the server
+and its connected MailBend processes and removes the session, certificates and
+state. Old MCP snippets then fail closed; start again for a fresh mailbox and
+configuration. As with other temporary programs, SIGKILL or power loss can leave
+a directory under `/tmp/mailbend-demo-*`; remove only your stopped session's
+directory. No real mail is sent, and no live provider or Jev behavior is tested.
+
 ## Why MailBend
 
-- **Safety rules are proven, not just tested.** The rules for the IMAP
+- **Safety rules are proven, not just tested.** The rules for the IMAP <!-- claim:read-plans -->
   command plans, the SMTP envelope and the optional Jev checks (Jev is
   TypeSafe's model; see [Jev](#jev-optional)) are laws in
   [LAWS.bend](LAWS.bend), and `bend PROOF.bend` proves each one for every
@@ -23,7 +56,7 @@ server](#use). Details of the install are [below](#install-linux).
   a permanent delete needs its confirmation word, a recipient allowlist
   refuses any unlisted recipient. See
   [What the proofs cover](#what-the-proofs-cover).
-- **Stale UIDs never touch other messages.** Every change is pinned to the
+- **Stale UIDs never touch other messages.** Every change is pinned to the <!-- claim:uidvalidity -->
   folder's UIDVALIDITY inside the same IMAP session that makes it.
 - **The agent-facing core never reads the password.** The core is written in
   [Bend 2](https://github.com/bendlang/bend); only the Rust TLS helper
@@ -629,7 +662,7 @@ to 1024 UTF-8 bytes.
 The result reports:
 
 - `present`: `{uid, flags}` observations, without message content or Jev calls.
-- `absent`: UIDs proven absent **in this mailbox** by a successful, complete UID
+- `absent`: UIDs confirmed absent **in this mailbox** by a successful, complete UID
   SEARCH after fetching flags. This does not prove global deletion: a message
   may have moved or still have a copy elsewhere.
 - `unknown`: UIDs whose evidence is incomplete. Keep their cached state and
@@ -684,10 +717,10 @@ questions. Never post credentials or real mail.
 
 ## Safety
 
-- **TLS is always verified**: certificate chain and host name, TLS 1.2+, with
+- **TLS is always verified**: certificate chain and host name, TLS 1.2+, with <!-- claim:native-boundaries -->
   no option to turn verification off. SMTP uses STARTTLS by default;
   `MAILBEND_SMTP_TLS_MODE=implicit` opts into implicit TLS.
-- **Credentials stay in the helper.** Only `mailbend-tls` reads the password
+- **Credentials stay in the helper.** Only `mailbend-tls` reads the password <!-- claim:native-boundaries -->
   and sends it only to the verified server, so no tool result or log
   contains it. This is a code-level separation, not an OS boundary:
   `MAILBEND_APP_PASSWORD` is inherited by every MailBend process and
@@ -703,39 +736,43 @@ questions. Never post credentials or real mail.
   `MAILBEND_DRAFTS_ONLY=1` to keep a person in front of every send, and
   have your MCP client ask before it runs a tool that changes mail.
   Claude Code users can add the [client-side send/delete prompt](docs/CLAUDE-HOOK.md).
-- **Sending can be fenced.** With `MAILBEND_ALLOWED_RECIPIENTS`, a message
+  The hook's pure response envelope permits only `ask` or no decision; <!-- claim:client-prompts -->
+  its pure call classifier asks for real sends and permanent deletes unless
+  `dry_run` is exactly Boolean `true`. Client enforcement and native input handling
+  remain tested boundaries.
+- **Sending can be fenced.** With `MAILBEND_ALLOWED_RECIPIENTS`, a message <!-- claim:send-allowlist -->
   goes only when every envelope recipient is allowed: `LAWS.bend` states, and
   `PROOF.bend` proves, that the envelope is refused whenever any one
   recipient is not, wherever it stands in the list, and that without an
   allowlist the envelope is unchanged; the envelope has no other source.
   `MAILBEND_MAX_SENDS_PER_DAY` caps sends per UTC day in a local counter no
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
-  `APPEND` to the Sent folder and nothing else (proven).
-- **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that
+  `APPEND` to the Sent folder and nothing else (proven). <!-- claim:sent-copy -->
+- **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that <!-- claim:read-plans -->
   every read plan (probe, quota, folders, search, get, new mail, refresh, thread) contains
   no command that can change a mailbox, for every argument, and
-  that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`.
-- **Nothing is lost by accident.** Move and trash never expunge before
-  copying (proven for every server capability), and their first
-  `UID EXPUNGE` names the same UIDs as their first `UID COPY` (proven).
-  Permanent delete needs the exact confirmation word (proven: otherwise the
+  that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`. <!-- claim:read-wire -->
+- **Nothing is lost by accident.** Move and trash never expunge before <!-- claim:move-delete-plans -->
+  copying (proven for every server capability), and their first <!-- claim:move-delete-plans -->
+  `UID EXPUNGE` names the same UIDs as their first `UID COPY` (proven). <!-- claim:move-delete-plans -->
+  Permanent delete needs the exact confirmation word (proven: otherwise the <!-- claim:move-delete-plans -->
   plan is empty) and UIDPLUS; its first `UID EXPUNGE` names the same UIDs
   as its first `\Deleted` store, and with the confirmation those are the
-  caller's UIDs (proven). Every command that changes mail is pinned too:
+  caller's UIDs (proven). Every command that changes mail is pinned too: <!-- claim:move-delete-plans -->
   move and trash do exactly one `UID MOVE`, or exactly one `UID COPY`, one
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
-  second or later change (proven). Expunging always renders as
-  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID
+  second or later change (proven). Expunging always renders as <!-- claim:move-delete-plans -->
+  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
   commands. Commands that take a UID list preserve its order. STORE preserves
-  the requested flag and add or remove operation (proven).
-- **Stale UIDs never touch other messages.** Every change is pinned to the
-  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if
+  the requested flag and add or remove operation (proven). <!-- claim:uid-wire -->
+- **Stale UIDs never touch other messages.** Every change is pinned to the <!-- claim:uidvalidity -->
+  caller's folder and UIDVALIDITY in the same IMAP session (proven for every plan): if <!-- claim:uidvalidity -->
   the folder was recreated since the UIDs were read, the helper stops before
   any change. Reply and forward check it too before using the original, and
   expunging plans confirm UIDPLUS in their own session first.
-- **Folder targets must be resolved.** Overrides, advertised roles and
-  conventional names follow the per-role precedence above (proven for every
+- **Folder targets must be resolved.** Overrides, advertised roles and <!-- claim:role-resolution -->
+  conventional names follow the per-role precedence above (proven for every <!-- claim:role-resolution -->
   folder list); ambiguous or unselectable targets never trigger a guessed
   mutation.
 - **Search pages move toward older UIDs.** `mail_search` keeps its newest-first
@@ -762,11 +799,11 @@ questions. Never post credentials or real mail.
   count or the remaining number of pages. Every page still enumerates matching
   UIDs with UID SEARCH; pagination bounds fetched summaries and response size,
   not server search work. `mail_get_new` retains its separate arrival cursor.
-- **Labels are folders, and no tool deletes one.** On iCloud a label is a
-  folder: `mail_label` is the proven move plan (so every move law holds for
+- **Labels are folders, and no tool deletes one.** On iCloud a label is a <!-- claim:label-plans -->
+  folder: `mail_label` is the proven move plan (so every move law holds for <!-- claim:label-plans -->
   it), and moving the messages back to INBOX removes the label.
   `mail_create_folder` and `mail_rename_folder` only create, rename and
-  (un)subscribe (proven: they change no message and expunge nothing). A
+  (un)subscribe (proven: they change no message and expunge nothing). A <!-- claim:folder-plans -->
   rename subscribes the new name of each moved folder that was subscribed,
   then unsubscribes its old name; if only a subscription fails, the call
   succeeds with `subscribed: false` and a note not to retry. They refuse
@@ -777,12 +814,12 @@ questions. Never post credentials or real mail.
   already exist. IMAP has no way to delete a folder only when it is empty,
   and iCloud deletes a folder's messages with it, so delete folders in
   Apple Mail or iCloud.com.
-- **Triage moves each message once, into a folder it may fill.**
-  `mail_triage` files each message by at most one proven move, into
+- **Triage moves each message once, into a folder it may fill.** <!-- claim:triage-plans -->
+  `mail_triage` files each message by at most one proven move, into <!-- claim:triage-plans -->
   `To Delete` or a category folder passed in, never into INBOX, a role
-  folder or the folder it reads, and creates no folder (proven for every
+  folder or the folder it reads, and creates no folder (proven for every <!-- claim:triage-plans -->
   input).
-- **The running core reports interrupted changes.** A move (`mail_move`, `mail_trash`,
+- **The running core reports interrupted changes.** A move (`mail_move`, `mail_trash`, <!-- claim:interrupted-changes -->
   `mail_label`) cut off when its COPY may have run fails with `partial: true`
   (the messages may be in both folders; `isError` over MCP, exit 1 on the
   CLI), never as an error that implies nothing changed. A refused or earlier
@@ -798,7 +835,7 @@ questions. Never post credentials or real mail.
   failed after starting or was killed by a signal may have, so these changes
   count it as cut off. These results require the core to remain alive. Stopping
   the core can leave a completed or partial change with no result to the client.
-- **Attachments stay inside one directory.** Attachments are read only from
+- **Attachments stay inside one directory.** Attachments are read only from <!-- claim:attachment-boundaries -->
   `MAILBEND_ATTACH_DIR` (off without it), at most 32 and 25 MB in total, by
   the credential-free `mailbend-attach`, which refuses symlinks, `..`, hard
   links, devices and FIFOs, so a prompt-injected message cannot make the
@@ -807,7 +844,7 @@ questions. Never post credentials or real mail.
   home directory, and a directory that holds, is or lies inside `.ssh`,
   `.gnupg`, `.aws`, `.config` or `.git` are refused.
   Mechanics: [native/README.md](native/README.md#contract).
-- **Downloads land only in one directory, as new files.**
+- **Downloads land only in one directory, as new files.** <!-- claim:attachment-boundaries -->
   `mail_get_attachment` saves only in `MAILBEND_DOWNLOAD_DIR` (off without
   it, and refused in read-only mode), under the attachment's own file name
   stripped of any path, control or format characters and leading dots. A
@@ -817,7 +854,7 @@ questions. Never post credentials or real mail.
   directory in `PATH`). A saved file is still untrusted content. Mechanics:
   [native/README.md](native/README.md#contract).
 - **Jev sees only what you allow.** See [Jev](#jev-optional).
-- **Trust overrides replace the system trust store.** Both network helpers
+- **Trust overrides replace the system trust store.** Both network helpers <!-- claim:native-boundaries -->
   honor `SSL_CERT_FILE` and `SSL_CERT_DIR`, combining their certificates when
   both are configured. No usable roots means failure, not platform fallback.
   Empty directory entries are ignored, but an empty file value fails to load.
@@ -827,11 +864,22 @@ questions. Never post credentials or real mail.
   mandatory. `scripts/mailbend` warns when an override is set.
   `mailbend diagnose` reports `system`, `ssl_cert_env` or `mailbend_ca_file`
   without the path. See the [native trust rule](native/README.md#contract).
-- **Commands run in lock-step.** They run one at a time and stop at the
+- **Commands run in lock-step.** They run one at a time and stop at the <!-- claim:native-boundaries -->
   first rejection; message contents are framed as IMAP literals, so a
   message cannot spoof a server reply.
 
 ### What the proofs cover
+
+The [law catalogue](docs/LAWS.md) lists every root law with its source summary.
+The [claim coverage](docs/PROOF-COVERAGE.md) maps these statements to named laws,
+tests, code and seeded bugs. See [how to maintain the claims](docs/SAFETY-CLAIMS.md).
+The badge above reports the full CI workflow,
+including its kernel-verdict step, rather than an individual proof job.
+
+Mark and flag plans change only their documented flags. <!-- claim:flag-plans -->
+An APPEND dry-run preview shows the message size rather than its contents. <!-- claim:dry-run -->
+Missing Jev answers and answers from another model take cautious paths. <!-- claim:jev-answers -->
+Read commands render as EXAMINE and BODY.PEEK. <!-- claim:read-wire -->
 
 `PROOF.bend` imports the pure policy module rather than tool orchestration or the
 generated schema. CI separately kernel-checks `src/tools.bend` and the
@@ -854,15 +902,15 @@ from the `\Noselect`, `\NonExistent` and special-use attributes themselves. Fold
 discovery, override validation and how each tool uses the resolved folder are
 covered by the end-to-end tests.
 
-The switch laws cover every operation and JSON argument value. Read-only calls
+The switch laws cover every operation and JSON argument value. Read-only calls <!-- claim:policy-gates -->
 that can write, drafts-only calls that send, and Jev-dependent calls with Jev off
 all return a non-empty refusal. The send classifier is fixed independently to the
 operation and `as_draft` field. Unrecognized Boolean switch strings produce a bad
 flag, and a bad flag in any of the five configuration positions rejects the whole
 configuration. Environment reads and tool dispatch remain end-to-end tested.
 
-Each mutating IMAP constructor has a law for its exact effect and write status,
-for every argument. A draft plan is exactly one APPEND with Draft and Seen flags.
+Each mutating IMAP constructor has a law for its exact effect and write status, <!-- claim:effect-classifiers -->
+for every argument. A draft plan is exactly one APPEND with Draft and Seen flags. <!-- claim:draft-plans -->
 Every resolved role has a structural witness of its exact name and selectability
 in the original listing, with no bound on the list length. The policy mutation
 check rejects changed gates, classifiers, draft plans and invented role names.
@@ -871,13 +919,13 @@ The laws are about the pure IMAP command plans, the SMTP envelope and outcome
 interpretation, Jev's
 requests and gates (the functions through which Jev can block a send or
 delete), and their rendering. They prove that a headers-mode Jev request
-holds no message text, and that a gate can only take a send or delete away,
-never change it. The gate laws cover the pure functions
+holds no message text, and that a gate can only take a send or delete away, <!-- claim:jev-privacy -->
+never change it. The gate laws cover the pure functions <!-- claim:jev-gates -->
 `Jev.outbound_checked` and `Jev.delete_checked`; the IO that calls them is
 covered by the end-to-end tests and a CI check that no other code reaches
 `S.outbound` or `smtp_run`, uses `plan_delete` without `delete_checked`, or
 makes an expunge outside `src/ops.bend` and `src/imap.bend`. The SMTP outcome laws prove that unconfirmed or missing progress stays unknown
-for every exit code and transcript, and that confirmed acceptance survives a
+for every exit code and transcript, and that confirmed acceptance survives a <!-- claim:smtp-outcome -->
 later process failure. Native progress production itself remains a tested IO
 boundary. The native
 helpers, TLS, MIME parsing, the agent's choices and environment
@@ -887,7 +935,7 @@ checks that Jev's answers are right. Each law is stated in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-each-safety-rule-is-enforced)
 maps each rule to the code and checks that enforce it.
 
-Response projection laws also prove that the per-field selection predicate
+Response projection laws also prove that the per-field selection predicate <!-- claim:response-budget -->
 keeps non-body fields, and fitting one non-body field preserves its value and
 byte allowance. A separate law fixes the body classifier to exactly `text`,
 `html` and selected-part `content`, so safety fields cannot silently become
@@ -904,7 +952,7 @@ an extra no-overflow premise. When the full escaped string fits, the text
 and exact unused allowance are preserved. The proof follows the production
 escape/reverse loops and machine-word addition, not a parallel serializer.
 
-Image admission laws retain the original `Budget.admit_all` cap proofs and
+Image admission laws retain the original `Budget.admit_all` cap proofs and <!-- claim:image-budget -->
 also bound the production `Image.bind_next` state machine used by `bind_run`.
 For every draw history from its real empty-accumulator `room_new()` seed,
 used images plus any pending image plus remaining room stay within four
@@ -921,7 +969,7 @@ fetches remain a tested boundary. The reference law pins the pure
 `Used` fate and joins the corpus; an unavailable token retries. This is not
 a separate global reference-uniqueness theorem.
 
-The [json_serialized_bytes](LAWS.bend) law proves
+The [json_serialized_bytes](LAWS.bend) law proves <!-- claim:json-bytes -->
 `C.utf8_len(J.show(j)) == Response.bytes(j)` for every `J.Json`, including
 embedded chains and object members. The proof follows the actual serializer,
 quotes, separators and UTF-8 accumulator. This is **U32 modular equality**:
@@ -930,7 +978,7 @@ value has a nonoverflowing natural byte size or fits a response budget.
 
 Full result/list assembly, whole-response byte bounds, cursor paging,
 unchanged Jev inputs, native IO and final image request assembly remain
-tested rather than kernel-proven.
+tested rather than established by kernel proofs.
 The budget mutation check rejects over-budget prefix retention, ignored
 image count, production room reset/refund, broken IO transition wiring,
 omitted UTF-8 accumulation, missing JSON delimiters, doubled separators,
@@ -946,7 +994,7 @@ flowchart LR
   core -- "MCP stdout" --> agent
   subgraph core["Bend core: never reads the password"]
     direction TB
-    tools["tools"] --> plans["command plans<br/>(safety laws proven)"]
+    tools["tools"] --> plans["command plans<br/>(safety laws checked)"]
     plans --> parse["render and parse<br/>IMAP, MIME, JSON"]
   end
   core -- "IMAP script or SMTP envelope on stdin" --> helper["mailbend-tls (Rust, rustls)<br/>verified TLS, login,<br/>lock-step commands"]
