@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import contextlib
 import ctypes
+import itertools
 import json
 import os
 import pathlib
@@ -69,8 +70,11 @@ def process_state(pid):
 
 
 def stopped(pid):
-    # A vanished core must fail the stop barrier, not satisfy or outwait it.
-    return process_state(pid) == "T"
+    # An exited or vanished core must fail the barrier, not satisfy or outwait it.
+    state = process_state(pid)
+    if state in "ZXx":
+        raise AssertionError(f"process {pid} exited before being observed stopped (state {state})")
+    return state == "T"
 
 
 def live(pid):
@@ -896,7 +900,11 @@ class ProcessStateTests(unittest.TestCase):
                         pathlib.Path, "read_text", autospec=True,
                         return_value=f"123 ({comm}) {state} 1 2 3\n") as read:
                     self.assertEqual(process_state(123), state)
-                    self.assertEqual(stopped(123), state == "T")
+                    if state in "ZXx":
+                        with self.assertRaisesRegex(AssertionError, "exited before being observed stopped"):
+                            stopped(123)
+                    else:
+                        self.assertEqual(stopped(123), state == "T")
                     self.assertEqual(live(123), state not in "ZXx")
                     self.assertEqual(read.call_args_list,
                                      [mock.call(pathlib.Path("/proc/123/stat"))] * 3)
@@ -915,22 +923,41 @@ class ProcessStateTests(unittest.TestCase):
                 with self.subTest(predicate=predicate.__name__), self.assertRaises(PermissionError):
                     predicate(123)
 
+    def test_exited_core_fails_stop_barrier_without_polling(self):
+        for state in "ZXx":
+            with self.subTest(state=state), mock.patch.object(
+                    pathlib.Path, "read_text", return_value=f"123 (core) {state} 1\n") as read, \
+                    mock.patch.object(time, "monotonic", side_effect=itertools.count()), \
+                    mock.patch.object(time, "sleep") as sleep:
+                with self.assertRaisesRegex(
+                        AssertionError, f"process 123 exited before being observed stopped \\(state {state}\\)"):
+                    wait_until(lambda: stopped(123))
+                read.assert_called_once()
+                sleep.assert_not_called()
+
     def test_stop_barrier_keeps_default_deadline(self):
+        now = 0.0
+
+        def advance(seconds):
+            nonlocal now
+            now += seconds
+
         with mock.patch.object(pathlib.Path, "read_text", return_value="123 (core) S 1\n") as read, \
-                mock.patch.object(time, "monotonic", side_effect=[0, 0, 0.01, 10]), \
-                mock.patch.object(time, "sleep") as sleep:
+                mock.patch.object(time, "monotonic", side_effect=lambda: now), \
+                mock.patch.object(time, "sleep", side_effect=advance):
             with self.assertRaisesRegex(AssertionError, "within timeout"):
                 wait_until(lambda: stopped(123))
-            self.assertEqual(read.call_count, 2)
-            self.assertEqual(sleep.call_args_list, [mock.call(0.01)] * 2)
+            self.assertGreater(read.call_count, 0)
+            self.assertGreaterEqual(now, 10)
+            self.assertLess(now, 10.1)
 
     def test_backpressure_waits_for_observed_stop_before_flood_and_term(self):
         events = []
-        states = iter("RSTZ")
+        states = iter("RST")
 
         def read(path):
             if path == pathlib.Path("/proc/123/stat"):
-                state = next(states)
+                state = "Z" if (123, signal.SIGCONT) in events else next(states, "T")
                 events.append(state)
                 return f"123 (name) T fake) {state} 1\n"
             self.assertEqual(path, pathlib.Path("/proc/123/status"))
@@ -938,7 +965,7 @@ class ProcessStateTests(unittest.TestCase):
             return f"ShdPnd:\t{1 << (signal.SIGTERM - 1):x}\n"
 
         def flood(_):
-            self.assertEqual(events[-1], "T", "input reached a core not observed stopped")
+            self.assertIn("T", events, "input reached a core not observed stopped")
             events.append("flood")
             raise BlockingIOError
 
@@ -954,8 +981,10 @@ class ProcessStateTests(unittest.TestCase):
             case = StdioTests("test_backpressure_still_forwards_signals")
             case.test_backpressure_still_forwards_signals()
             session.proc.wait.assert_called_once_with(timeout=10)
-        self.assertEqual(events, [(123, signal.SIGSTOP), "R", "S", "T", "flood", "terminate",
-                                  "pending", (123, signal.SIGCONT), "Z"])
+        required = [(123, signal.SIGSTOP), "T", "flood", "terminate",
+                    "pending", (123, signal.SIGCONT), "Z"]
+        for before, after in zip(required, required[1:]):
+            self.assertLess(events.index(before), events.index(after), events)
 
 
 if __name__ == "__main__":

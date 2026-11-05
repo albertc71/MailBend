@@ -1,0 +1,3 @@
+# Optional manual recipe only. Not a product or CI dependency.
+openai-agents==0.24.0
+mcp==1.30.0

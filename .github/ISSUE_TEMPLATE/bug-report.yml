@@ -1,0 +1,72 @@
+{
+  "name": "Bug report",
+  "description": "Report a problem with a synthetic reproduction and reviewed local diagnostics.",
+  "title": "Bug: ",
+  "body": [
+    {
+      "type": "markdown",
+      "attributes": {
+        "value": "Never include real credentials, account addresses, mail, private hosts, folder names, or unredacted transcripts. Report suspected vulnerabilities through [private vulnerability reporting](https://github.com/albertc71/MailBend/security/advisories/new), not this public form. Use fake data and the local fake server for reproductions."
+      }
+    },
+    {
+      "type": "input",
+      "id": "revision",
+      "attributes": {
+        "label": "MailBend commit",
+        "description": "Paste the exact commit from git rev-parse HEAD. Say if your checkout has local changes."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "input",
+      "id": "distribution",
+      "attributes": {
+        "label": "Linux distribution, version, and architecture",
+        "description": "Include whether you use WSL or a container. Do not include machine names or account details."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "diagnose",
+      "attributes": {
+        "label": "Reviewed offline diagnose JSON",
+        "description": "Run scripts/mailbend diagnose with no flags. This checks local setup without a network connection. Review the JSON before sharing and remove any private data. If you cannot run it, explain why. Do not paste environment files, client configuration, setup --check output, or live-mail tool output.",
+        "render": "json"
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "reproduction",
+      "attributes": {
+        "label": "Synthetic reproduction",
+        "description": "Give the smallest steps using fake data and tests/fake_mail_server.py. Include a synthetic fixture or failing test when possible. If you cannot reproduce it offline, describe the limitation without attaching live-mail dumps."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "behavior",
+      "attributes": {
+        "label": "Expected and actual behavior",
+        "description": "Describe what you expected and what happened. Use synthetic examples rather than message contents or account details."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "checkboxes",
+      "id": "privacy",
+      "attributes": {
+        "label": "Privacy review",
+        "options": [
+          {
+            "label": "I reviewed this report. It contains no real credentials, account addresses, mail, private hosts, folder names, or unredacted transcripts.",
+            "required": true
+          }
+        ]
+      }
+    }
+  ]
+}

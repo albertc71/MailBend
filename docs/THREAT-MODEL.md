@@ -3,7 +3,7 @@
 MailBend limits what its mail tools can do after an agent chooses a call.
 It does not establish that the call serves the user's intent. This document
 connects those limits to their evidence and to the threats left outside them.
-It describes the repository at `5da814cc7eebcb4561a7cc65281609602e68e5d7`,
+It describes the repository at `9a154c1a793690fef17e367da2ffe1c79548214c`,
 reviewed on 5 November 2026. It is not a certification or a new security policy.
 [SECURITY.md](../SECURITY.md#scope) defines the reporting scope.
 
@@ -85,17 +85,19 @@ The boundaries follow [AGENTS.md](../AGENTS.md#native-boundaries):
 3. The core supplies complete scripts or envelopes to `mailbend-tls` over
    stdin. That helper owns sockets, credential reads, verified TLS, protocol
    framing, and lock-step execution. It checks the whole input before
-   connecting and stops on rejection or an unmet expectation. It does not
-   choose mail operations. Transcripts return to the core for interpretation.
+   connecting and stops on rejection or an unmet expectation. It must never
+   choose, reorder, synthesize, or alter mail operations. Transcripts return
+   to the core for interpretation.
 4. `mailbend-attach` re-executes with an empty environment before attachment
-   reads, downloads, or counter access. It opens no network connection and
-   reads no credentials. Its filesystem checks apply to those operations, not
-   to every file the local user or calling agent can access.
+   reads, downloads, or counter access. It must not implement mail policy or
+   network access, and reads no credentials. Its filesystem checks apply to
+   those operations, not to every file the local user or calling agent can access.
 5. The core builds Jev requests and interprets answers. `mailbend-typesafe`
    re-executes with an allow-listed environment before reading its key file,
    then transports the request to the fixed
    `https://api.typesafe.ai/v1/systemone` endpoint. No mail password remains
-   in that re-executed environment. The helper does not decide mail policy.
+   in that re-executed environment. The helper must not read mail credentials
+   or make mail-policy decisions, including when credentials are file-backed.
 6. Network helpers use the shared `mailbend-net` TLS implementation. Mail
    sockets connect directly to the configured IMAP or SMTP destination.
    System DNS is the default; `mailbend-cloud` opts into DoH. A numeric
@@ -138,14 +140,35 @@ that a prose security claim follows from a law.
 
 Proved properties include [read_only_refuses_writes](../LAWS.bend),
 [drafts_only_refuses_sends](../LAWS.bend),
-[malformed_switch_is_bad](../LAWS.bend), and
+[malformed_switch_is_bad](../LAWS.bend),
+[bad_read_only_rejects_config](../LAWS.bend),
+[bad_drafts_only_rejects_config](../LAWS.bend),
+[bad_typesafe_rejects_config](../LAWS.bend),
+[bad_zero_retention_rejects_config](../LAWS.bend),
+[bad_images_rejects_config](../LAWS.bend), and
 [allowlist_refuses_unlisted](../LAWS.bend).
 The pure [policy](../src/policy.bend) rejects forbidden calls, even if the caller
 knows a hidden tool's name. The [SMTP envelope builder](../src/smtp.bend)
-checks every envelope recipient, including Bcc. Environment loading and
-dispatch in [the tool layer](../src/tools.bend) remain tested wiring.
-[End-to-end tests](../tests/test-e2e.py) cover `read_only`, `gates_tool_list`,
-`allowlist`, `allowlist_reply_all`, and `daily_limit`.
+checks every envelope recipient, including Bcc.
+
+`MAILBEND_READ_ONLY` refuses mutations and hides mutating tools.
+`MAILBEND_DRAFTS_ONLY` refuses sends and hides `mail_send`; reply and forward
+remain listed because they can save drafts with `as_draft=true`. An unrecognized
+value in the shared Boolean configuration (`MAILBEND_READ_ONLY`,
+`MAILBEND_DRAFTS_ONLY`, `MAILBEND_TYPESAFE`, `MAILBEND_TYPESAFE_ZERO_RETENTION`,
+or `MAILBEND_TYPESAFE_IMAGES`) fails closed, never reads as off: every known
+tool call fails, although listing falls back to the read tools that do not
+need Jev. These switches are not the complete fail-closed set: the other TypeSafe
+settings checked by [`config_of`](../src/policy.bend) can also reject the shared
+configuration. The laws cover pure classification, configuration rejection,
+and policy refusal. Environment
+loading, listing, and the runtime refusal path in [the tool layer](../src/tools.bend)
+remain tested wiring. [End-to-end tests](../tests/test-e2e.py) exercise these
+paths in `read_only`, `jev_switches`, `jev_images`, and `setup_diagnostics`;
+`gates_tool_list` checks the offered tool metadata. Send-only settings are
+separate: `send_settings` tests malformed send settings refusing sends while
+leaving drafts and reads working. `allowlist`, `allowlist_reply_all`, and
+`daily_limit` cover the recipient and quota controls.
 The same suite's `compose` cases test malformed argument types and names
 before any send. Schema validation is a tested input boundary, not a proof of
 the caller's intent.
@@ -318,6 +341,12 @@ Results and diagnostics can be captured by the client, but MailBend has no
 persistent application audit journal. The send counter records reservations,
 not calls or their outcomes. The [offline posture report](CLOUD_AGENT.md#offline-posture)
 describes configuration, not observed traffic or a security verdict.
+The opt-in [redacted provider report](PROVIDER-REPORTS.md) adds diagnostic
+observations without submitting them anywhere. Its `provider_reports`
+[end-to-end cases](../tests/test-e2e.py) test the finite report fields and
+redaction; they are not a proof. The operator must review the output before
+sharing it in a public issue. A report does not establish write-path support
+or compatibility for every account at a provider.
 [Audit and trace proposals](https://github.com/albertc71/MailBend/issues/91)
 remain open. A reviewer cannot infer missing actions from an absent client log.
 
@@ -332,8 +361,8 @@ The following sources were read on **5 November 2026**:
 - [CoSAI MCP security whitepaper](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/whitepapers/model-context-protocol-security.md),
   version 2.0, last updated 12 August 2026, marked Draft.
 
-The short labels below summarize the categories. The mappings are MailBend's
-analysis, not an OWASP or CoSAI assessment. **Addressed** means the narrowly
+The MCP rows use OWASP's item names; the other short labels summarize their
+categories. The mappings are MailBend's analysis, not an OWASP or CoSAI assessment. **Addressed** means the narrowly
 stated property has a law or test and no identified gap in that scope.
 **Partial** means controls cover only part of the category. **Out of scope**
 means this connector does not own the capability or trust decision.
@@ -345,16 +374,16 @@ No CoSAI assurance level or framework compliance is claimed.
 
 | Item and short label | Status | Evidence and covered behavior | Residual risk |
 | --- | --- | --- | --- |
-| MCP01:2025 Credential exposure | partial | [C3](#c3-secrets-have-separate-readers-not-separate-user-identities) separates secret readers and tests file, process, and output controls. | Inherited environments and same-user file access remain. No compromised-host or secure-erasure guarantee exists. |
-| MCP02:2025 Growing privileges | partial | [C1](#c1-calls-obey-configured-policy-not-inferred-intent) proves policy refusals and the recipient allowlist; [C5](#c5-local-file-operations-stay-within-configured-roots) tests file scope. | The caller gets the configured account access, not per-task delegated scopes. Read-only does not hide sensitive folders. [Least-privilege reads](https://github.com/albertc71/MailBend/issues/90) remain proposed. |
-| MCP03:2025 Poisoned tools | partial | [C8](#c8-build-checks-constrain-the-reviewed-source) records static generated schemas and CI drift checks. | Static definitions can still be malicious if source or binaries are replaced. MailBend cannot authenticate other tools or prevent a client from trusting hostile mail. |
-| MCP04:2025 Supply-chain compromise | partial | [C8](#c8-build-checks-constrain-the-reviewed-source) records checksum pins, locked dependencies, and CI controls. | Pins do not establish benign upstream code. [Attestation](https://github.com/albertc71/MailBend/issues/71) and [crate audit coverage](https://github.com/albertc71/MailBend/issues/127) remain open. |
-| MCP05:2025 Command injection | partial | [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) links exact rendering laws and native literal-framing tests. [C5](#c5-local-file-operations-stay-within-configured-roots) covers download destinations. | Native parsing and MIME handling are tested, not proved. A caller's shell or later execution of a download is outside these controls. |
-| MCP06:2025 Contextual prompt injection | open | [SECURITY.md](../SECURITY.md#scope) excludes an agent obeying mail; the [incident matrix](INCIDENTS.md) measures containment after compromise. | Valid malicious calls can succeed. [Content signals](https://github.com/albertc71/MailBend/issues/57), [post-read policy](https://github.com/albertc71/MailBend/issues/89), and [restricted reads](https://github.com/albertc71/MailBend/issues/90) are not implemented protections. |
-| MCP07:2025 Authentication and authorization gaps | partial | [C4](#c4-tls-authenticates-the-configured-endpoint) tests endpoint authentication. [C1](#c1-calls-obey-configured-policy-not-inferred-intent) constrains calls after local launch. | Stdio possession authorizes calls under shared configuration. There is no independent caller identity, per-human consent, or protection from the same local user. |
-| MCP08:2025 Missing audit evidence | open | [C9](#c9-prompts-and-diagnostics-are-not-consent-or-an-audit-journal) distinguishes current results, diagnostics, and the counter from the [audit proposal](https://github.com/albertc71/MailBend/issues/91). | Caller logs can be absent, altered, or lost with a stopped process. There is no complete or tamper-evident action history. |
-| MCP09:2025 Unmanaged MCP servers | out of scope | [Client configuration](MCP_CLIENTS.md) selects a local launcher; [C8](#c8-build-checks-constrain-the-reviewed-source) covers this repository's build controls. | MailBend does not discover or govern other servers, client registrations, or substituted installations. Deployment inventory remains the operator's responsibility. |
-| MCP10:2025 Context injection and excess sharing | partial | [C6](#c6-jev-may-veto-or-annotate-not-approve) bounds Jev request categories. [Privacy boundaries](PRIVACY.md) identify the caller's onward sharing. | Headers can be confidential. Returned mail remains hostile context. Read-only, truncation, and a secret scan do not prevent arbitrary disclosure through the caller or an allowed send. |
+| MCP01:2025 Token Mismanagement & Secret Exposure | partial | [C3](#c3-secrets-have-separate-readers-not-separate-user-identities) separates secret readers and tests file, process, and output controls. | Inherited environments and same-user file access remain. No compromised-host or secure-erasure guarantee exists. |
+| MCP02:2025 Privilege Escalation via Scope Creep | partial | [C1](#c1-calls-obey-configured-policy-not-inferred-intent) proves policy refusals and the recipient allowlist; [C5](#c5-local-file-operations-stay-within-configured-roots) tests file scope. | The caller gets the configured account access, not per-task delegated scopes. Read-only does not hide sensitive folders. [Least-privilege reads](https://github.com/albertc71/MailBend/issues/90) remain proposed. |
+| MCP03:2025 Tool Poisoning | partial | [C8](#c8-build-checks-constrain-the-reviewed-source) records static generated schemas and CI drift checks. | Static definitions can still be malicious if source or binaries are replaced. MailBend cannot authenticate other tools or prevent a client from trusting hostile mail. |
+| MCP04:2025 Software Supply Chain Attacks & Dependency Tampering | partial | [C8](#c8-build-checks-constrain-the-reviewed-source) records checksum pins, locked dependencies, and CI controls. | Pins do not establish benign upstream code. [Attestation](https://github.com/albertc71/MailBend/issues/71) and [crate audit coverage](https://github.com/albertc71/MailBend/issues/127) remain open. |
+| MCP05:2025 Command Injection & Execution | partial | [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) links exact rendering laws and native literal-framing tests. [C5](#c5-local-file-operations-stay-within-configured-roots) covers download destinations. | Native parsing and MIME handling are tested, not proved. A caller's shell or later execution of a download is outside these controls. |
+| MCP06:2025 Prompt Injection via Contextual Payloads | open | [SECURITY.md](../SECURITY.md#scope) excludes an agent obeying mail; the [incident matrix](INCIDENTS.md) measures containment after compromise. | Valid malicious calls can succeed. [Content signals](https://github.com/albertc71/MailBend/issues/57), [post-read policy](https://github.com/albertc71/MailBend/issues/89), and [restricted reads](https://github.com/albertc71/MailBend/issues/90) are not implemented protections. |
+| MCP07:2025 Insufficient Authentication & Authorization | partial | [C4](#c4-tls-authenticates-the-configured-endpoint) tests endpoint authentication. [C1](#c1-calls-obey-configured-policy-not-inferred-intent) constrains calls after local launch. | Stdio possession authorizes calls under shared configuration. There is no independent caller identity, per-human consent, or protection from the same local user. |
+| MCP08:2025 Lack of Audit and Telemetry | open | [C9](#c9-prompts-and-diagnostics-are-not-consent-or-an-audit-journal) distinguishes current results, diagnostics, and the counter from the [audit proposal](https://github.com/albertc71/MailBend/issues/91). | Caller logs can be absent, altered, or lost with a stopped process. There is no complete or tamper-evident action history. |
+| MCP09:2025 Shadow MCP Servers | out of scope | [Client configuration](MCP_CLIENTS.md) selects a local launcher; [C8](#c8-build-checks-constrain-the-reviewed-source) covers this repository's build controls. | MailBend does not discover or govern other servers, client registrations, or substituted installations. Deployment inventory remains the operator's responsibility. |
+| MCP10:2025 Context Injection & Over-Sharing | partial | [C6](#c6-jev-may-veto-or-annotate-not-approve) bounds Jev request categories. [Privacy boundaries](PRIVACY.md) identify the caller's onward sharing. | Headers can be confidential. Returned mail remains hostile context. Read-only, truncation, and a secret scan do not prevent arbitrary disclosure through the caller or an allowed send. |
 
 ### OWASP Top 10 for Agentic Applications
 
@@ -364,7 +393,7 @@ No CoSAI assurance level or framework compliance is claimed.
 | ASI02 Tool misuse | partial | [C1](#c1-calls-obey-configured-policy-not-inferred-intent), [C2](#c2-plans-preserve-mailbox-identity-and-command-structure), and [C6](#c6-jev-may-veto-or-annotate-not-approve) link policy, exact plans, and optional veto evidence. | An allowed send, move, or confirmed delete can still be unwanted. Dry-run previews do not bind or approve a later call. |
 | ASI03 Identity and privilege abuse | partial | [C3](#c3-secrets-have-separate-readers-not-separate-user-identities) limits credential handling; [C1](#c1-calls-obey-configured-policy-not-inferred-intent) restricts mail effects. | The agent acts through the user's configured account. There is no per-agent identity or independent human authorization, and same-user credential access remains. |
 | ASI04 Agentic supply-chain compromise | partial | [C8](#c8-build-checks-constrain-the-reviewed-source) records repository build controls and [#127](https://github.com/albertc71/MailBend/issues/127). | The model, client, other tools, upstream dependencies, and substituted binaries are not made trustworthy by MailBend's proofs. |
-| ASI05 Unexpected code execution | partial | [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) tests protocol framing; [C5](#c5-local-file-operations-stay-within-configured-roots) restricts file writes. [Native boundaries](../AGENTS.md#native-boundaries) expose no mail tool for arbitrary shell execution. | Parsers and dependencies remain trusted implementation code. Separate shell tools, compromised binaries, and later execution of downloaded content are outside the boundary. |
+| ASI05 Unexpected code execution | partial | [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) tests protocol framing; [C5](#c5-local-file-operations-stay-within-configured-roots) restricts file writes. The [schema generator](../tools/gen-schema.py) and [generated tool list](../src/schema.bend) expose no arbitrary-shell tool, checked by the [schema unit pins](../tests/unit/schema.bend). The proved [tools_listed_per_config](../LAWS.bend) law fixes the pure operation-name list for each configuration. | Parsers and dependencies remain trusted implementation code. Separate shell tools, compromised binaries, and later execution of downloaded content are outside the boundary. |
 | ASI06 Poisoned memory or context | partial | [C6](#c6-jev-may-veto-or-annotate-not-approve) limits external model requests; [privacy documentation](PRIVACY.md#collection-use-and-local-storage) records the absence of a MailBend mailbox database. | Hostile mail persists at the provider and may be reread. The client can retain poisoned context or memory; MailBend does not sanitize agent memory or learn trusted facts from it. |
 | ASI07 Insecure agent communication | partial | [C4](#c4-tls-authenticates-the-configured-endpoint) covers mail and TypeSafe transport; [the stdio boundary](#assumptions-and-trust-boundaries) is local inherited I/O. | TLS does not authenticate an email author's intent or an inter-agent instruction. MailBend supplies no agent-to-agent authorization or trust negotiation. |
 | ASI08 Cascading failures | partial | [C7](#c7-results-preserve-uncertainty-and-work-has-finite-local-bounds) preserves uncertain outcomes and local bounds; [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) stops a rejected plan. | Earlier effects are not rolled back. A stopped core loses results, external retries can duplicate effects, and repeated valid calls can exhaust provider or API budgets. |

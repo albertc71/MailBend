@@ -3,6 +3,13 @@
 Thanks for helping. MailBend is small on purpose; please open an issue to
 discuss larger changes before writing them.
 
+Start with the [issue chooser](https://github.com/albertc71/MailBend/issues/new/choose)
+for a bug report, feature request, or provider conformance report. Report suspected
+vulnerabilities privately through [SECURITY.md](SECURITY.md).
+Documentation fixes, tests, and synthetic fixtures are useful first contributions.
+[Governance](GOVERNANCE.md) explains proposals, owner approval for every pull
+request, and law changes.
+
 ## Ground rules
 
 - Read [AGENTS.md](AGENTS.md): it holds the invariants every change must keep
@@ -106,8 +113,12 @@ Keep the entrypoint under 300 lines, use portable frontmatter without
 The documentation check validates tool-scoped names and arguments against
 `tools/gen-schema.py`; it is not a behavioral evaluation of an agent.
 
-When changing `.claude-plugin/` or `hooks/hooks.json`, also run these checks
-with Claude Code 2.1.295 or later:
+When changing shipped plugin behavior, including `.claude-plugin/` or
+`hooks/`, bump `version` in `.claude-plugin/plugin.json` and update the version
+assertion in `tests/test-plugin.py` and the plugin guide. The
+[upstream version contract](https://code.claude.com/docs/en/plugins-reference#version)
+keeps repository-marketplace users on the declared version until it changes.
+Also run these checks with Claude Code 2.1.295 or later:
 
 ```sh
 claude plugin validate . --strict
@@ -115,10 +126,13 @@ claude plugin validate .claude-plugin/marketplace.json --strict
 ```
 
 Plugin tests never start Claude or use a live account. The lightweight suite
-resolves manifest commands against a temporary fake installation, including
-paths with shell metacharacters. The runtime suite uses this checkout's
-launcher, its built binaries, and the loopback mail fixture. Neither these
-tests nor the validator proves client loading or prompt display. Follow the
+guards manifest declarations and uses a Python harness to substitute paths
+and merge environments against a fake installation. Shell-metacharacter
+paths exercise Python's argv handling, not Claude's interpolation, process
+launching or environment inheritance. The runtime suite uses that same
+harness with this checkout's real launcher, built binaries, and loopback mail
+fixture. Neither these tests nor the validator proves client loading or prompt
+display. Follow the
 [manual plugin checks](docs/CLAUDE-PLUGIN.md#verify-the-connection-and-prompt)
 before relying on a particular client version.
 
@@ -170,6 +184,12 @@ links whose labels are the exact law names and whose targets are `LAWS.bend`.
 The check also recognizes `law` or `laws` followed by backtick names, a backtick
 name followed by `law`, and `Laws.`-qualified references. It checks names, not whether
 prose claims follow from the laws.
+
+The bug and feature forms and issue chooser configuration use JSON syntax,
+which is valid YAML, so the same offline check can parse them without another
+dependency. It checks required fields, privacy warnings, and the private security
+route. The documentation tests reject broken declarations and contributor links.
+These source checks do not submit issues or verify GitHub's rendered form.
 
 Environment coverage uses exact `MAILBEND_*` string literals in `main.bend`,
 `src/*.bend`, and native Rust source, excluding comments and `cfg(test)` modules.

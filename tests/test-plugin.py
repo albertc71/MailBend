@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Check plugin declarations and literal argv/env with an isolated fake launcher.
+"""Guard plugin declarations and exercise a Python-only launch emulation.
 
 --runtime also runs the real hook and MCP launcher against the loopback mail
-fixture. Neither mode runs Claude or proves that Claude loads the plugin.
+fixture. Python performs substitutions, environment merges and argv launches
+in both modes; they do not test Claude's handling of any of these operations.
+Neither mode runs Claude or proves that Claude loads the plugin.
 """
 import argparse
 import json
@@ -24,7 +26,7 @@ def read_json(path):
 
 
 def resolve_command(entry, config):
-    """Resolve documented user_config substitutions, not a Claude runtime emulator."""
+    """Emulate substitutions in Python, without testing Claude's implementation."""
     def expand(value):
         return re.sub(r"\$\{user_config\.([a-z_]+)\}",
                       lambda match: config[match[1]], value)
@@ -37,7 +39,7 @@ class Packaging(unittest.TestCase):
         plugin = read_json(".claude-plugin/plugin.json")
         marketplace = read_json(".claude-plugin/marketplace.json")
         self.assertEqual(plugin["name"], "mailbend")
-        self.assertEqual(plugin["version"], "0.1.0")
+        self.assertEqual(plugin["version"], "0.1.1")
         self.assertEqual(marketplace["name"], "mailbend")
         self.assertTrue(marketplace["description"].strip())
         self.assertEqual(marketplace["plugins"], [{"name": "mailbend", "source": "./"}])
@@ -48,7 +50,8 @@ class Packaging(unittest.TestCase):
         self.assertNotIn("agents", plugin)
 
 
-class LaunchContract(unittest.TestCase):
+class PythonLaunchEmulation(unittest.TestCase):
+    """Finite manifest guards plus a local harness, not evidence of client behavior."""
     def setUp(self):
         self.plugin = read_json(".claude-plugin/plugin.json")
         self.temp = tempfile.TemporaryDirectory(prefix="mailbend-plugin-")
@@ -79,11 +82,13 @@ class LaunchContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertNotIn("synthetic-file-content-not-a-user-setting", result.stdout)
+        self.assertNotIn("synthetic-inherited-password", result.stdout + result.stderr)
         self.assertFalse((self.work / "INJECTED").exists())
         self.assertFalse((self.work / "PASSWORD_INJECTED").exists())
         return json.loads(result.stdout)
 
-    def test_mcp_launch_uses_literal_paths_and_safe_defaults(self):
+    def test_manifest_defaults_and_paths_in_python_launch_emulation(self):
+        """Guard declarations; substitution/merge/argv assertions cover only this harness."""
         fields = self.plugin["userConfig"]
         self.assertEqual(set(fields), {"mailbend_dir", "email", "password_file",
                                        "read_only", "drafts_only"})
@@ -99,19 +104,25 @@ class LaunchContract(unittest.TestCase):
             self.config[key] = fields[key]["default"]
         self.assertFalse(any(field.get("sensitive") for field in fields.values()))
         self.assertEqual(set(self.plugin["mcpServers"]), {"mailbend"})
+        server_env = self.plugin["mcpServers"]["mailbend"]["env"]
+        self.assertEqual(server_env["MAILBEND_APP_PASSWORD"], "")
+        self.assertNotIn("MAILBEND_TYPESAFE_API_KEY", server_env,
+                         "the core refuses this variable even when empty")
         self.env.update(MAILBEND_LOGIN="wrong-inherited-login", MAILBEND_READ_ONLY="0",
+                        MAILBEND_APP_PASSWORD="synthetic-inherited-password",
                         MAILBEND_DRAFTS_ONLY="0", MAILBEND_TYPESAFE="1",
                         MAILBEND_IMAP_HOST="imap.example.test", MAILBEND_IMAP_PORT="1993")
         result = self.launch(self.plugin["mcpServers"]["mailbend"])
         self.assertEqual(result, {
             "args": ["mcp"], "input": "",
             "env": {"MAILBEND_EMAIL": "reader@example.test", "MAILBEND_LOGIN": "",
+                    "MAILBEND_APP_PASSWORD": "",
                     "MAILBEND_PASSWORD_FILE": str(self.password),
                     "MAILBEND_READ_ONLY": "1", "MAILBEND_DRAFTS_ONLY": "1",
                     "MAILBEND_TYPESAFE": "0", "MAILBEND_IMAP_HOST": "imap.example.test",
                     "MAILBEND_IMAP_PORT": "1993"}})
 
-    def test_write_modes_are_independent_explicit_settings(self):
+    def test_write_mode_substitutions_in_python_launch_emulation(self):
         for read_only, drafts_only in (("1", "0"), ("0", "1"), ("0", "0")):
             with self.subTest(read_only=read_only, drafts_only=drafts_only):
                 self.config.update(read_only=read_only, drafts_only=drafts_only)
@@ -145,6 +156,7 @@ class LaunchContract(unittest.TestCase):
 
 
 class Runtime(unittest.TestCase):
+    """Real MailBend launcher/hook with Python-resolved config, not a Claude session."""
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mailbend-plugin-runtime-")
         self.addCleanup(self.temp.cleanup)
@@ -195,7 +207,7 @@ class Runtime(unittest.TestCase):
                 else:
                     self.assertEqual(result.stdout, "")
 
-    def test_manifest_mcp_probe_and_read_only_refusals(self):
+    def test_python_resolved_mcp_probe_and_read_only_refusals(self):
         for name in ("mailbend-core", "mailbend-stdio", "mailbend-tls"):
             self.assertTrue(os.access(ROOT / "bin" / name, os.X_OK),
                             "--runtime requires this checkout's binaries; run scripts/install.sh")
@@ -230,6 +242,7 @@ class Runtime(unittest.TestCase):
                         MAILBEND_SMTP_HOST="localhost", MAILBEND_SMTP_PORT=ports["smtp"],
                         MAILBEND_CA_FILE=str(self.work / "certs/ca.pem"),
                         MAILBEND_TIMEOUT_MS="10000", MAILBEND_LOGIN="wrong-inherited-login",
+                        MAILBEND_APP_PASSWORD="synthetic-inherited-password",
                         MAILBEND_READ_ONLY="0", MAILBEND_DRAFTS_ONLY="0", MAILBEND_TYPESAFE="1")
         before = json.loads(state.read_text())
         requests = [
@@ -249,6 +262,7 @@ class Runtime(unittest.TestCase):
                                 text=True, capture_output=True, env=self.env | overrides, timeout=90)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(fixture["password"], result.stdout + result.stderr)
+        self.assertNotIn("synthetic-inherited-password", result.stdout + result.stderr)
         replies = [json.loads(line) for line in result.stdout.split("\n") if line]
         self.assertEqual([reply["id"] for reply in replies], [0, 1, 2, 3, 4])
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-06-18")
@@ -270,10 +284,42 @@ class Runtime(unittest.TestCase):
                           " CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ", "MAIL FROM:"):
             self.assertFalse(any(forbidden in line for line in lines), forbidden)
 
+    def test_jev_off_still_refuses_inherited_invalid_settings_before_helpers(self):
+        """The real core rejects these settings even with the manifest's Jev-off override."""
+        helper = self.work / "forbidden-helper"
+        helper.write_text("#!/bin/sh\nprintf called > \"$MARKER\"\nexit 97\n")
+        helper.chmod(0o700)
+        marker = self.work / "helper-called"
+        self.env["MARKER"] = str(marker)
+        for name in ("TLS", "ATTACH", "TYPESAFE"):
+            self.env[f"MAILBEND_{name}_HELPER"] = str(helper)
+        command, overrides = resolve_command(self.plugin["mcpServers"]["mailbend"], self.config)
+        requests = [
+            {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18"}},
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "mail_probe", "arguments": {}}}]
+        for key, value in (("MAILBEND_TYPESAFE_API_KEY", ""),
+                           ("MAILBEND_TYPESAFE_CONTENT", "invalid"),
+                           ("MAILBEND_TYPESAFE_ZERO_RETENTION", "invalid"),
+                           ("MAILBEND_TYPESAFE_IMAGES", "invalid")):
+            with self.subTest(setting=key):
+                result = subprocess.run(command,
+                                        input="".join(json.dumps(r) + "\n" for r in requests),
+                                        capture_output=True, text=True,
+                                        env=self.env | {key: value} | overrides, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                replies = [json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual([reply["id"] for reply in replies], [0, 1])
+                reply = replies[1]
+                self.assertTrue(reply["result"]["isError"])
+                self.assertIn(key, reply["result"]["structuredContent"]["error"])
+                self.assertFalse(marker.exists(), "invalid config started a mail helper")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument("--runtime", action="store_true")
     args, rest = parser.parse_known_args()
-    cases = ["Packaging", "LaunchContract"] + (["Runtime"] if args.runtime else [])
+    cases = ["Packaging", "PythonLaunchEmulation"] + (["Runtime"] if args.runtime else [])
     unittest.main(argv=[sys.argv[0], *rest], defaultTest=cases)
