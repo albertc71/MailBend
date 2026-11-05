@@ -190,7 +190,16 @@ class ProcessLifetime(unittest.TestCase):
         until(lambda: self.demo.exited(proc))
         reaping = threading.Event()
         release = threading.Event()
-        cleanup_started = threading.Event()
+        contended = threading.Event()
+        original_lock = self.demo.lock
+        class ObservedLock:
+            def __enter__(self):
+                if not original_lock.acquire(blocking=False):
+                    contended.set()  # A real failed acquisition, not thread entry.
+                    original_lock.acquire()
+            def __exit__(self, *_args):
+                original_lock.release()
+        self.demo.lock = ObservedLock()
         errors = []
         real_wait = proc.wait
         def delayed_wait(*args, **kwargs):
@@ -204,7 +213,6 @@ class ProcessLifetime(unittest.TestCase):
             except Exception as error:
                 errors.append(error)
         def cleanup_owner():
-            cleanup_started.set()
             try:
                 self.demo.cleanup()
             except Exception as error:
@@ -217,7 +225,7 @@ class ProcessLifetime(unittest.TestCase):
             try:
                 self.assertTrue(reaping.wait(5))
                 owner.start()
-                self.assertTrue(cleanup_started.wait(5))
+                self.assertTrue(contended.wait(5))
             finally:
                 release.set()
                 client.join(5)
@@ -233,6 +241,52 @@ class ProcessLifetime(unittest.TestCase):
                              [mock.call(proc.pid, signal.SIGTERM),
                               mock.call(proc.pid, signal.SIGKILL)])
         self.assertEqual(proc.returncode, 0)
+
+    def test_grace_wait_does_not_block_other_children(self):
+        proc, lines = self.start('import signal, time\n'
+                                 'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                                 'print(1, flush=True)\n'
+                                 'time.sleep(300)\n')
+        self.assertEqual(lines.json(), 1)
+        waiting = threading.Event()
+        release = threading.Event()
+        observed = threading.Event()
+        errors = []
+        def grace_sleep(_delay):
+            waiting.set()
+            if not release.wait(5):
+                raise AssertionError('unrelated child blocked during grace wait')
+        def stop():
+            try:
+                self.demo.stop(proc)
+            except Exception as error:
+                errors.append(error)
+        def observe():
+            try:
+                other, _ = self.start('pass')
+                self.demo.exited(other)
+                observed.set()
+            except Exception as error:
+                errors.append(error)
+        with mock.patch.object(self.module.time, 'sleep', grace_sleep), \
+             mock.patch.object(self.module, 'STOP_TIMEOUT', .05):
+            stopper = threading.Thread(target=stop)
+            observer = threading.Thread(target=observe)
+            stopper.start()
+            try:
+                self.assertTrue(waiting.wait(5))
+                observer.start()
+                self.assertTrue(observed.wait(2), 'shared lock held during grace wait')
+                self.assertIsNone(proc.returncode)
+                self.assertTrue(Path(f'/proc/{proc.pid}').exists())
+            finally:
+                release.set()
+                stopper.join(5)
+                if observer.ident is not None:
+                    observer.join(5)
+            self.assertFalse(stopper.is_alive())
+            self.assertFalse(observer.is_alive())
+            self.assertEqual(errors, [])
 
     def test_already_reaped_leader_is_never_signaled(self):
         for use_popen in (True, False):
@@ -263,6 +317,37 @@ class ProcessLifetime(unittest.TestCase):
 
 
 class Certificates(unittest.TestCase):
+    def test_main_resets_inherited_sigchld_in_actual_child(self):
+        # Exercise main without opening sockets or requiring compiled binaries.
+        # The inspected process is a real child of Demo.start, not this test.
+        with tempfile.TemporaryDirectory(prefix='mailbend-sigchld-') as root:
+            binary = Path(root) / 'bin'
+            binary.mkdir()
+            for name in ('core', 'tls', 'attach', 'stdio', 'typesafe'):
+                (binary / f'mailbend-{name}').symlink_to(sys.executable)
+            probe = r'''
+import os, runpy, signal, subprocess, sys
+from pathlib import Path
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+module = runpy.run_path(sys.argv[1])
+main = module['main']
+main.__globals__['ROOT'] = Path(sys.argv[2])
+def inspect(demo):
+    proc = demo.start([sys.executable, '-I', '-c',
+                       'print(open("/proc/self/status").read())'], stdout=subprocess.PIPE)
+    with proc.stdout:
+        print(proc.stdout.read().decode(), end='')
+module['Demo'].run = inspect
+sys.argv = [sys.argv[1]]
+main()
+'''
+            run = subprocess.run([sys.executable, '-I', '-c', probe, str(DEMO), root],
+                                 capture_output=True, text=True, check=True, timeout=10)
+            ignored = next(line.split()[1] for line in run.stdout.splitlines()
+                           if line.startswith('SigIgn:'))
+            self.assertEqual(int(ignored, 16) & (1 << (signal.SIGCHLD - 1)), 0,
+                             'demo child inherited SIGCHLD=SIG_IGN')
+
     def test_signal_during_spawn_registers_child_before_cleanup(self):
         loader = importlib.machinery.SourceFileLoader('mailbend_demo_spawn', str(DEMO))
         spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -370,9 +455,10 @@ class Contract(unittest.TestCase):
         launcher = self.root / 'scripts/mailbend'
         launcher.write_text(f'#!{sys.executable} -I\n'
                            'import os, sys, json, subprocess\n'
+                           'status = open("/proc/self/status").read()\n'
                            'child = subprocess.Popen(["/bin/sleep", "300"])\n'
                            'print(json.dumps({"env": dict(os.environ), "pid": os.getpid(), '
-                           '"child": child.pid, "args": sys.argv[1:]}), flush=True)\n'
+                           '"child": child.pid, "status": status, "args": sys.argv[1:]}), flush=True)\n'
                            'sys.stdin.buffer.read()\n')
         launcher.chmod(0o700)
         # Inspect environments in real certificate/server child processes.
@@ -471,6 +557,9 @@ class Contract(unittest.TestCase):
         self.addCleanup(demo.close)
         _, lines = demo.connect()
         snapshot = lines.json()
+        ignored = next(line.split()[1] for line in snapshot['status'].splitlines()
+                       if line.startswith('SigIgn:'))
+        self.assertEqual(int(ignored, 16) & (1 << (signal.SIGCHLD - 1)), 0)
         demo.close()
         for pid in (snapshot['pid'], snapshot['child']):
             until(lambda: not live(pid))
