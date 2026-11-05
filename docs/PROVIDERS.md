@@ -23,6 +23,14 @@ The [synthetic transport suite](../tests/test-transport.sh) covers verified
 TLS and both SMTP modes. It does not make every provider below fake-tested.
 No provider has a community-reported entry in this guide yet.
 
+Collect evidence with `mailbend diagnose --imap --smtp --report` and the
+[provider-report form](../.github/ISSUE_TEMPLATE/provider-report.yml).
+Promote a provider to community-reported only when a linked report shows
+`ok` for every applicable IMAP and SMTP stage. Protocol-inapplicable skipped
+stages do not establish a check. See [report interpretation and the separate
+write checklist](PROVIDER-REPORTS.md). No tier changes without a recorded
+qualifying report or authorized live run.
+
 ## Shared setup rules
 
 Start with `MAILBEND_READ_ONLY=1`. The print-only
@@ -43,7 +51,7 @@ before applying anything. It does not prove that an account works.
   a port number never selects it. There is no plaintext fallback or
   certificate-verification bypass.
 - After the account owner authorizes a connection,
-  `mailbend diagnose --imap --smtp` checks the configured transports without reading messages. Share
+  `mailbend diagnose --imap --smtp --report` checks the configured transports without reading messages. Share
   only its redacted output. `mailbend setup --check` and `mail_probe` can expose
   local folder names, so their output is not a public report.
 - Discover folders before choosing overrides. MailBend uses an explicit

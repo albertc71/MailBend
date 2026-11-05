@@ -120,7 +120,8 @@ reasons; OAuth is unsupported. The SMTP check follows the configured TLS mode:
 implicit mode verifies TLS before greeting or EHLO; STARTTLS mode upgrades
 before authentication. Both use only greeting, EHLO, authentication and
 best-effort QUIT, with STARTTLS only in that mode.
-IMAP discovery uses only authenticated CAPABILITY/LIST queries and logout.
+IMAP discovery uses authenticated CAPABILITY/LIST queries, the existing optional
+quota check and logout.
 Both are permitted with read-only/drafts-only enabled; malformed switches stop
 all network work. This grants no sending permission or exception to send gates.
 
@@ -132,6 +133,11 @@ Timeouts or broken helpers fail without exposing captured process output.
 Exit status is 1 for failed or uncertain checks, 0 otherwise; always inspect
 skipped checks. Success does not establish mailbox-write permission, recipient
 acceptance, available send quota or end-to-end delivery.
+
+Add `--report` to include fixed capability tokens, role-resolution methods,
+SMTP AUTH offers and the MailBend version. This adds no commands or network
+permission. See [provider reports](PROVIDER-REPORTS.md) for the schema,
+redaction rules, evidence tiers and a separate disposable-account write checklist.
 
 The JSON is shareable: it contains no account, hosts, IPs, paths, folder names,
 server diagnostics, AUTH payloads, credentials or message content. Guidance is
