@@ -36,6 +36,7 @@ class PlanCoverage(unittest.TestCase):
     def check(self, code=0, diagnostic="", root=None):
         result = subprocess.run([sys.executable, str(CHECK), "--root", str(root or self.root)],
                                 capture_output=True, text=True, timeout=30)
+        self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         if diagnostic:
             self.assertIn(diagnostic, result.stderr)
@@ -46,6 +47,57 @@ class PlanCoverage(unittest.TestCase):
         self.append("src/ops.bend", "\ndef plan_missing() -> List<I.Cmd>:\n  [I.CRead{}]\n")
         self.append("src/tools.bend", "\ndef missing() -> List<I.Cmd>:\n  Ops.plan_missing()\n")
         self.check(1, "plan_missing")
+
+    def test_production_cannot_call_non_plan_command_wrapper(self):
+        self.append("src/ops.bend", "\ndef store_cmd() -> List<I.Cmd>:\n  [I.CStore{7}]\n")
+        self.append("src/tools.bend", "\ndef bypass() -> List<I.Cmd>:\n  Ops.store_cmd()\n")
+        self.check(1, "store_cmd")
+
+    def test_production_cannot_call_imap_command_factory(self):
+        self.append("src/imap.bend", "\ndef store(uid: U32) -> Cmd:\n  CStore{uid}\n")
+        self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.store(7)\n")
+        self.check(1, "store")
+
+    def test_non_plan_wrapper_cannot_hide_an_internal_plan(self):
+        self.append("src/ops.bend", "\ndef plan_hidden() -> List<I.Cmd>:\n  [I.CStore{7}]\n"
+                    "\ndef run_hidden() -> List<I.Cmd>:\n  plan_hidden()\n")
+        self.append("src/tools.bend", "\ndef bypass() -> List<I.Cmd>:\n  Ops.run_hidden()\n")
+        self.check(1, "run_hidden")
+
+    def test_imap_factory_named_plan_is_still_rejected(self):
+        self.append("src/imap.bend", "\ndef plan_store(uid: U32) -> Cmd:\n  CStore{uid}\n")
+        self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.plan_store(7)\n")
+        self.check(1, "plan_store")
+
+    def test_cmd_parameters_do_not_make_classifiers_command_producers(self):
+        self.append("src/ops.bend", "\ndef observes(cmd: I.Cmd) -> Bool:\n  True{}\n")
+        self.append("src/imap.bend", "\ndef observes(cmd: Cmd) -> Bool:\n  True{}\n")
+        self.append("src/tools.bend", "\ndef observe(cmd: I.Cmd) -> Bool:\n"
+                    "  Ops.observes(cmd) == I.observes(cmd)\n")
+        self.check()
+
+    def test_multiline_return_type_uses_actual_imap_alias(self):
+        self.append("src/ops.bend", "\nimport ./imap.bend as Mail\n"
+                    "def store_cmd(\n  uid: U32\n)\n  -> List<\n    Mail.Cmd\n  >:\n"
+                    "  [Mail.CStore{uid}]\n")
+        self.append("src/tools.bend", "\nimport ./ops.bend as Plans\n"
+                    "def bypass() -> Data:\n  Plans.store_cmd\n")
+        self.check(1, "store_cmd")
+
+    def test_unrelated_cmd_return_type_is_allowed(self):
+        self.write("src/other.bend", "type Cmd is Data:\n  Local{}\n")
+        self.append("src/ops.bend", "\nimport ./other.bend as Other\n"
+                    "def local_cmd() -> Other.Cmd:\n  Other.Local{}\n")
+        self.append("src/imap.bend", "\nimport ./other.bend as Other\n"
+                    "def local_cmd() -> Other.Cmd:\n  Other.Local{}\n")
+        self.append("src/tools.bend", "\ndef local() -> Data:\n"
+                    "  (Ops.local_cmd(), I.local_cmd())\n")
+        self.check()
+
+    def test_ops_cannot_reexport_an_imap_command_factory(self):
+        self.append("src/imap.bend", "\ndef store(uid: U32) -> Cmd:\n  CStore{uid}\n")
+        self.append("src/ops.bend", "\ndef plan_store() -> I.Cmd:\n  I.store(7)\n")
+        self.check(1, "store")
 
     def test_production_cannot_construct_commands(self):
         self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.CStore{7}\n")
@@ -177,11 +229,39 @@ class PlanCoverage(unittest.TestCase):
                 else:
                     self.write(relative, previous)
 
+    def test_main_and_nested_files_cannot_reference_command_producers(self):
+        self.append("src/ops.bend", "\ndef store_cmd() -> I.Cmd:\n  I.CStore{7}\n")
+        self.append("src/imap.bend", "\ndef store_cmd() -> Cmd:\n  CStore{7}\n")
+        for relative, prefix in (("main.bend", "./src/"), ("src/nested/read.bend", "../")):
+            for module in ("ops", "imap"):
+                with self.subTest(relative=relative, module=module):
+                    path = self.root / relative
+                    path.parent.mkdir(exist_ok=True)
+                    previous = path.read_text() if path.exists() else None
+                    self.write(relative, f"import {prefix}{module}.bend as Mail\n"
+                               "def bypass() -> Data:\n  Mail.store_cmd\n")
+                    self.check(1, relative)
+                    if previous is None:
+                        path.unlink()
+                    else:
+                        self.write(relative, previous)
+
     def test_patterns_can_contain_nested_constructors(self):
         self.append("src/tools.bend", "\ndef observe(cmd: Data) -> U32:\n  match cmd:\n"
                     "    case Some{I.CStore{uid}} <> rest:\n      uid\n"
                     "    case Some{I.CRead{}}: 0\n")
         self.check()
+
+    def test_lexical_colon_inside_pattern_does_not_end_pattern(self):
+        # A source-reader control, not a claim that Bend accepts typed patterns.
+        self.append("src/tools.bend", "\ndef observe(cmd: Data) -> U32:\n  match cmd:\n"
+                    "    case Some{field: I.CStore{uid}}: 0\n")
+        self.check()
+
+    def test_new_case_resets_depth_after_malformed_pattern(self):
+        self.append("src/tools.bend", "\ndef bypass(cmd: Data) -> I.Cmd:\n  match cmd:\n"
+                    "    case Some{\n    case _: I.CStore{7}\n")
+        self.check(1, "I.CStore")
 
     def test_pattern_does_not_hide_following_constructor(self):
         self.append("src/tools.bend", "\ndef bypass(cmd: I.Cmd) -> I.Cmd:\n  match cmd:\n"
@@ -209,6 +289,60 @@ class PlanCoverage(unittest.TestCase):
             with self.subTest(literal=literal):
                 self.write("src/tools.bend", literal)
                 self.check(1, "unterminated literal")
+
+    def test_existing_import_target_outside_repository_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="mailbend-outside-import-") as directory:
+            outside = Path(directory) / "outside.bend"
+            outside.write_text("def harmless() -> U32:\n  0\n", encoding="utf-8")
+            self.write("src/tools.bend", f"import ../../{outside.parent.name}/outside.bend as Other\n")
+            self.check(1, "import does not name a repository file")
+
+    def test_duplicate_definitions_are_rejected(self):
+        for relative, declaration in (("src/ops.bend", "\ndef plan_read() -> List<I.Cmd>:\n  []\n"),
+                                      ("src/imap.bend", "\ndef observe() -> Bool:\n  True{}\n"
+                                       "\ndef observe() -> Bool:\n  False{}\n")):
+            with self.subTest(relative=relative):
+                previous = (self.root / relative).read_text()
+                self.append(relative, declaration)
+                self.check(1, "duplicate def")
+                self.write(relative, previous)
+
+    def test_duplicate_cmd_constructors_are_rejected(self):
+        self.append("src/imap.bend", "  CRead{}\n")
+        self.check(1, "duplicate Cmd constructor")
+
+    def test_multiple_cmd_type_declarations_are_rejected(self):
+        self.append("src/imap.bend", "\ntype Cmd is Data:\n  CAnother{}\n")
+        self.check(1, "Cmd type declaration")
+
+    def test_malformed_law_header_is_rejected_even_with_other_coverage(self):
+        self.append("LAWS.bend", "\nlaw malformed = True{}\n")
+        self.check(1, "unsupported law declaration")
+
+    def test_tautological_law_satisfies_presence_only_check(self):
+        self.write("LAWS.bend", "import ./src/ops.bend as Ops\n"
+                   "law tautology:\n  Ops.plan_read == Ops.plan_read\n")
+        self.assertIn("1 public plan", self.check().stdout)
+
+    def test_malformed_factory_headers_fail_closed(self):
+        for declaration in ("def store(uid: U32 -> Cmd:\n  CStore{uid}\n",
+                            "def store() -> :\n  CRead{}\n",
+                            "def store() Cmd:\n  CRead{}\n",
+                            "def store() -> Cmd\n"):
+            with self.subTest(declaration=declaration):
+                previous = (self.root / "src/imap.bend").read_text()
+                self.append("src/imap.bend", "\n" + declaration)
+                self.check(1, "def")
+                self.write("src/imap.bend", previous)
+
+    def test_unsupported_return_binders_and_nested_colons_fail_closed(self):
+        original = (self.root / "src/ops.bend").read_text()
+        for annotation in ("&uid: U32 -> I.Cmd", "@uid: U32 -> I.Cmd",
+                           "{I.CRead{} == I.CRead{} : I.Cmd}", "(item: I.Cmd)"):
+            with self.subTest(annotation=annotation):
+                self.write("src/ops.bend", original +
+                           f"\ndef store_cmd() -> {annotation}:\n  I.CRead{{}}\n")
+                self.check(1, "unsupported def return type")
 
     def test_malformed_plan_and_command_declarations_fail_closed(self):
         self.append("src/ops.bend", "\ndef plan_broken = []\n")
