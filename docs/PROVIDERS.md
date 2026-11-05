@@ -125,12 +125,15 @@ the message. Do not rely on `mail_delete` as proof of global deletion while
 [#101](https://github.com/albertc71/MailBend/issues/101) remains unresolved.
 
 Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
-`[Gmail]/Important`, but no Archive role. MailBend keeps folders advertising
-`\Important` (see [#123](https://github.com/albertc71/MailBend/issues/123)) or
-`\All`, and their descendants, out of classification, triage and `mail_label`
-destinations. It refuses create/rename destinations there and refuses renaming
-a reserved folder or any parent containing it. `mail_move` can still use such
-a folder when explicitly named, subject to the normal move checks.
+`[Gmail]/Important`, but no Archive role. MailBend reserves every folder
+advertising a recognized special-use role, including `\Important`
+(see [#123](https://github.com/albertc71/MailBend/issues/123)), `\All`, and
+`\Flagged` (Starred), and their descendants. These are excluded from
+classification and triage categories, Jev read-annotation categories, and
+`mail_label` destinations. It refuses create/rename destinations there and
+refuses renaming a reserved folder or any parent containing it. `mail_move`
+can still use such a folder when explicitly named, subject to the normal
+move checks.
 Choose `MAILBEND_ARCHIVE_FOLDER` only after reviewing the actual folder list and
 intended archive semantics. Do not silently substitute All Mail. Names and
 visibility can differ by account.
