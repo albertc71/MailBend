@@ -161,8 +161,53 @@ class Claims(unittest.TestCase):
         self.rejected("mutation target is not cited claim code")
 
     def test_mutation_must_reject_a_cited_root_law(self):
-        self.manifest['claims'][0]['mutation']['proof'] = 'PROOF.bend#Laws.read_is_read_only'
+        self.manifest['claims'][0]['mutation']['law'] = 'read_is_read_only'
         self.rejected("mutation rejects an uncited law")
+
+    def test_direct_observer_must_implement_linked_law(self):
+        self.manifest['claims'][0]['mutation']['law'] = 'probe_writes_nothing'
+        self.rejected("mutation observer and law disagree")
+
+    def test_helper_observer_needs_cited_law(self):
+        claim = next(c for c in self.manifest['claims'] if c['id'] == 'client-prompts')
+        claim['mutation']['law'] = 'read_is_read_only'
+        self.rejected("mutation rejects an uncited law")
+
+    def test_example_observer_needs_cited_law(self):
+        claim = next(c for c in self.manifest['claims'] if c['id'] == 'role-resolution')
+        claim['mutation']['law'] = 'tests/formal/role-folders.bend#missing'
+        self.rejected("mutation rejects an uncited law")
+
+    def test_observer_needs_relationship_explanation(self):
+        self.manifest['claims'][0]['mutation']['observer_reason'] = '  '
+        self.rejected("mutation observer needs a relationship explanation")
+
+    def test_same_named_reachable_observer_is_ambiguous(self):
+        path = self.root / 'tests/formal/other-observer.bend'
+        path.write_text('def plan_quota_writes_nothing() -> Bool:\n  True{}\n')
+        with (self.root / 'PROOF.bend').open('a') as out:
+            out.write('\nimport ./tests/formal/other-observer.bend as Other\n')
+        self.rejected("ambiguous mutation observer")
+
+    def test_same_named_unreachable_observer_is_not_ambiguous(self):
+        path = self.root / 'tests/formal/other-observer.bend'
+        path.write_text('def plan_quota_writes_nothing() -> Bool:\n  True{}\n')
+        CHECKS.validate(self.root)
+
+    def test_summary_markers_cover_the_summarized_claims(self):
+        # This is a specific regression guard, not a semantic prose classifier.
+        lines = [line for line in (self.root / 'README.md').read_text().splitlines()
+                 if line.startswith('with pure-function safety rules')
+                 or line.startswith('- **Pure-function safety rules')]
+        self.assertEqual(len(lines), 2)
+        expected = {'read-plans', 'move-delete-plans', 'send-allowlist', 'jev-gates'}
+        for line in lines:
+            self.assertTrue(expected <= set(CHECKS.MARKER.findall(line)))
+
+    def test_read_safety_includes_brief_and_contacts(self):
+        claim = next(c for c in self.manifest['claims'] if c['id'] == 'read-plans')
+        self.assertTrue({'brief_plans_write_nothing', 'brief_range_writes_nothing',
+                         'contact_plans'} <= set(claim['laws']))
 
     def test_unknown_marker(self):
         with (self.root / 'README.md').open('a') as out:
@@ -217,10 +262,30 @@ class Mutations(unittest.TestCase):
         return subprocess.CompletedProcess([], code, text, '')
 
     def test_semantic_rejection(self):
-        require_rejection(self.result(), self.mutation)
-        require_rejection(self.result(text='SOME PROOFS FAIL\nLocation: fixture\n- expected : True\n- observed : False\n'), self.mutation)
+        root = self.fixture()
+        require_rejection(self.result(), self.mutation, root)
+        require_rejection(self.result(text='SOME PROOFS FAIL\nLocation: fixture\n- expected : True\n- observed : False\n'), self.mutation, root)
+
+    def test_rejection_cannot_select_same_name_in_another_file(self):
+        root = self.fixture()
+        (root / 'src/other.bend').write_text('def fixture() -> Bool:\n  True{}\n')
+        with (root / 'PROOF.bend').open('a') as out:
+            out.write('\nimport ./src/other.bend as Other\n')
+        with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
+            require_rejection(self.result(), self.mutation, root)
+
+    def test_runner_rejects_ambiguous_observer_before_running_bend(self):
+        root = self.fixture()
+        (root / 'src/other.bend').write_text('def Laws.fixture() -> Bool:\n  True{}\n')
+        with (root / 'PROOF.bend').open('a') as out:
+            out.write('\nimport ./src/other.bend as Other\n')
+        def unexpected_check(path):
+            self.fail('an ambiguous observer must fail before a proof check')
+        with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
+            run_mutations(root, [self.mutation], unexpected_check)
 
     def test_survivor_and_unrelated_failures_rejected(self):
+        root = self.fixture()
         for result in [self.result(0, 'ALL PROOFS CHECK'), self.result(1, 'ALL PROOFS CHECK'),
                        self.result(0), self.result(1, ''),
                        self.result(text='SOME PROOFS FAIL\nLocation: other\n- expected : True\n- observed : False\n'),
@@ -228,7 +293,7 @@ class Mutations(unittest.TestCase):
                        self.result(text='SOME PROOFS FAIL\nLocation: Laws.fixture\n- expected : True\n- observed : False\nconsumed more than once'),
                        self.result(text='SOME PROOFS FAIL\nALL PROOFS CHECK\nLocation: Laws.fixture\n- expected : True\n- observed : False\n')]:
             with self.subTest(result=result), self.assertRaisesRegex(ValueError, 'expected semantic rejection'):
-                require_rejection(result, self.mutation)
+                require_rejection(result, self.mutation, root)
 
     def test_baseline_requires_success_and_verdict(self):
         for result in [self.result(), self.result(0, ''), self.result(1, 'ALL PROOFS CHECK')]:
@@ -242,6 +307,7 @@ class Mutations(unittest.TestCase):
         (root / 'src').mkdir()
         for relative in ('LAWS.bend', 'PROOF.bend', 'src/model.bend'):
             (root / relative).write_text('safe\n')
+        (root / 'PROOF.bend').write_text('def Laws.fixture() -> Bool:\n  True{}\n')
         return root
 
     def test_runner_isolates_mutations_and_restores_copy(self):

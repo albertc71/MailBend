@@ -16,12 +16,6 @@
         "parts_write_nothing",
         "part_writes_nothing",
         "part_guarded",
-        "image_round_guarded",
-        "image_round_fetch_empty",
-        "image_round_fetch_exact",
-        "image_round_section_empty",
-        "image_round_section_exact",
-        "image_round_writes_nothing",
         "search_page_writes_nothing",
         "search_page_examines",
         "search_continuation_pins_identity",
@@ -46,17 +40,34 @@
         "checked_read_preserves_writes",
         "checked_read_without_identities_unchanged",
         "checked_headers_write_nothing",
-        "checked_classify_writes_nothing"
+        "checked_classify_writes_nothing",
+        "brief_plans_write_nothing",
+        "brief_range_writes_nothing",
+        "contact_plans",
+        "image_round_guarded",
+        "image_round_fetch_empty",
+        "image_round_fetch_exact",
+        "image_round_section_empty",
+        "image_round_section_exact",
+        "image_round_writes_nothing"
       ],
       "tests": [
         "tests/test-e2e.py#reads",
         "tests/test-e2e.py#selected_parts",
         "tests/test-e2e.py#refresh_known",
+        "tests/brief-cases.py#run",
+        "tests/brief-continuation-cases.py#run",
+        "tests/test-e2e.py#live_contacts",
         "tests/test-e2e.py#jev_image_rounds",
         "tests/formal/check-plan-wire-mutations.py#main"
       ],
       "code": [
         "src/ops.bend#plan_get",
+        "src/ops.bend#plan_brief",
+        "src/ops.bend#plan_brief_range",
+        "src/ops.bend#plan_contacts_search",
+        "src/ops.bend#plan_contact_candidates",
+        "src/ops.bend#plan_contacts_headers",
         "src/ops.bend#plan_image_round",
         "src/ops.bend#image_reads",
         "src/ops.bend#image_read_items"
@@ -66,7 +77,9 @@
         "path": "src/ops.bend",
         "before": "[I.CGetQuotaRoot{\"INBOX\"}]",
         "after": "[I.CGetQuotaRoot{\"INBOX\"}, I.CStore{[1], True{}, I.FSeen{}}]",
-        "proof": "PROOF.bend#Laws.plan_quota_writes_nothing"
+        "proof": "PROOF.bend#Laws.plan_quota_writes_nothing",
+        "law": "plan_quota_writes_nothing",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -95,7 +108,9 @@
         "path": "src/imap.bend",
         "before": "\"BODY.PEEK[]<0.\" ++ U32.show(max) ++ \">\"",
         "after": "\"BODY[]<0.\" ++ U32.show(max) ++ \">\"",
-        "proof": "PROOF.bend#Laws.fetch_items_never_set_seen"
+        "proof": "PROOF.bend#Laws.fetch_items_never_set_seen",
+        "law": "fetch_items_never_set_seen",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -122,7 +137,9 @@
         "path": "src/ops.bend",
         "before": "[I.CStore{uids, seen, I.FSeen{}}]",
         "after": "[I.CStore{uids, seen, I.FDeleted{}}]",
-        "proof": "PROOF.bend#Laws.mark_never_deletes"
+        "proof": "PROOF.bend#Laws.mark_never_deletes",
+        "law": "mark_never_deletes",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -161,7 +178,9 @@
         "path": "src/ops.bend",
         "before": "plan_delete.if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)",
         "after": "plan_delete.if(True{}, mbox, uids, uidplus, uidv)",
-        "proof": "PROOF.bend#Laws.delete_expunges_only_marked"
+        "proof": "PROOF.bend#Laws.delete_expunges_only_marked",
+        "law": "delete_expunges_only_marked",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -193,7 +212,9 @@
         "path": "src/imap.bend",
         "before": "\"UID STORE \" ++ uid_set(us)",
         "after": "\"STORE \" ++ uid_set(us)",
-        "proof": "PROOF.bend#Laws.store_renders_exactly"
+        "proof": "PROOF.bend#Laws.store_renders_exactly",
+        "law": "store_renders_exactly",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -232,7 +253,9 @@
         "path": "src/ops.bend",
         "before": "[I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]",
         "after": "[I.CSelect{\"Other\"}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]",
-        "proof": "PROOF.bend#Laws.mark_opens_callers_folder"
+        "proof": "PROOF.bend#Laws.mark_opens_callers_folder",
+        "law": "mark_opens_callers_folder",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -256,7 +279,9 @@
         "path": "src/ops.bend",
         "before": "[I.CAppend{drafts, [I.FDraft{}, I.FSeen{}], msg}]",
         "after": "[I.CAppend{drafts, [I.FSeen{}], msg}]",
-        "proof": "PROOF.bend#Laws.draft_is_exact_append"
+        "proof": "PROOF.bend#Laws.draft_is_exact_append",
+        "law": "draft_is_exact_append",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -280,7 +305,9 @@
         "path": "src/smtp.bend",
         "before": "outbound.if(all_allowed(allow, rcpts), rcpts, from, msg)",
         "after": "outbound.if(True{}, rcpts, from, msg)",
-        "proof": "PROOF.bend#Laws.allowlist_refuses_unlisted"
+        "proof": "PROOF.bend#Laws.allowlist_refuses_unlisted",
+        "law": "allowlist_refuses_unlisted",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -302,7 +329,9 @@
         "path": "src/ops.bend",
         "before": "[I.CAppend{sent, [I.FSeen{}], msg}]",
         "after": "[I.CAppend{sent, [], msg}]",
-        "proof": "PROOF.bend#Laws.sent_copy_only_appends"
+        "proof": "PROOF.bend#Laws.sent_copy_only_appends",
+        "law": "sent_copy_only_appends",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -333,7 +362,9 @@
         "path": "src/ops.bend",
         "before": "[I.CCapability{}, I.CCreate{mbox}, I.CSubscribe{mbox}]",
         "after": "[I.CCapability{}, I.CCreate{mbox}]",
-        "proof": "PROOF.bend#Laws.create_changes_exactly"
+        "proof": "PROOF.bend#Laws.create_changes_exactly",
+        "law": "create_changes_exactly",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -357,7 +388,9 @@
         "path": "src/ops.bend",
         "before": "plan_move(mbox, uids, label, move, uidplus, uidv)",
         "after": "plan_move(mbox, uids, \"Other\", move, uidplus, uidv)",
-        "proof": "PROOF.bend#Laws.label_opens_callers_folder"
+        "proof": "PROOF.bend#Laws.label_opens_callers_folder",
+        "law": "label_opens_callers_folder",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -386,7 +419,9 @@
         "path": "src/ops.bend",
         "before": "plan_triage.if(dests_ok(mbox, cats, reserved, ms) && Bool.not(repeats(uids_per_move(ms))),",
         "after": "plan_triage.if(True{},",
-        "proof": "PROOF.bend#Laws.triage_moves_only_to_known_folders"
+        "proof": "PROOF.bend#Laws.triage_moves_only_to_known_folders",
+        "law": "triage_moves_only_to_known_folders",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -430,7 +465,9 @@
         "path": "src/jev.bend",
         "before": "case Headers{}:\n      header_state(f)",
         "after": "case Headers{}:\n      J.obj(List.append(&2, J.Json, fact_kvs(f), [J.kv(\"text\", J.str(text))]))",
-        "proof": "PROOF.bend#Laws.headers_state_has_no_body"
+        "proof": "PROOF.bend#Laws.headers_state_has_no_body",
+        "law": "headers_state_has_no_body",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -476,7 +513,9 @@
         "path": "src/jev.bend",
         "before": "case Vetoed{reasons}:\n      []\n    case Failed{reason}:\n      []",
         "after": "case Vetoed{reasons}:\n      plan\n    case Failed{reason}:\n      []",
-        "proof": "PROOF.bend#Laws.delete_veto_only_subtracts"
+        "proof": "PROOF.bend#Laws.delete_veto_only_subtracts",
+        "law": "delete_veto_only_subtracts",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -522,7 +561,9 @@
         "path": "src/response.bend",
         "before": "    case False{}:\n      Prefix{\"\", left}",
         "after": "    case False{}:\n      Prefix{SCon{c, tail}, left}",
-        "proof": "tests/formal/budget-proofs.bend#prefix_conserves.put"
+        "proof": "tests/formal/budget-proofs.bend#prefix_conserves.put",
+        "law": "prefix_conserves_scalar_allowance",
+        "observer_reason": "The root proof calls BudgetProof.prefix_conserves, whose recursive helper uses prefix_conserves.put to prove the preserved scalar allowance."
       }
     },
     {
@@ -549,7 +590,9 @@
         "path": "src/image.bend",
         "before": "BMint{4n, corpus, still, room, rest, acc}",
         "after": "BMint{4n, corpus, still, room_new(), rest, acc}",
-        "proof": "tests/formal/budget-bind-proofs.bend#bind_admit_conserved"
+        "proof": "tests/formal/budget-bind-proofs.bend#bind_admit_conserved",
+        "law": "image_bind_count_cap",
+        "observer_reason": "The root proof calls BindProof.returned_cap; its trace conservation proof uses bind_admit_conserved to preserve the image count and byte allowances."
       }
     },
     {
@@ -572,7 +615,9 @@
         "path": "src/json.bend",
         "before": "\"[\" ++ show(items) ++ \"]\"",
         "after": "\"[\" ++ show(items) ++ \"\"",
-        "proof": "tests/formal/json-size-proofs.bend#show_bytes"
+        "proof": "tests/formal/json-size-proofs.bend#show_bytes",
+        "law": "json_serialized_bytes",
+        "observer_reason": "The root proof calls JsonSize.show_bytes directly to equate the serializer byte count with the response counter."
       }
     },
     {
@@ -614,7 +659,9 @@
         "path": "src/policy.bend",
         "before": "ro && Bool.not(Ops.is_read_only(op))",
         "after": "False{}",
-        "proof": "PROOF.bend#Laws.read_only_refuses_writes"
+        "proof": "PROOF.bend#Laws.read_only_refuses_writes",
+        "law": "read_only_refuses_writes",
+        "observer_reason": "The observer is the root implementation of this cited law."
       }
     },
     {
@@ -648,7 +695,9 @@
         "path": "src/imap.bend",
         "before": "writes(effect(c)) || any_writes(t)",
         "after": "writes(effect(c))",
-        "proof": "PROOF.bend#Laws.any_writes_after_read"
+        "proof": "PROOF.bend#Laws.any_writes_after_read",
+        "law": "any_writes_after_read",
+        "observer_reason": "The direct concrete law requires EXAMINE followed by SELECT to be classified as writing. Ignoring the tail makes this command list return False instead of True."
       }
     },
     {
@@ -683,7 +732,9 @@
         "path": "src/policy.bend",
         "before": "resolved_role.if(String.is_empty(override), fs, override, attr, a, b)",
         "after": "resolved_role.if(True{}, fs, override, attr, a, b)",
-        "proof": "tests/formal/role-folders.bend#override_example"
+        "proof": "tests/formal/role-folders.bend#override_example",
+        "law": "tests/formal/role-folders.bend#override_takes_its_listed_folder",
+        "observer_reason": "The concrete override_example checks the listed selectable Bin override against competing advertised and conventional folders. It instantiates the listed-folder override behavior before the universal proofs."
       }
     },
     {
@@ -769,23 +820,22 @@
         "path": "src/hook.bend",
         "before": "J.str(\"ask\")",
         "after": "J.str(\"allow\")",
-        "proof": "PROOF.bend#hook_output_safe"
+        "proof": "PROOF.bend#hook_output_safe",
+        "law": "hook_never_allows_or_denies",
+        "observer_reason": "The root proof calls hook_output_safe directly for the parsed decision. That helper proves the decision can only be absent or ask."
       }
     }
   ],
   "unclaimed": {
-    "awaiting_incomplete_is_unknown": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "contact_plans": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_preserves_selected_uids": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_partitions_selected_uids": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_plans_write_nothing": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "awaiting_disabled_filters_keep_candidate": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_complete_unseen_highwater": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_partial_unseen_prefix": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_arrivals_keep_prefix": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_range_writes_nothing": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_range_wire": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_completed_has_no_continuation": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here.",
-    "brief_unseen_filter_interval": "Specialized brief, contact or awaiting-reply behavior is outside the safety claims catalogued here."
+    "awaiting_incomplete_is_unknown": "Awaiting-reply classification keeps incomplete evidence without a positive reply unknown; this is an evidence-status contract, not a mailbox-effect or send/delete safety claim.",
+    "brief_preserves_selected_uids": "Brief classification preserves the selected UID sequence and multiplicity; this output-completeness contract is separate from the read-plans no-write claim.",
+    "brief_partitions_selected_uids": "Brief classification preserves each selected UID occurrence count; this grouping contract is separate from mailbox effects and does not assert unique UIDs in the input.",
+    "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim.",
+    "brief_complete_unseen_highwater": "A complete unseen brief checkpoints at the window high-water UID; this pagination contract does not establish mailbox effects or runtime acquisition completeness.",
+    "brief_partial_unseen_prefix": "A partial unseen brief checkpoints at the last retained UID; this pagination contract is separate from the read-plans no-write claim.",
+    "brief_arrivals_keep_prefix": "An arrivals brief checkpoints at the last retained UID for either continuation state; this checkpoint contract is separate from mailbox-effect safety.",
+    "brief_range_wire": "The UID-range search key renders its supplied endpoints exactly; this search-selection contract is separate from the read-wire EXAMINE/BODY.PEEK guarantee.",
+    "brief_completed_has_no_continuation": "A completed brief emits a null continuation cursor; this output-pagination contract is separate from mailbox-effect safety.",
+    "brief_unseen_filter_interval": "Unseen brief filtering includes only UIDs greater than the lower boundary and at most the high-water boundary; this selection contract is separate from mailbox-effect safety."
   }
 }
