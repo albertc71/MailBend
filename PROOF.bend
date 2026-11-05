@@ -166,6 +166,7 @@ def Laws.image_round_section_empty():
 def Laws.image_round_section_exact(section, max, rest):
   {==}
 
+# Keep before image_reads_write_nothing: the classifier tail mutant must first fail here.
 def Laws.any_writes_after_read():
   {==}
 
