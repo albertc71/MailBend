@@ -807,6 +807,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
+                wait_until(lambda: pathlib.Path(f"/proc/{core}/stat").read_text().split(") ", 1)[1][0] == "T")
                 session.peer.setblocking(False)
                 while True:
                     try:
@@ -820,7 +821,8 @@ class StdioTests(unittest.TestCase):
                     return int(pending, 16) & (1 << (signal.SIGTERM - 1))
                 wait_until(term_pending)
             finally:
-                os.kill(core, signal.SIGCONT)
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(core, signal.SIGCONT)
             self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
             self.assertFalse(live(core))
 
