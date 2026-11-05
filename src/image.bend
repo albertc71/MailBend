@@ -73,8 +73,7 @@ def image_file_cap() -> U32:
 def image_request_cap() -> U32:
   1572864
 
-# The most image parts one batch fetches, whatever their fate. Each fetch
-# is one read-only IMAP session.
+# The most image parts one batch fetches, whatever their fate.
 def fetch_cap() -> U32:
   8
 
@@ -895,6 +894,10 @@ def ahead.if(over_count: Bool, over_budget: Bool) -> Maybe<&2, Reason>:
 def ahead(q: Quota) -> Maybe<&2, Reason>:
   Quota{Room{count, bytes}, fetches} = q
   ahead.if(U32.is_zero(fetches) || U32.is_zero(count), U32.is_zero(bytes))
+
+def quota_round(q: Quota) -> U32:
+  Quota{Room{count, bytes}, fetches} = q
+  Bool.pick(U32, U32.is_zero(bytes), 0, U32.min(count, fetches))
 
 def quota_fetched(q: Quota) -> Quota:
   Quota{room, fetches} = q

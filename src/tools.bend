@@ -7318,47 +7318,77 @@ def find_go(fuel: Nat, +uid: U32, ms: List<&2, I.Msg>, hold: Maybe<&2, I.Msg>) -
 def find_msg(uid: U32, +ms: List<&2, I.Msg>) -> Maybe<&2, I.Msg>:
   find_go(Nat.add(List.length(&2, I.Msg, ms), 1n), uid, ms, None{})
 
-# A message's image parts surveyed in turn, against its batch's quota: the
-# parts left, the verdicts so far (reversed) and the quota left.
+type ImgPart is Data:
+  ImgPart{uid: U32, part: Part.Part}
+
+type ImgQueue is Data:
+  ImgQueue{counts: List<&2, Nat>, parts: List<&2, ImgPart>}
+
+def image_parts.keep(yes: Bool, uid: U32, p: Part.Part, rest: List<&2, ImgPart>) ->
+  List<&2, ImgPart>:
+  match yes:
+    case True{}:
+      ImgPart{uid, p} <> rest
+    case False{}:
+      rest
+
+def image_parts(+uid: U32, ps: List<&2, Part.Part>) -> List<&2, ImgPart>:
+  match ps:
+    case Nil{}:
+      []
+    case +p <> t:
+      Part.Part{path, ct, cd, encoding, size} = p
+      image_parts.keep(String.starts_with(image_typ(ct, cd), "image/"), uid, p,
+        image_parts(uid, t))
+
+def image_queue.parts(m: Maybe<&2, I.Msg>, uid: U32) -> List<&2, ImgPart>:
+  match m:
+    case None{}:
+      []
+    case Some{msg}:
+      image_parts(uid, msg_parts(msg))
+
+def image_queue.join(+ps: List<&2, ImgPart>, q: ImgQueue) -> ImgQueue:
+  ImgQueue{counts, rest} = q
+  ImgQueue{List.length(&2, ImgPart, ps) <> counts, List.append(&2, ImgPart, ps, rest)}
+
+def image_queue(es: List<&2, Jev.Entry>, +ms: List<&2, I.Msg>) -> ImgQueue:
+  match es:
+    case Nil{}:
+      ImgQueue{[], []}
+    case e <> t:
+      +uid = entry_uid(e)
+      image_queue.join(image_queue.parts(find_msg(uid, ms), uid), image_queue(t, ms))
+
+# A request's ordered parts share one quota. The cached reply belongs to
+# a round no wider than the remaining image slots and fetch attempts.
 type ImgSee is Data:
-  SeeParts{rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, quota: Image.Quota}
-  SeeFetch{rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, quota: Image.Quota,
-    part: Part.Part, format: Image.Format, max: U32}
+  SeeParts{rest: List<&2, ImgPart>, acc: List<&2, Image.Verdict>, quota: Image.Quota}
+  SeeFetch{rest: List<&2, ImgPart>, acc: List<&2, Image.Verdict>, quota: Image.Quota,
+    uid: U32, part: Part.Part, format: Image.Format, max: U32}
   SeeStop{msg: String}
   SeeDone{vs: List<&2, Image.Verdict>, quota: Image.Quota}
 
-def see_ahead(m: Maybe<&2, Image.Reason>, rest: List<&2, Part.Part>,
-  acc: List<&2, Image.Verdict>, quota: Image.Quota, +p: Part.Part, name: String,
+def image_pre(p: Part.Part) -> Image.Pre:
+  Part.Part{path, ct, cd, encoding, size} = p
+  Image.screen(image_typ(ct, cd), encoding, size)
+
+def see_ahead(m: Maybe<&2, Image.Reason>, rest: List<&2, ImgPart>,
+  acc: List<&2, Image.Verdict>, quota: Image.Quota, uid: U32, +p: Part.Part, name: String,
   format: Image.Format, max: U32) -> ImgSee:
   match m:
     case Some{reason}:
       SeeParts{rest, Image.VDrop{Part.path(p), name, reason} <> acc, quota}
     case None{}:
-      SeeFetch{rest, acc, Image.quota_fetched(quota), p, format, max}
+      SeeFetch{rest, acc, quota, uid, p, format, max}
 
-def see_screen(pre: Image.Pre, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  +quota: Image.Quota, +p: Part.Part, name: String) -> ImgSee:
+def see_screen(pre: Image.Pre, rest: List<&2, ImgPart>, acc: List<&2, Image.Verdict>,
+  +quota: Image.Quota, uid: U32, +p: Part.Part, name: String) -> ImgSee:
   match pre:
     case Image.Omit{reason}:
       SeeParts{rest, Image.VDrop{Part.path(p), name, reason} <> acc, quota}
     case Image.Fetch{format, max}:
-      see_ahead(Image.ahead(quota), rest, acc, quota, p, name, format, max)
-
-def see_part.image(yes: Bool, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
-  quota: Image.Quota, +p: Part.Part, +ct: String, +cd: String, encoding: String, size: U32) ->
-  ImgSee:
-  match yes:
-    case False{}:
-      SeeParts{rest, acc, quota}
-    case True{}:
-      see_screen(Image.screen(image_typ(ct, cd), encoding, size), rest, acc, quota, p,
-        image_name(ct, cd))
-
-def see_part(rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>, quota: Image.Quota,
-  +p: Part.Part) -> ImgSee:
-  Part.Part{path, +ct, +cd, encoding, size} = p
-  see_part.image(String.starts_with(image_typ(ct, cd), "image/"), rest, acc, quota, p, ct, cd,
-    encoding, size)
+      see_ahead(Image.ahead(quota), rest, acc, quota, uid, p, name, format, max)
 
 def skip_fetch(+m: String) -> Bool:
   String.eq(m, "MIME section metadata changed between sessions") ||
@@ -7369,7 +7399,7 @@ def skip_fetch(+m: String) -> Bool:
     String.eq(m, "malformed or unsupported BODYSTRUCTURE") ||
     String.eq(m, "BODYSTRUCTURE exceeds 128 parts or levels")
 
-def fetch_fail(stop: Bool, m: String, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>,
+def fetch_fail(stop: Bool, m: String, rest: List<&2, ImgPart>, acc: List<&2, Image.Verdict>,
   quota: Image.Quota, path: List<&2, U32>, name: String) -> ImgSee:
   match stop:
     case True{}:
@@ -7377,14 +7407,12 @@ def fetch_fail(stop: Bool, m: String, rest: List<&2, Part.Part>, acc: List<&2, I
     case False{}:
       SeeParts{rest, Image.VDrop{path, name, Image.Unreadable{}} <> acc, quota}
 
-def see_judged(j: Image.Judged, rest: List<&2, Part.Part>, acc: List<&2, Image.Verdict>) ->
+def see_judged(j: Image.Judged, rest: List<&2, ImgPart>, acc: List<&2, Image.Verdict>) ->
   ImgSee:
   Image.Judged{v, quota} = j
   SeeParts{rest, v <> acc, quota}
 
-# A fetched part is judged, then admitted against the batch's room as it
-# is fetched, so a still that will not be sent is dropped at once.
-def fetch_end(r: Result<&2, &2, String, String>, rest: List<&2, Part.Part>,
+def fetch_end(r: Result<&2, &2, String, String>, rest: List<&2, ImgPart>,
   acc: List<&2, Image.Verdict>, quota: Image.Quota, path: List<&2, U32>, name: String,
   format: Image.Format) -> ImgSee:
   match r:
@@ -7393,83 +7421,98 @@ def fetch_end(r: Result<&2, &2, String, String>, rest: List<&2, Part.Part>,
     case Fail{+m}:
       fetch_fail(Bool.not(skip_fetch(m)), m, rest, acc, quota, path, name)
 
-def fetch_one(folder: String, +uid: U32, +uidv: U32, rest: List<&2, Part.Part>,
-  acc: List<&2, Image.Verdict>, quota: Image.Quota, +p: Part.Part, format: Image.Format,
-  +max: U32) -> IO(ImgSee):
-  +path = Part.path(p)
-  +name = image_name_of(p)
-  do IO<ImgSee>:
-    run : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, path, max))
-    return fetch_end(part_bytes(run, uid, uidv, p, max), rest, acc, quota, path, name, format)
+type ImgFetch is Data:
+  ImgFetch{uid: U32, part: Part.Part, max: U32}
 
-def see_fuel(ps: List<&2, Part.Part>) -> Nat:
-  Nat.add(Nat.mul(List.length(&2, Part.Part, ps), 3n), 2n)
+def round_part(pre: Image.Pre, uid: U32, p: Part.Part) -> List<&2, ImgFetch>:
+  match pre:
+    case Image.Omit{reason}:
+      []
+    case Image.Fetch{format, max}:
+      [ImgFetch{uid, p, max}]
 
-def see_run(fuel: Nat, +folder: String, +uid: U32, +uidv: U32, st: ImgSee) -> IO(ImgSee):
-  match fuel st:
-    case 0n _:
-      IO.pure(ImgSee, SeeStop{"image survey exceeded its part budget"})
-    case 1n+f SeeStop{m}:
-      IO.pure(ImgSee, SeeStop{m})
-    case 1n+f SeeDone{vs, quota}:
-      IO.pure(ImgSee, SeeDone{vs, quota})
-    case 1n+f SeeParts{Nil{}, acc, quota}:
-      IO.pure(ImgSee, SeeDone{List.reverse(&2, Image.Verdict, acc), quota})
-    case 1n+f SeeParts{p <> rest, acc, quota}:
-      see_run(f, folder, uid, uidv, see_part(rest, acc, quota, p))
-    case 1n+f SeeFetch{rest, acc, quota, p, format, max}:
-      do IO<ImgSee>:
-        nxt : ImgSee <- fetch_one(folder, uid, uidv, rest, acc, quota, p, format, max)
-        see_run(f, folder, uid, uidv, nxt)
+def round_parts(ps: List<&2, ImgPart>, left: Nat) -> List<&2, ImgFetch>:
+  match ps left:
+    case _ 0n:
+      []
+    case Nil{} _:
+      []
+    case ImgPart{uid, +p} <> rest 1n+n:
+      +one = round_part(image_pre(p), uid, p)
+      List.append(&2, ImgFetch, one,
+        round_parts(rest, Nat.sub(1n+n, List.length(&2, ImgFetch, one))))
 
-def see_msg(m: Maybe<&2, I.Msg>, folder: String, uid: U32, uidv: U32, quota: Image.Quota) ->
+def round_reads.put(same: Bool, uid: U32, range: Ops.PartRange,
+  other: U32, ranges: List<&2, Ops.PartRange>, rest: List<&2, Ops.PartRead>) ->
+  List<&2, Ops.PartRead>:
+  match same:
+    case True{}:
+      Ops.PartRead{uid, range <> ranges} <> rest
+    case False{}:
+      Ops.PartRead{uid, [range]} <> Ops.PartRead{other, ranges} <> rest
+
+def round_reads.add(+uid: U32, range: Ops.PartRange, reads: List<&2, Ops.PartRead>) ->
+  List<&2, Ops.PartRead>:
+  match reads:
+    case Nil{}:
+      [Ops.PartRead{uid, [range]}]
+    case Ops.PartRead{+other, ranges} <> rest:
+      round_reads.put(U32.is_eq(uid, other), uid, range, other, ranges, rest)
+
+def round_reads(ps: List<&2, ImgFetch>) -> List<&2, Ops.PartRead>:
+  match ps:
+    case Nil{}:
+      []
+    case ImgFetch{uid, p, max} <> rest:
+      round_reads.add(uid, Ops.PartRange{Part.path(p), max}, round_reads(rest))
+
+def see_fuel(ps: List<&2, ImgPart>) -> Nat:
+  Nat.add(Nat.mul(List.length(&2, ImgPart, ps), 4n), 2n)
+
+def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat, +run: Run(), st: ImgSee) ->
   IO(ImgSee):
-  match m:
-    case None{}:
-      IO.pure(ImgSee, SeeDone{[], quota})
-    case Some{msg}:
-      +ps = msg_parts(msg)
-      see_run(see_fuel(ps), folder, uid, uidv, SeeParts{ps, [], quota})
+  match fuel cached st:
+    case 0n _ _:
+      IO.pure(ImgSee, SeeStop{"image survey exceeded its part budget"})
+    case 1n+f _ SeeStop{m}:
+      IO.pure(ImgSee, SeeStop{m})
+    case 1n+f _ SeeDone{vs, quota}:
+      IO.pure(ImgSee, SeeDone{vs, quota})
+    case 1n+f _ SeeParts{Nil{}, acc, quota}:
+      IO.pure(ImgSee, SeeDone{List.reverse(&2, Image.Verdict, acc), quota})
+    case 1n+f _ SeeParts{ImgPart{uid, +p} <> rest, acc, quota}:
+      see_run(f, folder, uidv, cached, run,
+        see_screen(image_pre(p), rest, acc, quota, uid, p, image_name_of(p)))
+    case 1n+f 0n SeeFetch{+rest, acc, +quota, +uid, +p, format, max}:
+      +ps = round_parts(ImgPart{uid, p} <> rest, U32.to_nat(Image.quota_round(quota)))
+      do IO<ImgSee>:
+        reply : Run() <- imap_run(Ops.plan_image_round(folder, uidv, round_reads(ps)))
+        see_run(f, folder, uidv, List.length(&2, ImgFetch, ps), reply,
+          SeeFetch{rest, acc, quota, uid, p, format, max})
+    case 1n+f 1n+n SeeFetch{rest, acc, quota, uid, +p, format, max}:
+      see_run(f, folder, uidv, n, run,
+        fetch_end(part_bytes(run, uid, uidv, p, max), rest, acc, Image.quota_fetched(quota),
+          Part.path(p), image_name_of(p), format))
 
-def see_entry(e: Jev.Entry, ms: List<&2, I.Msg>, folder: String, uidv: U32,
-  quota: Image.Quota) -> IO(ImgSee):
-  +uid = entry_uid(e)
-  see_msg(find_msg(uid, ms), folder, uid, uidv, quota)
-
-# One batch's survey: one quota for all its messages, since they share one
-# request.
 type Bat is Data:
-  BatGo{es: List<&2, Jev.Entry>, counts: List<&2, Nat>, vs: List<&2, Image.Verdict>,
-    quota: Image.Quota}
-  BatSaw{es: List<&2, Jev.Entry>, counts: List<&2, Nat>, vs: List<&2, Image.Verdict>, one: ImgSee}
   BatNo{msg: String}
   BatOk{counts: List<&2, Nat>, vs: List<&2, Image.Verdict>}
 
-def batch_fuel(es: List<&2, Jev.Entry>) -> Nat:
-  Nat.add(Nat.mul(List.length(&2, Jev.Entry, es), 4n), 2n)
+def batch_seen(seen: ImgSee, counts: List<&2, Nat>) -> Bat:
+  match seen:
+    case SeeDone{vs, quota}:
+      BatOk{counts, vs}
+    case SeeStop{m}:
+      BatNo{m}
+    case _:
+      BatNo{"image survey stopped between parts"}
 
-def batch_run(fuel: Nat, +folder: String, +uidv: U32, +ms: List<&2, I.Msg>, st: Bat) -> IO(Bat):
-  match fuel st:
-    case 0n _:
-      IO.pure(Bat, BatNo{"image survey exceeded its message budget"})
-    case 1n+f BatNo{m}:
-      IO.pure(Bat, BatNo{m})
-    case 1n+f BatOk{counts, vs}:
-      IO.pure(Bat, BatOk{counts, vs})
-    case 1n+f BatGo{Nil{}, counts, vs, quota}:
-      IO.pure(Bat, BatOk{counts, vs})
-    case 1n+f BatGo{e <> rest, counts, vs, quota}:
-      do IO<Bat>:
-        one : ImgSee <- see_entry(e, ms, folder, uidv, quota)
-        batch_run(f, folder, uidv, ms, BatSaw{rest, counts, vs, one})
-    case 1n+f BatSaw{rest, counts, vs, SeeStop{m}}:
-      IO.pure(Bat, BatNo{m})
-    case 1n+f BatSaw{rest, counts, vs, SeeDone{+more, quota}}:
-      +n = List.length(&2, Image.Verdict, more)
-      batch_run(f, folder, uidv, ms, BatGo{rest, List.append(&2, Nat, counts, [n]),
-        List.append(&2, Image.Verdict, vs, more), quota})
-    case 1n+f BatSaw{rest, counts, vs, one}:
-      IO.pure(Bat, BatNo{"image survey stopped between parts"})
+def batch_run(folder: String, uidv: U32, q: ImgQueue) -> IO(Bat):
+  ImgQueue{counts, +ps} = q
+  do IO<Bat>:
+    seen : ImgSee <- see_run(see_fuel(ps), folder, uidv, 0n, Done{[]},
+      SeeParts{ps, [], Image.quota_new()})
+    return batch_seen(seen, counts)
 
 def corpus_entry(e: Jev.Entry) -> String:
   Jev.Entry{f, state, qs, n, q, l, u} = e
@@ -7603,8 +7646,6 @@ def image_seen(
       do IO<Gathered>:
         fates : List<&2, Image.Fate> <- Image.bind_io(vs, batch_corpus(folder, names, es))
         image_bound(zip_images(c, es, counts, fates), es, keys, p, ss)
-    case _:
-      IO.pure(Gathered, Gathered{Fail{"image survey did not finish"}, ss})
 
 # One batch, surveyed, bound and asked before the next is surveyed, so only
 # its stills are held, and only until its request is answered.
@@ -7620,7 +7661,7 @@ def image_batch(
   ss: List<&2, Survey>
 ) -> IO(Gathered):
   do IO<Gathered>:
-    seen : Bat <- batch_run(batch_fuel(es), folder, uidv, ms, BatGo{es, [], [], Image.quota_new()})
+    seen : Bat <- batch_run(folder, uidv, image_queue(es, ms))
     image_seen(c, folder, names, keys, es, p, ss, seen)
 
 def image_step.put(

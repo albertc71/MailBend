@@ -43,7 +43,11 @@
         "checked_classify_writes_nothing",
         "brief_plans_write_nothing",
         "brief_range_writes_nothing",
-        "contact_plans"
+        "contact_plans",
+        "image_round_guarded",
+        "image_round_fetch_exact",
+        "image_round_section_exact",
+        "image_round_writes_nothing"
       ],
       "tests": [
         "tests/test-e2e.py#reads",
@@ -51,7 +55,9 @@
         "tests/test-e2e.py#refresh_known",
         "tests/brief-cases.py#run",
         "tests/brief-continuation-cases.py#run",
-        "tests/test-e2e.py#live_contacts"
+        "tests/test-e2e.py#live_contacts",
+        "tests/test-e2e.py#jev_image_rounds",
+        "tests/formal/check-plan-wire-mutations.py#main"
       ],
       "code": [
         "src/ops.bend#plan_get",
@@ -59,7 +65,10 @@
         "src/ops.bend#plan_brief_range",
         "src/ops.bend#plan_contacts_search",
         "src/ops.bend#plan_contact_candidates",
-        "src/ops.bend#plan_contacts_headers"
+        "src/ops.bend#plan_contacts_headers",
+        "src/ops.bend#plan_image_round",
+        "src/ops.bend#image_reads",
+        "src/ops.bend#image_read_items"
       ],
       "mutation": {
         "id": "read-plans-negative-control",
@@ -86,7 +95,8 @@
       ],
       "tests": [
         "tests/test-e2e.py#reads",
-        "tests/test-e2e.py#search_pagination"
+        "tests/test-e2e.py#search_pagination",
+        "tests/test-e2e.py#jev_image_rounds"
       ],
       "code": [
         "src/imap.bend#item_str"
@@ -669,7 +679,7 @@
         "unsubscribe_classifies_as_writing",
         "select_classifies_as_writing",
         "any_writes_checks_each_command",
-        "thread_plans_write_nothing"
+        "image_round_writes_nothing"
       ],
       "tests": [
         "tests/test-e2e.py#mutations"
@@ -683,9 +693,9 @@
         "path": "src/imap.bend",
         "before": "writes(effect(c)) || any_writes(t)",
         "after": "writes(effect(c))",
-        "proof": "PROOF.bend#thread_searches_add_no_write",
-        "law": "thread_plans_write_nothing",
-        "observer_reason": "The root thread-plan proof calls thread_search_writes_nothing, which uses thread_searches_add_no_write. This read-safety consequence detects a broken write classifier before the direct classifier proofs are checked."
+        "proof": "PROOF.bend#image_reads_write_nothing",
+        "law": "image_round_writes_nothing",
+        "observer_reason": "The root image-round no-write proof calls image_reads_write_nothing. Its inductive step relies on any_writes recursively inspecting the command tail. The tail-removal mutant breaks that step before the direct classifier proofs are checked; this observer is a read-safety consequence of the classifier."
       }
     },
     {

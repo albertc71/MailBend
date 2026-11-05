@@ -14,7 +14,21 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 GUARD = '[I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]'
+IMAGE_ROUND = 'I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> image_reads(reads)'
 MUTATIONS = (
+    ("image round omits identity guard", "src/ops.bend", IMAGE_ROUND,
+     'I.CExamine{mbox} <> image_reads(reads)', "image_round_guarded"),
+    ("image round fetches before identity guard", "src/ops.bend", IMAGE_ROUND,
+     'I.CExamine{mbox} <> List.append(&2, I.Cmd, image_reads(reads), '
+     '[I.CExpect{I.uidv_line(uidv)}])', "image_round_guarded"),
+    ("image round selects writable folder", "src/ops.bend", IMAGE_ROUND,
+     IMAGE_ROUND.replace('CExamine', 'CSelect'), "image_round_guarded"),
+    ("image round fetches another UID", "src/ops.bend",
+     'I.CFetch{[uid], List.append(&2, I.Item,',
+     'I.CFetch{[99], List.append(&2, I.Item,', "image_round_fetch_exact"),
+    ("image round fetches another section", "src/ops.bend",
+     'I.IPart{section, max} <> image_read_items(t)',
+     'I.IPart{[99], max} <> image_read_items(t)', "image_round_section_exact"),
     ("quota plan mutates flags", "src/ops.bend", '[I.CGetQuotaRoot{"INBOX"}]',
      '[I.CGetQuotaRoot{"INBOX"}, I.CStore{[1], True{}, I.FSeen{}}]',
      "plan_quota_writes_nothing"),

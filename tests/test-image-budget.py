@@ -4,6 +4,7 @@ every image skip reason."""
 
 import pathlib
 import re
+import runpy
 import subprocess
 import sys
 
@@ -62,6 +63,17 @@ def main():
         sys.exit("schema omits image reasons: " + ", ".join(missing))
     if "image_notice" not in schema or not has("images") or not has("metadata_removed_bytes"):
         sys.exit("schema omits images, image_notice or metadata_removed_bytes")
+    limits = (ROOT / "native/mailbend-tls/src/limits.rs").read_text()
+    assert "MAX_OUTPUT: u64 = 60 << 20" in limits
+    tools = (ROOT / "src/tools.bend").read_text()
+    assert "Process.run(path, [mode], input, 134217728, 300000)" in tools
+    ceilings = re.search(r"^ceiling (\d+) (\d+)$", text, re.M)
+    caps = re.search(r"^caps (\d+) ", text, re.M)
+    assert ceilings and caps
+    maximum_round_parts = int(caps.group(1)) * (max(map(int, ceilings.groups())) + 1)
+    assert maximum_round_parts < 60 * 1024 * 1024
+    assert 2 * 60 * 1024 * 1024 < 134217728
+    runpy.run_path(str(ROOT / "tests/formal/check-image-rounds.py"), run_name="__main__")
     print(f"image budget {printed} matches MAX_REQUEST")
 
 
