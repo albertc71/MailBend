@@ -9,8 +9,15 @@ def modern_version() -> String:
 def latest_legacy_version() -> String:
   "2025-11-25"
 
+# Keep the supported structured legacy revisions beside the negotiation list.
+def structured_versions() -> List<&2, String>:
+  [latest_legacy_version(), "2025-06-18"]
+
 def legacy_versions() -> List<&2, String>:
-  [latest_legacy_version(), "2025-06-18", "2025-03-26", "2024-11-05"]
+  List.append(&2, String, structured_versions(), ["2025-03-26", "2024-11-05"])
+
+def is_structured(v: String) -> Bool:
+  List.contains(~String, ~String.eq, structured_versions(), v)
 
 def versions() -> J.Json:
   J.strs(modern_version() <> legacy_versions())

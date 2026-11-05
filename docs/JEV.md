@@ -206,8 +206,8 @@ reported in `missing`, even if a message took it meanwhile.
 
 ## Reads
 
-`mail_search`, `mail_get`, `mail_get_new` and `mail_get_thread` (marked
-`openWorldHint` for this reason) add the `jev` object to each message shown.
+`mail_search`, `mail_get`, `mail_get_new` and `mail_get_thread` add the `jev`
+object to each message shown.
 Its `signals` are `reply_needed`, `action_required`, `priority`, `category`
 (chosen from the folder list), `suggested_action`, and `suspected_injection`
 only when Jev suspects one.

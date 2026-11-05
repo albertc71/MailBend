@@ -382,6 +382,7 @@ def output_schema(name):
 
 
 # Annotations
+# destructiveHint is non-additive, not Ops.is_destructive (permanent-delete policy).
 
 READS = hints(read_only=True, idempotent=True)
 SETS_FLAGS = hints(idempotent=True, destructive=True)

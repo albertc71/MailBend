@@ -154,7 +154,12 @@ static metadata prompt for a draft or dry run. Vendor client UIs have not been
 tested as part of this metadata change.
 
 Server discovery, initialization and modern tool listings include a title,
-a description and the project's website URL. Ordinary tool results retain the
+a description and the project's website URL. All legacy initializations also
+include this rich server identity, and tool listings for every supported
+revision include tool titles and `_meta`. Some of these fields are extensions
+to older revision schemas; clients must tolerate unknown fields. Compatibility
+of the existing result shapes applies to `tools/call`, not to the complete
+`initialize` or `tools/list` metadata. Ordinary tool results retain the
 compact server name and version, so display metadata does not inflate every
 reply or its byte budget. Icons and a larger
 `anthropic/maxResultSizeChars` are not advertised. Existing response budgets
