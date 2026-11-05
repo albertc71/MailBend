@@ -30,42 +30,17 @@ MUTATIONS = (
      'case None{}:\n      Quiet{}\n    case Some{name}:'),
     ("nonobject tool input stays quiet", 'case _ _:\n      uncertain()\n\ndef event.kind.if(',
      'case Some{_} _:\n      Quiet{}\n    case _ _:\n      uncertain()\n\ndef event.kind.if('),
+    ("accepted event never classified",
+     'event.fields(J.as_str(J.get(event, "tool_name")), J.get(event, "tool_input"))',
+     'uncertain()'),
 )
 
-EXPECTED_LAWS = {
-    "wrong event kind stays quiet": "hook_wrong_kind_asks",
-    "missing event kind stays quiet": "hook_wrong_kind_asks",
-    "nonobject tool input stays quiet": "hook_nonobject_input_asks",
+EXPECTED_OBSERVERS = {
+    "wrong event kind stays quiet": "Laws.hook_wrong_kind_asks",
+    "missing event kind stays quiet": "Laws.hook_wrong_kind_asks",
+    "nonobject tool input stays quiet": "Laws.hook_nonobject_input_asks",
+    "accepted event never classified": "hook_pretool_read_is_quiet",
 }
-
-# Explicitly inhabit each premise, with a known read tool that would be quiet
-# for valid PreToolUse/object input. These also prevent vacuous law changes.
-WITNESSES = """
-def wrong_kind_witness() -> Laws.hook_wrong_kind(Some{"PostToolUse"}):
-  {==}
-
-def missing_kind_witness() -> Laws.hook_wrong_kind(None{}):
-  Unit{}
-
-def nonobject_input_witness() -> Laws.hook_nonobject_input(Some{J.JArr{J.JEnd{}}}):
-  Unit{}
-
-def missing_input_witness() -> Laws.hook_nonobject_input(None{}):
-  Unit{}
-
-def wrong_kind_printed_ask()
-  -> {Laws.hook_printed_decision(Hook.event.kind(Some{"PostToolUse"},
-    J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]))) ==
-      Some{"ask"} : Maybe<&2, String>}:
-  Laws.hook_wrong_kind_asks(Some{"PostToolUse"},
-    J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]),
-    wrong_kind_witness())
-
-def nonobject_input_printed_ask()
-  -> {Laws.hook_printed_decision(Hook.event.fields(Some{"mail_get"},
-    Some{J.JArr{J.JEnd{}}})) == Some{"ask"} : Maybe<&2, String>}:
-  Laws.hook_nonobject_input_asks("mail_get", Some{J.JArr{J.JEnd{}}}, nonobject_input_witness())
-"""
 
 
 def check(root):
@@ -83,7 +58,7 @@ def main():
         shutil.copytree(ROOT / "src", root / "src")
         (root / "LAWS.bend").write_text(IMPORTS + laws.split(SECTION)[1])
         (root / "PROOF.bend").write_text(
-            IMPORTS + "import ./LAWS.bend as Laws\n" + proofs.split(SECTION)[1] + WITNESSES)
+            IMPORTS + "import ./LAWS.bend as Laws\n" + proofs.split(SECTION)[1])
         original = (root / "src/hook.bend").read_text()
         result = check(root)
         assert result.returncode == 0 and "ALL PROOFS CHECK" in result.stdout, result
@@ -95,8 +70,8 @@ def main():
             output = result.stdout + result.stderr
             assert result.returncode != 0 and "SOME PROOFS FAIL" in output, (name, output)
             assert "expected" in output and "observed" in output, (name, output)
-            if name in EXPECTED_LAWS:
-                assert f"Location: Laws.{EXPECTED_LAWS[name]}" in output, (name, output)
+            if name in EXPECTED_OBSERVERS:
+                assert f"Location: {EXPECTED_OBSERVERS[name]}" in output, (name, output)
             for syntax_error in ("Error parsing", "consumed more than once", "a defined name"):
                 assert syntax_error not in output, (name, output)
             print(f"PASS rejected {name}")

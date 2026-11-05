@@ -4,7 +4,9 @@
 
 MailBend gives AI agents a mailbox as MCP tools (stdio) and a CLI: a Linux
 IMAP/SMTP connector with iCloud Mail as the default, live-tested profile,
-whose safety rules are proven by the compiler for every input. <!-- claim:read-plans -->
+with pure-function safety rules proven by the compiler for every input. <!-- claim:read-plans --> <!-- claim:move-delete-plans --> <!-- claim:send-allowlist --> <!-- claim:jev-gates -->
+These cover read and move/delete plans, recipient allowlists and Jev gates;
+[the proof scope](#what-the-proofs-cover) distinguishes them from native IO.
 
 ```sh
 sudo apt-get install -y build-essential clang ca-certificates curl
@@ -48,13 +50,13 @@ directory. No real mail is sent, and no live provider or Jev behavior is tested.
 
 ## Why MailBend
 
-- **Safety rules are proven, not just tested.** The rules for the IMAP <!-- claim:read-plans -->
-  command plans, the SMTP envelope and the optional Jev checks (Jev is
-  TypeSafe's model; see [Jev](#jev-optional)) are laws in
-  [LAWS.bend](LAWS.bend), and `bend PROOF.bend` proves each one for every
-  input: reads cannot change mail, nothing is expunged before it is copied,
-  a permanent delete needs its confirmation word, a recipient allowlist
-  refuses any unlisted recipient. See
+- **Pure-function safety rules are proven, not just tested.** <!-- claim:read-plans --> <!-- claim:move-delete-plans --> <!-- claim:send-allowlist --> <!-- claim:jev-gates -->
+  [LAWS.bend](LAWS.bend) states the rules and `bend PROOF.bend` proves them
+  for every input: read plans cannot change mail; move and trash plans never
+  expunge before copying; permanent-delete plans require the confirmation
+  word; an SMTP recipient allowlist refuses the entire envelope if any
+  recipient is unlisted; and optional Jev gates can only remove a send or
+  delete, never change it (Jev is TypeSafe's model; see [Jev](#jev-optional)). See
   [What the proofs cover](#what-the-proofs-cover).
 - **Stale UIDs never touch other messages.** Every change is pinned to the <!-- claim:uidvalidity -->
   folder's UIDVALIDITY inside the same IMAP session that makes it.
@@ -753,9 +755,9 @@ questions. Never post credentials or real mail.
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven). <!-- claim:sent-copy -->
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that <!-- claim:read-plans -->
-  every read plan (probe, quota, folders, search, get, new mail, refresh, thread) contains
-  no command that can change a mailbox, for every argument, and
-  that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`. <!-- claim:read-wire -->
+  every read plan (probe, quota, folders, search, get, new mail, refresh, thread,
+  brief, contacts) contains no command that can change a mailbox, for every
+  argument, and that what is rendered on the wire is `EXAMINE` and `BODY.PEEK`. <!-- claim:read-wire -->
 - **Nothing is lost by accident.** Move and trash never expunge before <!-- claim:move-delete-plans -->
   copying (proven for every server capability), and their first <!-- claim:move-delete-plans -->
   `UID EXPUNGE` names the same UIDs as their first `UID COPY` (proven). <!-- claim:move-delete-plans -->
