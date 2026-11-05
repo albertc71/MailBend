@@ -160,9 +160,9 @@ or `MAILBEND_TYPESAFE_IMAGES`) fails closed, never reads as off: every known
 tool call fails, although listing falls back to the read tools that do not
 need Jev. These switches are not the complete fail-closed set: the other TypeSafe
 settings checked by [`config_of`](../src/policy.bend) can also reject the shared
-configuration. The laws cover pure classification, configuration rejection,
-and policy refusal. Environment
-loading, listing, and the runtime refusal path in [the tool layer](../src/tools.bend)
+configuration; those other rejections are tested, not proved. The laws cover
+pure classification, malformed-switch configuration rejection, and policy refusal.
+Environment loading, listing, and the runtime refusal path in [the tool layer](../src/tools.bend)
 remain tested wiring. [End-to-end tests](../tests/test-e2e.py) exercise these
 paths in `read_only`, `jev_switches`, `jev_images`, and `setup_diagnostics`;
 `gates_tool_list` checks the offered tool metadata. Send-only settings are
