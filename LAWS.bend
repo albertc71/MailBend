@@ -2135,3 +2135,33 @@ law hook_unknown_tool_asks:
 law hook_missing_name_asks:
   for args: Maybe<&2, J.Json>
   {hook_printed_decision(Hook.event.fields(None{}, args)) == Some{"ask"} : Maybe<&2, String>}
+
+# These predicates are inhabited exactly for the two invalid input shapes.
+# They depend only on input values, not on the production decision.
+def hook_wrong_kind(kind: Maybe<&2, String>) -> Type:
+  match kind:
+    case None{}:
+      Unit
+    case Some{name}:
+      {String.eq(name, "PreToolUse") == False{} : Bool}
+
+def hook_nonobject_input(args: Maybe<&2, J.Json>) -> Type:
+  match args:
+    case Some{J.JObj{items}}:
+      Empty
+    case _:
+      Unit
+
+# LAW: every missing or non-PreToolUse kind prints ask for any event payload
+law hook_wrong_kind_asks:
+  for +kind: Maybe<&2, String>
+  for event: J.Json
+  for wrong: hook_wrong_kind(kind)
+  {hook_printed_decision(Hook.event.kind(kind, event)) == Some{"ask"} : Maybe<&2, String>}
+
+# LAW: a present tool name with missing or non-object input prints ask
+law hook_nonobject_input_asks:
+  for name: String
+  for +args: Maybe<&2, J.Json>
+  for nonobject: hook_nonobject_input(args)
+  {hook_printed_decision(Hook.event.fields(Some{name}, args)) == Some{"ask"} : Maybe<&2, String>}

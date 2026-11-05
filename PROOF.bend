@@ -2572,3 +2572,38 @@ def Laws.hook_unknown_tool_asks(name, items, unknown):
 
 def Laws.hook_missing_name_asks(args):
   {==}
+
+def Laws.hook_wrong_kind_asks(kind, event, wrong):
+  match kind:
+    case None{}:
+      {==}
+    case Some{name}:
+      %Equal.sym(Bool, String.eq(name, "PreToolUse"), False{}, wrong) :
+        {Laws.hook_printed_decision(Hook.event.kind.if(_, event)) ==
+          Some{"ask"} : Maybe<&2, String>}
+      {==}
+
+def Laws.hook_nonobject_input_asks(name, args, nonobject):
+  match args:
+    case Some{J.JObj{items}}:
+      Empty.absurd(
+        {Laws.hook_printed_decision(Hook.event.fields(Some{name}, Some{J.JObj{items}})) ==
+          Some{"ask"} : Maybe<&2, String>}, nonobject)
+    case None{}:
+      {==}
+    case Some{J.JNull{}}:
+      {==}
+    case Some{J.JBool{b}}:
+      {==}
+    case Some{J.JNum{raw}}:
+      {==}
+    case Some{J.JStr{s}}:
+      {==}
+    case Some{J.JArr{items}}:
+      {==}
+    case Some{J.JCons{head, tail}}:
+      {==}
+    case Some{J.JEnd{}}:
+      {==}
+    case Some{J.JKv{key, val}}:
+      {==}
