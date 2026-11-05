@@ -721,7 +721,7 @@
     },
     {
       "id": "client-prompts",
-      "claim": "The pure client-side hook prints no decision or the specified ask envelope, and its call classifier asks for real sends and permanent deletes unless dry_run is exactly Boolean true. Unparseable text, text rejected by the byte-cap check, unknown tool names with object arguments and missing tool names print ask. Client enforcement and native input handling remain tested boundaries.",
+      "claim": "The pure client-side hook prints no decision or the specified ask envelope, and its call classifier asks for real sends and permanent deletes unless dry_run is exactly Boolean true. Unparseable text, text rejected by the byte-cap check, missing or non-PreToolUse event kinds, unknown tool names with object arguments, missing or non-string tool names, and present tool names with missing or non-object input print ask. Client enforcement and native input handling remain tested boundaries.",
       "anchor": "safety",
       "status": "proven",
       "laws": [
@@ -732,19 +732,24 @@
         "hook_unparseable_input_asks",
         "hook_oversized_input_asks",
         "hook_unknown_tool_asks",
-        "hook_missing_name_asks"
+        "hook_missing_name_asks",
+        "hook_wrong_kind_asks",
+        "hook_nonobject_input_asks"
       ],
       "tests": [
         "tests/test-hook.py#test_change_truth_table",
         "tests/test-hook.py#test_malformed_or_unknown_events_ask",
-        "tests/formal/check-hook.py#main"
+        "tests/formal/check-hook.py#main",
+        "tests/test-hook.py#test_event_kind_requires_exact_name",
+        "tests/test-hook.py#test_known_tool_nonobject_input_asks"
       ],
       "code": [
         "src/hook.bend#response",
         "src/hook.bend#call",
         "src/hook.bend#output",
         "src/hook.bend#raw",
-        "src/hook.bend#event.fields"
+        "src/hook.bend#event.fields",
+        "src/hook.bend#event.kind"
       ],
       "mutation": {
         "id": "client-prompts-negative-control",

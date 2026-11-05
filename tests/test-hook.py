@@ -94,6 +94,20 @@ class Hook(unittest.TestCase):
                       event("unknown", dry_run=True)):
             self.ask(encoded(value))
 
+    def test_event_kind_requires_exact_name(self):
+        for kind in (None, False, 7, [], {}, "", "PreToolUs", "PreToolUseX", "pretooluse"):
+            with self.subTest(kind=kind):
+                value = event("mail_get")
+                value["hook_event_name"] = kind
+                self.ask(encoded(value))
+
+    def test_known_tool_nonobject_input_asks(self):
+        for args in (None, False, 0, "", [], [1]):
+            with self.subTest(args=args):
+                value = event("mail_get")
+                value["tool_input"] = args
+                self.ask(encoded(value))
+
     def test_last_separator_and_bare_names(self):
         for name in ("mail_reply", "mcp__mailbend__mail_reply", "mcp__custom___mail_reply"):
             value = event("mail_reply", as_draft=True)
