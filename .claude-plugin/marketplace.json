@@ -1,0 +1,13 @@
+{
+  "name": "mailbend",
+  "description": "MailBend's Claude Code plugin for an existing local installation.",
+  "owner": {
+    "name": "Minh Quang Tran"
+  },
+  "plugins": [
+    {
+      "name": "mailbend",
+      "source": "./"
+    }
+  ]
+}

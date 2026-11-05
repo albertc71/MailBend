@@ -463,6 +463,10 @@ roles. `mail_list_folders` retains actual advertised attributes and
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
 
+Claude Code users can install the [optional MailBend plugin](docs/CLAUDE-PLUGIN.md)
+to connect an existing installation with the skill and send/delete prompt.
+It starts read-only and does not build MailBend or grant tool permissions.
+
 Install the optional [MailBend agent skill](skills/mailbend/SKILL.md) by copying
 the complete `skills/mailbend/` directory, including `references/`, into your
 client's supported skills directory. It teaches safe MCP and CLI workflows; it

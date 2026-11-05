@@ -6,6 +6,10 @@ hook does not execute a tool, grant permission, or attest human approval. The
 
 ## Add the hook
 
+The [optional Claude Code plugin](CLAUDE-PLUGIN.md) includes this hook with a
+plugin-scoped matcher and execution failures set to block. Do not add the
+manual configuration below when using the plugin.
+
 Build MailBend first. In your Claude Code settings, merge this hook into the
 existing `hooks` object. Replace `/absolute/path/to/MailBend` with your checkout
 path. If your MCP server has a different name, replace `mailbend` in the matcher.
