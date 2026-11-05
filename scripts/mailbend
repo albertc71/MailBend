@@ -3,7 +3,7 @@
 # helper, the attachment reader and the TypeSafe helper next to it. Falls back to
 # `bend main.bend` (slower start) when the core was not compiled.
 # MCP uses the stdio helper to adapt inherited sockets before starting the core.
-# Usage: scripts/mailbend mcp | tools | call <tool> [json or -] | diagnose [--imap] [--smtp] | setup | hook claude-pretooluse | version
+# Usage: scripts/mailbend mcp | tools | call <tool> [json or -] | diagnose [--imap] [--smtp] [--report] | setup | hook claude-pretooluse | version
 set -eu
 ulimit -c 0
 # Bend may reuse a closed fd 0 for an internal pipe before opening /dev/stdin.

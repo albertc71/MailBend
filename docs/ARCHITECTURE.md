@@ -274,6 +274,7 @@ main.bend            CLI and the MCP stdio server (JSON-RPC lines)
 src/hook.bend        pure Claude Code client-side ask-or-quiet prompt decisions
 src/providers.bend   reviewed print-only setup presets, prerequisites, and configuration rendering
 src/diagnostics.bend redacted checks (network only when requested), offline posture and local-only setup folder suggestions
+src/provider-report.bend finite provider-report vocabulary and role-resolution observations
 src/mcp-protocol.bend MCP version metadata, envelopes and protocol limits
 src/tools.bend       the tools: arguments, sessions, results
 src/policy.bend      pure switches, helper outcomes and role resolution

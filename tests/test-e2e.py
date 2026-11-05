@@ -582,6 +582,99 @@ def setup_diagnostics(work):
             srv.stop()
 
 
+def provider_reports(work):
+    fixture = copy.deepcopy(FIX)
+    private_folder = "private-folder@example.com"
+    fixture["mailboxes"][private_folder] = fixture["mailboxes"].pop("Sent Messages")
+    fixture["smtp_auth"] = "PLAIN LOGIN XOAUTH2 private-mechanism@example.com"
+    fixture["smtp_auth_before_tls"] = "OAUTHBEARER private-plaintext@example.com"
+    caps = "MOVE,UIDPLUS,SPECIAL-USE,CONDSTORE,X-GM-EXT-1,private-cap@example.com"
+    for mode in ([], ["--smtp-implicit"]):
+        srv = Server(work, caps=caps, fixture=fixture, extra=mode)
+        try:
+            before = srv.st()
+            env = srv.env(MAILBEND_READ_ONLY="1", MAILBEND_DRAFTS_ONLY="1")
+            def invoke(*flags):
+                p = subprocess.run([LAUNCHER, "diagnose", *flags], env=env,
+                                   capture_output=True, text=True, timeout=135)
+                outputs.extend([p.stdout, p.stderr])
+                return p
+
+            local = invoke("--report")
+            report = json.loads(local.stdout).get("server_facts", {})
+            check("provider report: flag alone never authorizes network",
+                  local.returncode == 0 and not srv.log_lines() and report == {
+                      "mailbend_version": "0.1.0", "imap_capabilities": None,
+                      "roles": None, "smtp_auth": None}, report)
+            ordinary = invoke("--imap", "--smtp")
+            log_before = srv.log_records()
+            reported = invoke("--report", "--smtp", "--imap")
+            log_after = srv.log_records()[len(log_before):]
+            body = json.loads(reported.stdout)
+            facts = body.pop("server_facts", {})
+            check("provider report: default JSON remains byte-identical without added facts",
+                  ordinary.returncode == reported.returncode == 0
+                  and json.dumps(body, separators=(",", ":"), ensure_ascii=False) + "\n" == ordinary.stdout)
+            observed = lambda records: [(r["proto"], r["line"]) for r in records]
+            check("provider report: opt-in sends exactly the existing diagnostic commands",
+                  observed(log_after) == observed(log_before), observed(log_after))
+            check("provider report: fixed capability tokens and counted unknown",
+                  facts.get("imap_capabilities") == {"tokens": ["IMAP4REV1", "UIDPLUS", "MOVE",
+                      "CONDSTORE", "X-GM-EXT-1", "SPECIAL-USE"], "unknown_count": 1}, facts)
+            check("provider report: reports protected SMTP mechanisms only",
+                  facts.get("smtp_auth") == {"mechanisms": ["PLAIN", "LOGIN", "XOAUTH2"],
+                      "unknown_count": 1}, facts)
+            check("provider report: role names and address-shaped folders remain private",
+                  facts.get("roles") == {"inbox": "name", "drafts": "advertised", "trash": "advertised",
+                      "sent": "advertised", "junk": "advertised", "archive": "advertised"}
+                  and all(secret not in reported.stdout for secret in (private_folder,
+                      "private-cap", "private-mechanism", FIX["user"], PASSWORD,
+                      "localhost", str(srv.imap), str(srv.smtp))), facts)
+            check("provider report: read-only and drafts-only checks leave mail unchanged", srv.st() == before)
+            env["MAILBEND_SENT_FOLDER"] = private_folder
+            override = json.loads(invoke("--imap", "--report").stdout)["server_facts"]
+            check("provider report: explicit role override is identified without its value",
+                  override["roles"]["sent"] == "override" and override["smtp_auth"] is None)
+            env["MAILBEND_SMTP_HOST"] = "untrusted.example"
+            env["MAILBEND_SMTP_CONNECT_IP"] = "127.0.0.1"
+            refused = invoke("--smtp", "--report")
+            refused_body = json.loads(refused.stdout)
+            check("provider report: TLS failure never reports plaintext AUTH offers",
+                  refused.returncode != 0 and refused_body["server_facts"]["smtp_auth"] is None
+                  and diagnosed(refused_body["checks"], "smtp", "tls", "failed"))
+            env.pop("MAILBEND_SMTP_CONNECT_IP")
+            env["MAILBEND_SMTP_HOST"] = "localhost"
+            start = len(srv.log_records())
+            for flags in (("--report", "--report"), ("--imap", "--imap", "--report"),
+                          ("--report=false", "--smtp"), ("--posture", "--report")):
+                invalid = invoke(*flags)
+                check("provider report: invalid flags fail before network", invalid.returncode == 2
+                      and len(srv.log_records()) == start, flags)
+        finally:
+            srv.stop()
+    fixture = copy.deepcopy(FIX)
+    fixture["smtp_auth"] = "XOAUTH2 private-mechanism@example.com"
+    fixture["mailboxes"]["Sent Messages"]["special"] = []
+    fixture["mailboxes"]["Drafts"]["special"] = []
+    fixture["mailboxes"]["Trash"] = copy.deepcopy(fixture["mailboxes"]["Deleted Messages"])
+    fixture["mailboxes"]["Junk"]["special"] = ["\\Junk", "\\Noselect"]
+    srv = Server(work, caps="SPECIAL-USE", fixture=fixture)
+    try:
+        p = subprocess.run([LAUNCHER, "diagnose", "--imap", "--smtp", "--report"],
+                           env=srv.env(), capture_output=True, text=True, timeout=135)
+        outputs.extend([p.stdout, p.stderr])
+        body = json.loads(p.stdout)
+        facts = body.get("server_facts", {})
+        check("provider report: failed AUTH still describes the protected offer",
+              p.returncode != 0 and facts.get("smtp_auth") == {"mechanisms": ["XOAUTH2"], "unknown_count": 1}
+              and diagnosed(body["checks"], "smtp", "authentication", "failed", "unsupported_auth"))
+        check("provider report: conventional, ambiguous and unselectable roles are distinguished",
+              facts.get("roles") == {"inbox": "name", "drafts": "name", "trash": "ambiguous",
+                  "sent": "name", "junk": "unresolved", "archive": "advertised"}, facts)
+    finally:
+        srv.stop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool-scenarios-only", action="store_true",
@@ -618,6 +711,7 @@ def run_all(work, *, tool_scenarios_only=False):
         setup_profiles(work)
         setup_folder_suggestions(work)
         setup_diagnostics(work)
+        provider_reports(work)
     srv = Server(work)
     try:
         reads(srv)

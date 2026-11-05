@@ -52,9 +52,61 @@ pub fn has_auth(ehlo: &[u8], mechanism: &[u8]) -> bool {
     })
 }
 
+/// Fixed AUTH observations for a protected diagnostic EHLO reply.
+pub fn auth_facts(ehlo: &[u8]) -> String {
+    const ALLOWED: [&str; 4] = ["PLAIN", "LOGIN", "XOAUTH2", "OAUTHBEARER"];
+    let mut offered = [false; ALLOWED.len()];
+    let mut unknown = 0;
+    for line in lines(ehlo).map(text) {
+        if !starts_with_ignore_case(line, b"AUTH ") {
+            continue;
+        }
+        for token in line[5..]
+            .split(u8::is_ascii_whitespace)
+            .filter(|t| !t.is_empty())
+        {
+            if let Some(index) = ALLOWED
+                .iter()
+                .position(|known| token.eq_ignore_ascii_case(known.as_bytes()))
+            {
+                offered[index] = true;
+            } else {
+                unknown += 1;
+            }
+        }
+    }
+    let mut facts = String::new();
+    for (mechanism, present) in ALLOWED.into_iter().zip(offered) {
+        if present {
+            facts.push_str("smtp_auth ");
+            facts.push_str(mechanism);
+            facts.push('\n');
+        }
+    }
+    facts.push_str(&format!("smtp_auth_other {unknown}\n"));
+    facts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_report_redacts_unknown_mechanisms_and_deduplicates_known_ones() {
+        assert_eq!(
+            auth_facts(b"250-private.example\r\n250-AUTH plain LOGIN XOAUTH2 OAUTHBEARER private@example.com PLAIN\r\n250 AUTH strange-secret\r\n"),
+            "smtp_auth PLAIN\nsmtp_auth LOGIN\nsmtp_auth XOAUTH2\nsmtp_auth OAUTHBEARER\nsmtp_auth_other 2\n"
+        );
+        assert_eq!(auth_facts(b"250 AUTHX PLAIN\r\n"), "smtp_auth_other 0\n");
+    }
+
+    #[test]
+    fn report_mechanisms_are_exact_tokens_not_authentication_word_prefixes() {
+        assert_eq!(
+            auth_facts(b"250 AUTH PLAIN] LOGIN@example.com XOAUTH2x\r\n"),
+            "smtp_auth_other 3\n"
+        );
+    }
 
     #[test]
     fn reply_lines_carry_a_code_and_a_continuation_mark() {

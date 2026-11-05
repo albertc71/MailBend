@@ -121,7 +121,7 @@ raw-core negative control that reproduces the original `ENXIO` failure.
 
 ## Contract
 
-Diagnostic modes emit only fixed `stage reason` lines, with `ok`, `invalid`,
+Normal diagnostic modes emit only fixed `stage reason` lines, with `ok`, `invalid`,
 `failed`, `skipped`, `unsupported_tls` or `unsupported_auth` reasons; they exit
 0 when the diagnostic itself runs, even when a check fails. They never emit
 server transcripts or error messages. Bend allow-lists the tokens, renders the
@@ -130,6 +130,15 @@ and 1 MiB. Local modes check settings, credentials and CA loading without a
 socket. Network modes authenticate with an empty operation plan and disconnect;
 they cannot parse an SMTP envelope or reserve a send. Folder discovery remains
 in Bend using its existing read-only plans and separate bounded sessions.
+
+`diagnose-smtp-report` adds fixed `smtp_auth PLAIN`, `smtp_auth LOGIN`,
+`smtp_auth XOAUTH2` and `smtp_auth OAUTHBEARER` lines for offered mechanisms,
+plus `smtp_auth_other N` for the count of other nonempty mechanism occurrences.
+These facts come only from EHLO after verified TLS, even when authentication
+subsequently fails. Unknown bytes are never emitted. This mode uses the same
+empty SMTP plan and wire commands as `diagnose-smtp`. Bend chooses whether to
+request these facts, allow-lists them again and renders the public report.
+
 
 ```text
 mailbend-tls imap   < tagged IMAP commands   > server transcript

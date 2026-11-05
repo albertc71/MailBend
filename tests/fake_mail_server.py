@@ -228,6 +228,7 @@ class State:
         self.quota_status = fixture.get('quota_status', 'OK')
         self.quota_refusals = fixture.get('quota_refusals', {})
         self.smtp_auth = fixture.get('smtp_auth', 'PLAIN LOGIN')
+        self.smtp_auth_before_tls = fixture.get('smtp_auth_before_tls', '')
         self.smtp_greeting = fixture.get('smtp_greeting', 'fake ESMTP')
         self.seen = {}
         self.examine_count = 0
@@ -1550,6 +1551,8 @@ class SMTPSession:
             lines.append('STARTTLS')
         if self.tls_active:
             lines.append('AUTH ' + self.state.smtp_auth)
+        elif self.state.smtp_auth_before_tls:
+            lines.append('AUTH ' + self.state.smtp_auth_before_tls)
         for line in lines[:-1]:
             self.send(f'250-{line}\r\n')
         self.send(f'250 {lines[-1]}\r\n')
