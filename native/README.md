@@ -139,7 +139,6 @@ subsequently fails. Unknown bytes are never emitted. This mode uses the same
 empty SMTP plan and wire commands as `diagnose-smtp`. Bend chooses whether to
 request these facts, allow-lists them again and renders the public report.
 
-
 ```text
 mailbend-tls imap   < tagged IMAP commands   > server transcript
 mailbend-tls smtp   < SMTP envelope + DATA   > server transcript

@@ -37,7 +37,10 @@ remain supported.
   observed in EHLO after verified TLS. `unknown_count` counts other offered
   mechanism occurrences without returning them. An offer does not mean
   MailBend supports that mechanism. MailBend still authenticates only with
-  PLAIN or LOGIN.
+  PLAIN or LOGIN. Only the standard `AUTH` EHLO form is recognized; legacy
+  `AUTH=PLAIN LOGIN` lines are neither reported nor counted, matching the
+  authentication parser. A zero `unknown_count` (native `smtp_auth_other 0`)
+  does not establish that the server offered no other syntax.
 
 A `null` observation means it was not collected, or discovery failed. For
 example, an invalid role override prevents reporting role methods. It does
