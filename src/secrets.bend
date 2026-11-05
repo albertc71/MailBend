@@ -1,6 +1,6 @@
-# The local secret scan. With Jev on, an outgoing message is first scanned
-# here, without TypeSafe, for three kinds of secret: a private key block, a
-# token with a well-known prefix, and a password line. It reads the content
+# The local secret scan. With Jev or MAILBEND_SECRET_SCAN on, an outgoing
+# message is scanned without TypeSafe for private key blocks, tokens with
+# well-known prefixes and password lines. It reads the content
 # before transfer encoding: the header fields, the body, each attachment's
 # name and bytes, and a forwarded message's header section and parts. Any
 # text it cannot read makes the scan Incomplete, which blocks the send just

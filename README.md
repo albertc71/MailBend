@@ -588,11 +588,30 @@ are `local_refusal`, `helper_not_started`, `stopped_before_data`,
 `explicit_rejection`, `acceptance_unconfirmed`, `missing_progress`, or
 `accepted_by_server`.
 
+## Local secret scan
+
+Set `MAILBEND_SECRET_SCAN=1` to scan outgoing sends, replies and forwards
+locally, without a TypeSafe account or network request. It looks for private
+keys, known token prefixes and password lines in headers, bodies and
+attachments, including forwarded originals. A secret or text it cannot read
+in full blocks the send before SMTP, including during a dry run.
+
+The result reports `secret_scan` as `clean`, `found` or `incomplete`.
+Refusals identify a field or attachment position, never the matched value.
+This detects accidental leaks, not deliberate encoding or concealment.
+See the [scan rules and limits](docs/JEV.md#sends).
+
+`1` or `true` enables the independent scan. `0`, `false`, empty or unset
+leaves it off. Other values refuse sends but leave reads and drafts alone.
+`mail_save_draft` and replies or forwards with `as_draft` never scan.
+Enabling Jev always requires its local scan, even with
+`MAILBEND_SECRET_SCAN=0`.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
 `MAILBEND_TYPESAFE=1` and a `MAILBEND_TYPESAFE_KEY_FILE`; with it off, no
-tool asks it and no tool's result changes. With Jev on:
+tool asks it. The local secret scan above is independent. With Jev on:
 
 - **Reads** (`mail_search`, `mail_get`, `mail_get_new`, `mail_get_thread`)
   add Jev's notes to each message they show.

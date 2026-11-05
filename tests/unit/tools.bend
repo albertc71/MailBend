@@ -1067,25 +1067,25 @@ def check_schema() -> IO(Unit):
 
 def show_sends(s: T.Sends()) -> String:
   match s:
-    case Done{T.Sending{save, allow, limit, dir}}:
+    case Done{T.Sending{save, allow, limit, dir, scan}}:
       Bool.show(save) ++ " [" ++ String.join(allow, ",") ++ "] " ++ U32.show(limit) ++ " [" ++
         dir ++ "]"
     case Fail{m}:
       "error " ++ m
 
 def sends(save: String, allow: String, max: String, dir: String) -> String:
-  show_sends(T.sending_of(save, allow, max, dir, "", "/home/u"))
+  show_sends(T.sending_of(save, allow, max, dir, "", "/home/u", ""))
 
 def header_msg(headers: String) -> I.Msg:
   I.Msg{1, [], "", 0, headers, "", I.VNil{}}
 
 def check_sending() -> IO(Unit):
   do IO<Unit>:
-    IO.print(show_sends(T.sending_of("", "", "", "", "", "")))
+    IO.print(show_sends(T.sending_of("", "", "", "", "", "", "")))
     IO.print(sends("1", " Bob@X.com , @Example.ORG", "5", ""))
-    IO.print(show_sends(T.sending_of("true", "", "", "/st", "/xdg", "/home/u")) ++ " " ++
-      show_sends(T.sending_of("", "", "", "", "/xdg", "/home/u")) ++ " " ++
-      show_sends(T.sending_of("", "", "", "", "rel", "rel")))
+    IO.print(show_sends(T.sending_of("true", "", "", "/st", "/xdg", "/home/u", "")) ++ " " ++
+      show_sends(T.sending_of("", "", "", "", "/xdg", "/home/u", "")) ++ " " ++
+      show_sends(T.sending_of("", "", "", "", "rel", "rel", "")))
     IO.print(sends("yes", "", "", ""))
     IO.print(sends("", "a@x.com,", "", ""))
     IO.print(sends("", "Bob <b@x.com>", "", ""))
