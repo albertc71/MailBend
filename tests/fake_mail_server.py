@@ -1008,7 +1008,9 @@ class IMAPSession:
                         if 'uidvalidity' in change:
                             mb['uidvalidity'] = change['uidvalidity']
                         removed = change.get('remove_uids', [])
-                        mb['messages'] = [m for m in mb['messages'] if m['uid'] not in removed]
+                        replacements = {m['uid']: m for m in change.get('replace_messages', [])}
+                        mb['messages'] = [replacements.get(m['uid'], m) for m in mb['messages']
+                                          if m['uid'] not in removed]
                         self.state.save()
             count, uidvalidity, uidnext = len(mb['messages']), mb['uidvalidity'], mb['uidnext']
         self.mailbox, self.readonly = name, readonly

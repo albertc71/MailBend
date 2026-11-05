@@ -175,6 +175,37 @@ law part_guarded:
       I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{},
         I.IStructure{}, I.IPart{section, max}]}] : List<&2, I.Cmd>}
 
+# LAW: a round pins the folder before its exact per-message selected reads.
+law image_round_guarded:
+  for mbox: String
+  for uidv: U32
+  for reads: List<&2, Ops.PartRead>
+  {Ops.plan_image_round(mbox, uidv, reads) ==
+    I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> Ops.image_reads(reads)
+    : List<&2, I.Cmd>}
+
+law image_round_fetch_exact:
+  for uid: U32
+  for ranges: List<&2, Ops.PartRange>
+  for rest: List<&2, Ops.PartRead>
+  {Ops.image_reads(Ops.PartRead{uid, ranges} <> rest) ==
+    I.CFetch{[uid], List.append(&2, I.Item,
+      [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}],
+      Ops.image_read_items(ranges))} <> Ops.image_reads(rest) : List<&2, I.Cmd>}
+
+law image_round_section_exact:
+  for section: List<&2, U32>
+  for max: U32
+  for rest: List<&2, Ops.PartRange>
+  {Ops.image_read_items(Ops.PartRange{section, max} <> rest) ==
+    I.IPart{section, max} <> Ops.image_read_items(rest) : List<&2, I.Item>}
+
+law image_round_writes_nothing:
+  for mbox: String
+  for uidv: U32
+  for reads: List<&2, Ops.PartRead>
+  {I.any_writes(Ops.plan_image_round(mbox, uidv, reads)) == False{} : Bool}
+
 # LAW: every search page is read-only, including its UIDVALIDITY expectation.
 law search_page_writes_nothing:
   for mbox: String

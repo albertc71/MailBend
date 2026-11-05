@@ -16,6 +16,10 @@
         "parts_write_nothing",
         "part_writes_nothing",
         "part_guarded",
+        "image_round_guarded",
+        "image_round_fetch_exact",
+        "image_round_section_exact",
+        "image_round_writes_nothing",
         "search_page_writes_nothing",
         "search_page_examines",
         "search_continuation_pins_identity",
@@ -45,10 +49,15 @@
       "tests": [
         "tests/test-e2e.py#reads",
         "tests/test-e2e.py#selected_parts",
-        "tests/test-e2e.py#refresh_known"
+        "tests/test-e2e.py#refresh_known",
+        "tests/test-e2e.py#jev_image_rounds",
+        "tests/formal/check-plan-wire-mutations.py#main"
       ],
       "code": [
-        "src/ops.bend#plan_get"
+        "src/ops.bend#plan_get",
+        "src/ops.bend#plan_image_round",
+        "src/ops.bend#image_reads",
+        "src/ops.bend#image_read_items"
       ],
       "mutation": {
         "id": "read-plans-negative-control",
@@ -73,7 +82,8 @@
       ],
       "tests": [
         "tests/test-e2e.py#reads",
-        "tests/test-e2e.py#search_pagination"
+        "tests/test-e2e.py#search_pagination",
+        "tests/test-e2e.py#jev_image_rounds"
       ],
       "code": [
         "src/imap.bend#item_str"
