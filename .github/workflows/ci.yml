@@ -143,6 +143,7 @@ jobs:
         run: |
           python3 tests/test-image-budget.py
           python3 tests/test-image-assets.py
+          python3 tests/test-image-replies-probe.py
       - name: Bounded exhaustive search-pagination model
         run: |
           python3 tests/formal/search-pagination-model.py
