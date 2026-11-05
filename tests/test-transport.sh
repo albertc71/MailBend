@@ -666,6 +666,65 @@ PY
   done
 }
 
+# Exercise authenticate through the actual helper, not only has_auth. The
+# fake server redacts every AUTH command and LOGIN challenge response: one
+# redacted line is PLAIN, three are LOGIN. Check the complete wire sequence
+# so retries, premature AUTH and mail commands cannot hide behind success.
+case_smtp_auth_selection() {
+  local base_fixture="$FIXTURE" FIXTURE="$WORK/smtp-auth-fixture.json"
+  local mode extra name offer mechanism expected password
+  for mode in starttls implicit; do
+    extra=""
+    [ "$mode" = implicit ] && extra="--smtp-implicit"
+    while IFS='|' read -r name offer mechanism expected; do
+      python3 - "$base_fixture" "$FIXTURE" "$offer" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    fixture = json.load(source)
+fixture['smtp_auth'] = sys.argv[3]
+# A conflicting unprotected offer must never determine authentication.
+fixture['smtp_auth_before_tls'] = 'PLAIN OAUTHBEARER'
+with open(sys.argv[2], 'w', encoding='utf-8') as target:
+    json.dump(fixture, target)
+PY
+      if [ "$?" -ne 0 ]; then fail "SMTP AUTH fixture" "could not write fixture"; return; fi
+      start_server "smtp-auth-$mode-$name" $extra || {
+        fail "$mode AUTH $name" "server did not start"; return;
+      }
+      password="$PASSWORD"
+      [ "$name" = rejected-plain ] && password="wrong-synthetic-password"
+      call_smtp '' MAILBEND_SMTP_TLS_MODE="$mode" MAILBEND_APP_PASSWORD="$password"
+      if [ "$CODE" -eq "$expected" ] && python3 - "$LOG_FILE" "$STATE_FILE" "$mode" "$mechanism" "$expected" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    lines = [json.loads(line)['line'] for line in source]
+mode, mechanism, code = sys.argv[3], sys.argv[4], int(sys.argv[5])
+hello = 'EHLO [127.0.0.1]'
+expected = [hello, 'STARTTLS', hello] if mode == 'starttls' else [hello]
+auth_lines = {'PLAIN': 1, 'LOGIN': 3, 'none': 0}[mechanism]
+expected += ['AUTH <redacted>'] * auth_lines
+if code == 0:
+    expected.append('QUIT')
+assert lines == expected, f'expected {mechanism} authentication sequence: {expected!r}; got {lines!r}'
+with open(sys.argv[2], encoding='utf-8') as source:
+    assert not json.load(source).get('sent'), 'authentication test sent mail'
+PY
+      then
+        pass "$mode AUTH $name selects $mechanism without retry"
+      else
+        fail "$mode AUTH $name expects $mechanism" "exit=$CODE expected=$expected"
+      fi
+      stop_server
+    done <<'CASES'
+malformed-plain|PLAIN] LOGIN|LOGIN|0
+plain-first|PLAIN LOGIN|PLAIN|0
+plain-last|LOGIN PLAIN|PLAIN|0
+malformed-only|PLAIN] LOGIN]|none|4
+rejected-plain|PLAIN LOGIN|PLAIN|4
+CASES
+  done
+}
+
 # --- run every case -------------------------------------------------------
 case1
 case3
@@ -691,6 +750,7 @@ case_smtp_progress
 case_selected_section
 case_refresh
 case_smtp_modes
+case_smtp_auth_selection
 case2
 if python3 "$ROOT/tests/test-process-protection.py"; then
   pass "secret helpers refuse dumps and external environment reads"
