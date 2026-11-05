@@ -462,6 +462,8 @@ roles. `mail_list_folders` retains actual advertised attributes and
 
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).
 They keep passwords in private files and use the public launcher.
+For an application built with the OpenAI Agents SDK, use the optional
+[framework recipe](docs/FRAMEWORKS.md) with per-call human approval.
 
 Install the optional [MailBend agent skill](skills/mailbend/SKILL.md) by copying
 the complete `skills/mailbend/` directory, including `references/`, into your
