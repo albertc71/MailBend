@@ -47,6 +47,33 @@ def run(t, work):
     finally:
         srv.stop()
 
+    # Duplicate UIDs within one SEARCH line exercise selection deduplication.
+    # The older "duplicate" mode repeats the entire response, which is invalid
+    # evidence and must not be accepted as a complete SEARCH.
+    srv = t.Server(work, fixture=fixture, extra=('--search-response', 'duplicate-uids'))
+    try:
+        code, first = t.tool(srv, 'mail_brief', {'limit': 2})
+        cursor = first.get('next_continuation')
+        t.check('brief continuation: duplicate SEARCH UIDs do not consume page slots',
+                code == 0 and [m['uid'] for m in first.get('messages', [])] == [1, 3]
+                and cursor == dict(token, after_uid=3) and first.get('has_more') is True
+                and first.get('next_since_uid') == 3, first)
+        code, last = t.tool(srv, 'mail_brief', {'continuation': cursor, 'limit': 2})
+        t.check('brief continuation: duplicate SEARCH UIDs retain each UID once across pages',
+                code == 0 and [m['uid'] for m in last.get('messages', [])] == [5]
+                and last.get('next_continuation') is None and last.get('has_more') is False
+                and last.get('next_since_uid') == 9, last)
+    finally:
+        srv.stop()
+
+    srv = t.Server(work, fixture=fixture, extra=('--search-response', 'duplicate'))
+    try:
+        code, result = t.tool(srv, 'mail_brief', {'limit': 2})
+        t.check('brief continuation: repeated SEARCH responses cannot advance a cursor',
+                code != 0 and no_cursor(result), result)
+    finally:
+        srv.stop()
+
     # The original failure: a tiny old unread set below >10000 already-seen UIDs.
     large = copy.deepcopy(fixture)
     large['mailboxes']['INBOX']['messages'] = [message(1), message(3)] + [

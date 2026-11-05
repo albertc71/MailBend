@@ -826,18 +826,41 @@
         "law": "hook_never_allows_or_denies",
         "observer_reason": "The root proof calls hook_output_safe directly for the parsed decision. That helper proves the decision can only be absent or ask."
       }
+    },
+    {
+      "id": "brief-pagination",
+      "claim": "Brief results retain the selected messages in UID order, return each UID once, keep partial unseen checkpoints at the last returned UID, and refuse an insufficient response budget without an advancing checkpoint. Synthetic end-to-end tests cover the runtime behavior; the cited pure laws cover selected UID sequence and multiplicity, cursor selection and range boundaries, not acquisition completeness, deduplication or response-budget enforcement.",
+      "anchor": "deterministic-metadata-brief",
+      "status": "tested",
+      "laws": [
+        "brief_preserves_selected_uids",
+        "brief_partitions_selected_uids",
+        "brief_complete_unseen_highwater",
+        "brief_partial_unseen_prefix",
+        "brief_arrivals_keep_prefix",
+        "brief_range_wire",
+        "brief_completed_has_no_continuation",
+        "brief_unseen_filter_interval"
+      ],
+      "tests": [
+        "tests/brief-cases.py#run",
+        "tests/brief-continuation-cases.py#run"
+      ],
+      "code": [
+        "src/brief.bend#items",
+        "src/brief.bend#checkpoint",
+        "src/brief.bend#next_cursor",
+        "src/brief.bend#window_uids",
+        "src/imap.bend#key_str",
+        "src/tools.bend#brief_selected",
+        "src/tools.bend#brief_headers.complete",
+        "src/tools.bend#brief_output",
+        "src/response.bend#bounded"
+      ]
     }
   ],
   "unclaimed": {
     "awaiting_incomplete_is_unknown": "Awaiting-reply classification keeps incomplete evidence without a positive reply unknown; this is an evidence-status contract, not a mailbox-effect or send/delete safety claim.",
-    "brief_preserves_selected_uids": "Brief classification preserves the selected UID sequence and multiplicity; this output-completeness contract is separate from the read-plans no-write claim.",
-    "brief_partitions_selected_uids": "Brief classification preserves each selected UID occurrence count; this grouping contract is separate from mailbox effects and does not assert unique UIDs in the input.",
-    "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim.",
-    "brief_complete_unseen_highwater": "A complete unseen brief checkpoints at the window high-water UID; this pagination contract does not establish mailbox effects or runtime acquisition completeness.",
-    "brief_partial_unseen_prefix": "A partial unseen brief checkpoints at the last retained UID; this pagination contract is separate from the read-plans no-write claim.",
-    "brief_arrivals_keep_prefix": "An arrivals brief checkpoints at the last retained UID for either continuation state; this checkpoint contract is separate from mailbox-effect safety.",
-    "brief_range_wire": "The UID-range search key renders its supplied endpoints exactly; this search-selection contract is separate from the read-wire EXAMINE/BODY.PEEK guarantee.",
-    "brief_completed_has_no_continuation": "A completed brief emits a null continuation cursor; this output-pagination contract is separate from mailbox-effect safety.",
-    "brief_unseen_filter_interval": "Unseen brief filtering includes only UIDs greater than the lower boundary and at most the high-water boundary; this selection contract is separate from mailbox-effect safety."
+    "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim."
   }
 }

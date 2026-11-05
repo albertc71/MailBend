@@ -1193,9 +1193,10 @@ continue it. The default page is 50 messages, with a maximum of 100. A checkpoin
 from a complete unseen page uses the EXAMINE UIDNEXT minus one (`checkpoint_basis:
 high_water`), including when no unseen messages exist. SEARCH arrivals above that
 snapshot wait for the next call. A capped page uses its last selected UID
-(`selected_prefix`), never skipping unreturned unseen messages. For a partial
-unseen page, pass its `next_continuation` object unchanged as `continuation` on
-the next call, without `since_uid`. This retains the original folder,
+(`selected_prefix`), never skipping unreturned unseen
+messages. <!-- claim:brief-pagination -->
+For a partial unseen page, pass its `next_continuation` object unchanged as
+`continuation` on the next call, without `since_uid`. This retains the original folder,
 UIDVALIDITY and high-water mark, and searches only later unseen, undeleted UIDs
 inside that range. When `next_continuation` is null, unseen traversal is complete
 and `next_since_uid` is the arrival checkpoint. Legacy continuation using
@@ -1205,9 +1206,10 @@ tracks later changes to read status. Use `mail_refresh` for known-message flag c
 Every returned message has one `group` and an independent `delivery` value.
 Groups are `people`, `lists`, `automated` and `unknown_people`. `groups` gives the
 counts, including separate raw List-Id keys, while `messages` contains each UID
-once in arrival order. Direct delivery means an exact To match to
-`MAILBEND_EMAIL`; `cc_only` means an exact Cc match without a To match. Aliases,
-Bcc and malformed addresses remain `other_or_unknown`.
+once in arrival order. <!-- claim:brief-pagination -->
+Direct delivery means an exact To match to `MAILBEND_EMAIL`; `cc_only` means an
+exact Cc match without a To match. Aliases, Bcc and malformed addresses remain
+`other_or_unknown`.
 
 People means an exact recipient was observed in the newest 100 stored Sent
 headers within 30 days. At most 50 distinct selected senders are matched. A
@@ -1228,11 +1230,18 @@ They do not authorize actions or prove identity.
 
 Missing selected FETCH data or changed UIDVALIDITY returns an error without a
 checkpoint. A too-small `max_response_bytes` also fails the entire result, just
-as for `mail_get_new`; it never removes an item and advances past it. Retry the
-same checkpoint with a smaller page or larger budget. Jev off makes no TypeSafe
-call. Jev on adds the existing header annotations without changing the groups.
+as for `mail_get_new`; it never removes an item and advances past
+it. <!-- claim:brief-pagination -->
+Retry the same checkpoint with a smaller page or larger budget. Jev off makes no
+TypeSafe call. Jev on adds the existing header annotations without changing the groups.
 The scheduled morning-brief recipe now uses this tool; notification polling
 continues to use `mail_get_new`.
+
+These pagination and output guarantees are tested with synthetic CLI and MCP
+fixtures. The [claim evidence](docs/PROOF-COVERAGE.md#brief-pagination) separates
+the pure laws for selected UID sequence and counts, checkpoint selection and
+continuation boundaries from runtime acquisition, deduplication and budget
+handling. The pure laws do not establish those runtime guarantees.
 
 Optional body previews, lifetime first-time classification, and #139's paid
 agent-quality comparison remain outside this metadata core. The synthetic
