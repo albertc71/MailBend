@@ -131,10 +131,22 @@ class Claims(unittest.TestCase):
             'class A:\n    def test_x(self): pass\n'
             'class B:\n    async def test_x(self): pass\n')
         self.manifest['claims'][0]['tests'] = ['tests/ambiguous.py#test_x']
-        self.rejected('ambiguous Python test reference: tests/ambiguous.py#test_x; '
-                      'definitions at lines 2, 4')
-        with self.assertRaisesRegex(ValueError, 'ambiguous Python test reference'):
+        self.rejected('ambiguous test reference: tests/ambiguous.py#test_x; '
+                      'declarations or bindings at lines 2, 4')
+        with self.assertRaisesRegex(ValueError, 'ambiguous test reference'):
             CHECKS.coverage(self.root)
+
+    def test_python_rebinding_rejected_by_validation_and_coverage(self):
+        for binding in ('class test_x: pass', 'test_x = None', 'test_x: object = None'):
+            with self.subTest(binding=binding):
+                (self.root / 'tests/rebound.py').write_text(
+                    'def test_x(): pass\n' + binding + '\n')
+                self.manifest['claims'][0]['tests'] = ['tests/rebound.py#test_x']
+                message = ('ambiguous test reference: tests/rebound.py#test_x; '
+                           'declarations or bindings at lines 1, 2')
+                self.rejected(message)
+                with self.assertRaisesRegex(ValueError, message):
+                    CHECKS.coverage(self.root)
 
     def test_missing_code(self):
         self.manifest['claims'][0]['code'] = ['src/ops.bend#does_not_exist']
@@ -397,7 +409,7 @@ class PythonReferences(unittest.TestCase):
     def rejected(self, source, lines):
         self.path.write_text(source)
         value = 'fixture.py#test_x'
-        message = (f'ambiguous Python test reference: {value}; definitions at lines '
+        message = (f'ambiguous test reference: {value}; declarations or bindings at lines '
                    + ', '.join(map(str, lines)))
         self.assertEqual(python_headers(self.path)['test_x'], tuple(lines))
         cache = {}
@@ -432,6 +444,64 @@ class PythonReferences(unittest.TestCase):
         self.rejected('def first():\n    async def test_x(): pass\n'
                       'def second():\n    def test_x(): pass\n', (2, 4))
 
+    def test_class_function_collisions_rejected_in_either_order(self):
+        for function in ('def test_x(): pass', 'async def test_x(): pass'):
+            for source in (function + '\nclass test_x: pass\n',
+                           'class test_x: pass\n' + function + '\n'):
+                with self.subTest(source=source):
+                    self.rejected(source, (1, 2))
+
+    def test_nested_class_function_collision_rejected(self):
+        self.rejected('def outer():\n    class test_x: pass\n'
+                      'def test_x(): pass\n', (2, 3))
+
+    def test_module_assignments_rejected_in_either_order(self):
+        for binding in ('test_x = None', 'test_x: object = None',
+                        'other = test_x = None', '(other, test_x) = (1, 2)',
+                        '[other, *test_x] = [1, 2]',
+                        '(other, [test_x]) = (1, [2])'):
+            for source in ('def test_x(): pass\n' + binding + '\n',
+                           binding + '\ndef test_x(): pass\n'):
+                with self.subTest(source=source):
+                    self.rejected(source, (1, 2))
+
+    def test_module_control_flow_assignments_rejected(self):
+        for binding in ('test_x = None', 'test_x: object = None'):
+            with self.subTest(binding=binding):
+                self.rejected('def test_x(): pass\nif enabled:\n    ' + binding + '\n',
+                              (1, 3))
+
+    def test_multiline_assignment_reports_target_line(self):
+        self.rejected('def test_x(): pass\n(\n    other,\n    test_x,\n) = (1, 2)\n',
+                      (1, 4))
+
+    def test_local_stores_and_nonbinding_targets_do_not_reject_test(self):
+        self.path.write_text(
+            'def test_x(): pass\n'
+            'test_x: object\n'
+            'thing.test_x = None\nthing[test_x] = None\n'
+            'thing.test_x: object = None\nthing[test_x]: object = None\n'
+            'def helper():\n    test_x = None\n'
+            '    test_x: object = None\n'
+            'async def async_helper():\n    test_x = None\n'
+            'class Example:\n    test_x = None\n'
+            '    test_x: object = None\n')
+        self.assertEqual(python_headers(self.path)['test_x'], (1,))
+        self.assertEqual(reference_location(self.root, 'fixture.py#test_x', 'test'),
+                         ('fixture.py', 'test_x', 1))
+        self.assertIn('#L1)', CHECKS.link('fixture.py#test_x', 'test', {}, self.root))
+
+    def test_uncited_class_and_assignment_collisions_do_not_reject_test(self):
+        self.path.write_text('def helper(): pass\nclass helper: pass\n'
+                             'helper = None\nhelper: object = None\n'
+                             'def test_x(): pass\n')
+        cache = {}
+        self.assertEqual(reference_location(self.root, 'fixture.py#test_x', 'test', cache),
+                         ('fixture.py', 'test_x', 5))
+        self.assertIn('#L5)', CHECKS.link('fixture.py#test_x', 'test', {}, self.root))
+        with self.assertRaisesRegex(ValueError, 'ambiguous test reference'):
+            reference(self.root, 'fixture.py#helper', 'test', cache)
+
     def test_unique_function_forms_preserve_declaration_lines(self):
         self.path.write_text(
             '# heading\n@decorator\ndef sync_test(): pass\n\n'
@@ -463,12 +533,12 @@ class PythonReferences(unittest.TestCase):
                          ('fixture.py', 'test_x'))
         self.assertIn('#L5)', CHECKS.link('fixture.py#test_x', 'test', {}, self.root))
         # A cache populated by a valid name must still reject an ambiguous name.
-        with self.assertRaisesRegex(ValueError, 'ambiguous Python test reference'):
+        with self.assertRaisesRegex(ValueError, 'ambiguous test reference'):
             reference(self.root, 'fixture.py#helper', 'test', cache)
 
     def test_nonfunction_names_do_not_become_reference_targets(self):
         self.path.write_text('# def test_x(): pass\ntext = "def test_x(): pass"\n'
-                             'test_x = lambda: None\nclass test_x: pass\n')
+                             'test_x = lambda: None\ntest_x: object = None\nclass test_x: pass\n')
         self.assertEqual(python_headers(self.path), {})
         with self.assertRaisesRegex(ValueError, 'missing test name: fixture.py#test_x'):
             reference(self.root, 'fixture.py#test_x', 'test')
