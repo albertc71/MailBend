@@ -14,11 +14,6 @@ def check_method(label: String, +method: String, +resolved: Bool) -> IO(Unit):
   equivalent = (reported && resolved) || (Bool.not(reported) && Bool.not(resolved))
   IO.print(label ++ " " ++ method ++ " " ++ Bool.show(equivalent))
 
-def check(label: String, +fs: List<&2, I.Folder>, +override: String,
-  +attr: String, +a: String, +b: String) -> IO(Unit):
-  check_method(label, R.role_method(fs, override, attr, a, b),
-    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, attr, a, b)))
-
 # Read the actual report field, so wiring drift in R.roles is tested too.
 # A missing or non-string field must not silently become "unresolved".
 def report_method(roles: J.Json, key: String) -> String:
@@ -28,6 +23,26 @@ def trash(label: String, +fs: List<&2, I.Folder>, +override: String) -> IO(Unit)
   check_method(label, report_method(R.roles(fs, "", override, "", "", ""), "trash"),
     Maybe.is_some(&2, String, Policy.resolved_role(fs, override, "\\Trash",
       Policy.trash_name(), Policy.deleted_messages_name())))
+
+def drafts(label: String, +fs: List<&2, I.Folder>, +override: String) -> IO(Unit):
+  check_method(label, report_method(R.roles(fs, override, "", "", "", ""), "drafts"),
+    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, "\\Drafts",
+      Policy.drafts_name(), Policy.drafts_name())))
+
+def sent(label: String, +fs: List<&2, I.Folder>, +override: String) -> IO(Unit):
+  check_method(label, report_method(R.roles(fs, "", "", override, "", ""), "sent"),
+    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, "\\Sent",
+      Policy.sent_name(), Policy.sent_messages_name())))
+
+def junk(label: String, +fs: List<&2, I.Folder>, +override: String) -> IO(Unit):
+  check_method(label, report_method(R.roles(fs, "", "", "", override, ""), "junk"),
+    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, "\\Junk",
+      Policy.junk_name(), Policy.junk_name())))
+
+def archive(label: String, +fs: List<&2, I.Folder>, +override: String) -> IO(Unit):
+  check_method(label, report_method(R.roles(fs, "", "", "", "", override), "archive"),
+    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, "\\Archive",
+      Policy.archive_name(), Policy.archive_name())))
 
 def inbox(label: String, +fs: List<&2, I.Folder>) -> IO(Unit):
   check_method(label, report_method(R.roles(fs, "", "", "", "", ""), "inbox"),
@@ -78,14 +93,26 @@ def main() -> IO(Unit):
       I.Folder{"Deleted Messages", "/", []}], "")
     trash("empty listing", [], "")
     trash("no matching role", [I.Folder{"Unrelated", "/", []}], "")
-    check("drafts same conventional names", [I.Folder{"Drafts", "/", []}], "", "\\Drafts",
-      Policy.drafts_name(), Policy.drafts_name())
-    check("sent alternate name", [I.Folder{"Sent Messages", "/", []}], "", "\\Sent",
-      Policy.sent_name(), Policy.sent_messages_name())
-    check("junk advertised", [I.Folder{"Spam", "/", ["\\Junk"]}], "", "\\Junk",
-      Policy.junk_name(), Policy.junk_name())
-    check("archive override", [I.Folder{"Saved", "/", []}], "Saved", "\\Archive",
-      Policy.archive_name(), Policy.archive_name())
+    drafts("drafts same conventional names", [I.Folder{"Drafts", "/", []}], "")
+    sent("sent alternate name", [I.Folder{"Sent Messages", "/", []}], "")
+    junk("junk advertised", [I.Folder{"Spam", "/", ["\\Junk"]}], "")
+    archive("archive override", [I.Folder{"Saved", "/", []}], "Saved")
+    drafts("drafts override", [I.Folder{"Saved", "/", []}], "Saved")
+    drafts("drafts advertised", [I.Folder{"Provider Drafts", "/", ["\\Drafts"]}], "")
+    drafts("drafts name ignores sent", [I.Folder{"Drafts", "/", []},
+      I.Folder{"Sent", "/", []}], "")
+    sent("sent override", [I.Folder{"Saved", "/", []}], "Saved")
+    sent("sent advertised", [I.Folder{"Provider Sent", "/", ["\\Sent"]}], "")
+    sent("sent alternate ignores junk", [I.Folder{"Sent Messages", "/", []},
+      I.Folder{"Junk", "/", []}], "")
+    junk("junk override", [I.Folder{"Saved", "/", []}], "Saved")
+    junk("junk conventional name", [I.Folder{"Junk", "/", []}], "")
+    junk("junk name ignores sent", [I.Folder{"Junk", "/", []},
+      I.Folder{"Sent", "/", []}], "")
+    archive("archive advertised", [I.Folder{"Provider Archive", "/", ["\\Archive"]}], "")
+    archive("archive conventional name", [I.Folder{"Archive", "/", []}], "")
+    archive("archive name ignores sent", [I.Folder{"Archive", "/", []},
+      I.Folder{"Sent", "/", []}], "")
 
 #|inbox uppercase name True
 #|inbox lowercase name True
@@ -122,3 +149,15 @@ def main() -> IO(Unit):
 #|sent alternate name name True
 #|junk advertised advertised True
 #|archive override override True
+#|drafts override override True
+#|drafts advertised advertised True
+#|drafts name ignores sent name True
+#|sent override override True
+#|sent advertised advertised True
+#|sent alternate ignores junk name True
+#|junk override override True
+#|junk conventional name name True
+#|junk name ignores sent name True
+#|archive advertised advertised True
+#|archive conventional name name True
+#|archive name ignores sent name True
