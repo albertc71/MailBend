@@ -8,6 +8,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 IDENTIFIER = r"[A-Za-z_][A-Za-z_0-9.]*"
+UNSAFE_DEF = re.compile(r"unsafe\s+def\b")
 
 
 def require(condition, detail):
@@ -101,11 +102,11 @@ def bend_headers(path, kind):
         token = start["token"]
         end = start.end()
         if token == "@":
-            attribute = re.match(r"unsafe\s+def\b", source[end:])
+            attribute = UNSAFE_DEF.match(source, end)
             require(attribute is not None,
                     f"unsupported Bend attribute/header at {path}:{number}")
             token = "def"
-            end += attribute.end()
+            end = attribute.end()
         declaration = header.match(source, end)
         require(declaration is not None
                 and (token != "law" or declaration["delimiter"] == ":"),
@@ -123,25 +124,50 @@ def bend_names(path, kind):
     return set(bend_headers(path, kind))
 
 
-def reference(root, value, kind, cache=None):
+def python_headers(path):
+    """Keep every function's declaration line, including methods and nested defs.
+
+    References use bare function names, so only the cited name must be unique
+    across this file. Unrelated duplicate helpers (for example __init__ methods)
+    do not make a different, uniquely named test ambiguous. Decorators do not
+    move a link away from the def/async def line reported by the AST.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    positions = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            positions.setdefault(node.name, []).append(node.lineno)
+    return {name: tuple(sorted(lines)) for name, lines in positions.items()}
+
+
+def reference_location(root, value, kind, cache=None):
+    """Resolve validation and generated links to the same unique declaration."""
     require(isinstance(value, str), f"{kind} reference must be a string")
     relative, separator, name = value.partition("#")
     path = local_path(root, relative)
     require(separator and name, f"{kind} reference needs path#name: {value}")
     key = (path, kind)
     if cache is not None and key in cache:
-        names = cache[key]
+        positions = cache[key]
     elif path.suffix == ".bend":
-        names = bend_names(path, "law" if kind == "law" else "def")
+        positions = {name: (line,) for name, line in
+                     bend_headers(path, "law" if kind == "law" else "def").items()}
     elif path.suffix == ".py" and kind == "test":
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        names = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        positions = python_headers(path)
     else:
         raise ValueError(f"unsupported {kind} reference: {value}")
     if cache is not None:
-        cache[key] = names
-    require(name in names, f"missing {kind} name: {value}")
-    return relative, name
+        cache[key] = positions
+    require(name in positions, f"missing {kind} name: {value}")
+    lines = positions[name]
+    require(len(lines) == 1,
+            f"ambiguous Python {kind} reference: {value}; definitions at lines "
+            + ", ".join(map(str, lines)))
+    return relative, name, lines[0]
+
+
+def reference(root, value, kind, cache=None):
+    return reference_location(root, value, kind, cache)[:2]
 
 
 def local_imports(path):

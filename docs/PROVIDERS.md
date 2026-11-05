@@ -129,8 +129,8 @@ Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
 advertising a recognized special-use role, including `\Important`
 (see [#123](https://github.com/albertc71/MailBend/issues/123)), `\All`, and
 `\Flagged` (Starred), and their descendants. These are excluded from
-classification and triage categories, Jev read-annotation categories, and
-`mail_label` destinations. It refuses create/rename destinations there and
+classification and triage categories, [Jev read-annotation categories](../README.md#jev-optional),
+and `mail_label` destinations. MailBend refuses create/rename destinations there and
 refuses renaming a reserved folder or any parent containing it. `mail_move`
 can still use such a folder when explicitly named, subject to the normal
 move checks.

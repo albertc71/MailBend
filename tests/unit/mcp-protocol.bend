@@ -16,6 +16,8 @@ def main() -> IO(Unit):
     IO.print("March 2025 structured " ++ Bool.show(MCP.is_structured("2025-03-26")))
     IO.print("November 2024 structured " ++ Bool.show(MCP.is_structured("2024-11-05")))
     IO.print("modern structured " ++ Bool.show(MCP.is_structured(MCP.modern_version())))
+    # These unknown/empty cases test only the helper. Legacy negotiation maps them
+    # to the latest legacy revision, which supports structured results.
     IO.print("unknown structured " ++ Bool.show(MCP.is_structured("2099-01-01")))
     IO.print("empty structured " ++ Bool.show(MCP.is_structured("")))
     IO.print("valid metadata " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}"))))

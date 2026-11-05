@@ -9,7 +9,7 @@ forwards also require inspection of the original; their draft mode is rejected
 because its preview does not show recipients. No product code or required CI
 dependencies change.
 
-This recipe targets `openai-agents==0.24.0` and `mcp==1.29.0`. It uses the released
+This recipe targets `openai-agents==0.24.0` and `mcp==1.30.0`. It uses the released
 [MCP approval policy](https://github.com/openai/openai-agents-python/blob/v0.24.0/src/agents/mcp/server.py),
 [RunState approval methods](https://github.com/openai/openai-agents-python/blob/v0.24.0/src/agents/run_state.py),
 and [ScriptedModel testing API](https://github.com/openai/openai-agents-python/blob/v0.24.0/docs/testing.md).
