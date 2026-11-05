@@ -1432,17 +1432,50 @@ def part_raw(v: Maybe<&2, String>) -> Result<&2, &2, String, String>:
     case None{}:
       Fail{"missing selected section or unexpected partial origin"}
 
-def part_bytes(r: Run(), +uid: U32, +uidv: U32, +p: Part.Part, max: U32)
-  -> Result<&2, &2, String, String>:
-  do Result<&2, &2, String, String>:
+type PartReply is Data:
+  PartReply{messages: List<&2, I.Msg>, values: List<&2, List<&2, I.Value>>}
+
+def part_tokens(lines: List<&2, I.RLine>) -> List<&2, List<&2, I.Value>>:
+  match lines:
+    case Nil{}:
+      []
+    case I.RLine{text, lits} <> rest:
+      I.tokens(String.drop(text, 2n), lits) <> part_tokens(rest)
+
+def part_prepare(r: Run(), uidv: U32) -> Result<&2, &2, String, PartReply>:
+  do Result<&2, &2, String, PartReply>:
     +lines : List<&2, I.RLine> <- r
     Part.check(uidv_is(I.ok_code(lines, "UIDVALIDITY"), uidv), stale_msg())
-    ps : List<&2, Part.Part> <- part_metadata(lines, uid)
+    return PartReply{I.fetched(lines), part_tokens(lines)}
+
+def part_values(vs: List<&2, List<&2, I.Value>>, +uid: U32, +key: String) ->
+  Maybe<&2, String>:
+  match vs:
+    case Nil{}:
+      None{}
+    case row <> rest:
+      Part.fetched.put(Part.response(row, uid, key), part_values(rest, uid, key))
+
+def part_prepared.read(reply: PartReply, +uid: U32, +p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  PartReply{messages, values} = reply
+  do Result<&2, &2, String, String>:
+    ps : List<&2, Part.Part> <- part_metadata.first(part_metadata.filter(messages, uid))
     current : Part.Part <- part_found(Part.select(ps, I.section_str(Part.path(p))))
     Part.check(part_same(p, current), "MIME section metadata changed between sessions")
-    raw : String <- part_raw(Part.fetched(lines, uid,
+    raw : String <- part_raw(part_values(values, uid,
       "BODY[" ++ I.section_str(Part.path(p)) ++ "]<0>"))
     Part.decode(p, raw, max)
+
+def part_prepared(r: Result<&2, &2, String, PartReply>, uid: U32, p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  do Result<&2, &2, String, String>:
+    reply : PartReply <- r
+    part_prepared.read(reply, uid, p, max)
+
+def part_bytes(r: Run(), uid: U32, uidv: U32, p: Part.Part, max: U32)
+  -> Result<&2, &2, String, String>:
+  part_prepared(part_prepare(r, uidv), uid, p, max)
 
 def part_content.fields(text: Bool, ct: String, bytes: String) -> List<&2, J.Json>:
   match text:
@@ -7469,8 +7502,8 @@ def round_reads(ps: List<&2, ImgFetch>) -> List<&2, Ops.PartRead>:
 def see_fuel(ps: List<&2, ImgPart>) -> Nat:
   Nat.add(Nat.mul(List.length(&2, ImgPart, ps), 4n), 2n)
 
-def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat, +run: Run(), st: ImgSee) ->
-  IO(ImgSee):
+def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat,
+  +run: Result<&2, &2, String, PartReply>, st: ImgSee) -> IO(ImgSee):
   match fuel cached st:
     case 0n _ _:
       IO.pure(ImgSee, SeeStop{"image survey exceeded its part budget"})
@@ -7487,11 +7520,11 @@ def see_run(fuel: Nat, +folder: String, +uidv: U32, cached: Nat, +run: Run(), st
       +ps = round_parts(ImgPart{uid, p} <> rest, U32.to_nat(Image.quota_round(quota)))
       do IO<ImgSee>:
         reply : Run() <- imap_run(Ops.plan_image_round(folder, uidv, round_reads(ps)))
-        see_run(f, folder, uidv, List.length(&2, ImgFetch, ps), reply,
+        see_run(f, folder, uidv, List.length(&2, ImgFetch, ps), part_prepare(reply, uidv),
           SeeFetch{rest, acc, quota, uid, p, format, max})
     case 1n+f 1n+n SeeFetch{rest, acc, quota, uid, +p, format, max}:
       see_run(f, folder, uidv, n, run,
-        fetch_end(part_bytes(run, uid, uidv, p, max), rest, acc, Image.quota_fetched(quota),
+        fetch_end(part_prepared(run, uid, p, max), rest, acc, Image.quota_fetched(quota),
           Part.path(p), image_name_of(p), format))
 
 type Bat is Data:
@@ -7510,7 +7543,7 @@ def batch_seen(seen: ImgSee, counts: List<&2, Nat>) -> Bat:
 def batch_run(folder: String, uidv: U32, q: ImgQueue) -> IO(Bat):
   ImgQueue{counts, +ps} = q
   do IO<Bat>:
-    seen : ImgSee <- see_run(see_fuel(ps), folder, uidv, 0n, Done{[]},
+    seen : ImgSee <- see_run(see_fuel(ps), folder, uidv, 0n, Done{PartReply{[], []}},
       SeeParts{ps, [], Image.quota_new()})
     return batch_seen(seen, counts)
 

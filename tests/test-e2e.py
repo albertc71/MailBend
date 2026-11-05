@@ -1764,9 +1764,29 @@ def no_cache_hints(result):
     return "ttlMs" not in result and "cacheScope" not in result
 
 
+def mcp_metadata(tools):
+    names = {tool["name"] for tool in tools}
+    interactions = {"mail_send", "mail_reply", "mail_forward", "mail_delete"}
+    destructive = {"mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag",
+                   "mail_move", "mail_label", "mail_trash", "mail_delete",
+                   "mail_rename_folder", "mail_triage"}
+    check("MCP tools have titles and explicit boolean annotations", bool(tools) and all(
+        isinstance(tool.get("title"), str) and tool["title"].strip() and
+        all(type(tool.get("annotations", {}).get(key)) is bool for key in
+            ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"))
+        for tool in tools), tools)
+    check("MCP requests interaction exactly for offered send and delete tools",
+          {tool["name"] for tool in tools if tool.get("_meta", {}).get(
+              "anthropic/requiresUserInteraction") is True} == names & interactions)
+    check("MCP describes external mail and non-additive changes", all(
+        tool["annotations"]["openWorldHint"] is True and
+        tool["annotations"]["destructiveHint"] == (tool["name"] in destructive)
+        for tool in tools))
+
+
 def mcp_modern(srv):
     # Official schema examples and normative requirements are mapped in docs/MCP.md.
-    versions = ["2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05"]
+    versions = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
     reqs = [modern_request(1), modern_request(2, "tools/list"),
             modern_request(3, "tools/call", name="mail_search", arguments={"limit": 1}),
             modern_request(4, "tools/call", name="mail_delete", arguments={}),
@@ -1791,11 +1811,19 @@ def mcp_modern(srv):
         for r in res if "result" in r), res)
     check("modern MCP: discovery and list have private five-minute cache hints",
           all(cache_hints_ok(by_id[i]["result"]) for i in [1, 2]), res)
+    check("modern MCP: cacheable metadata includes display identity", all(
+        by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"].get("title") == "MailBend" and
+        by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"].get("websiteUrl") ==
+        "https://github.com/albertc71/MailBend" for i in (1, 2)))
+    check("modern MCP: tool calls retain compact server identity", all(
+        set(by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]) == {"name", "version"}
+        for i in (3, 4)))
     check("modern MCP: calls and protocol errors carry no cache hints",
           all(no_cache_hints(r) and no_cache_hints(r.get("result", {}))
               and no_cache_hints(r.get("error", {})) for r in res
               if r.get("id") not in [1, 2]), res)
     tools = by_id[2]["result"]["tools"]
+    mcp_metadata(tools)
     check("modern MCP: tool list and successful call", len(tools) == TOOL_COUNT and all(
         t["inputSchema"].get("type") == "object" for t in tools) and
         by_id[3]["result"].get("isError") is False, res)
@@ -1872,6 +1900,7 @@ def mcp_modern(srv):
     check("modern MCP: notification or malformed initialization cannot create legacy state",
           len(res) == 2 and all(r.get("error", {}).get("code") == -32602 for r in res), res)
 
+    june_november_tools = []
     for version in versions[1:]:
         init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": version}}
         reqs = [init, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
@@ -1882,6 +1911,9 @@ def mcp_modern(srv):
                 modern_request(7, "tools/list"),
                 {"jsonrpc": "2.0", "id": 8, "method": "tools/list"}]
         res, _ = mcp_session(srv, reqs, legacy=False)
+        mcp_metadata(res[1]["result"]["tools"])
+        if version in ("2025-11-25", "2025-06-18"):
+            june_november_tools.append(res[1]["result"]["tools"])
         check(f"MCP legacy {version}: initialization, list, call and modern interleaving",
               res[0].get("result", {}).get("protocolVersion") == version and
               len(res[1]["result"]["tools"]) == TOOL_COUNT and "resultType" not in res[1]["result"] and
@@ -1898,6 +1930,9 @@ def mcp_modern(srv):
               [t["name"] for t in res[6]["result"].get("tools", [])] ==
               [t["name"] for t in res[1]["result"]["tools"]] and
               res[7].get("result") == res[5]["result"], res)
+
+    check("June and November 2025 return identical tool shapes",
+          len(june_november_tools) == 2 and june_november_tools[0] == june_november_tools[1])
 
     # Availability is configuration-dependent, so every cacheable result must
     # remain private. These requests need no mail or TypeSafe session.
@@ -1917,6 +1952,7 @@ def mcp_modern(srv):
                                       and (drafts_only == "0" or t["name"] != "mail_send")]
                 res, code = mcp_session(srv, [modern_request(1), modern_request(2, "tools/list")],
                                         legacy=False, **env)
+                mcp_metadata(res[1]["result"]["tools"])
                 check(f"modern MCP: private cache hints with configuration {env}",
                       code == 0 and len(res) == 2 and all(
                           cache_hints_ok(r.get("result", {})) for r in res) and
@@ -1965,9 +2001,9 @@ def mcp(srv):
     names = [t["name"] for t in tools]
     check(f"mcp: tools/list has all {TOOL_COUNT} tools with schemas", len(tools) == TOOL_COUNT and all("inputSchema" in t for t in tools), names)
     ann = {t["name"]: t.get("annotations", {}) for t in tools}
-    check("mcp: read tools are marked read-only, delete destructive",
+    check("mcp: read tools are read-only, delete and trash are non-additive",
           all(ann[n]["readOnlyHint"] for n in READ_TOOLS)
-          and ann["mail_delete"]["destructiveHint"] and not ann["mail_trash"]["destructiveHint"], ann)
+          and ann["mail_delete"]["destructiveHint"] and ann["mail_trash"]["destructiveHint"], ann)
     call = by_id.get(3, {}).get("result", {})
     payload = json.loads(call.get("content", [{}])[0].get("text", "{}"))
     check("mcp: tools/call returns the result", call.get("isError") is False and [m["uid"] for m in payload.get("messages", [])] == [3] or
@@ -2009,7 +2045,7 @@ def mcp_structured(srv):
         ("mail_mark_read", {"uids": [3], "uidvalidity": INBOX_VALIDITY, "dry_run": True}),
         ("mail_send", {"to": ["test@example.net"], "body": 'A "quote"\n\t雪', "dry_run": True}),
     ]
-    for version in ("2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05", "unknown"):
+    for version in ("2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "unknown"):
         requests = [{"jsonrpc": "2.0", "id": 0, "method": "initialize",
                      "params": {"protocolVersion": version}},
                     {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
@@ -2021,7 +2057,7 @@ def mcp_structured(srv):
             requests += [modern_request(i + 2, "tools/call", name=name, arguments=args)
                          for i, (name, args) in enumerate(calls)]
         replies, code = mcp_session(srv, requests, legacy=False)
-        modern = version in ("2026-07-28", "2025-06-18", "unknown")
+        modern = version in ("2026-07-28", "2025-11-25", "2025-06-18", "unknown")
         check(f"mcp: {version} output schemas follow negotiated version",
               all(("outputSchema" in t) == modern for t in replies[1]["result"]["tools"]))
         if modern:
@@ -6228,8 +6264,8 @@ def gates_tool_list(srv, work, key_file):
                   set(changing) == set(MUTATING_CALLS) | more and not missing, (sorted(changing), missing))
         open_world = {t["name"] for t in tool_list(srv) if t["annotations"]["readOnlyHint"]
                       and t["annotations"]["openWorldHint"]}
-        check("gates: exactly the annotatable reads are marked open-world",
-              open_world == {name for name, _ in ANNOTATED_READS}, open_world)
+        check("gates: all external mailbox reads are marked open-world with Jev off",
+              open_world == set(READ_TOOLS), open_world)
     finally:
         ts.stop()
 

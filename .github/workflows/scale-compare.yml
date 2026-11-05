@@ -2,6 +2,11 @@ name: Scale comparison
 on:
   pull_request:
     paths:
+      - src/image.bend
+      - src/imap.bend
+      - src/ops.bend
+      - src/sections.bend
+      - src/tools.bend
       - tests/test-scale.py
       - tests/scale_pair.py
       - tests/test-scale-pair.py
