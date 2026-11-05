@@ -24,6 +24,9 @@ You should get an acknowledgement within a week. Fixes are released on
 
 ## Scope
 
+The [threat model and assurance map](docs/THREAT-MODEL.md) describes the assets,
+trust boundaries, evidence, and residual risks behind this scope.
+
 In scope: anything that breaks the guarantees in the README's
 [Safety](README.md#safety) section and [AGENTS.md](AGENTS.md), for example
 

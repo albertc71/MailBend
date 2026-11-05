@@ -724,6 +724,10 @@ questions. Never post credentials or real mail.
 
 ## Safety
 
+The [threat model and assurance map](docs/THREAT-MODEL.md) connects these controls
+to their assumptions, evidence, and residual risks across the OWASP MCP and
+Agentic Top 10.
+
 - **TLS is always verified**: certificate chain and host name, TLS 1.2+, with <!-- claim:native-boundaries -->
   no option to turn verification off. SMTP uses STARTTLS by default;
   `MAILBEND_SMTP_TLS_MODE=implicit` opts into implicit TLS.
