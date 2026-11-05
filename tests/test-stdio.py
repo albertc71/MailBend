@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import fake_mail_server as fake
 
@@ -62,11 +63,21 @@ def wait_until(predicate, timeout=10):
     raise AssertionError("condition did not become true within timeout")
 
 
+def process_state(pid):
+    # comm can contain ") "; the fields begin after its final closing parenthesis.
+    return pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+
+
+def stopped(pid):
+    # A vanished core must fail the stop barrier, not satisfy or outwait it.
+    return process_state(pid) == "T"
+
+
 def live(pid):
     # Z is an unreaped zombie and X a task its reaper is releasing; both have
     # exited, and kill() on an X task already fails with ESRCH.
     try:
-        return pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] not in "ZXx"
+        return process_state(pid) not in "ZXx"
     except (FileNotFoundError, ProcessLookupError):
         return False
 
@@ -753,7 +764,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
-                wait_until(lambda: pathlib.Path(f"/proc/{core}/stat").read_text().split(") ", 1)[1][0] == "T")
+                wait_until(lambda: stopped(core))
                 session.proc.kill()
                 self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                 # Exercise the real core; the separate input-independent child
@@ -779,7 +790,7 @@ class StdioTests(unittest.TestCase):
                 child = session.core_pid()
                 os.kill(child, signal.SIGSTOP)
                 try:
-                    wait_until(lambda: pathlib.Path(f"/proc/{child}/stat").read_text().split(") ", 1)[1][0] == "T")
+                    wait_until(lambda: stopped(child))
                     session.proc.kill()
                     self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                     # Orphan groups receive HUP+CONT. This child ignores HUP and
@@ -807,7 +818,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
-                wait_until(lambda: pathlib.Path(f"/proc/{core}/stat").read_text().split(") ", 1)[1][0] == "T")
+                wait_until(lambda: stopped(core))
                 session.peer.setblocking(False)
                 while True:
                     try:
@@ -874,6 +885,77 @@ class StdioTests(unittest.TestCase):
             self.assertEqual(session.proc.wait(timeout=10), 6)
             self.assertEqual(session.proc.stdout.read(), b"")
             self.assertIn(b"use scripts/mailbend mcp", session.proc.stderr.read())
+
+
+class ProcessStateTests(unittest.TestCase):
+    # These synthetic controls need neither built binaries nor visible /proc children.
+    def test_state_uses_final_comm_delimiter(self):
+        for comm in ("mailbend-core", "name) T fake", "name) Z fake", "(nested) ) X"):
+            for state in "RSDTtZXx":
+                with self.subTest(comm=comm, state=state), mock.patch.object(
+                        pathlib.Path, "read_text", autospec=True,
+                        return_value=f"123 ({comm}) {state} 1 2 3\n") as read:
+                    self.assertEqual(process_state(123), state)
+                    self.assertEqual(stopped(123), state == "T")
+                    self.assertEqual(live(123), state not in "ZXx")
+                    self.assertEqual(read.call_args_list,
+                                     [mock.call(pathlib.Path("/proc/123/stat"))] * 3)
+
+    def test_disappearance_fails_stop_barrier_but_is_not_live(self):
+        for error in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=error), mock.patch.object(
+                    pathlib.Path, "read_text", side_effect=error):
+                with self.assertRaises(error):
+                    wait_until(lambda: stopped(123))
+                self.assertFalse(live(123))
+
+    def test_other_read_errors_are_not_hidden(self):
+        with mock.patch.object(pathlib.Path, "read_text", side_effect=PermissionError):
+            for predicate in (stopped, live):
+                with self.subTest(predicate=predicate.__name__), self.assertRaises(PermissionError):
+                    predicate(123)
+
+    def test_stop_barrier_keeps_default_deadline(self):
+        with mock.patch.object(pathlib.Path, "read_text", return_value="123 (core) S 1\n") as read, \
+                mock.patch.object(time, "monotonic", side_effect=[0, 0, 0.01, 10]), \
+                mock.patch.object(time, "sleep") as sleep:
+            with self.assertRaisesRegex(AssertionError, "within timeout"):
+                wait_until(lambda: stopped(123))
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(sleep.call_args_list, [mock.call(0.01)] * 2)
+
+    def test_backpressure_waits_for_observed_stop_before_flood_and_term(self):
+        events = []
+        states = iter("RSTZ")
+
+        def read(path):
+            if path == pathlib.Path("/proc/123/stat"):
+                state = next(states)
+                events.append(state)
+                return f"123 (name) T fake) {state} 1\n"
+            self.assertEqual(path, pathlib.Path("/proc/123/status"))
+            events.append("pending")
+            return f"ShdPnd:\t{1 << (signal.SIGTERM - 1):x}\n"
+
+        def flood(_):
+            self.assertEqual(events[-1], "T", "input reached a core not observed stopped")
+            events.append("flood")
+            raise BlockingIOError
+
+        with mock.patch(f"{__name__}.Session") as session_class, \
+                mock.patch.object(pathlib.Path, "read_text", autospec=True, side_effect=read), \
+                mock.patch.object(time, "sleep"), \
+                mock.patch.object(os, "kill", side_effect=lambda pid, sig: events.append((pid, sig))):
+            session = session_class.return_value.__enter__.return_value
+            session.core_pid.return_value = 123
+            session.peer.send.side_effect = flood
+            session.proc.terminate.side_effect = lambda: events.append("terminate")
+            session.proc.wait.return_value = -signal.SIGTERM
+            case = StdioTests("test_backpressure_still_forwards_signals")
+            case.test_backpressure_still_forwards_signals()
+            session.proc.wait.assert_called_once_with(timeout=10)
+        self.assertEqual(events, [(123, signal.SIGSTOP), "R", "S", "T", "flood", "terminate",
+                                  "pending", (123, signal.SIGCONT), "Z"])
 
 
 if __name__ == "__main__":
