@@ -184,6 +184,9 @@ law image_round_guarded:
     I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> Ops.image_reads(reads)
     : List<&2, I.Cmd>}
 
+law image_round_fetch_empty:
+  {Ops.image_reads([]) == [] : List<&2, I.Cmd>}
+
 law image_round_fetch_exact:
   for uid: U32
   for ranges: List<&2, Ops.PartRange>
@@ -193,12 +196,21 @@ law image_round_fetch_exact:
       [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}],
       Ops.image_read_items(ranges))} <> Ops.image_reads(rest) : List<&2, I.Cmd>}
 
+law image_round_section_empty:
+  {Ops.image_read_items([]) == [] : List<&2, I.Item>}
+
 law image_round_section_exact:
   for section: List<&2, U32>
   for max: U32
   for rest: List<&2, Ops.PartRange>
   {Ops.image_read_items(Ops.PartRange{section, max} <> rest) ==
     I.IPart{section, max} <> Ops.image_read_items(rest) : List<&2, I.Item>}
+
+# A concrete classifier witness, not a universal statement about all plans.
+# Keep its proof before the recursive image proof to reject a lost tail
+# for a false equality, rather than only an incompatible induction term.
+law any_writes_after_read:
+  {I.any_writes([I.CExamine{"INBOX"}, I.CSelect{"INBOX"}]) == True{} : Bool}
 
 law image_round_writes_nothing:
   for mbox: String
