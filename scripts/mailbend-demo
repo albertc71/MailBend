@@ -84,6 +84,7 @@ class Demo:
         self.work = Path(work)
         self.env = {**BASE_ENV, "HOME": work, "TMPDIR": work}
         self.children = set()
+        self.stop_owners = {}
         self.clients = set()
         self.threads = []
         self.lock = threading.Lock()
@@ -115,22 +116,33 @@ class Demo:
                 return True  # Ownership was lost; stop() must not signal it.
 
     def stop(self, proc):
-        """Signal an owned group before its one final, serialized reap."""
-        with self.lock:
-            if proc not in self.children:
-                return proc.returncode
-            if proc.returncode is not None:
-                self.children.remove(proc)
-                return proc.returncode
-            try:
-                os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
-            except ChildProcessError:
-                self.children.remove(proc)
-                return None  # Never signal a group whose leader was reaped.
-            # Every other observer uses WNOWAIT. Even an exited leader keeps
-            # this PID/PGID reserved until both group signals have been sent.
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
+        """Reserve one stopper per child without blocking unrelated clients."""
+        while True:
+            with self.lock:
+                if proc not in self.children:
+                    return proc.returncode
+                pending = self.stop_owners.get(proc)
+                if pending is None:
+                    pending = threading.Event()
+                    self.stop_owners[proc] = pending
+                    break
+            # Another caller owns this child's signals and final reap. It
+            # must finish before cleanup can remove the session directory.
+            pending.wait()
+        try:
+            with self.lock:
+                if proc.returncode is not None:
+                    self.children.remove(proc)
+                    return proc.returncode
+                try:
+                    os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+                except ChildProcessError:
+                    self.children.remove(proc)
+                    return None  # Never signal a group whose leader was reaped.
+                # All observers use WNOWAIT, reserving the leader's PID/PGID
+                # while this stopper releases the shared lock for the grace wait.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGTERM)
             deadline = time.monotonic() + STOP_TIMEOUT
             while os.waitid(os.P_PID, proc.pid,
                             os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
@@ -138,11 +150,16 @@ class Demo:
                 if remaining <= 0:
                     break
                 time.sleep(min(0.05, remaining))
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
-            code = proc.wait()
-            self.children.remove(proc)
-            return code
+            with self.lock:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                code = proc.wait()
+                self.children.remove(proc)
+                return code
+        finally:
+            with self.lock:
+                del self.stop_owners[proc]
+                pending.set()
 
     def cleanup(self):
         self.stopping = True
