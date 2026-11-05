@@ -7,20 +7,41 @@ import Base
 import ../../src/provider-report.bend as R
 import ../../src/policy.bend as Policy
 import ../../src/imap.bend as I
+import ../../src/json.bend as J
 
-def check(label: String, +fs: List<&2, I.Folder>, +override: String,
-  +attr: String, +a: String, +b: String) -> IO(Unit):
-  +method = R.role_method(fs, override, attr, a, b)
+def check_method(label: String, +method: String, +resolved: Bool) -> IO(Unit):
   +reported = List.contains(~String, ~String.eq, ["override", "advertised", "name"], method)
-  +resolved = Maybe.is_some(&2, String, Policy.resolved_role(fs, override, attr, a, b))
   equivalent = (reported && resolved) || (Bool.not(reported) && Bool.not(resolved))
   IO.print(label ++ " " ++ method ++ " " ++ Bool.show(equivalent))
 
-def trash(label: String, fs: List<&2, I.Folder>, override: String) -> IO(Unit):
-  check(label, fs, override, "\\Trash", Policy.trash_name(), Policy.deleted_messages_name())
+def check(label: String, +fs: List<&2, I.Folder>, +override: String,
+  +attr: String, +a: String, +b: String) -> IO(Unit):
+  check_method(label, R.role_method(fs, override, attr, a, b),
+    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, attr, a, b)))
+
+# Read the actual report field, so wiring drift in R.roles is tested too.
+# A missing or non-string field must not silently become "unresolved".
+def report_method(roles: J.Json, key: String) -> String:
+  Maybe.default(&2, String, J.as_str(J.get(roles, key)), "invalid report field")
+
+def trash(label: String, +fs: List<&2, I.Folder>, +override: String) -> IO(Unit):
+  check_method(label, report_method(R.roles(fs, "", override, "", "", ""), "trash"),
+    Maybe.is_some(&2, String, Policy.resolved_role(fs, override, "\\Trash",
+      Policy.trash_name(), Policy.deleted_messages_name())))
+
+def inbox(label: String, +fs: List<&2, I.Folder>) -> IO(Unit):
+  check_method(label, report_method(R.roles(fs, "", "", "", "", ""), "inbox"),
+    Maybe.is_some(&2, String, Policy.named_folder(fs, "INBOX")))
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    inbox("inbox uppercase", [I.Folder{"INBOX", "/", []}])
+    inbox("inbox lowercase", [I.Folder{"inbox", "/", []}])
+    inbox("inbox duplicate", [I.Folder{"INBOX", "/", []}, I.Folder{"INBOX", "/", []}])
+    inbox("inbox mixed-case duplicate", [I.Folder{"INBOX", "/", []}, I.Folder{"inbox", "/", []}])
+    inbox("inbox noselect", [I.Folder{"INBOX", "/", ["\\Noselect"]}])
+    inbox("inbox nonexistent", [I.Folder{"INBOX", "/", ["\\NonExistent"]}])
+    inbox("inbox empty listing", [])
     trash("override wins", [I.Folder{"Custom", "/", []},
       I.Folder{"Provider Trash", "/", ["\\Trash"]}, I.Folder{"Trash", "/", []}], "Custom")
     trash("override missing blocks fallback", [I.Folder{"Provider Trash", "/", ["\\Trash"]},
@@ -32,8 +53,10 @@ def main() -> IO(Unit):
     trash("override nonexistent", [I.Folder{"Custom", "/", ["\\NonExistent"]},
       I.Folder{"Trash", "/", []}], "Custom")
     trash("override other role", [I.Folder{"Custom", "/", ["\\Junk"]}], "Custom")
+    trash("override remains case-sensitive", [I.Folder{"Trash", "/", []}], "trash")
     trash("advertised wins", [I.Folder{"Trash", "/", []},
       I.Folder{"Provider Trash", "/", ["\\Trash"]}], "")
+    trash("advertised lowercase attribute", [I.Folder{"Provider Trash", "/", ["\\trash"]}], "")
     trash("advertised duplicate blocks fallback", [I.Folder{"A", "/", ["\\Trash"]},
       I.Folder{"Trash", "/", []}, I.Folder{"B", "/", ["\\Trash"]}], "")
     trash("advertised mixed selectability", [I.Folder{"A", "/", ["\\Trash"]},
@@ -64,13 +87,22 @@ def main() -> IO(Unit):
     check("archive override", [I.Folder{"Saved", "/", []}], "Saved", "\\Archive",
       Policy.archive_name(), Policy.archive_name())
 
+#|inbox uppercase name True
+#|inbox lowercase name True
+#|inbox duplicate ambiguous True
+#|inbox mixed-case duplicate ambiguous True
+#|inbox noselect unresolved True
+#|inbox nonexistent unresolved True
+#|inbox empty listing unresolved True
 #|override wins override True
 #|override missing blocks fallback unresolved True
 #|override duplicate ambiguous True
 #|override noselect unresolved True
 #|override nonexistent unresolved True
 #|override other role override True
+#|override remains case-sensitive unresolved True
 #|advertised wins advertised True
+#|advertised lowercase attribute advertised True
 #|advertised duplicate blocks fallback ambiguous True
 #|advertised mixed selectability ambiguous True
 #|advertised noselect blocks fallback unresolved True
