@@ -295,6 +295,9 @@ jobs:
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
         if: matrix.suite == 'support'
+      - name: Outgoing clock failure boundaries
+        run: python3 tests/test-clock.py
+        if: matrix.suite == 'support'
       - name: Offline posture boundary and redaction
         run: python3 tests/test-posture.py
         if: matrix.suite == 'support'
