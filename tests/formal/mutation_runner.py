@@ -5,7 +5,11 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from law_catalogue import observer_names
 
 
 def require(condition, detail):
@@ -25,11 +29,11 @@ def require_baseline(result, label):
             f"{label}: baseline did not pass\n{result.stdout}{result.stderr}")
 
 
-def require_rejection(result, mutation):
+def require_rejection(result, mutation, root):
     output = result.stdout + result.stderr
     location = re.search(r"^Location: (\S+)", output, re.M)
     expected = mutation["proof"].split("#", 1)[1]
-    allowed = {expected, expected.removeprefix("Laws.")}
+    allowed = observer_names(root, mutation["proof"])
     require(result.returncode != 0 and "SOME PROOFS FAIL" in output
             and "ALL PROOFS CHECK" not in output
             and location is not None and location[1] in allowed
@@ -50,6 +54,8 @@ def fingerprint(root):
 
 
 def run_mutations(root, mutations, run_check=check):
+    for mutation in mutations:
+        observer_names(root, mutation["proof"])
     before = fingerprint(root)
     require_baseline(run_check(root), "checkout")
     with tempfile.TemporaryDirectory(prefix="mailbend-claim-mutations-") as directory:
@@ -71,7 +77,7 @@ def run_mutations(root, mutations, run_check=check):
                     f"{mutation['id']}: mutation target must occur exactly once and change")
             target.write_text(original.replace(mutation["before"], mutation["after"]), encoding="utf-8")
             try:
-                require_rejection(run_check(copy), mutation)
+                require_rejection(run_check(copy), mutation, copy)
                 print(f"PASS {mutation['id']}: rejected at {mutation['proof']}", flush=True)
             except ValueError as error:
                 failures.append(str(error))
