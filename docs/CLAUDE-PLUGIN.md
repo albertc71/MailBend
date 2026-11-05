@@ -24,10 +24,12 @@ Other clients can use the [MCP quickstarts](MCP_CLIENTS.md).
    Linux user, have mode `0600`, and have no symlink in its path.
 3. [Run the offline setup check](MCP_CLIENTS.md#check-the-local-installation).
    This does not check your mail login.
-4. Before starting Claude Code, unset conflicting credential variables:
+4. Before starting Claude Code, unset conflicting credential variables and
+   unused TypeSafe content settings:
 
    ```sh
    unset MAILBEND_APP_PASSWORD MAILBEND_TYPESAFE_API_KEY
+   unset MAILBEND_TYPESAFE_CONTENT MAILBEND_TYPESAFE_ZERO_RETENTION MAILBEND_TYPESAFE_IMAGES
    ```
 
 The plugin passes only the password-file path and overrides
@@ -70,7 +72,10 @@ and `mail_classify` and `mail_triage` are unavailable. There is no plugin option
 to enable Jev; use a [manual MCP registration](MCP_CLIENTS.md) if you need it.
 Inherited `MAILBEND_TYPESAFE_CONTENT`, `MAILBEND_TYPESAFE_ZERO_RETENTION` and
 `MAILBEND_TYPESAFE_IMAGES` are still validated while Jev is off, so an invalid
-value in one of those settings fails every tool closed.
+value or an unsupported combination fails every tool closed. For example,
+`MAILBEND_TYPESAFE_CONTENT=body` requires `MAILBEND_TYPESAFE_ZERO_RETENTION=1`,
+and `MAILBEND_TYPESAFE_IMAGES=1` requires body content with that zero-retention
+statement. Unset these three settings before starting Claude, as shown above.
 
 The client still sends requested mail content to its own model. Read-only
 mode is not a privacy boundary. Review Claude's data policy before connecting
