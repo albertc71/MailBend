@@ -342,9 +342,13 @@ allowlists or establish compatibility with an untested provider.
 
 | Profile | Transport | Validation |
 | --- | --- | --- |
-| iCloud Mail, existing default profile | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |
+| [iCloud Mail, existing default profile](docs/PROVIDERS.md#icloud-mail) | IMAP implicit TLS, SMTP STARTTLS | Live-tested existing profile |
 | Local synthetic server | SMTP STARTTLS and implicit TLS | Automated transport and end-to-end tests |
-| Other provider/account combinations | Either implemented SMTP mode | Not live-tested; no target accounts supplied |
+| [Other provider/account combinations](docs/PROVIDERS.md) | Depends on the documented profile | Unverified or unsupported; no other live provider run recorded |
+
+The [provider setup guide](docs/PROVIDERS.md) lists account prerequisites,
+endpoints, role-folder caveats, Sent-copy recommendations, and evidence tiers.
+Only the recorded iCloud profile is supported by live-test evidence.
 
 Implicit SMTP support was accepted to cover password-authenticated endpoints
 without STARTTLS. This adds a protocol mode, not a provider compatibility
@@ -1049,6 +1053,8 @@ before relying on a complete link.
 
 For failed calls, provider limits, concurrency, upgrades, and rollback, use
 the [operator runbook](docs/OPERATIONS.md).
+For provider-specific prerequisites and compatibility evidence, use the
+[provider setup guide](docs/PROVIDERS.md).
 
 - Linux x86_64 and aarch64 only (file access through `openat2` needs Linux 5.6+), with
   password login over IMAP implicit TLS and SMTP STARTTLS or opt-in implicit

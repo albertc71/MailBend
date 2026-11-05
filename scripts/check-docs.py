@@ -208,6 +208,10 @@ def check(root):
     required(variables, "MAILBEND_* source string literals")
     documented = required(set(re.findall(r"\b" + ENV_NAME.pattern + r"\b", (root / ".env.example").read_text())), ".env.example variable names")
     errors.extend(f".env.example: missing {name}" for name in sorted(variables - documented))
+    provider_guide = root / "docs/PROVIDERS.md"
+    provider_variables = set(ENV_NAME.findall(provider_guide.read_text()))
+    errors.extend(f"docs/PROVIDERS.md: unknown environment variable {name}"
+                  for name in sorted(provider_variables - variables))
 
     main = source_text(root / "main.bend")
     verbs = required(set(re.findall(r'^\s*case\s+"([^"\s]+)"\s*<>', definition(main, "cli"), re.M)), "CLI verbs")
