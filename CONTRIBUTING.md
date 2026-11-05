@@ -314,8 +314,11 @@ policy migration before treating a helper update as ready:
    verify that the run tested the exact proposed head.
 
 Keep the fixed reference, frozen apparatus and `install.sh` checks intact.
-Launcher revisions require a separately reviewed exact-byte migration, as in
-[the candidate hook launcher migration](tests/SCALE.md#reviewed-candidate-launcher-migration-110).
+Ordinary CI's source checks run preflight on the checkout's actual launcher, so
+any launcher byte change, including a comment edit, fails until those exact bytes
+receive a separately reviewed migration. See the
+[report usage-comment migration](tests/SCALE.md#reviewed-report-usage-comment-migration-292)
+and the earlier [candidate hook launcher migration](tests/SCALE.md#reviewed-candidate-launcher-migration-110).
 The paired job installs Bend from the reference helper for both builds;
 admitting candidate helper bytes does not validate a new compiler in that
 paired run. Compiler acceptance still requires the full Bend runbook and
