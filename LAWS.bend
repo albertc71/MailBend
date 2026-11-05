@@ -206,6 +206,12 @@ law image_round_section_exact:
   {Ops.image_read_items(Ops.PartRange{section, max} <> rest) ==
     I.IPart{section, max} <> Ops.image_read_items(rest) : List<&2, I.Item>}
 
+# A concrete classifier witness, not a universal statement about all plans.
+# Keep its proof before the recursive image proof to reject a lost tail
+# for a false equality, rather than only an incompatible induction term.
+law any_writes_after_read:
+  {I.any_writes([I.CExamine{"INBOX"}, I.CSelect{"INBOX"}]) == True{} : Bool}
+
 law image_round_writes_nothing:
   for mbox: String
   for uidv: U32

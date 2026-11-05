@@ -166,6 +166,9 @@ def Laws.image_round_section_empty():
 def Laws.image_round_section_exact(section, max, rest):
   {==}
 
+def Laws.any_writes_after_read():
+  {==}
+
 def image_reads_write_nothing(reads: List<&2, Ops.PartRead>)
   -> {I.any_writes(Ops.image_reads(reads)) == False{} : Bool}:
   match reads:
