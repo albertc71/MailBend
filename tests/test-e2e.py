@@ -2155,16 +2155,22 @@ def cli(srv, *args):
     return p
 
 
-USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -]"
+USAGE = ("usage: mailbend mcp | mailbend tools [--names | <tool>] | "
+         "mailbend call <tool> [json-arguments or -]")
 
 
 def cli_front_end(srv):
     p = cli(srv, "version")
     check("cli: version", p.returncode == 0 and p.stdout == "mailbend 0.1.0\n", (p.returncode, p.stdout))
-    for args in [(), ("help",), ("tools", "x"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
+    for args in [(), ("help",), ("tools", "x", "y"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
         p = cli(srv, *args)
         check(f"cli: {list(args)} prints the usage and exits 2",
               p.returncode == 2 and USAGE in p.stderr and p.stdout == "", (p.returncode, p.stdout, p.stderr))
+    p = cli(srv, "tools", "x")
+    check("cli: an unknown tool name exits 2 with the unavailable diagnostic",
+          p.returncode == 2 and p.stdout == "" and USAGE not in p.stderr
+          and p.stderr.splitlines()[-1:] == ["mailbend: unknown or unavailable tool"],
+          (p.returncode, p.stdout, p.stderr))
     p = cli(srv, "call", "mail_probe", "{not json")
     check("cli: arguments that are not JSON exit 2", p.returncode == 2 and p.stdout == ""
           and "the arguments are not valid JSON" in p.stderr, (p.returncode, p.stdout, p.stderr))

@@ -104,6 +104,7 @@ python3 tests/test-posture.py                     # offline capability report an
 python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
+python3 tests/test-cli-tools.py                   # credential-free filtered CLI discovery
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
 python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts

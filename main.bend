@@ -2,6 +2,8 @@
 #
 #   mailbend mcp                   MCP server on stdin/stdout (JSON-RPC lines)
 #   mailbend tools                 print the tool list as JSON
+#   mailbend tools --names         print available tool names as JSON
+#   mailbend tools <tool>          print one available tool's schema as JSON
 #   mailbend call <tool> [json or -] run one tool and print its JSON result
 #   mailbend version               print the version
 #   mailbend diagnose [--imap] [--smtp] [--report]   redacted setup checks; network is opt-in
@@ -611,10 +613,30 @@ def mcp() -> IO(Unit):
 # ===
 
 def usage() -> String:
-  "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -] | " ++
+  "usage: mailbend mcp | mailbend tools [--names | <tool>] | " ++
+    "mailbend call <tool> [json-arguments or -] | " ++
     "mailbend diagnose [--imap] [--smtp] [--report] | mailbend diagnose --posture | " ++
     "mailbend setup --provider <name> --email <address> | mailbend setup --check | " ++
     "mailbend setup --help | mailbend hook claude-pretooluse | mailbend version"
+
+def tool_cli.parsed(parsed: Maybe<&2, J.Json>) -> IO(Unit):
+  match parsed:
+    case Some{J.JObj{items}}:
+      IO.print(J.show(J.obj(legacy_fields(J.unchain(items)))))
+    case _:
+      IO.die(Unit, 2, "mailbend: unknown or unavailable tool")
+
+def tool_cli.if(available: Bool, name: String) -> IO(Unit):
+  match available:
+    case False{}:
+      IO.die(Unit, 2, "mailbend: unknown or unavailable tool")
+    case True{}:
+      tool_cli.parsed(J.parse(Schema.tool_defs.named(name)))
+
+def tool_cli(+name: String) -> IO(Unit):
+  do IO<Unit>:
+    c : Policy.Config <- T.config()
+    tool_cli.if(C.is_in(name, T.offered_names(c)), name)
 
 def fail_with(j: J.Json) -> IO(Unit):
   do IO<Unit>:
@@ -918,6 +940,12 @@ def cli(args: List<&2, String>) -> IO(Unit):
       do IO<Unit>:
         ts : J.Json <- offered_tools()
         IO.print(J.show(tools_for(False{}, ts)))
+    case "tools" <> "--names" <> Nil{}:
+      do IO<Unit>:
+        c : Policy.Config <- T.config()
+        IO.print(J.show(J.strs(T.offered_names(c))))
+    case "tools" <> name <> Nil{}:
+      tool_cli(name)
     case "call" <> name <> Nil{}:
       call_cli(name, "{}")
     case "call" <> name <> "-" <> Nil{}:
