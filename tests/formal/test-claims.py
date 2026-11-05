@@ -13,7 +13,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from law_catalogue import bend_headers, catalogue, laws, generated, load_json, proof_files
+from law_catalogue import (bend_headers, catalogue, laws, generated, load_json, proof_files,
+                           python_headers, reference, reference_location)
 from mutation_runner import require_baseline, require_rejection, run_mutations
 
 SPEC = importlib.util.spec_from_file_location("claim_checks", ROOT / "tools/check-claims.py")
@@ -124,6 +125,16 @@ class Claims(unittest.TestCase):
     def test_missing_test(self):
         self.manifest['claims'][0]['tests'] = ['tests/test-e2e.py#does_not_exist']
         self.rejected("missing test name")
+
+    def test_ambiguous_python_test_rejected_by_validation_and_coverage(self):
+        (self.root / 'tests/ambiguous.py').write_text(
+            'class A:\n    def test_x(self): pass\n'
+            'class B:\n    async def test_x(self): pass\n')
+        self.manifest['claims'][0]['tests'] = ['tests/ambiguous.py#test_x']
+        self.rejected('ambiguous Python test reference: tests/ambiguous.py#test_x; '
+                      'definitions at lines 2, 4')
+        with self.assertRaisesRegex(ValueError, 'ambiguous Python test reference'):
+            CHECKS.coverage(self.root)
 
     def test_missing_code(self):
         self.manifest['claims'][0]['code'] = ['src/ops.bend#does_not_exist']
@@ -289,6 +300,16 @@ class Claims(unittest.TestCase):
                 self.assertEqual(CHECKS.link('src/link-fixture.bend#fixture', 'code', {}, self.root),
                                  '[`src/link-fixture.bend#fixture`](../src/link-fixture.bend#L3)')
 
+    def test_multiple_unsafe_headers_keep_absolute_offsets_and_lines(self):
+        path = self.root / 'src/link-fixture.bend'
+        path.write_text('# heading\n\n@unsafe def first():\n  True{}\n\n'
+                        '  @unsafe\ndef second():\n  True{}\n\n'
+                        '@unsafe\tdef third():\n  True{}\n')
+        self.assertEqual(bend_headers(path, 'def'), {'first': 3, 'second': 6, 'third': 10})
+        for name, line in (('first', 3), ('second', 6), ('third', 10)):
+            self.assertIn(f'#L{line})', CHECKS.link(
+                f'src/link-fixture.bend#{name}', 'code', {}, self.root))
+
     def test_python_links_follow_ast_positions(self):
         (self.root / 'tests/link-fixture.py').write_text('async def\tfixture(\n):\n    pass\n')
         self.assertIn('#L1)', CHECKS.link('tests/link-fixture.py#fixture', 'test', {}, self.root))
@@ -364,6 +385,95 @@ class Claims(unittest.TestCase):
         path.write_text('{"claims": [], "claims": []}')
         with self.assertRaisesRegex(ValueError, "duplicate key"):
             load_json(path)
+
+
+class PythonReferences(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix='mailbend-python-reference-test-')
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.path = self.root / 'fixture.py'
+
+    def rejected(self, source, lines):
+        self.path.write_text(source)
+        value = 'fixture.py#test_x'
+        message = (f'ambiguous Python test reference: {value}; definitions at lines '
+                   + ', '.join(map(str, lines)))
+        self.assertEqual(python_headers(self.path)['test_x'], tuple(lines))
+        cache = {}
+        # The second validation uses the cached reader output, not a fresh AST.
+        for _ in range(2):
+            with self.assertRaises(ValueError) as error:
+                reference(self.root, value, 'test', cache)
+            self.assertEqual(str(error.exception), message)
+        with self.assertRaises(ValueError) as error:
+            CHECKS.link(value, 'test', {}, self.root)
+        self.assertEqual(str(error.exception), message)
+
+    def test_duplicate_sync_functions_rejected(self):
+        self.rejected('def test_x(): pass\ndef test_x(): pass\n', (1, 2))
+
+    def test_duplicate_async_functions_rejected(self):
+        self.rejected('async def test_x(): pass\nasync def test_x(): pass\n', (1, 2))
+
+    def test_mixed_sync_async_functions_rejected(self):
+        self.rejected('def test_x(): pass\nasync def test_x(): pass\n', (1, 2))
+
+    def test_same_named_methods_in_different_classes_rejected(self):
+        self.rejected('class A:\n    def test_x(self): pass\n'
+                      'class B:\n    def test_x(self): pass\n', (2, 4))
+
+    def test_nested_and_module_functions_rejected_in_source_order(self):
+        # ast.walk visits the module def before the earlier nested one.
+        self.rejected('def outer():\n    def test_x(): pass\n'
+                      'def test_x(): pass\n', (2, 3))
+
+    def test_repeated_nested_functions_rejected(self):
+        self.rejected('def first():\n    async def test_x(): pass\n'
+                      'def second():\n    def test_x(): pass\n', (2, 4))
+
+    def test_unique_function_forms_preserve_declaration_lines(self):
+        self.path.write_text(
+            '# heading\n@decorator\ndef sync_test(): pass\n\n'
+            '@decorator\nasync def\tasync_test(\n):\n    pass\n\n'
+            'class Example:\n    @decorator\n    def method(self): pass\n'
+            '    @decorator\n    async def async_method(self): pass\n\n'
+            'def outer():\n    @decorator\n    def nested(): pass\n'
+            '    @decorator\n    async def async_nested(): pass\n')
+        expected = {'sync_test': (3,), 'async_test': (6,), 'method': (12,),
+                    'async_method': (14,), 'outer': (16,), 'nested': (18,),
+                    'async_nested': (20,)}
+        self.assertEqual(python_headers(self.path), expected)
+        cache = {}
+        for name, (line,) in expected.items():
+            value = f'fixture.py#{name}'
+            with self.subTest(name=name):
+                self.assertEqual(reference(self.root, value, 'test', cache), ('fixture.py', name))
+                self.assertEqual(reference_location(self.root, value, 'test', cache),
+                                 ('fixture.py', name, line))
+                self.assertEqual(CHECKS.link(value, 'test', {}, self.root),
+                                 f'[`{value}`](../fixture.py#L{line})')
+
+    def test_uncited_duplicate_helpers_do_not_reject_unique_test(self):
+        self.path.write_text('class A:\n    def helper(self): pass\n'
+                             'class B:\n    def helper(self): pass\n'
+                             'def test_x(): pass\n')
+        cache = {}
+        self.assertEqual(reference(self.root, 'fixture.py#test_x', 'test', cache),
+                         ('fixture.py', 'test_x'))
+        self.assertIn('#L5)', CHECKS.link('fixture.py#test_x', 'test', {}, self.root))
+        # A cache populated by a valid name must still reject an ambiguous name.
+        with self.assertRaisesRegex(ValueError, 'ambiguous Python test reference'):
+            reference(self.root, 'fixture.py#helper', 'test', cache)
+
+    def test_nonfunction_names_do_not_become_reference_targets(self):
+        self.path.write_text('# def test_x(): pass\ntext = "def test_x(): pass"\n'
+                             'test_x = lambda: None\nclass test_x: pass\n')
+        self.assertEqual(python_headers(self.path), {})
+        with self.assertRaisesRegex(ValueError, 'missing test name: fixture.py#test_x'):
+            reference(self.root, 'fixture.py#test_x', 'test')
+        with self.assertRaisesRegex(ValueError, 'missing test name: fixture.py#test_x'):
+            CHECKS.link('fixture.py#test_x', 'test', {}, self.root)
 
 
 class Mutations(unittest.TestCase):
