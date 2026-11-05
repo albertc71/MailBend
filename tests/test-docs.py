@@ -64,6 +64,33 @@ class DriftChecks(unittest.TestCase):
         path.write_text(json.dumps({"blank_issues_enabled": False, "contact_links": []}))
         self.check("missing private security route")
 
+    def test_security_document_requires_private_security_route(self):
+        self.replace("SECURITY.md", "https://github.com/albertc71/MailBend/security/advisories/new",
+                     "https://github.com/albertc71/MailBend/issues/new")
+        self.check("SECURITY.md: missing private security route")
+
+    def test_form_checker_states_its_scope(self):
+        result = self.check()
+        self.assertIn("bug/feature form contracts", result.stdout)
+        self.assertIn("provider form not parsed", result.stdout)
+
+    def test_issue_form_mail_warning_is_not_supplied_by_links(self):
+        for filename in ("bug-report.yml", "feature-request.yml"):
+            with self.subTest(filename=filename):
+                path = self.root / ".github/ISSUE_TEMPLATE" / filename
+                original = path.read_text()
+                form = json.loads(original)
+                notice = next(field for field in form["body"] if field["type"] == "markdown")
+                notice["attributes"]["value"] = (
+                    "Never include real credentials or account addresses. MailBend support. "
+                    "[Private](https://github.com/albertc71/MailBend/security/advisories/new) "
+                    "[Policy](https://example.test/mail)")
+                path.write_text(json.dumps(form))
+                try:
+                    self.check("missing visible privacy warning")
+                finally:
+                    path.write_text(original)
+
     def test_issue_chooser_disables_blank_issues(self):
         path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
         config = json.loads(path.read_text())
@@ -498,25 +525,38 @@ const LIVE: &str = "MAILBEND_AFTER_QUOTE";
         self.check(".env.example")
 
 
-class ClientSnippets(unittest.TestCase):
+class ContributorLinks(unittest.TestCase):
+    def assert_links(self, relative, text):
+        path = ROOT / relative
+        for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", text):
+            if "://" in target:
+                continue
+            filename, _, anchor = target.partition("#")
+            destination = (path.parent / filename).resolve() if filename else path
+            self.assertTrue(destination.is_file(), target)
+            if anchor and destination.suffix == ".md":
+                headings = re.findall(r"^#+ (.+)$", destination.read_text(), re.M)
+                slugs = {re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
+                         for heading in headings}
+                self.assertIn(anchor, slugs, target)
+
     def test_contributor_routes_and_governance_links(self):
-        contributing = ROOT / "CONTRIBUTING.md"
-        links = re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", contributing.read_text())
+        contributing = (ROOT / "CONTRIBUTING.md").read_text()
+        links = re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", contributing)
         self.assertIn("GOVERNANCE.md", links)
         for relative in ("GOVERNANCE.md", "CONTRIBUTING.md"):
-            path = ROOT / relative
-            for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", path.read_text()):
-                if "://" in target:
-                    continue
-                filename, _, anchor = target.partition("#")
-                destination = (path.parent / filename).resolve() if filename else path
-                self.assertTrue(destination.is_file(), target)
-                if anchor and destination.suffix == ".md":
-                    headings = re.findall(r"^#+ (.+)$", destination.read_text(), re.M)
-                    slugs = {re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
-                             for heading in headings}
-                    self.assertIn(anchor, slugs, target)
+            self.assert_links(relative, (ROOT / relative).read_text())
 
+    def test_contributor_link_checker_rejects_broken_anchor(self):
+        for relative in ("GOVERNANCE.md", "CONTRIBUTING.md"):
+            with self.subTest(relative=relative):
+                text = (ROOT / relative).read_text()
+                text += "\n[Broken](CONTRIBUTING.md#no-such-heading)\n"
+                with self.assertRaisesRegex(AssertionError, "no-such-heading"):
+                    self.assert_links(relative, text)
+
+
+class ClientSnippets(unittest.TestCase):
     def test_password_file_recipe_python(self):
         text = (ROOT / "docs/MCP_CLIENTS.md").read_text()
         recipe = re.search(r"python3 - <<'PY'\n(.*?)\nPY\n", text, re.S)

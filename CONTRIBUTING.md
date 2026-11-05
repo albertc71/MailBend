@@ -10,6 +10,13 @@ Documentation fixes, tests, and synthetic fixtures are useful first contribution
 [Governance](GOVERNANCE.md) explains proposals, owner approval for every pull
 request, and law changes.
 
+The offline documentation checker validates selected declaration contracts for the
+issue chooser and bug/feature forms, including their visible privacy warnings.
+It does not parse `provider-report.yml`, validate every GitHub form field, or
+verify GitHub's rendered forms. Review the provider form separately when changing
+it; its diagnostic/report workflow is described in
+[Provider reports](docs/PROVIDER-REPORTS.md).
+
 ## Ground rules
 
 - Read [AGENTS.md](AGENTS.md): it holds the invariants every change must keep
