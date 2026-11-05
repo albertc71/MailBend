@@ -62,6 +62,10 @@ jobs:
           python3 tools/gen-laws.py --check
           python3 tools/check-claims.py --check
           python3 tests/formal/test-claims.py
+      - name: Public plan coverage and command construction
+        run: |
+          python3 tests/formal/check-plan-coverage.py
+          python3 tests/formal/test-plan-coverage.py
       - name: Install build dependencies
         run: |
           sudo apt-get update

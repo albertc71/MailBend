@@ -74,6 +74,8 @@ python3 tests/formal/check-response-image-budgets.py # budget proofs reject brok
 python3 tests/test-writing-laws.py                # malformed guide fences fail closed
 python3 tests/formal/check-writing-laws.py         # compile the guide and reject a broken plan
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
+python3 tests/formal/check-plan-coverage.py        # public plan references and command construction
+python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
 sh tests/run-unit.sh
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
@@ -155,6 +157,25 @@ The [bounded SMTP model](.agents/skills/smtp-tls-proofs/SKILL.md) checks an
 abstraction of authentication ordering, not the Rust implementation or
 cryptography. Its mutation check verifies that broken model transitions fail.
 The transport suite exercises the actual helper.
+
+The plan-coverage check runs offline without Bend. Every `plan_*` definition in
+`src/ops.bend` referenced by `main.bend` or a file under `src/` must also have a
+reference inside a `law` statement in `LAWS.bend`. Internal-only helpers are
+excluded. An externally referenced dotted helper still needs coverage. Comments and string literals do
+not count, and a function-value reference counts even without a call.
+This checks the presence of a reference, not the strength of a law or its proof.
+
+The same check rejects IMAP command construction in production files outside
+`src/ops.bend` and `src/imap.bend`. It derives constructor names from `I.Cmd`,
+resolves import aliases, and permits constructor patterns before a `case` colon.
+Proof and test files remain free to construct expected commands. The reader
+supports the repository's explicitly aliased local imports and fails on an
+unsupported import or relevant declaration. Qualified plan bindings are
+rejected. A qualified plan name immediately before a colon is also rejected
+as an ambiguous binding or annotation. Helper definitions in `LAWS.bend` do
+not supply coverage. Add a fixture to
+`tests/formal/test-plan-coverage.py` when extending its supported syntax.
+The existing proof and mutation checks remain necessary.
 
 The documentation check runs offline with Python 3.11 or later. It checks law
 references, environment-variable names, CLI verbs in both usage texts, and every
