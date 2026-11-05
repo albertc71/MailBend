@@ -49,6 +49,20 @@ law unknown_clock_refuses_reservation:
 def unknown_clock_refuses_reservation(envelope, limit, dir, s):
   {==}
 
+# The rejected correspondence window returns the selected page without IO.
+# Runtime tests cover the clock sample, threshold and callers.
+law invalid_brief_clock_keeps_selected_page:
+  for p: Tools.BriefPage
+  for me: String
+  for now: U32
+  {Tools.brief_contacts.clock(False{}, p, me, now) ==
+    IO.pure(Tools.Shown, Tools.brief_output(p, Tools.contacts_failed("",
+      "not scanned: system clock cannot support the 30-day correspondence window"), me, "")) :
+    IO(Tools.Shown)}
+
+def invalid_brief_clock_keeps_selected_page(p, me, now):
+  {==}
+
 # Offline posture
 # ---------------
 

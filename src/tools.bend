@@ -5477,6 +5477,17 @@ def brief_roles(r: Run(), p: BriefPage, me: String, since: String, now: U32) -> 
           merge_folders(I.folders(lines), []))
         brief_sent_role(fs, p, me, since, now)
 
+def brief_contacts.clock(valid: Bool, p: BriefPage, me: String, +now: U32) -> IO(Shown):
+  match valid:
+    case False{}:
+      IO.pure(Shown, brief_output(p, contacts_failed("",
+        "not scanned: system clock cannot support the 30-day correspondence window"), me, ""))
+    case True{}:
+      do IO<Shown>:
+        r : Run() <- await_raw(Ops.plan_probe())
+        brief_roles(r, p, me, Maybe.default(&2, String,
+          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+
 def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
   match empty:
     case True{}:
@@ -5484,9 +5495,7 @@ def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
     case False{}:
       do IO<Shown>:
         +now : U32 <- now_seconds()
-        r : Run() <- await_raw(Ops.plan_probe())
-        brief_roles(r, p, me, Maybe.default(&2, String,
-          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+        brief_contacts.clock(U32.is_ge(now, 2592000), p, me, now)
 
 def brief_contacts(+p: BriefPage) -> IO(Shown):
   BriefPage{folder, uidv, next, more, window, ms} = p
