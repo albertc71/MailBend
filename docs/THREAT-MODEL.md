@@ -142,7 +142,10 @@ Proved properties include [read_only_refuses_writes](../LAWS.bend),
 [drafts_only_refuses_sends](../LAWS.bend),
 [malformed_switch_is_bad](../LAWS.bend),
 [bad_read_only_rejects_config](../LAWS.bend),
-[bad_drafts_only_rejects_config](../LAWS.bend), and
+[bad_drafts_only_rejects_config](../LAWS.bend),
+[bad_typesafe_rejects_config](../LAWS.bend),
+[bad_zero_retention_rejects_config](../LAWS.bend),
+[bad_images_rejects_config](../LAWS.bend), and
 [allowlist_refuses_unlisted](../LAWS.bend).
 The pure [policy](../src/policy.bend) rejects forbidden calls, even if the caller
 knows a hidden tool's name. The [SMTP envelope builder](../src/smtp.bend)
@@ -154,8 +157,11 @@ remain listed because they can save drafts with `as_draft=true`. An unrecognized
 value in the shared Boolean configuration (`MAILBEND_READ_ONLY`,
 `MAILBEND_DRAFTS_ONLY`, `MAILBEND_TYPESAFE`, `MAILBEND_TYPESAFE_ZERO_RETENTION`,
 or `MAILBEND_TYPESAFE_IMAGES`) fails closed, never reads as off: every known
-tool call fails, although listing falls back to the read tools. The laws cover
-pure classification, configuration rejection, and policy refusal. Environment
+tool call fails, although listing falls back to the read tools that do not
+need Jev. These switches are not the complete fail-closed set: the other TypeSafe
+settings checked by [`config_of`](../src/policy.bend) can also reject the shared
+configuration. The laws cover pure classification, configuration rejection,
+and policy refusal. Environment
 loading, listing, and the runtime refusal path in [the tool layer](../src/tools.bend)
 remain tested wiring. [End-to-end tests](../tests/test-e2e.py) exercise these
 paths in `read_only`, `jev_switches`, `jev_images`, and `setup_diagnostics`;
@@ -387,7 +393,7 @@ No CoSAI assurance level or framework compliance is claimed.
 | ASI02 Tool misuse | partial | [C1](#c1-calls-obey-configured-policy-not-inferred-intent), [C2](#c2-plans-preserve-mailbox-identity-and-command-structure), and [C6](#c6-jev-may-veto-or-annotate-not-approve) link policy, exact plans, and optional veto evidence. | An allowed send, move, or confirmed delete can still be unwanted. Dry-run previews do not bind or approve a later call. |
 | ASI03 Identity and privilege abuse | partial | [C3](#c3-secrets-have-separate-readers-not-separate-user-identities) limits credential handling; [C1](#c1-calls-obey-configured-policy-not-inferred-intent) restricts mail effects. | The agent acts through the user's configured account. There is no per-agent identity or independent human authorization, and same-user credential access remains. |
 | ASI04 Agentic supply-chain compromise | partial | [C8](#c8-build-checks-constrain-the-reviewed-source) records repository build controls and [#127](https://github.com/albertc71/MailBend/issues/127). | The model, client, other tools, upstream dependencies, and substituted binaries are not made trustworthy by MailBend's proofs. |
-| ASI05 Unexpected code execution | partial | [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) tests protocol framing; [C5](#c5-local-file-operations-stay-within-configured-roots) restricts file writes. The [schema generator](../tools/gen-schema.py) and [generated tool list](../src/schema.bend) expose no arbitrary-shell tool, checked by the [schema unit pins](../tests/unit/schema.bend) and [tool-set assertions](../tests/test-output-schema.py). | Parsers and dependencies remain trusted implementation code. Separate shell tools, compromised binaries, and later execution of downloaded content are outside the boundary. |
+| ASI05 Unexpected code execution | partial | [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) tests protocol framing; [C5](#c5-local-file-operations-stay-within-configured-roots) restricts file writes. The [schema generator](../tools/gen-schema.py) and [generated tool list](../src/schema.bend) expose no arbitrary-shell tool, checked by the [schema unit pins](../tests/unit/schema.bend). The proved [tools_listed_per_config](../LAWS.bend) law fixes the pure operation-name list for each configuration. | Parsers and dependencies remain trusted implementation code. Separate shell tools, compromised binaries, and later execution of downloaded content are outside the boundary. |
 | ASI06 Poisoned memory or context | partial | [C6](#c6-jev-may-veto-or-annotate-not-approve) limits external model requests; [privacy documentation](PRIVACY.md#collection-use-and-local-storage) records the absence of a MailBend mailbox database. | Hostile mail persists at the provider and may be reread. The client can retain poisoned context or memory; MailBend does not sanitize agent memory or learn trusted facts from it. |
 | ASI07 Insecure agent communication | partial | [C4](#c4-tls-authenticates-the-configured-endpoint) covers mail and TypeSafe transport; [the stdio boundary](#assumptions-and-trust-boundaries) is local inherited I/O. | TLS does not authenticate an email author's intent or an inter-agent instruction. MailBend supplies no agent-to-agent authorization or trust negotiation. |
 | ASI08 Cascading failures | partial | [C7](#c7-results-preserve-uncertainty-and-work-has-finite-local-bounds) preserves uncertain outcomes and local bounds; [C2](#c2-plans-preserve-mailbox-identity-and-command-structure) stops a rejected plan. | Earlier effects are not rolled back. A stopped core loses results, external retries can duplicate effects, and repeated valid calls can exhaust provider or API budgets. |
