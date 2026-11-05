@@ -1,0 +1,59 @@
+{
+  "name": "mailbend",
+  "version": "0.1.0",
+  "description": "Use an installed MailBend server with its mail skill and optional send/delete prompt.",
+  "author": {
+    "name": "Minh Quang Tran"
+  },
+  "homepage": "https://github.com/albertc71/MailBend",
+  "repository": "https://github.com/albertc71/MailBend",
+  "license": "MIT",
+  "userConfig": {
+    "mailbend_dir": {
+      "type": "directory",
+      "title": "MailBend installation",
+      "description": "Absolute path to a built MailBend installation containing scripts/mailbend and bin/.",
+      "required": true
+    },
+    "email": {
+      "type": "string",
+      "title": "Primary account address",
+      "description": "Primary email address used to log in to your mail provider, not an alias.",
+      "required": true
+    },
+    "password_file": {
+      "type": "file",
+      "title": "App-password file",
+      "description": "Absolute path to your private, user-owned 0600 password file. Enter a path, never a password.",
+      "required": true
+    },
+    "read_only": {
+      "type": "string",
+      "title": "Read-only mode",
+      "description": "Keep 1 to refuse all mail changes and attachment downloads. Choose 0 only to enable writes deliberately.",
+      "options": ["1", "0"],
+      "default": "1"
+    },
+    "drafts_only": {
+      "type": "string",
+      "title": "Drafts-only mode",
+      "description": "Keep 1 to refuse sending even after read-only mode is disabled. This does not block deletion or other writes.",
+      "options": ["1", "0"],
+      "default": "1"
+    }
+  },
+  "mcpServers": {
+    "mailbend": {
+      "command": "${user_config.mailbend_dir}/scripts/mailbend",
+      "args": ["mcp"],
+      "env": {
+        "MAILBEND_EMAIL": "${user_config.email}",
+        "MAILBEND_LOGIN": "",
+        "MAILBEND_PASSWORD_FILE": "${user_config.password_file}",
+        "MAILBEND_READ_ONLY": "${user_config.read_only}",
+        "MAILBEND_DRAFTS_ONLY": "${user_config.drafts_only}",
+        "MAILBEND_TYPESAFE": "0"
+      }
+    }
+  }
+}

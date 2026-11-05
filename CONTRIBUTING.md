@@ -54,6 +54,7 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
+python3 tests/test-plugin.py                      # plugin declarations and isolated launcher fixture
 python3 tests/test-toolchain-installers.py        # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
 bend PROOF.bend --verdict                         # must print "ALL PROOFS CHECK"
@@ -86,6 +87,7 @@ python3 tests/test-posture.py                     # offline capability report an
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
+python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
@@ -100,6 +102,22 @@ Keep the entrypoint under 300 lines, use portable frontmatter without
 `allowed-tools`, and retain explicit human approval before sends and deletes.
 The documentation check validates tool-scoped names and arguments against
 `tools/gen-schema.py`; it is not a behavioral evaluation of an agent.
+
+When changing `.claude-plugin/` or `hooks/hooks.json`, also run these checks
+with Claude Code 2.1.295 or later:
+
+```sh
+claude plugin validate . --strict
+claude plugin validate .claude-plugin/marketplace.json --strict
+```
+
+Plugin tests never start Claude or use a live account. The lightweight suite
+resolves manifest commands against a temporary fake installation, including
+paths with shell metacharacters. The runtime suite uses this checkout's
+launcher, its built binaries, and the loopback mail fixture. Neither these
+tests nor the validator proves client loading or prompt display. Follow the
+[manual plugin checks](docs/CLAUDE-PLUGIN.md#verify-the-connection-and-prompt)
+before relying on a particular client version.
 
 The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
 checks. The second repeats the tool scenarios through structured MCP without

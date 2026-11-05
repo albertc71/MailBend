@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__plugin_mailbend_mailbend__.*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${user_config.mailbend_dir}/scripts/mailbend",
+            "args": ["hook", "claude-pretooluse"],
+            "onFailure": "block",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
