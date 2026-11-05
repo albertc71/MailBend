@@ -151,6 +151,26 @@ def Laws.part_writes_nothing(mbox, uid, uidv, section, max):
 def Laws.part_guarded(mbox, uid, uidv, section, max):
   {==}
 
+def Laws.image_round_guarded(mbox, uidv, reads):
+  {==}
+
+def Laws.image_round_fetch_exact(uid, ranges, rest):
+  {==}
+
+def Laws.image_round_section_exact(section, max, rest):
+  {==}
+
+def image_reads_write_nothing(reads: List<&2, Ops.PartRead>)
+  -> {I.any_writes(Ops.image_reads(reads)) == False{} : Bool}:
+  match reads:
+    case Nil{}:
+      {==}
+    case Ops.PartRead{uid, ranges} <> rest:
+      image_reads_write_nothing(rest)
+
+def Laws.image_round_writes_nothing(mbox, uidv, reads):
+  image_reads_write_nothing(reads)
+
 def Laws.search_page_writes_nothing(mbox, keys, cursor):
   match cursor:
     case SC.Start{}:
