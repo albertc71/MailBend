@@ -92,6 +92,11 @@ independently reviewed. No metadata was copied onto old measurements.
 
 ## Paired comparison on one runner
 
+The comparison runs automatically when the image plan, IMAP parser, section
+parser, image rules or tool layer changes. These paths are covered by the
+workflow filter alongside the measurement dependencies. A change to another
+measured product path still needs an explicit paired workflow run.
+
 The automated regression gate compares a fixed reviewed product reference
 against the exact candidate on the **same** standard Ubuntu runner. The
 immutable reference is `8ae04b1b3c773d14dea78e167e0047adab1e7cb5`; it is not

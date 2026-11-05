@@ -379,6 +379,7 @@ assert scale_fixtures.png.__module__ == "scale_support.v1.image_fixtures"
         paths = {line.removeprefix("      - ") for line in workflow.splitlines()
                  if line.startswith("      - ")}
         self.assertEqual(paths, {
+            "src/image.bend", "src/imap.bend", "src/ops.bend", "src/sections.bend", "src/tools.bend",
             "tests/test-scale.py", "tests/scale_pair.py", "tests/test-scale-pair.py",
             "tests/scale_fixtures.py", "tests/scale_support/**",
             "tests/scale-baseline.json",
