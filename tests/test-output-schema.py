@@ -77,6 +77,22 @@ for invalid in invalid_calls:
 checks += len(valid_indices) + len(invalid_calls)
 
 check_rendered_text(schema.TOOLS)
+assert all(isinstance(entry.get("title"), str) and entry["title"].strip()
+           for entry in schema.TOOLS), "each tool needs a human-readable title"
+checks += 1
+destructive_tools = {entry["name"] for entry in schema.TOOLS
+                     if entry["annotations"]["destructiveHint"]}
+assert destructive_tools == {"mail_mark_read", "mail_mark_unread", "mail_flag", "mail_unflag",
+                             "mail_move", "mail_label", "mail_trash", "mail_delete",
+                             "mail_rename_folder", "mail_triage"}, destructive_tools
+assert all(entry["annotations"]["openWorldHint"] is True for entry in schema.TOOLS)
+assert all(type(value) is bool for entry in schema.TOOLS
+           for value in entry["annotations"].values())
+checks += 3
+interaction_tools = {entry["name"] for entry in schema.TOOLS
+                     if entry.get("_meta", {}).get("anthropic/requiresUserInteraction") is True}
+assert interaction_tools == {"mail_send", "mail_reply", "mail_forward", "mail_delete"}, interaction_tools
+checks += 1
 fixture = [{"name": name, "description": ('quoted "value" \\ slash 雪 🌱 ' * 12),
             "empty": "", "control": "\n\t\u0000"} for name in ("first", "second")]
 assert "schema_piece.p0000()" in check_rendered_text(fixture)
