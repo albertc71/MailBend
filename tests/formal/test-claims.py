@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-from law_catalogue import catalogue, generated, load_json, proof_files
+from law_catalogue import bend_headers, catalogue, laws, generated, load_json, proof_files
 from mutation_runner import require_baseline, require_rejection, run_mutations
 
 SPEC = importlib.util.spec_from_file_location("claim_checks", ROOT / "tools/check-claims.py")
@@ -29,6 +29,9 @@ IMPORT_FORMS = (
 )
 
 DEFINITION_FORMS = (
+    '@unsafe def {name}() -> Bool:\n  True{{}}\n',
+    '  @unsafe\tdef\t{name}() -> Bool:\n    True{{}}\n',
+    '@unsafe\ndef {name}() -> Bool:\n  True{{}}\n',
     '  def {name}() -> Bool:\n    True{{}}\n',
     'def\t{name}() -> Bool:\n  True{{}}\n',
     'def\n{name}() -> Bool:\n  True{{}}\n',
@@ -242,6 +245,58 @@ class Claims(unittest.TestCase):
             'plan_quota_writes_nothing() -> Bool:\n  True{}\n')
         self.rejected("unsupported Bend def declaration")
 
+    def test_unsupported_attributes_fail_closed(self):
+        add_observer_import(self.root, IMPORT_FORMS[0], 'plan_quota_writes_nothing', False)
+        path = self.root / 'tests/formal/other-observer.bend'
+        for source in ('@unknown def hidden() -> Bool: True{}\n',
+                       '@unsafe # unsupported intervening comment\ndef hidden(): True{}\n',
+                       '@unsafe @unsafe def hidden(): True{}\n', '@unsafe\n'):
+            with self.subTest(source=source):
+                path.write_text(source)
+                self.rejected("unsupported Bend attribute/header")
+
+    def test_foreign_effect_import_has_explicit_scope_diagnostic(self):
+        with (self.root / 'PROOF.bend').open('a') as out:
+            out.write('\ndef effect() -> IO(Bool):\n  import "./effect.c"\n')
+        self.rejected("only Base and repository-local.*not foreign effect-body imports")
+
+    def test_law_whitespace_is_catalogued_and_linked(self):
+        path = self.root / 'LAWS.bend'
+        original = path.read_text()
+        for header in ('  law probe_writes_nothing:', 'law\tprobe_writes_nothing :',
+                       'law\nprobe_writes_nothing\n:'):
+            with self.subTest(header=header):
+                path.write_text(original.replace('law probe_writes_nothing:', header))
+                records = laws(self.root)
+                number = original[:original.index('law probe_writes_nothing:')].count('\n') + 1
+                self.assertEqual(records['probe_writes_nothing'].line, number)
+                self.assertIn(f'../LAWS.bend#L{number}', catalogue(self.root))
+                CHECKS.coverage(self.root)
+                self.assertIn(f'#L{number}', CHECKS.link(
+                    'LAWS.bend#probe_writes_nothing', 'law', records, self.root))
+
+    def test_unknown_law_header_is_not_silently_omitted(self):
+        with (self.root / 'LAWS.bend').open('a') as out:
+            out.write('\nlaw\tfuture? :\n  Bool\n')
+        self.rejected("unsupported Bend law declaration")
+
+    def test_definition_links_share_header_positions(self):
+        path = self.root / 'src/link-fixture.bend'
+        for definition in DEFINITION_FORMS + ('def {name}:\n  True{{}}\n',):
+            with self.subTest(definition=definition):
+                path.write_text('# heading\n\n' + definition.format(name='fixture'))
+                self.assertEqual(bend_headers(path, 'def'), {'fixture': 3})
+                self.assertEqual(CHECKS.link('src/link-fixture.bend#fixture', 'code', {}, self.root),
+                                 '[`src/link-fixture.bend#fixture`](../src/link-fixture.bend#L3)')
+
+    def test_python_links_follow_ast_positions(self):
+        (self.root / 'tests/link-fixture.py').write_text('async def\tfixture(\n):\n    pass\n')
+        self.assertIn('#L1)', CHECKS.link('tests/link-fixture.py#fixture', 'test', {}, self.root))
+
+    def test_missing_link_name_reports_value_error(self):
+        with self.assertRaisesRegex(ValueError, 'missing code name'):
+            CHECKS.link('src/ops.bend#does_not_exist', 'code', {}, self.root)
+
     def test_import_comments_are_not_dependencies(self):
         with (self.root / 'PROOF.bend').open('a') as out:
             out.write('\n  # import ./missing.bend as Missing\n')
@@ -367,6 +422,16 @@ class Mutations(unittest.TestCase):
                     self.fail('an ambiguous observer must fail before a proof check')
                 with self.assertRaisesRegex(ValueError, 'ambiguous mutation observer'):
                     run_mutations(root, [self.mutation], unexpected_check)
+
+    def test_runner_rejects_unknown_attribute_before_running_bend(self):
+        root = self.fixture()
+        add_observer_import(root, IMPORT_FORMS[0], 'fixture', False)
+        (root / 'tests/formal/other-observer.bend').write_text(
+            '@unknown def fixture() -> Bool:\n  True{}\n')
+        def unexpected_check(path):
+            self.fail('unsupported attributes must fail before a proof check')
+        with self.assertRaisesRegex(ValueError, 'unsupported Bend attribute/header'):
+            run_mutations(root, [self.mutation], unexpected_check)
 
     def test_reachability_retains_parent_imports_and_cycles(self):
         root = self.fixture()
