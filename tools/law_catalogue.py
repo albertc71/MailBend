@@ -44,7 +44,9 @@ class Law:
 
 
 def laws(root):
-    lines = local_path(root, "LAWS.bend").read_text(encoding="utf-8").splitlines()
+    path = local_path(root, "LAWS.bend")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    declarations = {line: name for name, line in bend_headers(path, "law").items()}
     supplements = load_json(local_path(root, "docs/law-summaries.json"))
     require(isinstance(supplements, dict), "law summaries must be an object")
     section = "Laws"
@@ -62,11 +64,8 @@ def laws(root):
                 comments.append(lines[following][2:].strip())
                 following += 1
             summary = " ".join(comments)
-        match = re.fullmatch(rf"law ({IDENTIFIER}):", line)
-        require(not line.startswith("law ") or match is not None,
-                f"unsupported law declaration at line {index + 1}")
-        if match:
-            name = match[1]
+        if index + 1 in declarations:
+            name = declarations[index + 1]
             require(name not in result, f"duplicate law {name}")
             description = summary
             # Supplements cover missing prose without editing the law contract.
@@ -83,17 +82,45 @@ def laws(root):
     return result
 
 
-def bend_names(path, kind):
+def bend_headers(path, kind):
+    """Read supported declaration names and their first source line together.
+
+    This is deliberately not a Bend parser. Recognize whitespace and the
+    documented @unsafe prefix, and fail closed on unknown attributes/headers
+    rather than silently omit a possible observer or catalogue entry.
+    """
+    require(kind in ("law", "def"), f"unsupported Bend declaration kind: {kind}")
     source = path.read_text(encoding="utf-8")
-    names = set()
-    header = re.compile(rf"\s+({IDENTIFIER})\s*[(:]")
-    for start in re.finditer(rf"^[ \t]*{kind}\b", source, re.M):
-        declaration = header.match(source, start.end())
-        if declaration is None:
-            number = source.count("\n", 0, start.start()) + 1
-            raise ValueError(f"unsupported Bend {kind} declaration at {path}:{number}")
-        names.add(declaration[1])
+    starts = re.compile(r"^[ \t]*(?P<token>@|def\b|law\b)", re.M)
+    header = re.compile(rf"\s+({IDENTIFIER})\s*(?P<delimiter>[(:])")
+    names = {}
+    offset = 0
+    line = 1
+    while start := starts.search(source, offset):
+        number = line + source.count("\n", offset, start.start())
+        token = start["token"]
+        end = start.end()
+        if token == "@":
+            attribute = re.match(r"unsafe\s+def\b", source[end:])
+            require(attribute is not None,
+                    f"unsupported Bend attribute/header at {path}:{number}")
+            token = "def"
+            end += attribute.end()
+        declaration = header.match(source, end)
+        require(declaration is not None
+                and (token != "law" or declaration["delimiter"] == ":"),
+                f"unsupported Bend {token} declaration at {path}:{number}")
+        line = number + source.count("\n", start.start(), declaration.end())
+        offset = declaration.end()
+        if token == kind:
+            name = declaration[1]
+            require(name not in names, f"duplicate Bend {kind} {name} at {path}:{number}")
+            names[name] = number
     return names
+
+
+def bend_names(path, kind):
+    return set(bend_headers(path, kind))
 
 
 def reference(root, value, kind, cache=None):
@@ -131,7 +158,9 @@ def local_imports(path):
             continue
         match = re.fullmatch(
             r"import[ \t]+(Base|\.[\w./-]+\.bend)(?:[ \t]+as[ \t]+\w+)?", declaration)
-        require(match is not None, f"unsupported Bend import at {path}:{number}")
+        require(match is not None, f"unsupported Bend import at {path}:{number}; "
+                "only Base and repository-local .bend module imports are supported "
+                "by this source reader (not foreign effect-body imports)")
         if match[1] != "Base":
             yield match[1]
 

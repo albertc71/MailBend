@@ -2,11 +2,12 @@
 """Validate public safety claims and generate their law/test/code coverage."""
 
 import argparse
+import ast
 from pathlib import Path
 import re
 import sys
 
-from law_catalogue import (ROOT, bend_names, generated, laws, load_json, local_path,
+from law_catalogue import (ROOT, bend_headers, bend_names, generated, laws, load_json, local_path,
                            observer_names, proof_files, reference, require)
 
 MARKER = re.compile(r"<!-- claim:([a-z][a-z0-9-]*) -->")
@@ -151,10 +152,15 @@ def link(value, kind, records, root):
     path, _, name = value.partition("#")
     suffix = ""
     if name:
-        source = local_path(root, path).read_text(encoding="utf-8").splitlines()
-        pattern = (rf"^law {re.escape(name)}:" if kind == "law"
-                   else rf"^\s*(?:async )?def {re.escape(name)}\(")
-        number = next(i for i, line in enumerate(source, 1) if re.search(pattern, line))
+        target = local_path(root, path)
+        if target.suffix == ".bend":
+            positions = bend_headers(target, "law" if kind == "law" else "def")
+        else:
+            tree = ast.parse(target.read_text(encoding="utf-8"))
+            positions = {node.name: node.lineno for node in ast.walk(tree)
+                         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        require(name in positions, f"missing {kind} name: {value}")
+        number = positions[name]
         suffix = f"#L{number}"
     return f"[`{value}`](../{path}{suffix})"
 
