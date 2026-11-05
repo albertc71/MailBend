@@ -6,7 +6,7 @@
     {
       "type": "markdown",
       "attributes": {
-        "value": "Never include real credentials, account addresses, or mail. Use synthetic examples. Report suspected vulnerabilities through [private vulnerability reporting](https://github.com/albertc71/MailBend/security/advisories/new), not this public form. Discuss larger changes before writing them."
+        "value": "Never include real credentials (including app passwords such as MAILBEND_APP_PASSWORD and the TypeSafe key file), account addresses, or mail. Use synthetic examples. Report suspected vulnerabilities through [private vulnerability reporting](https://github.com/albertc71/MailBend/security/advisories/new), not this public form. If an app password may have been exposed, revoke it with your provider first. Discuss larger changes before writing them."
       }
     },
     {
