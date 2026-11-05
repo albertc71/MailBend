@@ -37,6 +37,7 @@ import time
 from jsonschema import Draft202012Validator
 
 import mime_oracle
+from auth_refusal_cases import cases as auth_refusal_cases
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
@@ -582,6 +583,61 @@ def setup_diagnostics(work):
             srv.stop()
 
 
+def authentication_refusals(work, *, tool_scenarios_only=False):
+    for name, protocol, stage, reason, expected, attempts, changes in auth_refusal_cases(PASSWORD):
+        srv = Server(work, fixture={**FIX, **changes})
+        try:
+            before = srv.st()
+            if not tool_scenarios_only:
+                code, checks = diagnose(srv, "--" + protocol)
+                check(name + ": diagnostic uses only the fixed refusal reason", code != 0
+                      and diagnosed(checks, protocol, stage, "failed", reason), checks)
+                if stage == "greeting":
+                    check(name + ": authentication remains skipped", diagnosed(
+                        checks, protocol, "authentication", "skipped"))
+            start = len(srv.log_records())
+            operation = "mail_list_folders" if protocol == "imap" else "mail_send"
+            arguments = {} if protocol == "imap" else {
+                "to": "friend@example.com", "subject": "Not sent", "body": "Synthetic"}
+            code, result = tool(srv, operation, arguments)
+            error = result.get("error", "")
+            if protocol == "smtp":
+                check(name + ": refusal remains definitely not sent",
+                      result.get("smtp_outcome") == "not_sent"
+                      and result.get("smtp_phase") == "before_data"
+                      and result.get("smtp_reason") == "stopped_before_data", result)
+            check(name + ": tool reports useful redacted refusal guidance", code != 0
+                  and bool(error) and "private-server-marker" not in json.dumps(result)
+                  and PASSWORD not in json.dumps(result), result)
+            guidance = {
+                "credentials": "check MAILBEND_EMAIL (or MAILBEND_LOGIN)",
+                "temporary": "refused for now",
+                "limit": "reported a limit",
+                "in_use": "account is in use",
+                "expired": "app-password renewal",
+                "contact_admin": "administrator help",
+                "greeting_refused": "refused the connection",
+                "unknown": "unrecognized reason",
+            }
+            check(name + ": tool guidance matches the fixed reason", guidance[reason] in error, result)
+            if reason in ("temporary", "limit", "in_use", "greeting_refused"):
+                check(name + ": temporary refusal does not ask for a replacement password",
+                      any(word in error.lower() for word in ("later", "retry", "wait", "limit", "busy"))
+                      and "app-specific password" not in error.lower(), result)
+            records = srv.log_records()[start:]
+            lines = [r["line"] for r in records if r["proto"] == protocol]
+            check(name + ": no automatic auth retry or mail operation",
+                  sum(" LOGIN " in line or line == "AUTH <redacted>" for line in lines) == attempts
+                  and not any(" LIST " in line or line.startswith(("MAIL ", "RCPT ", "DATA"))
+                              for line in lines)
+                  and srv.st() == before, lines)
+            if stage == "greeting":
+                check(name + ": no greeting reconnect", sum(
+                    r["proto"] == protocol + "-refusal" for r in records) == 1)
+        finally:
+            srv.stop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool-scenarios-only", action="store_true",
@@ -618,6 +674,7 @@ def run_all(work, *, tool_scenarios_only=False):
         setup_profiles(work)
         setup_folder_suggestions(work)
         setup_diagnostics(work)
+    authentication_refusals(work, tool_scenarios_only=tool_scenarios_only)
     srv = Server(work)
     try:
         reads(srv)

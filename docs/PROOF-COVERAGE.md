@@ -18,7 +18,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`plan_quota_writes_nothing`](../LAWS.bend#L126), [`probe_writes_nothing`](../LAWS.bend#L130), [`folders_write_nothing`](../LAWS.bend#L134), [`roles_write_nothing`](../LAWS.bend#L138), [`folder_scan_writes_nothing`](../LAWS.bend#L142), [`search_writes_nothing`](../LAWS.bend#L146), [`parts_write_nothing`](../LAWS.bend#L152), [`part_writes_nothing`](../LAWS.bend#L157), [`part_guarded`](../LAWS.bend#L167), [`search_page_writes_nothing`](../LAWS.bend#L179), [`search_page_examines`](../LAWS.bend#L186), [`search_continuation_pins_identity`](../LAWS.bend#L194), [`get_writes_nothing`](../LAWS.bend#L203), [`get_checked_writes_nothing`](../LAWS.bend#L210), [`get_checked_pins_identity`](../LAWS.bend#L219), [`get_checked_without_identity_unchanged`](../LAWS.bend#L229), [`headers_write_nothing`](../LAWS.bend#L237), [`preflight_writes_nothing`](../LAWS.bend#L243), [`get_new_writes_nothing`](../LAWS.bend#L249), [`get_new_now_examines_only`](../LAWS.bend#L256), [`refresh_plan`](../LAWS.bend#L262), [`thread_plans_write_nothing`](../LAWS.bend#L274), [`awaiting_sent_writes_nothing`](../LAWS.bend#L283), [`reread_flags_writes_nothing`](../LAWS.bend#L289), [`classify_writes_nothing`](../LAWS.bend#L296), [`checked_headers_pin_identity`](../LAWS.bend#L305), [`checked_classify_pin_identity`](../LAWS.bend#L314), [`checked_reads_without_identity_unchanged`](../LAWS.bend#L324), [`checked_read_expectation`](../LAWS.bend#L334), [`checked_read_session_order`](../LAWS.bend#L338), [`checked_read_preserves_writes`](../LAWS.bend#L348), [`checked_read_without_identities_unchanged`](../LAWS.bend#L353), [`checked_headers_write_nothing`](../LAWS.bend#L357), [`checked_classify_writes_nothing`](../LAWS.bend#L363)
-- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1159), [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L6393), [`tests/test-e2e.py#refresh_known`](../tests/test-e2e.py#L827)
+- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1216), [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L6450), [`tests/test-e2e.py#refresh_known`](../tests/test-e2e.py#L884)
 - Code: [`src/ops.bend#plan_get`](../src/ops.bend#L350)
 - Seeded bug: `read-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.plan_quota_writes_nothing`.
 
@@ -29,7 +29,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`examine_renders_examine`](../LAWS.bend#L378), [`search_script_examines`](../LAWS.bend#L383), [`get_script_examines`](../LAWS.bend#L390), [`fetch_items_never_set_seen`](../LAWS.bend#L398), [`search_headers_render_exactly`](../LAWS.bend#L403), [`full_fetch_renders_exactly`](../LAWS.bend#L410)
-- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1159), [`tests/test-e2e.py#search_pagination`](../tests/test-e2e.py#L1021)
+- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1216), [`tests/test-e2e.py#search_pagination`](../tests/test-e2e.py#L1078)
 - Code: [`src/imap.bend#item_str`](../src/imap.bend#L633)
 - Seeded bug: `read-wire-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#Laws.fetch_items_never_set_seen`.
 
@@ -40,7 +40,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`mark_never_deletes`](../LAWS.bend#L423), [`flag_never_deletes`](../LAWS.bend#L433), [`mark_changes_only_seen`](../LAWS.bend#L447), [`flag_changes_only_flag_and_colour`](../LAWS.bend#L457), [`flag_changes_exactly`](../LAWS.bend#L471), [`unflag_clears_flag_and_colour`](../LAWS.bend#L490)
-- Tests: [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L2865)
+- Tests: [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L2922)
 - Code: [`src/ops.bend#plan_mark`](../src/ops.bend#L524)
 - Seeded bug: `flag-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.mark_never_deletes`.
 
@@ -51,7 +51,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`move_never_loses_mail`](../LAWS.bend#L526), [`trash_never_loses_mail`](../LAWS.bend#L537), [`move_expunges_only_copied`](../LAWS.bend#L548), [`trash_expunges_only_copied`](../LAWS.bend#L560), [`delete_expunges_only_marked`](../LAWS.bend#L573), [`delete_expunges_given_uids`](../LAWS.bend#L584), [`move_changes_exactly`](../LAWS.bend#L592), [`copy_move_changes_exactly`](../LAWS.bend#L603), [`trash_changes_exactly`](../LAWS.bend#L613), [`copy_trash_changes_exactly`](../LAWS.bend#L624), [`delete_changes_exactly`](../LAWS.bend#L635), [`expunge_renders_uid_expunge`](../LAWS.bend#L643), [`expunge_renders_exact_uid_set`](../LAWS.bend#L648), [`delete_needs_confirmation`](../LAWS.bend#L654), [`delete_checks_uidplus`](../LAWS.bend#L664), [`copy_move_checks_uidplus`](../LAWS.bend#L674)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1229), [`tests/test-e2e.py#fallback`](../tests/test-e2e.py#L2288)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1286), [`tests/test-e2e.py#fallback`](../tests/test-e2e.py#L2345)
 - Code: [`src/ops.bend#plan_move`](../src/ops.bend#L577), [`src/ops.bend#plan_delete`](../src/ops.bend#L625)
 - Seeded bug: `move-delete-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.delete_expunges_only_marked`.
 
@@ -62,7 +62,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`uid_set_is_comma_joined`](../LAWS.bend#L693), [`select_renders_callers_folder`](../LAWS.bend#L697), [`copy_renders_exactly`](../LAWS.bend#L701), [`move_renders_exactly`](../LAWS.bend#L707), [`fetch_renders_exactly`](../LAWS.bend#L713), [`search_renders_uid_search`](../LAWS.bend#L719), [`guard_search_renders_exact_uids`](../LAWS.bend#L723), [`store_renders_exactly`](../LAWS.bend#L728), [`expunge_renders_uid_expunge`](../LAWS.bend#L643), [`expunge_renders_exact_uid_set`](../LAWS.bend#L648)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1229), [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L2865)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1286), [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L2922)
 - Code: [`src/imap.bend#cmd_str`](../src/imap.bend#L671)
 - Seeded bug: `uid-wire-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#Laws.store_renders_exactly`.
 
@@ -73,7 +73,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`mark_is_pinned`](../LAWS.bend#L772), [`flag_is_pinned`](../LAWS.bend#L780), [`move_is_pinned`](../LAWS.bend#L789), [`trash_is_pinned`](../LAWS.bend#L800), [`delete_is_pinned`](../LAWS.bend#L811), [`mark_pins_callers_uidvalidity`](../LAWS.bend#L821), [`flag_pins_callers_uidvalidity`](../LAWS.bend#L830), [`move_pins_callers_uidvalidity`](../LAWS.bend#L841), [`trash_pins_callers_uidvalidity`](../LAWS.bend#L853), [`delete_pins_callers_uidvalidity`](../LAWS.bend#L865), [`mark_opens_callers_folder`](../LAWS.bend#L876), [`flag_opens_callers_folder`](../LAWS.bend#L888), [`unflag_opens_callers_folder`](../LAWS.bend#L915), [`move_opens_callers_folder`](../LAWS.bend#L930), [`trash_opens_callers_folder`](../LAWS.bend#L954), [`label_opens_callers_folder`](../LAWS.bend#L978), [`delete_opens_callers_folder`](../LAWS.bend#L1002)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1229), [`tests/test-e2e.py#flag_session_only`](../tests/test-e2e.py#L2933)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1286), [`tests/test-e2e.py#flag_session_only`](../tests/test-e2e.py#L2990)
 - Code: [`src/ops.bend#guarded`](../src/ops.bend#L502)
 - Seeded bug: `uidvalidity-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.mark_opens_callers_folder`.
 
@@ -84,7 +84,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`draft_never_removes`](../LAWS.bend#L1021), [`draft_is_exact_append`](../LAWS.bend#L1725)
-- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1331), [`tests/test-e2e.py#draft_paths`](../tests/test-e2e.py#L2351)
+- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1388), [`tests/test-e2e.py#draft_paths`](../tests/test-e2e.py#L2408)
 - Code: [`src/ops.bend#plan_draft`](../src/ops.bend#L846)
 - Seeded bug: `draft-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.draft_is_exact_append`.
 
@@ -95,7 +95,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`allowlist_refuses_unlisted`](../LAWS.bend#L1038), [`no_allowlist_is_unchanged`](../LAWS.bend#L1051)
-- Tests: [`tests/test-e2e.py#allowlist`](../tests/test-e2e.py#L3124), [`tests/test-e2e.py#allowlist_reply_all`](../tests/test-e2e.py#L3152)
+- Tests: [`tests/test-e2e.py#allowlist`](../tests/test-e2e.py#L3181), [`tests/test-e2e.py#allowlist_reply_all`](../tests/test-e2e.py#L3209)
 - Code: [`src/smtp.bend#outbound`](../src/smtp.bend#L116)
 - Seeded bug: `send-allowlist-negative-control` in `src/smtp.bend`. Expected rejection at `PROOF.bend#Laws.allowlist_refuses_unlisted`.
 
@@ -106,7 +106,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`sent_copy_only_appends`](../LAWS.bend#L1060)
-- Tests: [`tests/test-e2e.py#sent_copies`](../tests/test-e2e.py#L3288)
+- Tests: [`tests/test-e2e.py#sent_copies`](../tests/test-e2e.py#L3345)
 - Code: [`src/ops.bend#plan_sent_copy`](../src/ops.bend#L851)
 - Seeded bug: `sent-copy-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.sent_copy_only_appends`.
 
@@ -117,7 +117,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`create_changes_exactly`](../LAWS.bend#L1077), [`create_changes_no_mail`](../LAWS.bend#L1083), [`rename_changes_exactly`](../LAWS.bend#L1088), [`rename_subscribes_each_moved_folder`](../LAWS.bend#L1098), [`rename_unsubscribes_each_moved_folder`](../LAWS.bend#L1110), [`rename_subscribes_before_unsubscribing`](../LAWS.bend#L1118), [`rename_changes_no_mail`](../LAWS.bend#L1128), [`folder_plans_destroy_nothing`](../LAWS.bend#L1135)
-- Tests: [`tests/test-e2e.py#folder_create`](../tests/test-e2e.py#L2560), [`tests/test-e2e.py#folder_rename`](../tests/test-e2e.py#L2600)
+- Tests: [`tests/test-e2e.py#folder_create`](../tests/test-e2e.py#L2617), [`tests/test-e2e.py#folder_rename`](../tests/test-e2e.py#L2657)
 - Code: [`src/ops.bend#plan_create`](../src/ops.bend#L865), [`src/ops.bend#plan_rename`](../src/ops.bend#L897)
 - Seeded bug: `folder-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.create_changes_exactly`.
 
@@ -128,7 +128,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`label_is_move`](../LAWS.bend#L1152), [`label_creates_no_folder`](../LAWS.bend#L1163), [`label_opens_callers_folder`](../LAWS.bend#L978)
-- Tests: [`tests/test-e2e.py#folder_label`](../tests/test-e2e.py#L2662)
+- Tests: [`tests/test-e2e.py#folder_label`](../tests/test-e2e.py#L2719)
 - Code: [`src/ops.bend#plan_label`](../src/ops.bend#L636)
 - Seeded bug: `label-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.label_opens_callers_folder`.
 
@@ -139,7 +139,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`triage_moves_only_to_known_folders`](../LAWS.bend#L1188), [`triage_creates_no_mailbox`](../LAWS.bend#L1208), [`triage_one_move_per_message`](../LAWS.bend#L1220), [`triage_expunges_only_moved`](../LAWS.bend#L1235), [`filing_matches_table`](../LAWS.bend#L1252), [`uncertain_changes_nothing`](../LAWS.bend#L1267)
-- Tests: [`tests/test-e2e.py#triage_body`](../tests/test-e2e.py#L5562), [`tests/test-e2e.py#triage_protections`](../tests/test-e2e.py#L5825)
+- Tests: [`tests/test-e2e.py#triage_body`](../tests/test-e2e.py#L5619), [`tests/test-e2e.py#triage_protections`](../tests/test-e2e.py#L5882)
 - Code: [`src/ops.bend#plan_triage`](../src/ops.bend#L833), [`src/jev.bend#filing`](../src/jev.bend#L1437)
 - Seeded bug: `triage-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.triage_moves_only_to_known_folders`.
 
@@ -150,7 +150,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`append_preview_hides_message`](../LAWS.bend#L1306)
-- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1331), [`tests/test-e2e.py#triage_dry_run`](../tests/test-e2e.py#L5664)
+- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1388), [`tests/test-e2e.py#triage_dry_run`](../tests/test-e2e.py#L5721)
 - Code: [`src/imap.bend#preview`](../src/imap.bend#L771)
 
 ## jev-privacy
@@ -160,7 +160,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`headers_state_has_no_body`](../LAWS.bend#L1326), [`state_images_on_headers_is_state`](../LAWS.bend#L1343), [`state_images_body_without_refs_is_state`](../LAWS.bend#L1360), [`cargo_of_without_images`](../LAWS.bend#L1377), [`entry_at_sends_no_images`](../LAWS.bend#L1385), [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1509)
-- Tests: [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L5120), [`tests/test-e2e.py#triage_headers`](../tests/test-e2e.py#L5640)
+- Tests: [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L5177), [`tests/test-e2e.py#triage_headers`](../tests/test-e2e.py#L5697)
 - Code: [`src/jev.bend#state_of`](../src/jev.bend#L277)
 - Seeded bug: `jev-privacy-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.headers_state_has_no_body`.
 
@@ -171,7 +171,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`missing_answer_is_cautious`](../LAWS.bend#L1396), [`only_the_pinned_model_answers`](../LAWS.bend#L1411), [`unpinned_reply_is_no_answer`](../LAWS.bend#L1430)
-- Tests: [`tests/test-e2e.py#gates_unpinned`](../tests/test-e2e.py#L6306), [`tests/test-e2e.py#gates_failure`](../tests/test-e2e.py#L6276)
+- Tests: [`tests/test-e2e.py#gates_unpinned`](../tests/test-e2e.py#L6363), [`tests/test-e2e.py#gates_failure`](../tests/test-e2e.py#L6333)
 - Code: [`src/jev.bend#answered_by_pin`](../src/jev.bend#L1135)
 
 ## jev-gates
@@ -181,7 +181,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`send_veto_only_subtracts`](../LAWS.bend#L1452), [`delete_veto_only_subtracts`](../LAWS.bend#L1467), [`failure_blocks_outbound`](../LAWS.bend#L1477), [`secret_scan_blocks`](../LAWS.bend#L1493)
-- Tests: [`tests/test-e2e.py#gates_vetoes`](../tests/test-e2e.py#L6128), [`tests/test-e2e.py#gates_delete_vetoes`](../tests/test-e2e.py#L6203), [`tests/test-e2e.py#gates_secret_scan`](../tests/test-e2e.py#L6047)
+- Tests: [`tests/test-e2e.py#gates_vetoes`](../tests/test-e2e.py#L6185), [`tests/test-e2e.py#gates_delete_vetoes`](../tests/test-e2e.py#L6260), [`tests/test-e2e.py#gates_secret_scan`](../tests/test-e2e.py#L6104)
 - Code: [`src/jev.bend#outbound_checked`](../src/jev.bend#L1939), [`src/jev.bend#delete_checked`](../src/jev.bend#L1957)
 - Seeded bug: `jev-gates-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.delete_veto_only_subtracts`.
 
@@ -192,7 +192,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`smtp_unconfirmed_is_unknown`](../LAWS.bend#L1534), [`smtp_acceptance_survives_exit`](../LAWS.bend#L1543)
-- Tests: [`tests/test-e2e.py#smtp_outcomes`](../tests/test-e2e.py#L3220)
+- Tests: [`tests/test-e2e.py#smtp_outcomes`](../tests/test-e2e.py#L3277)
 - Code: [`src/smtp.bend`](../src/smtp.bend)
 
 ## response-budget
@@ -202,7 +202,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`projection_keeps_nonbody`](../LAWS.bend#L1554), [`response_body_fields_are_exact`](../LAWS.bend#L1563), [`response_preserves_nonbody`](../LAWS.bend#L1570), [`prefix_is_prefix`](../LAWS.bend#L1579), [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1587), [`prefix_whole_when_scalar_room`](../LAWS.bend#L1596), [`prefix_fits_allowance`](../LAWS.bend#L1912), [`prefix_whole_when_room`](../LAWS.bend#L1940)
-- Tests: [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L6393)
+- Tests: [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L6450)
 - Code: [`src/response.bend#keep`](../src/response.bend#L39), [`src/response.bend#prefix`](../src/response.bend#L142)
 - Seeded bug: `response-budget-negative-control` in `src/response.bend`. Expected rejection at `tests/formal/budget-proofs.bend#prefix_conserves.put`.
 
@@ -213,7 +213,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`image_used_only_with_clear_ref`](../LAWS.bend#L1609), [`image_admission_count_cap`](../LAWS.bend#L1624), [`image_admission_byte_cap`](../LAWS.bend#L1631), [`image_bind_count_cap`](../LAWS.bend#L1919), [`image_bind_byte_cap`](../LAWS.bend#L1927)
-- Tests: [`tests/test-e2e.py#jev_image_quota`](../tests/test-e2e.py#L4882), [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L5120)
+- Tests: [`tests/test-e2e.py#jev_image_quota`](../tests/test-e2e.py#L4939), [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L5177)
 - Code: [`src/image.bend#bind_next`](../src/image.bend#L984)
 - Seeded bug: `image-budget-negative-control` in `src/image.bend`. Expected rejection at `tests/formal/budget-bind-proofs.bend#bind_admit_conserved`.
 
@@ -224,7 +224,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`json_serialized_bytes`](../LAWS.bend#L1997)
-- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1159)
+- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1216)
 - Code: [`src/json.bend#show`](../src/json.bend#L118), [`src/response.bend#bytes`](../src/response.bend#L16)
 - Seeded bug: `json-bytes-negative-control` in `src/json.bend`. Expected rejection at `tests/formal/json-size-proofs.bend#show_bytes`.
 
@@ -235,8 +235,8 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`read_is_read_only`](../LAWS.bend#L47), [`search_is_read_only`](../LAWS.bend#L51), [`delete_is_not_read_only`](../LAWS.bend#L55), [`download_is_not_read_only`](../LAWS.bend#L59), [`trash_is_not_destructive`](../LAWS.bend#L63), [`read_only_tools_are_exactly_twelve`](../LAWS.bend#L67), [`tools_listed_per_config`](../LAWS.bend#L77), [`from_name_inverts_name`](../LAWS.bend#L115), [`sending_calls_are_exact`](../LAWS.bend#L1748), [`read_only_refuses_writes`](../LAWS.bend#L1754), [`drafts_only_refuses_sends`](../LAWS.bend#L1763), [`jev_off_refuses_jev_calls`](../LAWS.bend#L1772), [`malformed_switch_is_bad`](../LAWS.bend#L1781), [`bad_read_only_rejects_config`](../LAWS.bend#L1793), [`bad_drafts_only_rejects_config`](../LAWS.bend#L1807), [`bad_typesafe_rejects_config`](../LAWS.bend#L1821), [`bad_zero_retention_rejects_config`](../LAWS.bend#L1835), [`bad_images_rejects_config`](../LAWS.bend#L1849), [`resolved_role_names_selectable_folder`](../LAWS.bend#L1880)
-- Tests: [`tests/test-e2e.py#read_only`](../tests/test-e2e.py#L2192), [`tests/test-e2e.py#gates_tool_list`](../tests/test-e2e.py#L6020), [`tests/test-e2e.py#gates_jev_off`](../tests/test-e2e.py#L6037)
-- Code: [`src/policy.bend#refusal`](../src/policy.bend#L584)
+- Tests: [`tests/test-e2e.py#read_only`](../tests/test-e2e.py#L2249), [`tests/test-e2e.py#gates_tool_list`](../tests/test-e2e.py#L6077), [`tests/test-e2e.py#gates_jev_off`](../tests/test-e2e.py#L6094)
+- Code: [`src/policy.bend#refusal`](../src/policy.bend#L654)
 - Seeded bug: `policy-gates-negative-control` in `src/policy.bend`. Expected rejection at `PROOF.bend#Laws.read_only_refuses_writes`.
 
 ## effect-classifiers
@@ -246,7 +246,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`store_classifies_as_writing`](../LAWS.bend#L1640), [`copy_classifies_as_writing`](../LAWS.bend#L1649), [`move_classifies_as_writing`](../LAWS.bend#L1657), [`expunge_classifies_as_writing`](../LAWS.bend#L1665), [`append_classifies_as_writing`](../LAWS.bend#L1672), [`create_classifies_as_writing`](../LAWS.bend#L1681), [`rename_classifies_as_writing`](../LAWS.bend#L1688), [`subscribe_classifies_as_writing`](../LAWS.bend#L1696), [`unsubscribe_classifies_as_writing`](../LAWS.bend#L1703), [`select_classifies_as_writing`](../LAWS.bend#L1710), [`any_writes_checks_each_command`](../LAWS.bend#L1717)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1229)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1286)
 - Code: [`src/imap.bend#effect`](../src/imap.bend#L114), [`src/imap.bend#any_writes`](../src/imap.bend#L252)
 - Seeded bug: `effect-classifiers-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#thread_searches_add_no_write`.
 
@@ -257,8 +257,8 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`resolved_role_names_selectable_folder`](../LAWS.bend#L1880), [`tests/formal/role-folders.bend#override_decides_the_role`](../tests/formal/role-folders.bend#L48), [`tests/formal/role-folders.bend#override_takes_its_listed_folder`](../tests/formal/role-folders.bend#L60), [`tests/formal/role-folders.bend#override_naming_two_folders_takes_no_role`](../tests/formal/role-folders.bend#L80), [`tests/formal/role-folders.bend#override_naming_unselectable_folder_takes_no_role`](../tests/formal/role-folders.bend#L104), [`tests/formal/role-folders.bend#override_naming_no_folder_takes_no_role`](../tests/formal/role-folders.bend#L122), [`tests/formal/role-folders.bend#two_advertised_folders_take_no_role`](../tests/formal/role-folders.bend#L133), [`tests/formal/role-folders.bend#unselectable_advertised_folder_takes_no_role`](../tests/formal/role-folders.bend#L155), [`tests/formal/role-folders.bend#sole_advertised_folder_takes_the_role`](../tests/formal/role-folders.bend#L171), [`tests/formal/role-folders.bend#two_conventional_folders_take_no_role`](../tests/formal/role-folders.bend#L189), [`tests/formal/role-folders.bend#other_role_folder_never_takes_the_role`](../tests/formal/role-folders.bend#L220), [`tests/formal/role-folders.bend#each_role_has_its_own_attribute_and_names`](../tests/formal/role-folders.bend#L240), [`tests/formal/role-folders.bend#selectable_is_neither_noselect_nor_nonexistent`](../tests/formal/role-folders.bend#L262), [`tests/formal/role-folders.bend#recognized_roles_are_the_special_use_attributes`](../tests/formal/role-folders.bend#L269)
-- Tests: [`tests/test-e2e.py#generic_folders`](../tests/test-e2e.py#L2379)
-- Code: [`src/policy.bend#resolved_role`](../src/policy.bend#L499)
+- Tests: [`tests/test-e2e.py#generic_folders`](../tests/test-e2e.py#L2436)
+- Code: [`src/policy.bend#resolved_role`](../src/policy.bend#L569)
 - Seeded bug: `role-resolution-negative-control` in `src/policy.bend`. Expected rejection at `tests/formal/role-folders.bend#override_example`.
 
 ## attachment-boundaries
@@ -268,7 +268,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: None.
-- Tests: [`tests/test-e2e.py#attach_dir_guards`](../tests/test-e2e.py#L1299), [`tests/test-e2e.py#downloads`](../tests/test-e2e.py#L3392)
+- Tests: [`tests/test-e2e.py#attach_dir_guards`](../tests/test-e2e.py#L1356), [`tests/test-e2e.py#downloads`](../tests/test-e2e.py#L3449)
 - Code: [`native/mailbend-attach/src/main.rs`](../native/mailbend-attach/src/main.rs)
 
 ## native-boundaries
@@ -278,7 +278,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: None.
-- Tests: [`tests/test-e2e.py#implicit_smtp`](../tests/test-e2e.py#L3059), [`tests/test-e2e.py#password_file`](../tests/test-e2e.py#L2261), [`tests/test-e2e.py#failures`](../tests/test-e2e.py#L2243)
+- Tests: [`tests/test-e2e.py#implicit_smtp`](../tests/test-e2e.py#L3116), [`tests/test-e2e.py#password_file`](../tests/test-e2e.py#L2318), [`tests/test-e2e.py#failures`](../tests/test-e2e.py#L2300)
 - Code: [`native/mailbend-tls/src/main.rs`](../native/mailbend-tls/src/main.rs)
 
 ## interrupted-changes
@@ -288,7 +288,7 @@ It does not report an individual job or certify a pending pull request.
 [README statement](../README.md#safety).
 
 - Laws: [`refused_helper_is_not_lost`](../LAWS.bend#L1732)
-- Tests: [`tests/test-e2e.py#folder_cut_off`](../tests/test-e2e.py#L2752), [`tests/test-e2e.py#flag_cut_off`](../tests/test-e2e.py#L3008), [`tests/test-e2e.py#flag_helper_failures`](../tests/test-e2e.py#L3034)
+- Tests: [`tests/test-e2e.py#folder_cut_off`](../tests/test-e2e.py#L2809), [`tests/test-e2e.py#flag_cut_off`](../tests/test-e2e.py#L3065), [`tests/test-e2e.py#flag_helper_failures`](../tests/test-e2e.py#L3091)
 - Code: [`src/policy.bend`](../src/policy.bend)
 
 ## client-prompts

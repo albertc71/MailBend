@@ -65,6 +65,9 @@ fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
 }
 
 fn reason(error: &Exit) -> &'static str {
+    if let Some(reason) = error.auth_reason {
+        return reason.token();
+    }
     match error.message.as_str() {
         "server does not offer STARTTLS" => "unsupported_tls",
         "server offers neither AUTH PLAIN nor AUTH LOGIN" => "unsupported_auth",

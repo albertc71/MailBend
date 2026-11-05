@@ -113,7 +113,12 @@ The original `mail_probe` response is unchanged and can be inspected locally
 when you need folder names.
 
 Diagnostics separate DNS/DoH lookup, TCP connection, TLS, greeting/EHLO and
-authentication failures. MailBend supports IMAP implicit TLS with password LOGIN,
+authentication failures. Refused greetings and authentication report only fixed
+reason tokens, including temporary refusals, login limits, expired credentials
+and requests to contact the administrator. Temporary guidance says to wait before
+another login and keep the password unchanged; it never authorizes retrying a
+mail operation. A bare IMAP LOGIN `NO` retains credential guidance, so check
+provider status before changing credentials. MailBend supports IMAP implicit TLS with password LOGIN,
 and SMTP STARTTLS or explicit implicit TLS with AUTH PLAIN or LOGIN. Missing
 STARTTLS in STARTTLS mode or unsupported SMTP AUTH mechanisms have explicit
 reasons; OAuth is unsupported. The SMTP check follows the configured TLS mode:

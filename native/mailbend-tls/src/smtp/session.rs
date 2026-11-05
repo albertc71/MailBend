@@ -11,6 +11,7 @@ use zeroize::Zeroizing;
 
 use crate::connection::Connection;
 use crate::creds::Credentials;
+use crate::exit::AuthReason;
 use crate::limits::MAX_OUTPUT;
 use crate::settings::SmtpTlsMode;
 use crate::smtp::envelope::Step;
@@ -113,9 +114,17 @@ fn negotiate_tls(
         conn.start_tls(tls, host)?;
     }
     conn.enter_stage("greeting");
-    if reply_code(conn)? != SERVICE_READY {
-        return Err(Exit::protocol("server refused the connection"));
+    // A refused greeting is reduced to a fixed token, not server text.
+    let greeting = conn.quietly(read_reply)?;
+    if greeting.code != SERVICE_READY {
+        let reason = if greeting.code / 100 == 4 {
+            AuthReason::Temporary
+        } else {
+            AuthReason::GreetingRefused
+        };
+        return Err(Exit::protocol("server refused the connection").with_auth_reason(reason));
     }
+    conn.emit(&greeting.lines)?;
     conn.enter_stage("ehlo");
     let ehlo = hello(conn, "EHLO rejected")?;
     if mode == SmtpTlsMode::Implicit {
@@ -156,8 +165,11 @@ fn authenticate(conn: &mut Connection, ehlo: &[u8], creds: &Credentials) -> Resu
                 "server offers neither AUTH PLAIN nor AUTH LOGIN",
             ));
         }
-        if reply_code(conn)? != AUTH_SUCCEEDED {
-            return Err(Exit::auth("SMTP authentication rejected"));
+        let code = reply_code(conn)?;
+        if code != AUTH_SUCCEEDED {
+            return Err(
+                Exit::auth("SMTP authentication rejected").with_auth_reason(AuthReason::smtp(code))
+            );
         }
         Ok(())
     })
@@ -176,8 +188,11 @@ fn auth_plain(conn: &mut Connection, creds: &Credentials) -> Result<(), Exit> {
 fn auth_login(conn: &mut Connection, creds: &Credentials) -> Result<(), Exit> {
     conn.write(b"AUTH LOGIN\r\n")?;
     for secret in [&creds.user, &creds.pass] {
-        if reply_code(conn)? != AUTH_CHALLENGE {
-            return Err(Exit::auth("SMTP AUTH LOGIN refused"));
+        let code = reply_code(conn)?;
+        if code != AUTH_CHALLENGE {
+            return Err(
+                Exit::auth("SMTP AUTH LOGIN refused").with_auth_reason(AuthReason::smtp(code))
+            );
         }
         conn.write(&base64_line(b"", secret)?)?;
     }

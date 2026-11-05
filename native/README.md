@@ -307,6 +307,23 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   Bend interprets the latest marker even after process interruption; absent
   evidence is unknown. Exit status alone never proves SMTP acceptance.
   QUIT remains best effort after acceptance or refusal.
+- **Authentication refusal evidence**: after a refused login or greeting,
+  stderr adds one fixed `mailbend-auth: <token>` line. Tokens are
+  `credentials`, `temporary`, `limit`, `in_use`, `expired`, `contact_admin`,
+  `greeting_refused` and `unknown`. IMAP reads only a bracketed response code
+  immediately after an exact `NO`, `BAD` or login-time `BYE`; it never searches
+  the server's prose. `AUTHENTICATIONFAILED` and a bare LOGIN `NO` mean
+  `credentials`; `UNAVAILABLE`, `LIMIT`, `INUSE`, `EXPIRED` and `CONTACTADMIN`
+  have their corresponding fixed tokens. Unknown codes mean `unknown`.
+  SMTP AUTH 4xx replies mean `temporary`, 535 means `credentials`, and other
+  rejections mean `unknown`, including either AUTH LOGIN challenge. A 4xx
+  SMTP greeting is temporary; other refused greetings use `greeting_refused`.
+  Auth exchanges and refused greetings are not copied to the transcript.
+  Diagnostic modes print the failed stage and that same fixed token instead
+  of stderr evidence. Bend maps tokens to guidance; no server prose, address,
+  credential or AUTH payload enters the token. Older helpers with no token
+  retain the existing exit-code fallback. No retry is introduced, and no
+  token changes the SMTP acceptance evidence or permits retrying an operation.
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
 
