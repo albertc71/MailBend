@@ -184,6 +184,9 @@ law image_round_guarded:
     I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> Ops.image_reads(reads)
     : List<&2, I.Cmd>}
 
+law image_round_fetch_empty:
+  {Ops.image_reads([]) == [] : List<&2, I.Cmd>}
+
 law image_round_fetch_exact:
   for uid: U32
   for ranges: List<&2, Ops.PartRange>
@@ -192,6 +195,9 @@ law image_round_fetch_exact:
     I.CFetch{[uid], List.append(&2, I.Item,
       [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}, I.IStructure{}],
       Ops.image_read_items(ranges))} <> Ops.image_reads(rest) : List<&2, I.Cmd>}
+
+law image_round_section_empty:
+  {Ops.image_read_items([]) == [] : List<&2, I.Item>}
 
 law image_round_section_exact:
   for section: List<&2, U32>

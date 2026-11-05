@@ -41,5 +41,7 @@
   "brief_unseen_filter_interval": "Unseen filtering keeps only UIDs in the requested interval.",
   "image_round_fetch_exact": "Each selected message fetch uses the supplied UID, original part metadata and exactly its selected section items.",
   "image_round_section_exact": "Each selected image range becomes exactly its supplied MIME section and fetch limit.",
-  "image_round_writes_nothing": "An image round changes no mailbox for every folder, identity and list of selected reads."
+  "image_round_writes_nothing": "An image round changes no mailbox for every folder, identity and list of selected reads.",
+  "image_round_fetch_empty": "An empty selected-read tail adds no message fetch or other command.",
+  "image_round_section_empty": "An empty selected-range tail adds no MIME section or other fetch item."
 }

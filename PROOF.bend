@@ -154,7 +154,13 @@ def Laws.part_guarded(mbox, uid, uidv, section, max):
 def Laws.image_round_guarded(mbox, uidv, reads):
   {==}
 
+def Laws.image_round_fetch_empty():
+  {==}
+
 def Laws.image_round_fetch_exact(uid, ranges, rest):
+  {==}
+
+def Laws.image_round_section_empty():
   {==}
 
 def Laws.image_round_section_exact(section, max, rest):
