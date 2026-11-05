@@ -5,6 +5,7 @@
 import Base
 import ../../src/json.bend as J
 import ../../src/schema.bend as Schema
+import ../../src/ops.bend as Ops
 
 def text_or(m: Maybe<&2, String>) -> String:
   Maybe.default(&2, String, m, "?")
@@ -92,6 +93,25 @@ def tool_lines(ts: List<&2, J.Json>) -> List<&2, String>:
     case h <> t:
       tool_line(h) <> tool_lines(t)
 
+def policy_matches.op(op: Maybe<&2, Ops.Op>, +ann: J.Json) -> Bool:
+  match op:
+    case None{}:
+      False{}
+    case Some{+known}:
+      ro = Maybe.default(&2, Bool, J.as_bool(J.get(ann, "readOnlyHint")), False{})
+      destructive = Maybe.default(&2, Bool, J.as_bool(J.get(ann, "destructiveHint")), False{})
+      Bool.not(Bool.xor(ro, Ops.is_read_only(known))) &&
+        (Bool.not(Ops.is_destructive(known)) || destructive)
+
+def policy_matches(ts: List<&2, J.Json>) -> Bool:
+  match ts:
+    case Nil{}:
+      True{}
+    case +t <> rest:
+      name = text_or(J.as_str(J.get(t, "name")))
+      ann = Maybe.default(&2, J.Json, J.get(t, "annotations"), J.JNull{})
+      policy_matches.op(Ops.from_name(name), ann) && policy_matches(rest)
+
 # h * 31 + c over every character, wrapping at 2^32.
 def text_hash(s: String, h: U32) -> U32:
   match s:
@@ -106,37 +126,39 @@ def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(Nat.show(List.length(&2, J.Json, tools)) ++ " tools")
     IO.print(String.join(tool_lines(tools), "\n"))
+    IO.print("operation policy agrees " ++ Bool.show(policy_matches(tools)))
     IO.print(Nat.show(String.length(text)) ++ " characters")
     IO.print("hash " ++ U32.show(text_hash(text, 0)))
 
 #|28 tools
-#|mail_probe | readOnlyHint,idempotentHint | required - | -
-#|mail_list_folders | readOnlyHint,idempotentHint | required - | -
+#|mail_probe | readOnlyHint,idempotentHint,openWorldHint | required - | -
+#|mail_list_folders | readOnlyHint,idempotentHint,openWorldHint | required - | -
 #|mail_search | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string from:string to:string cc:string subject:string body:string text:string since:string before:string unseen:boolean seen:boolean flagged:boolean cursor:string limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string max_bytes:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string start:string[now] since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_brief | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string continuation:object since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
-#|mail_refresh | readOnlyHint,idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
+#|mail_refresh | readOnlyHint,idempotentHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer
 #|mail_get_thread | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer projection:string[full|text|html|metadata] max_response_bytes:integer
-#|mail_awaiting_reply | readOnlyHint,idempotentHint | required - | window_days:integer min_age_days:integer limit:integer exclude_lists:boolean exclude_automated:boolean
-#|mail_contacts | readOnlyHint,idempotentHint | required - | query:string window_days:integer limit:integer
-#|mail_correspondents | readOnlyHint,idempotentHint | required addresses | addresses:array window_days:integer limit:integer
+#|mail_awaiting_reply | readOnlyHint,idempotentHint,openWorldHint | required - | window_days:integer min_age_days:integer limit:integer exclude_lists:boolean exclude_automated:boolean
+#|mail_contacts | readOnlyHint,idempotentHint,openWorldHint | required - | query:string window_days:integer limit:integer
+#|mail_correspondents | readOnlyHint,idempotentHint,openWorldHint | required addresses | addresses:array window_days:integer limit:integer
 #|mail_classify | readOnlyHint,openWorldHint | required uids | folder:string uids:array uidvalidity:integer candidates:array
-#|mail_triage | openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
-#|mail_get_attachment | - | required uid | folder:string uid:integer uidvalidity:integer section:string index:integer filename:string dry_run:boolean
-#|mail_mark_read | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
-#|mail_mark_unread | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
-#|mail_flag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer colour:string[red|orange|yellow|green|blue|purple|grey] dry_run:boolean
-#|mail_unflag | idempotentHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
-#|mail_move | - | required uids,destination,uidvalidity | folder:string uids:array destination:string uidvalidity:integer dry_run:boolean
-#|mail_label | - | required uids,label,uidvalidity | folder:string uids:array label:string uidvalidity:integer dry_run:boolean
-#|mail_trash | - | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
-#|mail_delete | destructiveHint | required uids,uidvalidity,confirm | folder:string uids:array uidvalidity:integer confirm:string[permanently-delete] dry_run:boolean
-#|mail_create_folder | - | required name | name:string dry_run:boolean
-#|mail_rename_folder | - | required from,to | from:string to:string dry_run:boolean
-#|mail_save_draft | - | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
+#|mail_triage | destructiveHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_get_attachment | openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string index:integer filename:string dry_run:boolean
+#|mail_mark_read | destructiveHint,idempotentHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_mark_unread | destructiveHint,idempotentHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_flag | destructiveHint,idempotentHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer colour:string[red|orange|yellow|green|blue|purple|grey] dry_run:boolean
+#|mail_unflag | destructiveHint,idempotentHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_move | destructiveHint,openWorldHint | required uids,destination,uidvalidity | folder:string uids:array destination:string uidvalidity:integer dry_run:boolean
+#|mail_label | destructiveHint,openWorldHint | required uids,label,uidvalidity | folder:string uids:array label:string uidvalidity:integer dry_run:boolean
+#|mail_trash | destructiveHint,openWorldHint | required uids,uidvalidity | folder:string uids:array uidvalidity:integer dry_run:boolean
+#|mail_delete | destructiveHint,openWorldHint | required uids,uidvalidity,confirm | folder:string uids:array uidvalidity:integer confirm:string[permanently-delete] dry_run:boolean
+#|mail_create_folder | openWorldHint | required name | name:string dry_run:boolean
+#|mail_rename_folder | destructiveHint,openWorldHint | required from,to | from:string to:string dry_run:boolean
+#|mail_save_draft | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
-#|484906 characters
-#|hash 549702521
+#|operation policy agrees True
+#|485897 characters
+#|hash 3194590239
