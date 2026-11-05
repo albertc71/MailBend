@@ -30,7 +30,8 @@ class DriftChecks(unittest.TestCase):
         files = [*ROOT.glob("*.md"), ROOT / "LAWS.bend", ROOT / "main.bend",
                  ROOT / ".env.example", ROOT / "scripts/mailbend", ROOT / "tools/gen-schema.py",
                  *ROOT.glob("src/*.bend"), *ROOT.glob("native/*/src/**/*.rs"),
-                 *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md")]
+                 *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md"),
+                 *ROOT.glob(".github/ISSUE_TEMPLATE/*.yml")]
         for source in files:
             target = self.root / source.relative_to(ROOT)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,141 @@ class DriftChecks(unittest.TestCase):
 
     def test_current_documentation(self):
         self.check()
+
+    def test_issue_chooser_requires_private_security_route(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"blank_issues_enabled": False, "contact_links": []}))
+        self.check("missing private security route")
+
+    def test_issue_chooser_disables_blank_issues(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
+        config = json.loads(path.read_text())
+        config["blank_issues_enabled"] = True
+        path.write_text(json.dumps(config))
+        self.check("blank issues must be disabled")
+
+    def test_bug_form_requires_visible_reproduction(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/bug-report.yml"
+        path.write_text(json.dumps({"name": "Bug report", "description": "Report a bug", "body": []}))
+        self.check("missing required textarea reproduction")
+
+    def test_feature_form_requires_constraint_discussion(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/feature-request.yml"
+        path.write_text(json.dumps({"name": "Feature request", "description": "Propose a change", "body": []}))
+        self.check("missing required textarea constraints")
+
+    def test_issue_forms_require_visible_private_routing(self):
+        for filename in ("bug-report.yml", "feature-request.yml"):
+            with self.subTest(filename=filename):
+                path = self.root / ".github/ISSUE_TEMPLATE" / filename
+                original = path.read_text()
+                form = json.loads(original)
+                form["body"] = [field for field in form["body"] if field["type"] != "markdown"]
+                path.write_text(json.dumps(form))
+                self.check("missing visible private security route")
+                path.write_text(original)
+
+    def test_issue_forms_require_privacy_acknowledgement(self):
+        for filename in ("bug-report.yml", "feature-request.yml"):
+            with self.subTest(filename=filename):
+                path = self.root / ".github/ISSUE_TEMPLATE" / filename
+                original = path.read_text()
+                form = json.loads(original)
+                privacy = next(field for field in form["body"] if field.get("id") == "privacy")
+                privacy["attributes"]["options"][0]["required"] = False
+                path.write_text(json.dumps(form))
+                self.check("missing required privacy acknowledgement")
+                path.write_text(original)
+
+    def test_issue_form_privacy_warning_is_visible(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/bug-report.yml"
+        form = json.loads(path.read_text())
+        notice = next(field for field in form["body"] if field["type"] == "markdown")
+        notice["attributes"]["value"] = "[Private report](https://github.com/albertc71/MailBend/security/advisories/new)"
+        path.write_text(json.dumps(form))
+        self.check("missing visible privacy warning")
+
+    def test_issue_form_rejects_duplicate_field_ids(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/bug-report.yml"
+        form = json.loads(path.read_text())
+        form["body"].append(form["body"][1])
+        path.write_text(json.dumps(form))
+        self.check("duplicate issue field id revision")
+
+    def test_issue_form_malformed_declarations_fail_cleanly(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/bug-report.yml"
+        original = json.loads(path.read_text())
+        for form in ([], {**original, "name": ""}, {**original, "body": {}},
+                     {**original, "body": ["not a field"]},
+                     {**original, "body": [{"type": "textarea", "attributes": []}]}):
+            with self.subTest(form=form):
+                path.write_text(json.dumps(form))
+                result = self.check("invalid issue form declaration")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_issue_form_rejects_markdown_field_ids_cleanly(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/bug-report.yml"
+        form = json.loads(path.read_text())
+        form["body"][0]["id"] = ["invalid"]
+        path.write_text(json.dumps(form))
+        result = self.check("invalid issue form declaration")
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_bug_diagnostics_require_offline_no_flags_guidance(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/bug-report.yml"
+        original = path.read_text()
+        for description in (
+            "Run scripts/mailbend diagnose --posture and paste the output.",
+            "Run scripts/mailbend diagnose with no flags. Also run scripts/mailbend diagnose --imap.",
+            "Run scripts/mailbend diagnose with no flags. Also run scripts/mailbend diagnose --smtp.",
+        ):
+            with self.subTest(description=description):
+                form = json.loads(original)
+                field = next(field for field in form["body"] if field.get("id") == "diagnose")
+                field["attributes"]["description"] = description
+                path.write_text(json.dumps(form))
+                self.check("bug diagnostics must use the offline command with no flags")
+
+    def test_issue_chooser_malformed_links_fail_cleanly(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
+        for config in ([], {"blank_issues_enabled": False, "contact_links": ["not a link"]},
+                       {"blank_issues_enabled": False, "contact_links": None}):
+            with self.subTest(config=config):
+                path.write_text(json.dumps(config))
+                result = self.check("invalid issue chooser declaration")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_issue_form_required_fields_cannot_be_removed_or_made_optional(self):
+        for filename, names in (
+            ("bug-report.yml", ("revision", "distribution", "diagnose", "reproduction", "behavior")),
+            ("feature-request.yml", ("problem", "outcome", "constraints")),
+        ):
+            path = self.root / ".github/ISSUE_TEMPLATE" / filename
+            original = path.read_text()
+            for name in names:
+                for mutation in ("remove", "optional", "string-boolean", "wrong-type"):
+                    with self.subTest(filename=filename, field=name, mutation=mutation):
+                        form = json.loads(original)
+                        field = next(field for field in form["body"] if field.get("id") == name)
+                        if mutation == "remove":
+                            form["body"].remove(field)
+                        elif mutation == "wrong-type":
+                            field["type"] = "textarea" if field["type"] == "input" else "input"
+                        else:
+                            field["validations"]["required"] = False if mutation == "optional" else "true"
+                        path.write_text(json.dumps(form))
+                        try:
+                            self.check("missing required")
+                        finally:
+                            path.write_text(original)
+
+    def test_issue_chooser_rejects_public_security_route(self):
+        path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
+        config = json.loads(path.read_text())
+        config["contact_links"][0]["url"] = "https://github.com/albertc71/MailBend/issues/new"
+        path.write_text(json.dumps(config))
+        self.check("missing private security route")
 
     def test_skill_unknown_tool(self):
         for name in ("mail_missing", "mail_getWrong"):
@@ -363,6 +499,24 @@ const LIVE: &str = "MAILBEND_AFTER_QUOTE";
 
 
 class ClientSnippets(unittest.TestCase):
+    def test_contributor_routes_and_governance_links(self):
+        contributing = ROOT / "CONTRIBUTING.md"
+        links = re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", contributing.read_text())
+        self.assertIn("GOVERNANCE.md", links)
+        for relative in ("GOVERNANCE.md", "CONTRIBUTING.md"):
+            path = ROOT / relative
+            for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", path.read_text()):
+                if "://" in target:
+                    continue
+                filename, _, anchor = target.partition("#")
+                destination = (path.parent / filename).resolve() if filename else path
+                self.assertTrue(destination.is_file(), target)
+                if anchor and destination.suffix == ".md":
+                    headings = re.findall(r"^#+ (.+)$", destination.read_text(), re.M)
+                    slugs = {re.sub(r"[^a-z0-9 -]", "", heading.lower()).replace(" ", "-")
+                             for heading in headings}
+                    self.assertIn(anchor, slugs, target)
+
     def test_password_file_recipe_python(self):
         text = (ROOT / "docs/MCP_CLIENTS.md").read_text()
         recipe = re.search(r"python3 - <<'PY'\n(.*?)\nPY\n", text, re.S)
