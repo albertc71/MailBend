@@ -765,6 +765,11 @@ Agentic Top 10.
   `MAILBEND_MAX_SENDS_PER_DAY` caps sends per UTC day in a local counter no
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven). <!-- claim:sent-copy -->
+- **Outgoing mail needs a readable clock.** Sends and drafts, including dry runs,
+  refuse when `/bin/date +%s` fails or does not return a positive U32 decimal
+  timestamp. Sending checks the clock again before reserving its UTC-day count
+  and contacting SMTP, even without a daily cap. This validates the clock result,
+  not its accuracy. It does not detect clock skew or provide another clock source.
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that <!-- claim:read-plans -->
   every read plan (probe, quota, folders, search, get, new mail, refresh, thread,
   brief, contacts) contains no command that can change a mailbox, for every

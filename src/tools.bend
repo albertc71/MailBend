@@ -4694,12 +4694,24 @@ type Want is Data:
     jev: Jev.Switch
   }
 
+def secs_of.number(n: Maybe<&2, U32>, raw: String) -> U32:
+  match n:
+    case Some{+v}:
+      Bool.pick(U32, U32.is_gt(v, 0) && String.eq(raw, U32.show(v)), v, 0)
+    case None{}:
+      0
+
 def secs_of(p: Policy.Proc) -> U32:
   match p:
     case Policy.ProcOk{code, out, err}:
-      Maybe.default(&2, U32, U32.read(String.trim(out)), 0)
+      +raw = String.trim(out)
+      Bool.pick(U32, U32.is_eq(code, 0), secs_of.number(U32.read(raw), raw), 0)
     case _:
       0
+
+def clock_checked(+secs: U32) -> Result<&2, &2, String, U32>:
+  Bool.pick(Result<&2, &2, String, U32>, U32.is_eq(secs, 0),
+    Fail{"system clock is unavailable or invalid"}, Done{secs})
 
 def rand_of(r: Result<&1, &1, U32 & String, U32>) -> Result<&2, &2, String, U32>:
   match r:
@@ -4717,9 +4729,10 @@ def stamp_checked(
   b: Result<&1, &1, U32 & String, U32>
 ) -> Result<&2, &2, String, Stamp>:
   do Result<&2, &2, String, Stamp>:
+    now : U32 <- clock_checked(secs)
     x : U32 <- rand_of(a)
     y : U32 <- rand_of(b)
-    return stamp_of(secs, x, y)
+    return stamp_of(now, x, y)
 
 # The time in seconds since the epoch; 0 when it cannot be read.
 def now_seconds() -> IO(U32):
@@ -6106,13 +6119,27 @@ def unlisted_msg(refused: List<&2, String>) -> String:
   "MAILBEND_ALLOWED_RECIPIENTS does not allow sending to " ++ String.join(refused, ", ") ++
     "; nothing was sent"
 
+def send_allowed.clock(
+  clock: Result<&2, &2, String, U32>,
+  envelope: String,
+  limit: U32,
+  dir: String,
+  s: Sent
+) -> IO(Policy.Out):
+  match clock:
+    case Fail{problem}:
+      send_allowed.if(problem, envelope, s)
+    case Done{secs}:
+      do IO<Policy.Out>:
+        problem : String <- reserve(limit, dir, M.iso_date(secs))
+        send_allowed.if(problem, envelope, s)
+
 # The send counts against the UTC day read just before its reservation,
 # after the gates, which may take a while.
 def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(Policy.Out):
   do IO<Policy.Out>:
     secs : U32 <- now_seconds()
-    problem : String <- reserve(limit, dir, M.iso_date(secs))
-    send_allowed.if(problem, envelope, s)
+    send_allowed.clock(clock_checked(secs), envelope, limit, dir, s)
 
 # A message ready to send once the gates pass it: the bare sender and
 # recipients, the message, the allowlist and daily limit it goes under,

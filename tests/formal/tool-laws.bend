@@ -25,6 +25,30 @@ law hidden_tags_refuse_send_and_draft:
 def hidden_tags_refuse_send_and_draft(first, rest, w, from):
   {==}
 
+# Unknown time refuses composition regardless of either random result.
+law unknown_clock_refuses_stamp:
+  for a: Result<&1, &1, U32 & String, U32>
+  for b: Result<&1, &1, U32 & String, U32>
+  {Tools.stamp_checked(0, a, b) ==
+    Fail{"system clock is unavailable or invalid"} : Result<&2, &2, String, Tools.Stamp>}
+
+def unknown_clock_refuses_stamp(a, b):
+  {==}
+
+# The reservation-time refusal is pure IO, with no counter or SMTP effect,
+# including when the daily limit is zero.
+law unknown_clock_refuses_reservation:
+  for envelope: String
+  for limit: U32
+  for dir: String
+  for s: Tools.Sent
+  {Tools.send_allowed.clock(Tools.clock_checked(0), envelope, limit, dir, s) ==
+    Tools.pure_out(Tools.send_not_attempted(
+      Policy.Err{"system clock is unavailable or invalid; nothing was sent"})) : IO(Policy.Out)}
+
+def unknown_clock_refuses_reservation(envelope, limit, dir, s):
+  {==}
+
 # Offline posture
 # ---------------
 
