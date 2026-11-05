@@ -382,7 +382,8 @@ def output_schema(name):
 
 
 # Annotations
-# destructiveHint is non-additive, not Ops.is_destructive (permanent-delete policy).
+# destructiveHint marks a non-additive change. It is not Ops.is_destructive,
+# the permanent-delete policy classifier that the hook uses.
 
 READS = hints(read_only=True, idempotent=True)
 SETS_FLAGS = hints(idempotent=True, destructive=True)

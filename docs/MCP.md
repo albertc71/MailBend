@@ -158,7 +158,8 @@ a description and the project's website URL. All legacy initializations also
 include this rich server identity, and tool listings for every supported
 revision include tool titles and `_meta`. Some of these fields are extensions
 to older revision schemas; clients must tolerate unknown fields. Compatibility
-of the existing result shapes applies to `tools/call`, not to the complete
+of the existing result shapes covers `tools/call` results and the omission of
+`outputSchema` from `tools/list` before `2025-06-18`. It does not cover the other
 `initialize` or `tools/list` metadata. Ordinary tool results retain the
 compact server name and version, so display metadata does not inflate every
 reply or its byte budget. Icons and a larger
