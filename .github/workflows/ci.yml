@@ -314,6 +314,7 @@ jobs:
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
         run: |
+          python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
           python3 tests/test-e2e.py
       - name: Short synthetic MCP soak

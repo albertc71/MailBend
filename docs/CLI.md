@@ -27,6 +27,35 @@ Using stdin avoids putting the document in argv. It does not hide data from the
 caller, privileged users or a file you create. Keep argument files private. Do
 not put passwords in either JSON form; use the existing credential settings.
 
+## Tool discovery
+
+```sh
+scripts/mailbend tools
+scripts/mailbend tools --names
+scripts/mailbend tools mail_get
+```
+
+`tools` prints the available tool definitions as a JSON array. `tools --names`
+prints only their names as a JSON string array, in the same order. `tools <tool>`
+prints one JSON object identical to that tool's entry in the full array. Both
+schema forms keep the existing CLI format, which omits `outputSchema`.
+
+All three forms honor the current configuration. Read-only mode hides mutating
+tools. Drafts-only mode hides `mail_send` but keeps `mail_reply` and
+`mail_forward`, which can save drafts. Jev tools are available only when Jev is
+enabled. Invalid `MAILBEND_READ_ONLY`, `MAILBEND_DRAFTS_ONLY`, or TypeSafe settings
+conservatively list the read-only tools with Jev off, even though tool execution
+would fail.
+
+Discovery reads configuration without running tools, starting mail helpers,
+reading credential files, or contacting servers. Enabling Jev still requires
+an absolute `MAILBEND_TYPESAFE_KEY_FILE` path in the configuration, but discovery
+does not open that file.
+
+An unknown or unavailable tool name exits 2 with empty stdout and the fixed
+stderr message `mailbend: unknown or unavailable tool`. Extra arguments are
+usage errors. `--names` cannot be combined with a tool name.
+
 ## Output and status
 
 `call` prints one JSON tool result on stdout after dispatch, followed by a
