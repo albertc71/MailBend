@@ -14,7 +14,9 @@
 #                                 TypeSafe service (tests/fake_typesafe.py)
 set -eu
 
-outdir="${1:?usage: gen-test-certs.sh OUTDIR}"
+outdir="${1:?usage: gen-test-certs.sh OUTDIR [--demo]}"
+mode="${2:-}"
+case "$mode" in ""|--demo) ;; *) echo "unknown certificate mode" >&2; exit 2 ;; esac
 mkdir -p "$outdir"
 cd "$outdir"
 
@@ -28,20 +30,52 @@ openssl req -x509 -new -key ca-key.pem -days 2 -out ca.pem \
   -subj "/CN=MailBend Test CA" 2>/dev/null
 
 # CA-signed leaf with the given SAN and validity (in days from now; a
-# negative value back-dates notAfter before notBefore, i.e. already expired).
+# value of -1 uses a fixed, correctly ordered interval wholly in the past).
 gen_leaf() {
   name="$1"; san="$2"; days="$3"
   gen_key "${name}-key.pem"
   openssl req -new -key "${name}-key.pem" -out "${name}.csr" \
     -subj "/CN=${name}" 2>/dev/null
   printf 'subjectAltName=%s\n' "$san" > "${name}.ext"
-  openssl x509 -req -in "${name}.csr" -CA ca.pem -CAkey ca-key.pem -CAcreateserial \
-    -days "$days" -out "${name}.pem" \
-    -extfile "${name}.ext" 2>/dev/null
+  if [ "$days" = -1 ]; then
+    # OpenSSL 3.5 rejects non-positive `x509 -days`. `ca` supports fixed
+    # validity dates on both old and new OpenSSL, without changing the clock.
+    scratch=$(mktemp -d ./expired-ca.XXXXXX)
+    : > "$scratch/index"
+    printf '01\n' > "$scratch/serial"
+    cat > "$scratch/config" <<EOF
+[ca]
+default_ca = testca
+[testca]
+database = $scratch/index
+serial = $scratch/serial
+new_certs_dir = $scratch
+certificate = ca.pem
+private_key = ca-key.pem
+default_md = sha256
+policy = signing_policy
+[signing_policy]
+commonName = supplied
+EOF
+    openssl ca -batch -notext -config "$scratch/config" \
+      -startdate 20000101000000Z -enddate 20000102000000Z \
+      -in "${name}.csr" -out "${name}.pem" -extfile "${name}.ext" 2>/dev/null
+    rm -rf "$scratch"
+  else
+    openssl x509 -req -in "${name}.csr" -CA ca.pem -CAkey ca-key.pem -CAcreateserial \
+      -days "$days" -out "${name}.pem" \
+      -extfile "${name}.ext" 2>/dev/null
+  fi
   rm -f "${name}.csr" "${name}.ext"
 }
 
 gen_leaf server "DNS:localhost,DNS:mailbend.test" 2
+# The demo needs only this leaf. Do not generate negative test certificates
+# (notably the expired fixture) when starting a user-facing demo.
+if [ "$mode" = --demo ]; then
+  rm -f ca-key.pem ca.srl
+  exit 0
+fi
 gen_leaf ip-address "IP:127.0.0.1,IP:::1" 2
 gen_leaf wronghost "DNS:not-localhost.invalid" 2
 gen_leaf expired "DNS:localhost" -1

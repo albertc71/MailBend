@@ -78,6 +78,7 @@ python3 tests/test-image-assets.py                 # the fake TypeSafe's image r
 bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
 python3 tests/test-stdio.py
+python3 tests/test-demo.py                        # isolated loopback demo, MCP flow and cleanup
 python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit

@@ -15,6 +15,37 @@ scripts/install.sh --install-bend --install-rust
 Then [configure](#configure) your account and [register the MCP
 server](#use). Details of the install are [below](#install-linux).
 
+## Try it without an account
+
+From a built checkout, run `scripts/mailbend-demo` (Python 3 and OpenSSL are
+required). Keep that terminal open and copy its JSON into a separate MCP client
+configuration. No account, app password or TypeSafe key is needed. Ask the client
+to search the demo inbox, read the invoice, move the newsletter to Trash, or send
+a synthetic message to `friend@example.com`. Only that recipient is allowlisted.
+
+The mailbox has three synthetic messages: a newsletter, an invoice and a clearly
+labelled prompt injection. Treat the injection as untrusted mail, never as
+instructions. Use an isolated client session without real accounts or unrelated
+powerful tools: this demo isolates MailBend, not the rest of your agent's tools.
+Jev stays off, so its classification and triage tools are not offered. Use a
+trusted machine: the fixture password is public, and other users on the same
+host can reach the synthetic IMAP/SMTP ports.
+
+The demo discards inherited account, helper, proxy, trust-store and TypeSafe
+settings. Mail sockets connect only to `127.0.0.1`, with TLS still verifying
+`localhost` against a new throwaway CA. The temporary `MAILBEND_CA_FILE` applies
+only to this demo; it is never installed into the system trust store or copied
+into your regular configuration. The printed MCP command relays over a private
+local socket, so the MCP client's environment cannot override these settings.
+
+The terminal shows the temporary fake-server state file where synthetic sends
+and folder changes can be inspected. Ctrl-C, SIGTERM or SIGHUP stops the server
+and its connected MailBend processes and removes the session, certificates and
+state. Old MCP snippets then fail closed; start again for a fresh mailbox and
+configuration. As with other temporary programs, SIGKILL or power loss can leave
+a directory under `/tmp/mailbend-demo-*`; remove only your stopped session's
+directory. No real mail is sent, and no live provider or Jev behavior is tested.
+
 ## Why MailBend
 
 - **Safety rules are proven, not just tested.** The rules for the IMAP <!-- claim:read-plans -->
