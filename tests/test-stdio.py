@@ -937,19 +937,30 @@ class ProcessStateTests(unittest.TestCase):
 
     def test_stop_barrier_keeps_default_deadline(self):
         now = 0.0
+        clock_reads = 0
+
+        def monotonic():
+            nonlocal clock_reads
+            clock_reads += 1
+            # Allow extra observations without advancing time, but fail a busy
+            # loop even when a regression removes the sleep that moves the clock.
+            self.assertLessEqual(clock_reads, 10_000, "polling clock made no bounded progress")
+            return now
 
         def advance(seconds):
             nonlocal now
             now += seconds
 
-        with mock.patch.object(pathlib.Path, "read_text", return_value="123 (core) S 1\n") as read, \
-                mock.patch.object(time, "monotonic", side_effect=lambda: now), \
-                mock.patch.object(time, "sleep", side_effect=advance):
+        predicate = mock.Mock(side_effect=lambda: stopped(123))
+        with mock.patch.object(pathlib.Path, "read_text", return_value="123 (core) S 1\n"), \
+                mock.patch.object(time, "monotonic", side_effect=monotonic), \
+                mock.patch.object(time, "sleep", side_effect=advance) as sleep:
             with self.assertRaisesRegex(AssertionError, "within timeout"):
-                wait_until(lambda: stopped(123))
-            self.assertGreater(read.call_count, 0)
+                wait_until(predicate)
+            self.assertGreater(predicate.call_count, 0)
+            self.assertEqual(predicate.call_count, sleep.call_count)
             self.assertGreaterEqual(now, 10)
-            self.assertLess(now, 10.1)
+            self.assertLessEqual(now, 10 + 0.01 + 1e-9)
 
     def test_backpressure_waits_for_observed_stop_before_flood_and_term(self):
         events = []
@@ -983,6 +994,8 @@ class ProcessStateTests(unittest.TestCase):
             session.proc.wait.assert_called_once_with(timeout=10)
         required = [(123, signal.SIGSTOP), "T", "flood", "terminate",
                     "pending", (123, signal.SIGCONT), "Z"]
+        for event in ((123, signal.SIGSTOP), "flood", "terminate", (123, signal.SIGCONT)):
+            self.assertEqual(events.count(event), 1, events)
         for before, after in zip(required, required[1:]):
             self.assertLess(events.index(before), events.index(after), events)
 
