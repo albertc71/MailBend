@@ -182,11 +182,15 @@ It also rejects external references to command-returning defs in `src/ops.bend`
 unless their names start with `plan_`. External references to command-returning
 defs in `src/imap.bend` are rejected even if their names start with `plan_`:
 plans belong in `src/ops.bend`. This uses declared return types that name the
-IMAP `Cmd` type, directly or inside a container. A `Cmd` parameter alone does
+IMAP `Cmd` type, directly or inside a container. Every def in `src/ops.bend` and
+`src/imap.bend` must have an explicit, nonempty return annotation. This requirement
+does not apply to other modules or proof files. A `Cmd` parameter alone does
 not make a def command-returning. Return annotations support named types and
 generic containers with numeric multiplicities such as `List<&2, I.Cmd>`.
 Other return-type syntax fails closed. The check does not infer return types,
-expand type aliases, or follow higher-order values and call chains.
+expand type aliases, inspect user-defined data types or their fields, or follow
+higher-order values and call chains. It does not prove that plan output reaches
+the transport unchanged.
 
 Proof and test files remain free to construct expected commands. This source
 reader is not a Bend parser or type checker. It supports the repository's
