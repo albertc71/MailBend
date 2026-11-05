@@ -137,12 +137,37 @@ session (two when the server has SPECIAL-USE; `mail_get_thread` reuses its
 own). `mail_classify` and `mail_triage` report each request's `messages`,
 `bytes` and TypeSafe's `input_tokens`.
 
-With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` fetches each image part
-it might send in a read-only IMAP session of its own, just before the
-request that would carry it, and at most eight per request. A part past
-those eight, or past the request's four images or its bytes, is reported
-`over_count` or `over_budget` without being fetched, even where a fetch
-would have found it outside the pixel rules (`dimensions`).
+With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` fetches image candidates
+in rounds shared by all messages in one TypeSafe request. Each round takes
+at most the smaller of the remaining four image slots and eight fetch
+attempts. It opens the folder with `EXAMINE`, checks UIDVALIDITY, and fetches
+each participating message's selected `BODY.PEEK` sections together.
+Bend checks and admits the returned parts in their original order. Rejected
+images leave room for another round.
+
+| Image survey within one TypeSafe request | Extra IMAP logins |
+| --- | --- |
+| Images off, no eligible candidates, or no remaining budget | 0 |
+| First eligible candidates all accepted | 1 |
+| Rejected candidates require replacement rounds | At most 5 |
+
+A classify call can contain several TypeSafe requests. Each has its own
+quota and login budget. At most eight image parts are fetched per request.
+Nothing is fetched after its fourth accepted image, and no new round starts
+when its count, bytes or fetch budget is exhausted. Remaining parts keep
+their existing `over_count` or `over_budget` reason, even when downloading
+them would have found a different reason such as `dimensions`.
+
+If the byte budget becomes exactly zero during a round, later parts in that
+already-issued round may have been downloaded. They are reported
+`over_budget` without being judged or sent to TypeSafe. No further round
+runs. A single round requests at most four encoded parts of 2,162,689 bytes
+each. The helper's existing 60 MiB transcript cap includes metadata and
+protocol overhead and fails closed if the response exceeds it. Its encoded
+stdout is at most 120 MiB, below Bend's unchanged 128 MiB process limit.
+
+The [round model](plans/image-rounds.md) records the state transitions and
+the bounded session-count check.
 
 ## Sends
 
