@@ -9,6 +9,7 @@ def parsed(s: String) -> J.Json:
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    IO.print(J.show(MCP.versions()))
     IO.print("valid metadata " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}"))))
     IO.print("missing capabilities " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}"))))
     IO.print("null version " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":null,\"io.modelcontextprotocol/clientCapabilities\":{}}}"))))
@@ -28,6 +29,7 @@ def main() -> IO(Unit):
     IO.print(J.show(MCP.cacheable_result(False{}, J.obj([]), "1")))
     IO.print(J.show(MCP.cacheable_result(True{}, J.obj([]), "1")))
 
+#|["2026-07-28","2025-11-25","2025-06-18","2025-03-26","2024-11-05"]
 #|valid metadata True
 #|missing capabilities False
 #|null version False
@@ -43,6 +45,6 @@ def main() -> IO(Unit):
 #|huge exponent integer id True
 #|huge negative exponent fraction id False
 #|{}
-#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1"}}}
+#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1","title":"MailBend","description":"Read and manage mail over IMAP and SMTP with bounded plans and safety gates.","websiteUrl":"https://github.com/albertc71/MailBend"}}}
 #|{}
-#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1"}},"ttlMs":300000,"cacheScope":"private"}
+#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1","title":"MailBend","description":"Read and manage mail over IMAP and SMTP with bounded plans and safety gates.","websiteUrl":"https://github.com/albertc71/MailBend"}},"ttlMs":300000,"cacheScope":"private"}

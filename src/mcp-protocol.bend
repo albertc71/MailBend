@@ -7,10 +7,10 @@ def modern_version() -> String:
   "2026-07-28"
 
 def latest_legacy_version() -> String:
-  "2025-06-18"
+  "2025-11-25"
 
 def legacy_versions() -> List<&2, String>:
-  [latest_legacy_version(), "2025-03-26", "2024-11-05"]
+  [latest_legacy_version(), "2025-06-18", "2025-03-26", "2024-11-05"]
 
 def versions() -> J.Json:
   J.strs(modern_version() <> legacy_versions())
@@ -97,7 +97,11 @@ def requested(p: J.Json) -> String:
   Maybe.default(&2, String, J.as_str(J.get(meta(p), field("protocolVersion"))), "")
 
 def server_info(v: String) -> J.Json:
-  J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(v))])
+  J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(v)),
+    J.kv("title", J.str("MailBend")),
+    J.kv("description",
+      J.str("Read and manage mail over IMAP and SMTP with bounded plans and safety gates.")),
+    J.kv("websiteUrl", J.str("https://github.com/albertc71/MailBend"))])
 
 def complete_result(j: J.Json, v: String) -> J.Json:
   match j:

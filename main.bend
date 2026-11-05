@@ -306,8 +306,8 @@ def legacy_after(
 # Structured tool results are available from the June 2025 legacy revision.
 def legacy_structured(legacy: Maybe<&2, String>) -> Bool:
   match legacy:
-    case Some{v}:
-      String.eq(v, MCP.latest_legacy_version())
+    case Some{+v}:
+      String.eq(v, "2025-06-18") || String.eq(v, "2025-11-25")
     case None{}:
       False{}
 
