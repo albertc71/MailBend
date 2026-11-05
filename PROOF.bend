@@ -2630,10 +2630,20 @@ def hook_wrong_kind_printed_ask()
     J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]),
     hook_wrong_kind_witness())
 
+def hook_missing_kind_printed_ask()
+  -> {Laws.hook_printed_decision(Hook.event.kind(None{}, J.obj([]))) ==
+      Some{"ask"} : Maybe<&2, String>}:
+  Laws.hook_wrong_kind_asks(None{}, J.obj([]), hook_missing_kind_witness())
+
 def hook_nonobject_input_printed_ask()
   -> {Laws.hook_printed_decision(Hook.event.fields(Some{"mail_get"},
     Some{J.JArr{J.JEnd{}}})) == Some{"ask"} : Maybe<&2, String>}:
   Laws.hook_nonobject_input_asks("mail_get", Some{J.JArr{J.JEnd{}}}, hook_nonobject_input_witness())
+
+def hook_missing_input_printed_ask()
+  -> {Laws.hook_printed_decision(Hook.event.fields(Some{"mail_get"}, None{})) ==
+      Some{"ask"} : Maybe<&2, String>}:
+  Laws.hook_nonobject_input_asks("mail_get", None{}, hook_missing_input_witness())
 
 def hook_pretool_read_is_quiet()
   -> {Laws.hook_printed_decision(Hook.event.kind(Some{"PreToolUse"},
