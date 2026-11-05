@@ -116,8 +116,8 @@ def def_returns(path):
                     raise ValueError(f"{path}: unsupported def return type: {name}")
                 annotation.append(tokens[cursor])
                 cursor += 1
-            if not annotation:
-                raise ValueError(f"{path}: missing def return type: {name}")
+        if not annotation:
+            raise ValueError(f"{path}: missing def return type: {name}")
         if tokens[cursor:cursor + 1] != [":"]:
             raise ValueError(f"{path}: unsupported def return declaration: {name}")
         definitions[name] = annotation

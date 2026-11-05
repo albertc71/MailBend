@@ -58,6 +58,23 @@ class PlanCoverage(unittest.TestCase):
         self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.store(7)\n")
         self.check(1, "store")
 
+    def test_ops_command_wrapper_requires_a_return_annotation(self):
+        self.append("src/ops.bend", "\ndef store_cmd():\n  [I.CStore{7}]\n")
+        self.append("src/tools.bend", "\ndef bypass() -> List<I.Cmd>:\n  Ops.store_cmd()\n")
+        self.check(1, "missing def return type: store_cmd")
+
+    def test_imap_command_factory_requires_a_return_annotation(self):
+        self.append("src/imap.bend", "\ndef store(uid: U32):\n  CStore{uid}\n")
+        self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.store(7)\n")
+        self.check(1, "missing def return type: store")
+
+    def test_other_modules_and_proof_helpers_need_no_return_annotation(self):
+        self.append("src/tools.bend", "\ndef untyped_read():\n  Ops.plan_read()\n")
+        self.append("LAWS.bend", "\ndef untyped_helper():\n  Ops.plan_read()\n")
+        self.write("PROOF.bend", "import ./src/ops.bend as Ops\n"
+                   "def untyped_helper():\n  Ops.plan_read()\n")
+        self.assertIn("1 public plan", self.check().stdout)
+
     def test_non_plan_wrapper_cannot_hide_an_internal_plan(self):
         self.append("src/ops.bend", "\ndef plan_hidden() -> List<I.Cmd>:\n  [I.CStore{7}]\n"
                     "\ndef run_hidden() -> List<I.Cmd>:\n  plan_hidden()\n")
