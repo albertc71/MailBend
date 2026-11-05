@@ -45,6 +45,6 @@ def main() -> IO(Unit):
 #|huge exponent integer id True
 #|huge negative exponent fraction id False
 #|{}
-#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1","title":"MailBend","description":"Read and manage mail over IMAP and SMTP with bounded plans and safety gates.","websiteUrl":"https://github.com/albertc71/MailBend"}}}
+#|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1"}}}
 #|{}
 #|{"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"mailbend","version":"1","title":"MailBend","description":"Read and manage mail over IMAP and SMTP with bounded plans and safety gates.","websiteUrl":"https://github.com/albertc71/MailBend"}},"ttlMs":300000,"cacheScope":"private"}

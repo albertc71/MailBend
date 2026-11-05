@@ -1754,6 +1754,13 @@ def mcp_modern(srv):
         for r in res if "result" in r), res)
     check("modern MCP: discovery and list have private five-minute cache hints",
           all(cache_hints_ok(by_id[i]["result"]) for i in [1, 2]), res)
+    check("modern MCP: cacheable metadata includes display identity", all(
+        by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"].get("title") == "MailBend" and
+        by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"].get("websiteUrl") ==
+        "https://github.com/albertc71/MailBend" for i in (1, 2)))
+    check("modern MCP: tool calls retain compact server identity", all(
+        set(by_id[i]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]) == {"name", "version"}
+        for i in (3, 4)))
     check("modern MCP: calls and protocol errors carry no cache hints",
           all(no_cache_hints(r) and no_cache_hints(r.get("result", {}))
               and no_cache_hints(r.get("error", {})) for r in res

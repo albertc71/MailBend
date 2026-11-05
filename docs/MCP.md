@@ -153,8 +153,10 @@ word remains a mistake guard, not approval. The argument-sensitive
 static metadata prompt for a draft or dry run. Vendor client UIs have not been
 tested as part of this metadata change.
 
-Server discovery, initialization and modern result metadata include a title,
-a description and the project's website URL. Icons and a larger
+Server discovery, initialization and modern tool listings include a title,
+a description and the project's website URL. Ordinary tool results retain the
+compact server name and version, so display metadata does not inflate every
+reply or its byte budget. Icons and a larger
 `anthropic/maxResultSizeChars` are not advertised. Existing response budgets
 remain in force.
 

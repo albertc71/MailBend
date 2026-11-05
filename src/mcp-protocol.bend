@@ -103,10 +103,10 @@ def server_info(v: String) -> J.Json:
       J.str("Read and manage mail over IMAP and SMTP with bounded plans and safety gates.")),
     J.kv("websiteUrl", J.str("https://github.com/albertc71/MailBend"))])
 
-def complete_result(j: J.Json, v: String) -> J.Json:
+def complete_result(j: J.Json, server: J.Json) -> J.Json:
   match j:
     case J.JObj{items}:
-      m = J.obj([J.kv(field("serverInfo"), server_info(v))])
+      m = J.obj([J.kv(field("serverInfo"), server)])
       J.JObj{J.JCons{J.kv("resultType", J.str("complete")),
         J.JCons{J.kv("_meta", m), items}}}
     case _:
@@ -115,7 +115,7 @@ def complete_result(j: J.Json, v: String) -> J.Json:
 def result(modern: Bool, j: J.Json, v: String) -> J.Json:
   match modern:
     case True{}:
-      complete_result(j, v)
+      complete_result(j, J.obj([J.kv("name", J.str("mailbend")), J.kv("version", J.str(v))]))
     case False{}:
       j
 
@@ -125,7 +125,7 @@ def cacheable_result(modern: Bool, j: J.Json, v: String) -> J.Json:
   match modern j:
     case True{} J.JObj{items}:
       complete_result(J.JObj{J.JCons{J.kv("ttlMs", J.JNum{"300000"}),
-        J.JCons{J.kv("cacheScope", J.str("private")), items}}}, v)
+        J.JCons{J.kv("cacheScope", J.str("private")), items}}}, server_info(v))
     case _ _:
       j
 
