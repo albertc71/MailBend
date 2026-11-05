@@ -1216,6 +1216,13 @@ always unknown, never proof of a first-time sender or complete correspondence
 history. `correspondence` exposes the folder identity, sample, caps and reason
 for incomplete evidence. Sent discovery or read failure does not hide the
 selected messages; it leaves contact classification unknown with that reason.
+When selected senders exist, an unavailable clock or a timestamp earlier than
+30 days after the Unix epoch skips Sent discovery and scanning. The selected
+messages and checkpoint remain available, but `correspondence.since` is empty and coverage is incomplete
+with a clock/window reason. Exactly 30 days is sufficient for the window.
+This check prevents unsigned subtraction from wrapping; it does not verify clock accuracy.
+With no selected senders, the brief skips the clock and keeps its
+no-selected-senders coverage reason.
 List, automation, sender and delivery values are untrusted header signals.
 They do not authorize actions or prove identity.
 

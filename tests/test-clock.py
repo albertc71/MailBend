@@ -293,7 +293,9 @@ class ClockTests(ClockTestCase):
         self.assert_no_effects(before)
 
 
-class BriefClockTests(ClockTestCase):
+class BriefClockTestCase(ClockTestCase):
+    wires = ('cli', 'mcp')
+
     def mailbox_fixture(self):
         fixture = copy.deepcopy(e2e.FIX)
         fixture['mailboxes']['INBOX']['messages'] = [{
@@ -310,36 +312,114 @@ class BriefClockTests(ClockTestCase):
         }]
         return fixture
 
+    def assert_partial_brief(self, settings, wire):
+        before = self.srv.st()
+        failed, result = self.call('mail_brief', {'since_uid': 0},
+                                   settings | {'MAILBEND_READ_ONLY': '1'}, wire)
+        self.assertFalse(failed, result)
+        self.assertEqual([1], [m['uid'] for m in result['messages']])
+        self.assertEqual('Brief', result['messages'][0]['subject'])
+        self.assertEqual('unknown_people', result['messages'][0]['group'])
+        self.assertEqual([{'group': 'unknown_people', 'group_key': None, 'count': 1}],
+                         result['groups'])
+        self.assertEqual(('INBOX', 1700000001), (result['folder'], result['uidvalidity']))
+        self.assertEqual(1, result['next_since_uid'])
+        self.assertTrue(result['selected_complete'])
+        self.assertFalse(result['has_more'])
+        self.assertIsNone(result['next_continuation'])
+        correspondence = result['correspondence']
+        self.assertEqual('', correspondence['since'])
+        self.assertEqual((1, 1), (correspondence['selected_senders'],
+                                  correspondence['total_senders']))
+        coverage = correspondence['coverage']
+        self.assertFalse(coverage['complete'])
+        self.assertEqual(0, coverage['sampled_headers'])
+        self.assertIn('clock', coverage['reason'])
+        self.assertIn('window', coverage['reason'])
+        commands = [r['line'] for r in self.srv.log_records()[self.log_start:]]
+        self.assertFalse(any(' LIST ' in line or ' LSUB ' in line or
+                             'Sent Messages' in line or ' SINCE ' in line
+                             for line in commands), commands)
+        self.assertTrue(any(' UID FETCH ' in line for line in commands), commands)
+        self.assertFalse(any(' SELECT ' in line or 'BODY[' in line for line in commands), commands)
+        self.assert_no_effects(before)
+        self.assertNotIn('clock-secret-canary', json.dumps(result))
+        self.assertEqual(['date'], self.date_log.read_text().splitlines())
+
+    def assert_observed_brief(self, settings, wire, since):
+        before = self.srv.st()
+        failed, result = self.call('mail_brief', {'since_uid': 0},
+                                   settings | {'MAILBEND_READ_ONLY': '1'}, wire)
+        self.assertFalse(failed, result)
+        self.assertEqual([1], [m['uid'] for m in result['messages']])
+        self.assertEqual('people', result['messages'][0]['group'])
+        self.assertEqual([{'group': 'people', 'group_key': None, 'count': 1}], result['groups'])
+        self.assertEqual(('INBOX', 1700000001), (result['folder'], result['uidvalidity']))
+        self.assertEqual('Brief', result['messages'][0]['subject'])
+        self.assertEqual(1, result['next_since_uid'])
+        self.assertTrue(result['selected_complete'])
+        self.assertFalse(result['has_more'])
+        self.assertIsNone(result['next_continuation'])
+        correspondence = result['correspondence']
+        self.assertEqual(since, correspondence['since'])
+        self.assertEqual({'folder': 'Sent Messages', 'uidvalidity': 1700000004,
+                          'sampled_headers': 1, 'complete': True, 'reason': ''},
+                         correspondence['coverage'])
+        commands = [r['line'] for r in self.srv.log_records()[self.log_start:]]
+        self.assertTrue(any(' LIST ' in line for line in commands), commands)
+        self.assertTrue(any(' EXAMINE "Sent Messages"' in line for line in commands), commands)
+        searches = [line.split(' UID SEARCH ', 1)[1] for line in commands
+                    if ' UID SEARCH SINCE ' in line]
+        self.assertEqual(['SINCE ' + since + ' UNDELETED'], searches)
+        self.assertFalse(any(' SELECT ' in line or 'BODY[' in line for line in commands), commands)
+        self.assertEqual(['date'], self.date_log.read_text().splitlines())
+        self.assert_no_effects(before)
+
+
+class BriefClockTests(BriefClockTestCase):
     def test_unknown_clock_keeps_selected_brief_without_correspondence_scan(self):
-        for wire in ('cli', 'mcp'):
+        for wire in self.wires:
             with self.subTest(wire=wire):
-                before = self.srv.st()
-                failed, result = self.call('mail_brief', {'since_uid': 0},
-                                           {'CLOCK_TEST_MODE': 'unavailable',
-                                            'MAILBEND_READ_ONLY': '1'}, wire)
-                self.assertFalse(failed, result)
-                self.assertEqual([1], [m['uid'] for m in result['messages']])
-                self.assertEqual('Brief', result['messages'][0]['subject'])
-                self.assertEqual('unknown_people', result['messages'][0]['group'])
-                self.assertEqual(1, result['next_since_uid'])
-                self.assertTrue(result['selected_complete'])
-                self.assertFalse(result['has_more'])
-                self.assertIsNone(result['next_continuation'])
-                correspondence = result['correspondence']
-                self.assertEqual('', correspondence['since'])
-                self.assertEqual((1, 1), (correspondence['selected_senders'],
-                                          correspondence['total_senders']))
-                coverage = correspondence['coverage']
-                self.assertFalse(coverage['complete'])
-                self.assertEqual(0, coverage['sampled_headers'])
-                self.assertIn('clock', coverage['reason'])
-                self.assertIn('window', coverage['reason'])
-                commands = [r['line'] for r in self.srv.log_records()[self.log_start:]]
-                self.assertFalse(any(' LIST ' in line or ' LSUB ' in line or
-                                     'Sent Messages' in line or ' SINCE ' in line
-                                     for line in commands), commands)
-                self.assertTrue(any(' UID FETCH ' in line for line in commands), commands)
-                self.assert_no_effects(before)
+                self.assert_partial_brief({'CLOCK_TEST_MODE': 'unavailable'}, wire)
+
+    def test_failed_or_malformed_clock_keeps_selected_brief(self):
+        faults = [
+            {'CLOCK_TEST_EXIT': '1'},
+            *({'CLOCK_TEST_OUTPUT': value} for value in
+              ('', '0\n', 'clock-secret-canary\n', '4294967296\n')),
+        ]
+        for wire in self.wires:
+            for settings in faults:
+                with self.subTest(wire=wire, settings=settings):
+                    self.assert_partial_brief(settings, wire)
+
+    def test_early_positive_clock_keeps_selected_brief(self):
+        for wire in self.wires:
+            for value in ('1\n', '2591999\n'):
+                with self.subTest(wire=wire, value=value):
+                    self.assert_partial_brief({'CLOCK_TEST_OUTPUT': value}, wire)
+
+    def test_valid_clock_observes_known_correspondent(self):
+        for wire in self.wires:
+            with self.subTest(wire=wire):
+                self.assert_observed_brief({'CLOCK_TEST_OUTPUT': '1700000000\n'},
+                                           wire, '15-Oct-2023')
+
+
+class BriefClockBoundaryTests(BriefClockTestCase):
+    def mailbox_fixture(self):
+        fixture = super().mailbox_fixture()
+        for folder in ('INBOX', 'Sent Messages'):
+            message = fixture['mailboxes'][folder]['messages'][0]
+            message['internaldate'] = '30-Jan-1970 00:00:00 +0000'
+            message['raw'] = message['raw'].replace('Tue, 14 Nov 2023', 'Fri, 30 Jan 1970').replace(
+                'Mon, 13 Nov 2023', 'Fri, 30 Jan 1970')
+        return fixture
+
+    def test_exact_window_clock_observes_known_correspondent(self):
+        for wire in self.wires:
+            with self.subTest(wire=wire):
+                self.assert_observed_brief({'CLOCK_TEST_OUTPUT': '2592000\n'}, wire, '1-Jan-1970')
 
 
 if __name__ == '__main__':
