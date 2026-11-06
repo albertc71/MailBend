@@ -20,6 +20,7 @@ import ./image.bend as Image
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 import ./response.bend as Response
+import ./facts.bend as Facts
 import ./policy.bend as Policy
 import ./message-metadata.bend as Metadata
 
@@ -8885,6 +8886,58 @@ def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out)
     return projected.if(Maybe.is_some(&2, J.Json, J.get(args, "projection")) ||
       Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), o, args)
 
+def facts_result.within(fits: Bool, result: J.Json) -> Policy.Out:
+  match fits:
+    case True{}:
+      Policy.Ok{result}
+    case False{}:
+      Policy.Err{"max_response_bytes is too small for the projected result and facts; raise the budget"}
+
+def facts_source(shown: Shown) -> Facts.SourceEnd:
+  match shown:
+    case Whole{out, I.Msg{uid, flags, date, size, headers, body, structure}, max}:
+      +observed = C.byte_len(body)
+      Bool.pick(Facts.SourceEnd, U32.is_ge(observed, max) || U32.is_ne(size, observed),
+        Facts.Prefix{}, Facts.Complete{})
+    case _:
+      Facts.Prefix{}
+
+def facts_result(o: Policy.Out, ending: Facts.SourceEnd, +max: U32) -> Policy.Out:
+  match o:
+    case Policy.Ok{J.JObj{+items}}:
+      +j = J.obj(J.unchain(items))
+      source_end = Bool.pick(Facts.SourceEnd,
+        Policy.bool_arg(Maybe.default(&2, J.Json, J.get(j, "response"), J.JNull{}),
+          "output_truncated", False{}), Facts.Prefix{}, ending)
+      +result = J.obj(List.append(&2, J.Json, J.unchain(items),
+        Facts.fields(Policy.str_arg(j, "text", ""), source_end)))
+      facts_result.within(U32.is_zero(max) || U32.is_le(Response.bytes(result), max), result)
+    case _:
+      o
+
+def facts_get.run(enabled: Bool, +args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
+  match enabled:
+    case False{}:
+      projected(args, jev, t_get(args))
+    case True{}:
+      do IO<Policy.Out>:
+        +fetched : Shown <- t_get(args)
+        ending : Facts.SourceEnd = facts_source(fetched)
+        result : Policy.Out <- projected(args, jev, IO.pure(Shown, fetched))
+        return facts_result(result, ending, u32_arg(args, "max_response_bytes", 0))
+
+def facts_get.if(allowed: Bool, +args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
+  match allowed:
+    case False{}:
+      pure_out(Policy.Err{"facts=true requires a whole-message read with projection=full or text"})
+    case True{}:
+      facts_get.run(Policy.bool_arg(args, "facts", False{}), args, jev)
+
+def facts_get(+args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
+  facts_get.if(Bool.not(Policy.bool_arg(args, "facts", False{})) ||
+    (String.is_empty(Policy.str_arg(args, "section", "")) &&
+      C.is_in(Policy.str_arg(args, "projection", "full"), ["full", "text"])), args, jev)
+
 # Dispatch
 # ========
 
@@ -8900,7 +8953,7 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
     case Ops.OSearch{}:
       projected(args, jev, t_search(args))
     case Ops.OGet{}:
-      projected(args, jev, t_get(args))
+      facts_get(args, jev)
     case Ops.OGetNew{}:
       projected(args, jev, t_get_new(args))
     case Ops.OBrief{}:

@@ -30,6 +30,7 @@ import ./src/contacts.bend as Contacts
 import ./src/smtp.bend as S
 import ./src/response.bend as Response
 import ./src/hook.bend as Hook
+import ./tests/formal/facts-proofs.bend as FactProof
 import ./src/policy.bend as Policy
 import ./tests/formal/smtp-tls.bend as SmtpTls
 import ./tests/formal/role-folders.bend as RoleFolders
@@ -2516,6 +2517,18 @@ def Laws.brief_completed_has_no_continuation(window, folder, uidv, last):
       {==}
 
 def Laws.brief_unseen_filter_interval(after, high, uid):
+  {==}
+
+def Laws.meeting_facts_spans_within_text(source, ending):
+  FactProof.extraction_bounds(source, ending)
+
+def Laws.meeting_facts_emitted_values(source, ending):
+  FactProof.extracted_rendered(source, ending)
+
+def Laws.meeting_facts_complete_source_witness():
+  {==}
+
+def Laws.meeting_facts_unicode_source_witness():
   {==}
 
 # Client-side prompts
