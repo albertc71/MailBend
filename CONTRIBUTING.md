@@ -68,6 +68,8 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
+python3 tools/gen-llms.py --check                  # complete source index is current
+python3 tests/test-llms.py                         # offline index CLI and failure paths
 python3 tests/test-plugin.py                      # plugin declarations and isolated launcher fixture
 python3 tests/test-toolchain-installers.py        # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
@@ -233,6 +235,45 @@ in force.
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in
 `tests/unit/schema.bend`.
+
+## Documentation source index
+
+Run `python3 tools/gen-llms.py` after adding, removing or renaming documentation,
+or changing a page title or README section heading. Commit the resulting
+`llms.txt`. `python3 tools/gen-llms.py --check` compares exact bytes without
+writing; the documentation source-checks CI step runs it and
+`python3 tests/test-llms.py`. Both commands are offline and use only Python's
+standard library. `--root PATH` selects another repository fixture independently
+of the working directory.
+
+The index discovers README, its H2 sections in source order, every `docs/**/*.md`
+page, and every `skills/mailbend/**/*.md` page. Page paths are sorted within each
+group. Internal `.agents` skills are excluded. `docs/plans/` has a separate
+proposal/history list and is not evidence that a feature is implemented. This
+is a source index only; it does not publish a site or copy document bodies.
+
+The reader supports single-line ATX headings with up to three leading spaces,
+optional closing hashes, and backtick or tilde fences. Pages need a nonempty
+first heading at H1. README anchors support ASCII plain-text headings: lowercase,
+remove punctuation except hyphens/underscores, replace spaces with hyphens,
+and suffix collisions in source order across all heading levels. It is not a
+CommonMark parser: Setext headings, HTML, inline links, entities and other
+rendered inline markup are not interpreted. Keep README headings in the supported
+plain-text subset. Every README heading level is checked because each consumes
+an anchor. Brackets, angle brackets, emphasis/code/escape markers (`*`, `_`,
+backticks and backslashes), double tildes and entity references are rejected
+before writing. Ordinary punctuation such as parentheses and slashes is allowed.
+README HTML blocks and multiline comments are also rejected outside fences;
+one-line body comments such as claim markers remain supported. Standalone runs
+of hyphens or equals signs (up to three leading spaces) are rejected outside
+fences to avoid Setext headings consuming anchors; this also rejects some
+horizontal rules. Blockquote/list-contained headings and other container syntax
+are not parsed or comprehensively rejected. Keep README headings at the document
+level in the supported ATX subset; these checks are not general Markdown validation.
+This conservative restriction applies only to README anchors, not page-title
+labels elsewhere. Labels are Markdown-escaped and destinations URL-encoded.
+Invalid UTF-8, missing titles, unclosed fences, or missing mandatory README,
+CLI, recipes, frameworks or skill entrypoint fail before replacing the index.
 
 ## MIME and charset regressions
 

@@ -55,6 +55,8 @@ jobs:
         run: |
           python3 scripts/check-docs.py
           python3 tests/test-docs.py
+          python3 tools/gen-llms.py --check
+          python3 tests/test-llms.py
       - name: Claude plugin declarations and isolated launcher fixture
         run: python3 tests/test-plugin.py
       - name: Law catalogue and public safety claims
