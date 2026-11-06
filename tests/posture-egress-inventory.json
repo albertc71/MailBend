@@ -35,7 +35,7 @@
     },
     {
       "path": "native/README.md",
-      "sha256": "9d8291952fa74d234e76acdd156e30fbe629130eac9661be485d5d18dedba270"
+      "sha256": "3600c91187045455355b707aa16a33f8867e7cd6f04753dbcf4287d1693bbda1"
     },
     {
       "path": "native/clippy.toml",
@@ -203,11 +203,11 @@
     },
     {
       "path": "native/mailbend-stdio/src/main.rs",
-      "sha256": "ae22ac64f8494bbbc9e828216c8d873b6556101e65717b78cb7011dea7decb21"
+      "sha256": "197c9a597c0a601287a5edd6e7c07dadaa7d4b5dff1267f5de5cc6dab61eaa89"
     },
     {
       "path": "native/mailbend-stdio/src/relay.rs",
-      "sha256": "b51600ee21a2ae46fa8816b05a6d930574005ee9d6d2f767e226e0f42c9a0925"
+      "sha256": "b42ac79f825ba45549f0b892bc82bf3e287421432395b9503150fbcc68201581"
     },
     {
       "path": "native/mailbend-tls/Cargo.toml",
