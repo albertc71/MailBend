@@ -133,7 +133,7 @@ def main() -> IO(Unit):
 #|28 tools
 #|mail_probe | readOnlyHint,idempotentHint,openWorldHint | required - | -
 #|mail_list_folders | readOnlyHint,idempotentHint,openWorldHint | required - | -
-#|mail_search | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string from:string to:string cc:string subject:string body:string text:string since:string before:string unseen:boolean seen:boolean flagged:boolean cursor:string limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
+#|mail_search | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string from:string to:string cc:string subject:string body:string text:string since:string before:string unseen:boolean seen:boolean flagged:boolean answered:boolean unanswered:boolean draft:boolean cursor:string limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get | readOnlyHint,idempotentHint,openWorldHint | required uid | folder:string uid:integer uidvalidity:integer section:string max_bytes:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_get_new | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string start:string[now] since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
 #|mail_brief | readOnlyHint,idempotentHint,openWorldHint | required - | folder:string continuation:object since_uid:integer uidvalidity:integer limit:integer projection:string[full|text|html|metadata] max_response_bytes:integer
@@ -160,5 +160,5 @@ def main() -> IO(Unit):
 #|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
 #|operation policy agrees True
-#|486362 characters
-#|hash 3854109305
+#|486856 characters
+#|hash 2797992639

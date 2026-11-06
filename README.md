@@ -162,6 +162,31 @@ a `message/rfc822` attachment is one opaque part containing the complete
 attached message. Legacy `index` remains the zero-based attachment order
 reported by the whole-message `mail_get`; it is not a section number.
 
+### Search flag filters
+
+`mail_search` combines all supplied criteria with AND. These optional booleans
+select IMAP message flags in the requested folder, which defaults to INBOX.
+
+| Argument | `true` selects | `false` selects |
+| --- | --- | --- |
+| `seen` | Read messages | Unread messages |
+| `unseen` | Unread messages | Read messages |
+| `flagged` | Messages with `\Flagged` | Messages without `\Flagged` |
+| `answered` | Messages with `\Answered` | Messages without `\Answered` |
+| `unanswered` | Messages without `\Answered` | Messages with `\Answered` |
+| `draft` | Messages with `\Draft` | Messages without `\Draft` |
+
+An omitted argument leaves that flag unconstrained. `answered` uses the stored
+flag, not evidence that a conversation received a reply. `draft` does not choose
+the Drafts folder. For example, `{"folder":"Drafts","draft":true}` searches for
+messages with `\Draft` in the folder named Drafts.
+
+If both `seen` and `unseen` are supplied, their values must be opposite. The same
+rule applies to `answered` and `unanswered`. Equal values fail before login.
+Equivalent aliases share a cursor binding: `{"answered":false}` can continue
+with `{"unanswered":true}`. Changing or omitting a flag criterion rejects the
+old cursor. Searches open folders read-only and leave every message flag unchanged.
+
 ### Compact read responses
 
 `mail_get`, `mail_search`, `mail_get_new`, `mail_brief` and `mail_get_thread` accept optional

@@ -1057,12 +1057,32 @@ def seen_keys(seen: Maybe<&2, Bool>, unseen: Maybe<&2, Bool>) -> Keys():
     case Some{u}:
       seen_with_unseen(seen, u)
 
+def answered_with_unanswered(answered: Maybe<&2, Bool>, +unanswered: Bool) -> Keys():
+  match answered:
+    case None{}:
+      Done{[Bool.pick(I.Key, unanswered, I.KUnanswered{}, I.KAnswered{})]}
+    case Some{a}:
+      Bool.pick(Keys(), Bool.not(Bool.xor(a, unanswered)),
+        Fail{"\"answered\" and \"unanswered\" contradict each other; " ++
+          "use opposite values or omit one"},
+        Done{[Bool.pick(I.Key, unanswered, I.KUnanswered{}, I.KAnswered{})]})
+
+def answered_keys(answered: Maybe<&2, Bool>, unanswered: Maybe<&2, Bool>) -> Keys():
+  match unanswered:
+    case None{}:
+      Done{flag_key(answered, I.KAnswered{}, I.KUnanswered{})}
+    case Some{u}:
+      answered_with_unanswered(answered, u)
+
 def flag_keys(+args: J.Json) -> Keys():
   do Result<&2, &2, String, List<&2, I.Key>>:
     seen : List<&2, I.Key> <- seen_keys(J.as_bool(J.get(args, "seen")),
       J.as_bool(J.get(args, "unseen")))
+    answered : List<&2, I.Key> <- answered_keys(J.as_bool(J.get(args, "answered")),
+      J.as_bool(J.get(args, "unanswered")))
     return List.concat(&2, I.Key, [seen,
-      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{})])
+      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{}),
+      answered, flag_key(J.as_bool(J.get(args, "draft")), I.KDraft{}, I.KUndraft{})])
 
 def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
   match m:

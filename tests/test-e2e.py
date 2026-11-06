@@ -1068,11 +1068,62 @@ def sign_in_html(work):
                 srv.stop()
 
 
+def search_flag_schema(srv):
+    start = len(srv.log_lines())
+    for read_only in ("0", "1"):
+        if os.environ.get("MAILBEND_TEST_MCP") == "1":
+            replies, code = mcp_session(srv, [
+                {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                 "params": {"protocolVersion": "2025-06-18"}},
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            ], MAILBEND_READ_ONLY=read_only)
+            entry = next((item for item in replies[-1].get("result", {}).get("tools", [])
+                          if item.get("name") == "mail_search"), {})
+        else:
+            result = subprocess.run([LAUNCHER, "tools", "mail_search"], capture_output=True,
+                                    text=True, env=srv.env(MAILBEND_READ_ONLY=read_only), timeout=120)
+            outputs.extend([result.stdout, result.stderr])
+            code, entry = result.returncode, json.loads(result.stdout)
+        schema = entry.get("inputSchema", {})
+        properties = schema.get("properties", {})
+        check(f"search flags: discovery advertises optional booleans, read_only={read_only}", code == 0
+              and all(properties.get(name, {}).get("type") == "boolean"
+                      and name not in schema.get("required", []) for name in ("answered", "unanswered", "draft"))
+              and "undraft" not in properties, entry)
+        check(f"search flags: discovery retains read-only metadata, read_only={read_only}",
+              entry.get("annotations") == {"readOnlyHint": True, "destructiveHint": False,
+                                           "idempotentHint": True, "openWorldHint": True}, entry)
+    check("search flags: discovery never connects to mail", len(srv.log_lines()) == start)
+
+
 def search_flags(work):
-    srv = Server(work)
+    fixture = copy.deepcopy(FIX)
+    for message in fixture["mailboxes"]["INBOX"]["messages"]:
+        if message["uid"] in (2, 4):
+            message["flags"].append("\\Answered")
+        if message["uid"] in (3, 4):
+            message["flags"].append("\\Draft")
+    srv = Server(work, fixture=fixture)
     try:
         before = srv.st()
+        search_flag_schema(srv)
         for args, key, expected in (
+            ({"answered": True}, "ANSWERED", [4, 2]),
+            ({"answered": False}, "UNANSWERED", [6, 5, 3, 1]),
+            ({"unanswered": True}, "UNANSWERED", [6, 5, 3, 1]),
+            ({"unanswered": False}, "ANSWERED", [4, 2]),
+            ({"answered": True, "unanswered": False}, "ANSWERED", [4, 2]),
+            ({"answered": False, "unanswered": True}, "UNANSWERED", [6, 5, 3, 1]),
+            ({"draft": True}, "DRAFT", [4, 3]),
+            ({"draft": False}, "UNDRAFT", [6, 5, 2, 1]),
+            ({"answered": True, "draft": False}, "ANSWERED UNDRAFT", [2]),
+            ({"from": "carol", "since": "2026-09-22", "before": "2026-09-24",
+              "seen": False, "flagged": False, "answered": True, "draft": True},
+             'FROM "carol" UNSEEN UNFLAGGED ANSWERED DRAFT SINCE 22-Sep-2026 BEFORE 24-Sep-2026', [4]),
+            ({"seen": True, "answered": True}, "SEEN ANSWERED", []),
+            ({"flagged": True}, "FLAGGED", [5]),
+            ({"seen": True}, "SEEN", [5]),
+            ({"unseen": True}, "UNSEEN", [6, 4, 3, 2, 1]),
             ({"flagged": False}, "UNFLAGGED", [6, 4, 3, 2, 1]),
             ({"seen": False}, "UNSEEN", [6, 4, 3, 2, 1]),
             ({"unseen": False}, "SEEN", [5]),
@@ -1080,18 +1131,69 @@ def search_flags(work):
             ({"seen": False, "unseen": True}, "UNSEEN", [6, 4, 3, 2, 1]),
         ):
             start = len(srv.log_lines())
-            c, r = tool(srv, "mail_search", args)
-            searches = [line.split(" UID SEARCH ", 1)[1].split()
+            c, r = tool(srv, "mail_search", args, MAILBEND_READ_ONLY="1")
+            searches = [line.split(" UID SEARCH ", 1)[1]
                         for line in srv.log_lines()[start:] if " UID SEARCH " in line]
             check(f"search flags {args}: exact matching messages", c == 0
                   and [m["uid"] for m in r.get("messages", [])] == expected, r)
-            check(f"search flags {args}: exactly one {key} key", searches == [[key]], searches)
-        for value in (True, False):
+            check(f"search flags {args}: exact SEARCH criteria", searches == [key], searches)
+        for positive, negative in (("seen", "unseen"), ("answered", "unanswered")):
+            for value in (True, False):
+                start = len(srv.log_lines())
+                c, r = tool(srv, "mail_search", {positive: value, negative: value})
+                check(f"search flags: contradictory {positive}/{negative} {value} refused before login",
+                      c != 0 and "contradict" in r.get("error", "")
+                      and positive in r.get("error", "") and negative in r.get("error", "")
+                      and len(srv.log_lines()) == start, r)
+        for name in ("answered", "unanswered", "draft"):
+            for value in (None, 0, 1, "true", "false", [], {}):
+                start = len(srv.log_lines())
+                c, r = tool(srv, "mail_search", {name: value})
+                check(f"search flags: invalid {name}={value!r} refused before login", c != 0
+                      and name in r.get("error", "") and "must be true or false" in r.get("error", "")
+                      and len(srv.log_lines()) == start, r)
+        start = len(srv.log_lines())
+        c, r = tool(srv, "mail_search", {"undraft": True})
+        check("search flags: no undraft JSON alias", c != 0 and "unknown argument" in r.get("error", "")
+              and len(srv.log_lines()) == start, r)
+        for initial, equivalent, first_uid, next_uid, key in (
+            ({"answered": False}, {"unanswered": True}, 6, 5, "UNANSWERED"),
+            ({"unanswered": True}, {"answered": False}, 6, 5, "UNANSWERED"),
+            ({"answered": True}, {"answered": True, "unanswered": False}, 4, 2, "ANSWERED"),
+            ({"unanswered": False}, {"answered": True}, 4, 2, "ANSWERED"),
+            ({"answered": False}, {"answered": False, "unanswered": True}, 6, 5, "UNANSWERED"),
+            ({"draft": False}, {"draft": False}, 6, 5, "UNDRAFT"),
+            ({"draft": True}, {"draft": True}, 4, 3, "DRAFT"),
+        ):
+            c, first = tool(srv, "mail_search", dict(initial, limit=1))
+            cursor = first.get("next_cursor")
+            check(f"search flags {initial}: first cursor page", c == 0
+                  and [m["uid"] for m in first.get("messages", [])] == [first_uid]
+                  and first.get("has_more") is True and isinstance(cursor, str), first)
             start = len(srv.log_lines())
-            c, r = tool(srv, "mail_search", {"seen": value, "unseen": value})
-            check(f"search flags: contradictory {value} pair refused before login", c != 0
-                  and "seen" in r.get("error", "") and "unseen" in r.get("error", "")
-                  and len(srv.log_lines()) == start, r)
+            c, r = tool(srv, "mail_search", dict(equivalent, cursor=cursor, limit=1))
+            check(f"search flags {initial} to {equivalent}: equivalent cursor continues", c == 0
+                  and [m["uid"] for m in r.get("messages", [])] == [next_uid], r)
+            searches = [line.split(" UID SEARCH ", 1)[1]
+                        for line in srv.log_lines()[start:] if " UID SEARCH " in line]
+            check(f"search flags {equivalent}: continuation has one canonical key", searches == [key], searches)
+        for initial, changed in (
+            ({"answered": False}, ({}, {"answered": True}, {"unanswered": False})),
+            ({"answered": True}, ({}, {"answered": False}, {"unanswered": True})),
+            ({"draft": False}, ({}, {"draft": True})),
+            ({"draft": True}, ({}, {"draft": False})),
+            ({}, ({"answered": False}, {"draft": False})),
+        ):
+            c, first = tool(srv, "mail_search", dict(initial, limit=1))
+            cursor = first.get("next_cursor")
+            check(f"search flags {initial}: criterion-bound cursor exists", c == 0
+                  and isinstance(cursor, str), first)
+            for args in changed:
+                start = len(srv.log_lines())
+                c, r = tool(srv, "mail_search", dict(args, cursor=cursor, limit=1))
+                check(f"search flags {initial} to {args}: changed or omitted criterion refused before login",
+                      c != 0 and "cursor" in r.get("error", "")
+                      and len(srv.log_lines()) == start, r)
         c, first = tool(srv, "mail_search", {"flagged": False, "limit": 1})
         cursor = first.get("next_cursor")
         check("search flags: negative criterion yields a continuation", c == 0
@@ -1108,6 +1210,9 @@ def search_flags(work):
         check("search flags: omitted flags still send ALL", len(searches) == 1
               and searches[0].endswith(" UID SEARCH ALL"), searches)
         check("search flags: message flags unchanged", srv.st() == before)
+        lines = srv.log_lines()
+        check("search flags: no SELECT or mutation commands", not any(
+            command in line for line in lines for command in (" SELECT ",) + MUTATING_COMMANDS))
     finally:
         srv.stop()
 

@@ -597,6 +597,12 @@ TOOLS = [
                         "If unseen is also given, the values must be opposite."),
           "flagged": param("boolean", "True selects flagged; false selects unflagged. "
                            "Omit for either."),
+          "answered": param("boolean", "True selects answered; false selects unanswered. "
+                            "Omit for either. If unanswered is also given, the values must be opposite."),
+          "unanswered": param("boolean", "True selects unanswered; false selects answered. "
+                              "Omit for either. If answered is also given, the values must be opposite."),
+          "draft": param("boolean", "True selects drafts; false selects non-drafts. "
+                         "Omit for either. Matches the message flag, not the folder name."),
           "cursor": param("string", "Opaque continuation from next_cursor; at most 4096 characters.",
                           maxLength=4096),
           "limit": param("integer", "Default 20.", minimum=1, maximum=200)}),
