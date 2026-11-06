@@ -12,6 +12,8 @@ Bend runtime cannot safely provide the required OS/protocol boundary.
 
 - `mailbend-stdio`: adapts inherited socket stdin to a bounded pipe for the
   fixed sibling Bend core in MCP mode, supervising signals and child lifetime.
+  In socket-input mode it also relays nonblocking stdout through a bounded
+  pipe, without changing inherited descriptor flags.
   It creates no sockets, reads no credentials and makes no protocol or mail
   decisions. JSON framing, UTF-8 validation and request limits remain in Bend.
 
