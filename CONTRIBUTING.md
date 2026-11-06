@@ -99,6 +99,8 @@ python3 tests/test-stdio.py
 python3 tests/test-demo.py                        # isolated loopback demo, MCP flow and cleanup
 python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
+python3 scripts/check-native-hardening.py         # installed native ELF metadata, after install.sh
+python3 tests/test-native-hardening.py             # real C-linked positive and negative controls
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
@@ -233,6 +235,23 @@ in force.
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in
 `tests/unit/schema.bend`.
+
+### Native ELF checks
+
+`python3 scripts/check-native-hardening.py [BIN_DIRECTORY]` checks the four
+installed native helpers, defaulting to this checkout's `bin/` regardless of
+the current directory. It requires GNU `readelf` from binutils. The fixture
+suite also requires a C compiler available as `cc`; missing prerequisites
+fail rather than skip. Ordinary CI runs both checks after installation in
+the support suite on x86_64 and aarch64.
+
+Each helper must be a little-endian ELF64 PIE for a supported architecture,
+with GNU_RELRO, immediate binding, a present non-executable GNU_STACK and
+the matching Linux interpreter. Direct NEEDED entries may contain only
+`libc.so.6`, `libgcc_s.so.1` and that architecture's loader basename. The
+check reads ELF metadata without executing the helpers or using `ldd`. It
+does not inspect transitive dependencies, prove memory safety or exploit
+resistance, or establish library trust. The Bend core is outside this check.
 
 ## MIME and charset regressions
 
