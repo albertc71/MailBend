@@ -83,6 +83,7 @@ python3 tests/formal/check-writing-laws.py         # compile the guide and rejec
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 python3 tests/formal/check-plan-coverage.py        # public plan references and command construction
 python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
+python3 tests/test-unit-runner.py                 # offline unit scheduling and cleanup contracts
 sh tests/run-unit.sh
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
@@ -114,6 +115,36 @@ MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools thr
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+The unit runner stays serial by default. To opt into bounded parallel execution,
+run `sh tests/run-unit.sh --jobs 2`. The decimal job count must be between 1 and 8.
+The runner needs Python 3, Linux `/proc`, and the existing `bend`, `sed`, `cmp`,
+and `diff` commands.
+It runs sorted unit files in batches of at most that many compiler processes.
+A batch finishes and reports in filename order before the next batch starts, so
+idle slots do not refill while another file in the batch is still running.
+Failures still allow later files to run. A test passes only when Bend exits
+successfully and its combined stdout and stderr match the `#|` lines byte for byte.
+Failure diagnostics retain the first 20 lines of `diff` output.
+
+Each run keeps compiler output in private temporary files. Before comparing an
+output file, it terminates any descendants left in that compiler's process group.
+It retains the unreaped leader until the group stops, then reaps and forgets it.
+This keeps process-group IDs reserved until the last signal and prevents late
+output writes after comparison. Launch or file errors,
+SIGINT, and SIGTERM stop new launches and terminate owned process groups, with a
+half-second grace per group before SIGKILL. A group still running one second
+after SIGKILL is an infrastructure failure. The runner reaps direct children and removes its
+temporary files before exiting. An uninterruptible kernel wait can delay reaping,
+error reporting, and cleanup of other groups; shutdown has no guaranteed time bound.
+This cleanup cannot cover SIGKILL of the runner
+itself or descendants that deliberately escape their process group. Ordinary
+compiler failures produce the final pass/fail count; infrastructure errors and
+interruptions exit without that summary.
+
+CI exercises the synthetic scheduling and cleanup contracts on both architectures.
+Its actual Bend unit invocation remains serial until separate x86-64 and ARM64
+resource measurements support changing it. This option makes no speedup claim.
 
 When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
 the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).
