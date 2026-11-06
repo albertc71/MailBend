@@ -111,10 +111,14 @@ def child_pid(pid):
 
 
 class Session:
-    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False):
+    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False,
+                 send_buffer=None):
         self.peer, child = (None, None) if pipe else socket.socketpair()
         if child is not None:
+            if send_buffer is not None:
+                child.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, send_buffer)
             child.setblocking(not nonblocking)
+        self.output_observer = child.dup() if child is not None and send_buffer is not None else None
         self.proc = subprocess.Popen([str(launcher), "mcp"], stdin=child or subprocess.PIPE,
                                      stdout=child if duplex else subprocess.PIPE,
                                      stderr=subprocess.PIPE, env=env, cwd="/", start_new_session=True)
@@ -155,6 +159,8 @@ class Session:
         return self
 
     def __exit__(self, *_):
+        if self.output_observer is not None:
+            self.output_observer.close()
         if self.peer is not None:
             self.peer.close()
         if self.proc.poll() is None:
@@ -599,6 +605,37 @@ class StdioTests(unittest.TestCase):
                             self.assertEqual(session.proc.wait(timeout=10), 0)
                             self.assertEqual(session.proc.stderr.read(), b"")
                             self.assertFalse(live(core))
+
+    def test_large_reply_survives_nonblocking_output_backpressure(self):
+        for launcher in LAUNCHERS:
+            for modern in (False, True):
+                for nonblocking in (False, True):
+                    with self.subTest(launcher=launcher.name, modern=modern,
+                                      nonblocking=nonblocking):
+                        with Session(launcher, duplex=True, nonblocking=nonblocking,
+                                     send_buffer=4096) as session:
+                            session.send(discovery(modern))
+                            self.assertEqual(session.line()["id"], 1)
+                            params = {"_meta": META} if modern else {}
+                            session.send(request("tools/list", 2, params))
+                            self.assertTrue(select.select([session.output], [], [], 10)[0],
+                                            "core did not start its response")
+                            wait_until(lambda: not select.select(
+                                [], [session.output_observer], [], 0)[1])
+                            self.assertEqual(os.get_blocking(session.output_observer.fileno()),
+                                             not nonblocking)
+                            session.output_observer.close()
+                            session.output_observer = None
+                            time.sleep(0.1)
+                            reply = session.line()
+                            self.assertEqual(reply["id"], 2)
+                            self.assertEqual({t["name"] for t in reply["result"]["tools"]},
+                                             READ_TOOLS)
+                            session.send(request("tools/list", 3, params))
+                            self.assertEqual(session.line()["id"], 3)
+                            session.close_input()
+                            self.assertEqual(session.proc.wait(timeout=10), 0)
+                            self.assertEqual(session.proc.stderr.read(), b"")
 
     def test_pipe_file_and_empty_input(self):
         for launcher in LAUNCHERS:
