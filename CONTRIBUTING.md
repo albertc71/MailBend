@@ -232,10 +232,6 @@ filesystem: `MAILBEND_TEST_TMPDIR=/tmp python3 tests/test-e2e.py`. This changes
 only the temporary fixture directory; the attachment sandbox checks remain
 in force.
 
-After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
-`python3 tools/gen-schema.py`, and update the length and hash pinned in
-`tests/unit/schema.bend`.
-
 ### Native ELF checks
 
 `python3 scripts/check-native-hardening.py [BIN_DIRECTORY]` checks the four
@@ -252,6 +248,10 @@ the matching Linux interpreter. Direct NEEDED entries may contain only
 check reads ELF metadata without executing the helpers or using `ldd`. It
 does not inspect transitive dependencies, prove memory safety or exploit
 resistance, or establish library trust. The Bend core is outside this check.
+
+After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
+`python3 tools/gen-schema.py`, and update the length and hash pinned in
+`tests/unit/schema.bend`.
 
 ## MIME and charset regressions
 
