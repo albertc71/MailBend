@@ -62,6 +62,10 @@ jobs:
           python3 tools/gen-laws.py --check
           python3 tools/check-claims.py --check
           python3 tests/formal/test-claims.py
+      - name: Public plan coverage and command construction
+        run: |
+          python3 tests/formal/check-plan-coverage.py
+          python3 tests/formal/test-plan-coverage.py
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -295,6 +299,9 @@ jobs:
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
         if: matrix.suite == 'support'
+      - name: Outgoing clock failure boundaries
+        run: python3 tests/test-clock.py
+        if: matrix.suite == 'support'
       - name: Offline posture boundary and redaction
         run: python3 tests/test-posture.py
         if: matrix.suite == 'support'
@@ -307,6 +314,7 @@ jobs:
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
         run: |
+          python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
           python3 tests/test-e2e.py
       - name: Short synthetic MCP soak

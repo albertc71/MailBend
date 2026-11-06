@@ -250,7 +250,10 @@ def contributor_onramps(root):
                            for field in form["body"] if field.get("type") == "markdown")
         if f"]({security_url})" not in notice:
             errors.append(f"{path.relative_to(root)}: missing visible private security route")
-        if not all(term in notice.lower() for term in ("never include real credentials", "account addresses", "mail")):
+        # Check visible wording, not tokens supplied by simple inline-link targets.
+        visible_notice = re.sub(r"\]\([^)\n]*\)", "]", notice).lower()
+        if (not all(term in visible_notice for term in ("never include real credentials", "account addresses"))
+                or not re.search(r"\bmail\b", visible_notice)):
             errors.append(f"{path.relative_to(root)}: missing visible privacy warning")
         fields = {}
         for field in form["body"]:
@@ -346,7 +349,8 @@ def main():
     if errors:
         print("Documentation drift:\n" + "\n".join(errors), file=sys.stderr)
         return 1
-    print("Documentation checks pass: laws, environment, CLI usage, source layers, skill tools, provider-guide links, and contributor forms")
+    print("Documentation checks pass: laws, environment, CLI usage, source layers, skill tools, "
+          "provider-guide links, issue chooser and bug/feature form contracts (provider form not parsed)")
     return 0
 
 

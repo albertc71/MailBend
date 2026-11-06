@@ -588,11 +588,30 @@ are `local_refusal`, `helper_not_started`, `stopped_before_data`,
 `explicit_rejection`, `acceptance_unconfirmed`, `missing_progress`, or
 `accepted_by_server`.
 
+## Local secret scan
+
+Set `MAILBEND_SECRET_SCAN=1` to scan outgoing sends, replies and forwards
+locally, without a TypeSafe account or network request. It looks for private
+keys, known token prefixes and password lines in headers, bodies and
+attachments, including forwarded originals. A secret or text it cannot read
+in full blocks the send before SMTP, including during a dry run.
+
+The result reports `secret_scan` as `clean`, `found` or `incomplete`.
+Refusals identify a field or attachment position, never the matched value.
+This detects accidental leaks, not deliberate encoding or concealment.
+See the [scan rules and limits](docs/JEV.md#sends).
+
+`1` or `true` enables the independent scan. `0`, `false`, empty or unset
+leaves it off. Other values refuse sends but leave reads and drafts alone.
+`mail_save_draft` and replies or forwards with `as_draft` never scan.
+Enabling Jev always requires its local scan, even with
+`MAILBEND_SECRET_SCAN=0`.
+
 ## Jev (optional)
 
 Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
 `MAILBEND_TYPESAFE=1` and a `MAILBEND_TYPESAFE_KEY_FILE`; with it off, no
-tool asks it and no tool's result changes. With Jev on:
+tool asks it. The local secret scan above is independent. With Jev on:
 
 - **Reads** (`mail_search`, `mail_get`, `mail_get_new`, `mail_get_thread`)
   add Jev's notes to each message they show. Their category options exclude
@@ -767,6 +786,11 @@ Agentic Top 10.
   `MAILBEND_MAX_SENDS_PER_DAY` caps sends per UTC day in a local counter no
   tool can read or change. A Sent copy (`MAILBEND_SAVE_SENT`) is one
   `APPEND` to the Sent folder and nothing else (proven). <!-- claim:sent-copy -->
+- **Outgoing mail needs a readable clock.** Sends and drafts, including dry runs,
+  refuse when `/bin/date +%s` fails or does not return a positive U32 decimal
+  timestamp. Sending checks the clock again before reserving its UTC-day count
+  and contacting SMTP, even without a daily cap. This validates the clock result,
+  not its accuracy. It does not detect clock skew or provide another clock source.
 - **Reads cannot write.** `LAWS.bend` states, and `PROOF.bend` proves, that <!-- claim:read-plans -->
   every read plan (probe, quota, folders, search, get, new mail, refresh, thread,
   brief, contacts) contains no command that can change a mailbox, for every
@@ -1171,9 +1195,10 @@ continue it. The default page is 50 messages, with a maximum of 100. A checkpoin
 from a complete unseen page uses the EXAMINE UIDNEXT minus one (`checkpoint_basis:
 high_water`), including when no unseen messages exist. SEARCH arrivals above that
 snapshot wait for the next call. A capped page uses its last selected UID
-(`selected_prefix`), never skipping unreturned unseen messages. For a partial
-unseen page, pass its `next_continuation` object unchanged as `continuation` on
-the next call, without `since_uid`. This retains the original folder,
+(`selected_prefix`), never skipping unreturned unseen
+messages. <!-- claim:brief-pagination -->
+For a partial unseen page, pass its `next_continuation` object unchanged as
+`continuation` on the next call, without `since_uid`. This retains the original folder,
 UIDVALIDITY and high-water mark, and searches only later unseen, undeleted UIDs
 inside that range. When `next_continuation` is null, unseen traversal is complete
 and `next_since_uid` is the arrival checkpoint. Legacy continuation using
@@ -1183,9 +1208,10 @@ tracks later changes to read status. Use `mail_refresh` for known-message flag c
 Every returned message has one `group` and an independent `delivery` value.
 Groups are `people`, `lists`, `automated` and `unknown_people`. `groups` gives the
 counts, including separate raw List-Id keys, while `messages` contains each UID
-once in arrival order. Direct delivery means an exact To match to
-`MAILBEND_EMAIL`; `cc_only` means an exact Cc match without a To match. Aliases,
-Bcc and malformed addresses remain `other_or_unknown`.
+once in arrival order. <!-- claim:brief-pagination -->
+Direct delivery means an exact To match to `MAILBEND_EMAIL`; `cc_only` means an
+exact Cc match without a To match. Aliases, Bcc and malformed addresses remain
+`other_or_unknown`.
 
 People means an exact recipient was observed in the newest 100 stored Sent
 headers within 30 days. At most 50 distinct selected senders are matched. A
@@ -1194,16 +1220,30 @@ always unknown, never proof of a first-time sender or complete correspondence
 history. `correspondence` exposes the folder identity, sample, caps and reason
 for incomplete evidence. Sent discovery or read failure does not hide the
 selected messages; it leaves contact classification unknown with that reason.
+When selected senders exist, an unavailable clock or a timestamp earlier than
+30 days after the Unix epoch skips Sent discovery and scanning. The selected
+messages and checkpoint remain available, but `correspondence.since` is empty and coverage is incomplete
+with a clock/window reason. Exactly 30 days is sufficient for the window.
+This check prevents unsigned subtraction from wrapping; it does not verify clock accuracy.
+With no selected senders, the brief skips the clock and keeps its
+no-selected-senders coverage reason.
 List, automation, sender and delivery values are untrusted header signals.
 They do not authorize actions or prove identity.
 
 Missing selected FETCH data or changed UIDVALIDITY returns an error without a
 checkpoint. A too-small `max_response_bytes` also fails the entire result, just
-as for `mail_get_new`; it never removes an item and advances past it. Retry the
-same checkpoint with a smaller page or larger budget. Jev off makes no TypeSafe
-call. Jev on adds the existing header annotations without changing the groups.
+as for `mail_get_new`; it never removes an item and advances past
+it. <!-- claim:brief-pagination -->
+Retry the same checkpoint with a smaller page or larger budget. Jev off makes no
+TypeSafe call. Jev on adds the existing header annotations without changing the groups.
 The scheduled morning-brief recipe now uses this tool; notification polling
 continues to use `mail_get_new`.
+
+These pagination and output guarantees are tested with synthetic CLI and MCP
+fixtures. The [claim evidence](docs/PROOF-COVERAGE.md#brief-pagination) separates
+the pure laws for selected UID sequence and counts, checkpoint selection and
+continuation boundaries from runtime acquisition, deduplication and budget
+handling. The pure laws do not establish those runtime guarantees.
 
 Optional body previews, lifetime first-time classification, and #139's paid
 agent-quality comparison remain outside this metadata core. The synthetic

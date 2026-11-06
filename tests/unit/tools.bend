@@ -848,12 +848,13 @@ def show_stamp(r: Result<&2, &2, String, T.Stamp>) -> String:
 
 def randomness_cases() -> IO(Unit):
   do IO<Unit>:
-    IO.print("stamp first read " ++ show_stamp(T.stamp_checked(0, Fail{(1, "first")}, Done{1})))
-    IO.print("stamp second read " ++ show_stamp(T.stamp_checked(0, Done{1}, Fail{(1, "second")})))
-    IO.print("stamp both reads " ++ show_stamp(T.stamp_checked(0, Fail{(1, "first")}, Fail{(2, "second")})))
-    IO.print("stamp zero succeeds " ++ show_stamp(T.stamp_checked(0, Done{0}, Done{0})))
-    send : Policy.Out <- T.deliver_stamped(want(["a@x.com"], [], False{}), "me@example.com", T.stamp_checked(0, Fail{(1, "first")}, Done{0}))
-    draft : Policy.Out <- T.deliver_stamped(want(["a@x.com"], [], True{}), "me@example.com", T.stamp_checked(0, Done{0}, Fail{(1, "second")}))
+    IO.print("stamp first read " ++ show_stamp(T.stamp_checked(1700000000, Fail{(1, "first")}, Done{1})))
+    IO.print("stamp second read " ++ show_stamp(T.stamp_checked(1700000000, Done{1}, Fail{(1, "second")})))
+    IO.print("stamp both reads " ++ show_stamp(T.stamp_checked(1700000000, Fail{(1, "first")}, Fail{(2, "second")})))
+    IO.print("stamp unknown clock " ++ show_stamp(T.stamp_checked(0, Done{0}, Done{0})))
+    IO.print("stamp zero succeeds " ++ show_stamp(T.stamp_checked(1700000000, Done{0}, Done{0})))
+    send : Policy.Out <- T.deliver_stamped(want(["a@x.com"], [], False{}), "me@example.com", T.stamp_checked(1700000000, Fail{(1, "first")}, Done{0}))
+    draft : Policy.Out <- T.deliver_stamped(want(["a@x.com"], [], True{}), "me@example.com", T.stamp_checked(1700000000, Done{0}, Fail{(1, "second")}))
     IO.print("send random failure " ++ show_out(send))
     IO.print("draft random failure " ++ show_out(draft))
 
@@ -889,6 +890,12 @@ def check_compose() -> IO(Unit):
       U32.show(T.secs_of(Policy.ProcOk{0, "x", ""})) ++ " " ++
       U32.show(T.secs_of(Policy.ProcRefused{"x"})) ++
       " " ++ show_random(T.rand_of(Done{5})) ++ " " ++ show_random(T.rand_of(Fail{(1, "x")})))
+    IO.print("clock exit overflow canonical " ++
+      U32.show(T.secs_of(Policy.ProcOk{1, "1700000000", ""})) ++ " " ++
+      U32.show(T.secs_of(Policy.ProcOk{0, "4294967296", ""})) ++ " " ++
+      U32.show(T.secs_of(Policy.ProcOk{0, "4294967297", ""})) ++ " " ++
+      U32.show(T.secs_of(Policy.ProcOk{0, "01700000000", ""})) ++ " " ++
+      U32.show(T.secs_of(Policy.ProcOk{0, "4294967295", ""})))
     IO.print(T.domain_of("A <a@Example.com>") ++ " " ++ T.domain_of("bad"))
     check_drafts()
     IO.print(
@@ -1060,25 +1067,25 @@ def check_schema() -> IO(Unit):
 
 def show_sends(s: T.Sends()) -> String:
   match s:
-    case Done{T.Sending{save, allow, limit, dir}}:
+    case Done{T.Sending{save, allow, limit, dir, scan}}:
       Bool.show(save) ++ " [" ++ String.join(allow, ",") ++ "] " ++ U32.show(limit) ++ " [" ++
         dir ++ "]"
     case Fail{m}:
       "error " ++ m
 
 def sends(save: String, allow: String, max: String, dir: String) -> String:
-  show_sends(T.sending_of(save, allow, max, dir, "", "/home/u"))
+  show_sends(T.sending_of(save, allow, max, dir, "", "/home/u", ""))
 
 def header_msg(headers: String) -> I.Msg:
   I.Msg{1, [], "", 0, headers, "", I.VNil{}}
 
 def check_sending() -> IO(Unit):
   do IO<Unit>:
-    IO.print(show_sends(T.sending_of("", "", "", "", "", "")))
+    IO.print(show_sends(T.sending_of("", "", "", "", "", "", "")))
     IO.print(sends("1", " Bob@X.com , @Example.ORG", "5", ""))
-    IO.print(show_sends(T.sending_of("true", "", "", "/st", "/xdg", "/home/u")) ++ " " ++
-      show_sends(T.sending_of("", "", "", "", "/xdg", "/home/u")) ++ " " ++
-      show_sends(T.sending_of("", "", "", "", "rel", "rel")))
+    IO.print(show_sends(T.sending_of("true", "", "", "/st", "/xdg", "/home/u", "")) ++ " " ++
+      show_sends(T.sending_of("", "", "", "", "/xdg", "/home/u", "")) ++ " " ++
+      show_sends(T.sending_of("", "", "", "", "rel", "rel", "")))
     IO.print(sends("yes", "", "", ""))
     IO.print(sends("", "a@x.com,", "", ""))
     IO.print(sends("", "Bob <b@x.com>", "", ""))
@@ -1475,7 +1482,8 @@ def main() -> IO(Unit):
 #|stamp first read refused
 #|stamp second read refused
 #|stamp both reads refused
-#|stamp zero succeeds 00000000.0000000000000000
+#|stamp unknown clock refused
+#|stamp zero succeeds 6553f100.0000000000000000
 #|send random failure err cannot compose message: random identifier generation failed
 #|draft random failure err cannot compose message: random identifier generation failed
 #|{"has_more":true,"next_cursor":null,"pagination_unavailable":"search folder and criteria exceed the 4000-character cursor binding limit"}
@@ -1676,6 +1684,7 @@ def main() -> IO(Unit):
 #|atts f|message/rfc822|raw; | error bad
 #|09af 00000000 deadbeef ffffffff 12345678
 #|1700000000 0 0 5 refused
+#|clock exit overflow canonical 0 0 0 0 4294967295
 #|Example.com bad
 #|Tue, 14 Nov 2023 22:13:20 +0000 6553f100.00000001000000ff mailbend-6553f100.00000001000000ff
 #|<6553f100.00000001000000ff@my.org> A <a@x.com>,c@y.com,b@z.com False a@x.com,c@y.com,b@z.com

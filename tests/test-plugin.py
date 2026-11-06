@@ -284,7 +284,7 @@ class Runtime(unittest.TestCase):
                           " CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ", "MAIL FROM:"):
             self.assertFalse(any(forbidden in line for line in lines), forbidden)
 
-    def test_jev_off_still_refuses_inherited_invalid_settings_before_helpers(self):
+    def test_jev_off_still_refuses_inherited_invalid_or_inconsistent_settings_before_helpers(self):
         """The real core rejects these settings even with the manifest's Jev-off override."""
         helper = self.work / "forbidden-helper"
         helper.write_text("#!/bin/sh\nprintf called > \"$MARKER\"\nexit 97\n")
@@ -299,21 +299,32 @@ class Runtime(unittest.TestCase):
              "params": {"protocolVersion": "2025-06-18"}},
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
              "params": {"name": "mail_probe", "arguments": {}}}]
-        for key, value in (("MAILBEND_TYPESAFE_API_KEY", ""),
-                           ("MAILBEND_TYPESAFE_CONTENT", "invalid"),
-                           ("MAILBEND_TYPESAFE_ZERO_RETENTION", "invalid"),
-                           ("MAILBEND_TYPESAFE_IMAGES", "invalid")):
-            with self.subTest(setting=key):
+        cases = (
+            ({"MAILBEND_TYPESAFE_API_KEY": ""}, "MAILBEND_TYPESAFE_API_KEY must not be set"),
+            ({"MAILBEND_TYPESAFE_CONTENT": "invalid"}, "MAILBEND_TYPESAFE_CONTENT must be"),
+            ({"MAILBEND_TYPESAFE_ZERO_RETENTION": "invalid"}, "MAILBEND_TYPESAFE_ZERO_RETENTION"),
+            ({"MAILBEND_TYPESAFE_IMAGES": "invalid"}, "MAILBEND_TYPESAFE_IMAGES"),
+            ({"MAILBEND_TYPESAFE_CONTENT": "body"}, "MAILBEND_TYPESAFE_ZERO_RETENTION=1"),
+            ({"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "0"},
+             "MAILBEND_TYPESAFE_ZERO_RETENTION=1"),
+            ({"MAILBEND_TYPESAFE_IMAGES": "1"},
+             "MAILBEND_TYPESAFE_IMAGES needs MAILBEND_TYPESAFE_CONTENT=body"),
+            ({"MAILBEND_TYPESAFE_IMAGES": "1", "MAILBEND_TYPESAFE_CONTENT": "headers",
+              "MAILBEND_TYPESAFE_ZERO_RETENTION": "1"},
+             "MAILBEND_TYPESAFE_IMAGES needs MAILBEND_TYPESAFE_CONTENT=body"),
+        )
+        for inherited, error in cases:
+            with self.subTest(inherited=inherited):
                 result = subprocess.run(command,
                                         input="".join(json.dumps(r) + "\n" for r in requests),
                                         capture_output=True, text=True,
-                                        env=self.env | {key: value} | overrides, timeout=30)
+                                        env=self.env | inherited | overrides, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 replies = [json.loads(line) for line in result.stdout.splitlines()]
                 self.assertEqual([reply["id"] for reply in replies], [0, 1])
                 reply = replies[1]
                 self.assertTrue(reply["result"]["isError"])
-                self.assertIn(key, reply["result"]["structuredContent"]["error"])
+                self.assertIn(error, reply["result"]["structuredContent"]["error"])
                 self.assertFalse(marker.exists(), "invalid config started a mail helper")
 
 

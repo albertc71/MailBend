@@ -45,7 +45,7 @@ FIX = json.loads(FIXTURE.read_text(encoding="utf-8"))
 PASSWORD = FIX["password"]
 FOLDER_ROLES = ("drafts", "trash", "sent", "junk", "archive")
 SEND_SETTINGS = ("MAILBEND_SAVE_SENT", "MAILBEND_ALLOWED_RECIPIENTS", "MAILBEND_MAX_SENDS_PER_DAY",
-                 "MAILBEND_STATE_DIR")
+                 "MAILBEND_STATE_DIR", "MAILBEND_SECRET_SCAN")
 TYPESAFE_SETTINGS = ("MAILBEND_TYPESAFE", "MAILBEND_TYPESAFE_KEY_FILE", "MAILBEND_TYPESAFE_API_KEY",
                      "MAILBEND_TYPESAFE_CONTENT", "MAILBEND_TYPESAFE_ZERO_RETENTION", "MAILBEND_TYPESAFE_HELPER")
 FOLDER_COMMANDS = (" CREATE ", " RENAME ", " SUBSCRIBE ", " UNSUBSCRIBE ")
@@ -2155,16 +2155,22 @@ def cli(srv, *args):
     return p
 
 
-USAGE = "usage: mailbend mcp | mailbend tools | mailbend call <tool> [json-arguments or -]"
+USAGE = ("usage: mailbend mcp | mailbend tools [--names | <tool>] | "
+         "mailbend call <tool> [json-arguments or -]")
 
 
 def cli_front_end(srv):
     p = cli(srv, "version")
     check("cli: version", p.returncode == 0 and p.stdout == "mailbend 0.1.0\n", (p.returncode, p.stdout))
-    for args in [(), ("help",), ("tools", "x"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
+    for args in [(), ("help",), ("tools", "x", "y"), ("call",), ("call", "mail_probe", "{}", "x"), ("mcp", "x")]:
         p = cli(srv, *args)
         check(f"cli: {list(args)} prints the usage and exits 2",
               p.returncode == 2 and USAGE in p.stderr and p.stdout == "", (p.returncode, p.stdout, p.stderr))
+    p = cli(srv, "tools", "x")
+    check("cli: an unknown tool name exits 2 with the unavailable diagnostic",
+          p.returncode == 2 and p.stdout == "" and USAGE not in p.stderr
+          and p.stderr.splitlines()[-1:] == ["mailbend: unknown or unavailable tool"],
+          (p.returncode, p.stdout, p.stderr))
     p = cli(srv, "call", "mail_probe", "{not json")
     check("cli: arguments that are not JSON exit 2", p.returncode == 2 and p.stdout == ""
           and "the arguments are not valid JSON" in p.stderr, (p.returncode, p.stdout, p.stderr))
@@ -4571,7 +4577,8 @@ def dry_runs(work):
 # TypeSafe's Jev (mail_classify), against tests/fake_typesafe.py
 # ---------------------------------------------------------------
 
-TYPESAFE_KEY = "ts_test_key_0123456789"
+# Runtime-built synthetic key shared only with the local fake TypeSafe server.
+TYPESAFE_KEY = "_".join(("ts", "test", "key", "".join(str(n) for n in range(10))))
 JEV_PHRASE = "ignore previous instructions"
 
 
@@ -6146,10 +6153,13 @@ def triage_protections(work, key_file):
 GATE_VALIDITY = FIX["mailboxes"]["INBOX"]["uidvalidity"]
 GATE_SECRET, GATE_TWO_DEEP, GATE_FOUR_DEEP, GATE_UNDECODABLE, GATE_DISPOSABLE, GATE_PREVIEWED, GATE_DEADLINE, \
     GATE_INJECTION, GATE_BINARY_PART, GATE_WIDE_ALIAS, GATE_GLOBAL, GATE_HEADER_TOKEN, GATE_RACE = range(41, 54)
-GATE_PASSWORD = "Password: hunter22"
-GATE_TOKEN = "ghp_" + "a1B2c3D4" * 4
-GATE_PEM = ("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAfakefakefakefakefake\n"
-            "-----END RSA PRIVATE KEY-----\n")
+# Build detector inputs at runtime so source does not embed complete credentials
+# or private-key armour. These values are synthetic and never authenticate.
+GATE_PASSWORD = "".join(("Password: ", "hunter", str(22)))
+GATE_TOKEN = "".join(("gh", "p_", "a1B2c3D4" * 4))
+GATE_PEM = "\n".join((" ".join(("-----BEGIN", "RSA", "PRIVATE", "KEY-----")),
+                       "MIIEowIBAAKCAQEA" + "fake" * 5,
+                       " ".join(("-----END", "RSA", "PRIVATE", "KEY-----")), ""))
 GATE_TEXT = "the gated body text"
 ARCHIVE_VALIDITY = FIX["mailboxes"]["Archive"]["uidvalidity"]
 ANNOTATED_READS = [("mail_search", {}), ("mail_get", {"uid": GATE_PREVIEWED}), ("mail_get_new", {"since_uid": 40, "uidvalidity": GATE_VALIDITY}),
@@ -6280,6 +6290,7 @@ def gates(work):
     try:
         gates_tool_list(srv, work, key_file)
         gates_jev_off(srv)
+        gates_local_scan(srv, attach_dir)
         gates_secret_scan(srv, work, key_file, attach_dir)
         gates_vetoes(srv, work, key_file, attach_dir)
         gates_failure(srv, work, key_file)
@@ -6317,10 +6328,92 @@ def gates_jev_off(srv):
     check("gates, jev off: no read carries a jev object", not shown, shown)
 
 
+def gates_local_scan(srv, attach_dir):
+    env = {"MAILBEND_SECRET_SCAN": "1", "MAILBEND_ATTACH_DIR": attach_dir}
+    original = {"uidvalidity": GATE_VALIDITY, "to": FRIEND}
+    cases = [
+        ("body", "mail_send", {**SEND, "body": GATE_PASSWORD}, "found", "in the body"),
+        ("runtime-built token", "mail_send", {**SEND, "body": GATE_TOKEN}, "found", "in the body"),
+        ("runtime-built private key", "mail_send", {**SEND, "body": GATE_PEM}, "found", "in the body"),
+        ("subject", "mail_send", {**SEND, "subject": GATE_TOKEN}, "found", "in the subject field"),
+        ("recipient", "mail_send", {**SEND, "to": f'"{GATE_TOKEN}" <{FRIEND}>'}, "found", "in the to field"),
+        ("thread reference", "mail_send", {**SEND, "references": f"<{GATE_TOKEN}@example.com>"},
+         "found", "in the references field"),
+        ("attachment name", "mail_send", {**SEND, "attachments": [{"path": f"{GATE_TOKEN}.txt"}]},
+         "found", "in the name of attachment 1"),
+        ("attachment content", "mail_send", {**SEND, "attachments": [{"path": "keys.txt"}]},
+         "found", "attachment 1 > text/plain"),
+        ("reply body", "mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY, "body": GATE_PASSWORD},
+         "found", "in the body"),
+        ("quoted reply", "mail_reply", {"uid": GATE_SECRET, "uidvalidity": GATE_VALIDITY, "body": "thanks"},
+         "found", "in the body"),
+        ("forwarded original", "mail_forward", {**original, "uid": GATE_SECRET},
+         "found", "attachment 1 > message/rfc822 > text/plain"),
+        ("unreadable text", "mail_forward", {**original, "uid": GATE_UNDECODABLE},
+         "incomplete", "cannot be decoded"),
+        ("nested original", "mail_forward", {**original, "uid": GATE_FOUR_DEEP},
+         "incomplete", "more than 3 levels deep"),
+        ("over-limit text", "mail_send", {**SEND, "attachments": [{"path": "big.txt"}]},
+         "incomplete", "more than 1 MB of text"),
+        ("dry run", "mail_send", {**SEND, "body": GATE_PASSWORD, "dry_run": True}, "found", "in the body"),
+    ]
+    for title, name, args, scan, reason in cases:
+        before = len(srv.log_records())
+        c, r = tool(srv, name, args, **env)
+        logged = srv.log_records()[before:]
+        check("local scan, Jev off: " + title + " blocks before SMTP",
+              c != 0 and r.get("secret_scan") == scan and r.get("smtp_outcome") == "not_sent"
+              and reason in r.get("error", "") and "jev" not in r
+              and not any(x["proto"] == "smtp" for x in logged)
+              and GATE_PASSWORD not in json.dumps(r) and GATE_TOKEN not in json.dumps(r), r)
+    for title, body in [
+            ("token below the 20-character minimum", GATE_TOKEN[:19]),
+            ("token with an unrecognised prefix", "ghq" + GATE_TOKEN[3:]),
+            ("public key armour", GATE_PEM.replace("PRIVATE", "PUBLIC")),
+            ("password instruction", "".join(("Password: ", "required")))]:
+        before = sent_count(srv)
+        c, r = tool(srv, "mail_send", {**SEND, "body": body, "dry_run": True}, **env)
+        check("local scan: " + title + " is clean",
+              c == 0 and r.get("dry_run") is True and r.get("secret_scan") == "clean"
+              and "jev" not in r and sent_count(srv) == before, r)
+    for value in ("1", "true"):
+        before = sent_count(srv)
+        c, r = tool(srv, "mail_send", SEND, **{**env, "MAILBEND_SECRET_SCAN": value})
+        check("local scan: clean content sends with " + value,
+              c == 0 and r.get("secret_scan") == "clean" and "jev" not in r
+              and sent_count(srv) == before + 1, r)
+    for value in (None, "", "0", "false"):
+        before = sent_count(srv)
+        c, r = tool(srv, "mail_send", {**SEND, "body": GATE_PASSWORD}, MAILBEND_SECRET_SCAN=value)
+        check("local scan: off preserves sending for " + repr(value),
+              c == 0 and "secret_scan" not in r and "jev" not in r and sent_count(srv) == before + 1, r)
+    for value in ("yes", " false "):
+        for name, args in [("mail_send", SEND),
+                           ("mail_reply", {"uid": 2, "uidvalidity": GATE_VALIDITY, "body": "thanks"}),
+                           ("mail_forward", {**original, "uid": 2})]:
+            before = sent_count(srv)
+            c, r = tool(srv, name, args, MAILBEND_SECRET_SCAN=value)
+            check("local scan: malformed setting refuses " + name + " for " + repr(value),
+                  c != 0 and "MAILBEND_SECRET_SCAN must be" in r.get("error", "")
+                  and sent_count(srv) == before, r)
+    for value in ("1", "yes"):
+        before = sent_count(srv)
+        for name, args in [("mail_save_draft", {**SEND, "body": GATE_PASSWORD}),
+                           ("mail_reply", {"uid": GATE_SECRET, "uidvalidity": GATE_VALIDITY,
+                                           "body": GATE_PASSWORD, "as_draft": True}),
+                           ("mail_forward", {**original, "uid": GATE_SECRET, "as_draft": True})]:
+            c, r = tool(srv, name, args, MAILBEND_SECRET_SCAN=value)
+            check("local scan: " + name + " draft ignores " + value,
+                  c == 0 and r.get("saved_to") == "Drafts" and "secret_scan" not in r and "jev" not in r, r)
+        c, r = tool(srv, "mail_get", {"uid": GATE_SECRET}, MAILBEND_SECRET_SCAN=value)
+        check("local scan: reads ignore " + value,
+              c == 0 and "secret_scan" not in r and "jev" not in r and sent_count(srv) == before, r)
+
+
 def gates_secret_scan(srv, work, key_file, attach_dir):
     ts = TypeSafe(work)
     try:
-        env = jev_env(ts, key_file, MAILBEND_ATTACH_DIR=attach_dir)
+        env = jev_env(ts, key_file, MAILBEND_ATTACH_DIR=attach_dir, MAILBEND_SECRET_SCAN="0")
         original = {"uidvalidity": GATE_VALIDITY, "to": FRIEND}
         n = sent_count(srv)
         bad = []

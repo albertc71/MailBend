@@ -171,3 +171,25 @@ progress. Arrival-predicate, missing-upper-bound and premature-H mutants must
 break those invariants. It is not a server/parser proof or a CI drift check.
 Production interval, plan-read-only and completed-cursor laws plus synthetic
 CLI/MCP tests cover the implemented interfaces.
+
+## Clock-window follow-up for #83
+
+When selected senders exist, the brief keeps its selected headers and checkpoint
+if the clock cannot support its 30-day correspondence window. A timestamp below
+2592000 seconds, including unknown time represented as zero, returns incomplete coverage, zero sampled
+headers, an empty `since`, and a clock/window reason. This branch skips role
+probing and Sent reads. Exactly 2592000 remains a valid window boundary.
+With no selected senders, the existing branch skips the clock and retains its
+`not scanned: no selected senders` reason.
+
+Rejecting the whole brief would discard usable selected metadata. Substituting a
+fallback time would invent correspondence evidence. The existing incomplete
+`ContactScan` and `brief_output` preserve the selected page without either change.
+This is a bounded follow-up to #83, not a complete time-source or clock-skew design.
+
+The tool-layer [invalid_brief_clock_keeps_selected_page](../../tests/formal/tool-laws.bend)
+assertion covers the pure rejected-window branch for every selected page, account address, and timestamp.
+It does not prove that the IO caller samples the clock or selects that branch.
+`tests/test-clock.py` exercises the compiled CLI and MCP with synthetic mail and
+injected date failures, early times, and valid boundary values. The server command
+log distinguishes skipped Sent discovery from an empty successful Sent search.

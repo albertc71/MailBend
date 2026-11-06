@@ -148,6 +148,37 @@ class Claims(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     CHECKS.coverage(self.root)
 
+    def test_class_assignment_rejected_by_public_checker(self):
+        path = self.root / 'tests/rebound.py'
+        self.manifest['claims'][0]['tests'] = ['tests/rebound.py#test_x']
+        self.save()
+        for binding in ('test_x = None', 'test_x: object = None',
+                        'test_x = other = None', 'test_x = test_x = None'):
+            with self.subTest(binding=binding):
+                path.write_text('class Example:\n    def test_x(self): pass\n'
+                                '    ' + binding + '\n')
+                message = ('ambiguous test reference: tests/rebound.py#test_x; '
+                           'declarations or bindings at lines 2, 3')
+                self.rejected(message)
+                with self.assertRaisesRegex(ValueError, message):
+                    CHECKS.coverage(self.root)
+                result = subprocess.run([sys.executable, str(ROOT / 'tools/check-claims.py'),
+                                         '--root', str(self.root), '--check'],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stderr.strip(), message)
+
+        # Removing the class store, without changing the reference, restores a valid link.
+        # Annotation-only and ordinary method-local assignments must stay acceptable.
+        path.write_text('class Example:\n    def test_x(self): pass\n'
+                        '    test_x: object\n    def helper(self):\n        test_x = None\n')
+        generated(self.root / 'docs/PROOF-COVERAGE.md', CHECKS.coverage(self.root), False)
+        result = subprocess.run([sys.executable, str(ROOT / 'tools/check-claims.py'),
+                                 '--root', str(self.root), '--check'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('../tests/rebound.py#L2', (self.root / 'docs/PROOF-COVERAGE.md').read_text())
+
     def test_missing_code(self):
         self.manifest['claims'][0]['code'] = ['src/ops.bend#does_not_exist']
         self.rejected("missing code name")
@@ -410,7 +441,7 @@ class PythonReferences(unittest.TestCase):
         self.path.write_text(source)
         value = 'fixture.py#test_x'
         message = (f'ambiguous test reference: {value}; declarations or bindings at lines '
-                   + ', '.join(map(str, lines)))
+                   + ', '.join(map(str, sorted(set(lines)))))
         self.assertEqual(python_headers(self.path)['test_x'], tuple(lines))
         cache = {}
         # The second validation uses the cached reader output, not a fresh AST.
@@ -457,13 +488,50 @@ class PythonReferences(unittest.TestCase):
 
     def test_module_assignments_rejected_in_either_order(self):
         for binding in ('test_x = None', 'test_x: object = None',
-                        'other = test_x = None', '(other, test_x) = (1, 2)',
+                        'other = test_x = None', 'test_x = other = None',
+                        '(other, test_x) = (1, 2)',
                         '[other, *test_x] = [1, 2]',
                         '(other, [test_x]) = (1, [2])'):
             for source in ('def test_x(): pass\n' + binding + '\n',
                            binding + '\ndef test_x(): pass\n'):
                 with self.subTest(source=source):
                     self.rejected(source, (1, 2))
+
+    def test_class_assignments_rejected_in_either_order(self):
+        for function in ('def test_x(self): pass', 'async def test_x(self): pass'):
+            for binding in ('test_x = None', 'test_x: object = None',
+                            'other = test_x = None', 'test_x = other = None',
+                            '(other, test_x) = (1, 2)', '[other, *test_x] = [1, 2]'):
+                for body in (function + '\n    ' + binding, binding + '\n    ' + function):
+                    with self.subTest(body=body):
+                        self.rejected('class Example:\n    ' + body + '\n', (2, 3))
+
+    def test_class_control_flow_assignments_rejected(self):
+        for binding in ('test_x = None', 'test_x: object = None'):
+            with self.subTest(binding=binding):
+                self.rejected('class Example:\n    def test_x(self): pass\n'
+                              '    if enabled:\n        ' + binding + '\n', (2, 4))
+
+    def test_class_assignments_count_file_wide_once(self):
+        for prefix in ('class Outer:', 'def outer():', 'async def outer():'):
+            with self.subTest(prefix=prefix):
+                self.rejected('def test_x(): pass\n' + prefix + '\n'
+                              '    class Inner:\n        test_x = None\n', (1, 4))
+        self.rejected('def test_x(): pass\nclass Other:\n    test_x = None\n', (1, 3))
+
+    def test_repeated_target_lines_are_only_deduplicated_in_diagnostic(self):
+        for source, lines in (
+                ('def test_x(): pass\ntest_x = test_x = None\n', (1, 2, 2)),
+                ('class Example:\n    def test_x(self): pass\n'
+                 '    test_x = test_x = None\n', (2, 3, 3))):
+            with self.subTest(source=source):
+                self.rejected(source, lines)
+
+    def test_cached_same_line_collisions_remain_ambiguous(self):
+        self.path.write_text('def test_x(): pass\n')
+        cache = {(self.path, 'test'): {'test_x': (1, 1)}}
+        with self.assertRaisesRegex(ValueError, 'declarations or bindings at lines 1$'):
+            reference_location(self.root, 'fixture.py#test_x', 'test', cache)
 
     def test_module_control_flow_assignments_rejected(self):
         for binding in ('test_x = None', 'test_x: object = None'):
@@ -484,8 +552,11 @@ class PythonReferences(unittest.TestCase):
             'def helper():\n    test_x = None\n'
             '    test_x: object = None\n'
             'async def async_helper():\n    test_x = None\n'
-            'class Example:\n    test_x = None\n'
-            '    test_x: object = None\n')
+            'class Example:\n    test_x: object\n'
+            '    thing.test_x = None\n    thing[test_x] = None\n'
+            '    def method(self):\n        test_x = None\n'
+            '        test_x: object = None\n'
+            '    async def async_method(self):\n        test_x = None\n')
         self.assertEqual(python_headers(self.path)['test_x'], (1,))
         self.assertEqual(reference_location(self.root, 'fixture.py#test_x', 'test'),
                          ('fixture.py', 'test_x', 1))
