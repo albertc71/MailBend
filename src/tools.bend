@@ -862,13 +862,36 @@ def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
     case m <> t:
       msg_uid(m) <> msg_uids(t)
 
-# The UIDs of `us` that are not in `seen`, each once, in order.
-def unseen(us: List<&2, U32>, +seen: List<&2, U32>) -> List<&2, U32>:
+def unseen.seed(us: List<&2, U32>, seen: Set()) -> Set():
+  match us:
+    case Nil{}:
+      seen
+    case u <> t:
+      unseen.seed(t, Set.add(seen, U32.show(u)))
+
+def unseen.put(u: U32, key: String, rest: Set() -> List<&2, U32>, checked: Set() & Bool)
+  -> List<&2, U32>:
+  match checked:
+    case Tuple{seen, True{}}:
+      rest(seen)
+    case Tuple{seen, False{}}:
+      u <> rest(Set.add(seen, key))
+
+def unseen.go(us: List<&2, U32>, seen: Set()) -> List<&2, U32>:
   match us:
     case Nil{}:
       []
     case +u <> t:
-      List.filter.put(U32, u, unseen(t, u <> seen), Bool.not(uid_in(u, seen)))
+      +key = U32.show(u)
+      unseen.put(u, key, s => unseen.go(t, s), Set.has(seen, key))
+
+# The UIDs of `us` that are not in `seen`, each once, in order.
+def unseen(us: List<&2, U32>, seen: List<&2, U32>) -> List<&2, U32>:
+  match us:
+    case Nil{}:
+      []
+    case u <> t:
+      unseen.go(u <> t, unseen.seed(seen, Set.new()))
 
 def uidv_is(have: Maybe<&2, U32>, want: U32) -> Bool:
   match have:

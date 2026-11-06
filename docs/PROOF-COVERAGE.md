@@ -336,7 +336,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`brief_preserves_selected_uids`](../LAWS.bend#L1993), [`brief_partitions_selected_uids`](../LAWS.bend#L2000), [`brief_complete_unseen_highwater`](../LAWS.bend#L2020), [`brief_partial_unseen_prefix`](../LAWS.bend#L2026), [`brief_arrivals_keep_prefix`](../LAWS.bend#L2032), [`brief_range_wire`](../LAWS.bend#L2052), [`brief_completed_has_no_continuation`](../LAWS.bend#L2057), [`brief_unseen_filter_interval`](../LAWS.bend#L2064)
 - Tests: [`tests/brief-cases.py#run`](../tests/brief-cases.py#L13), [`tests/brief-continuation-cases.py#run`](../tests/brief-continuation-cases.py#L6)
-- Code: [`src/brief.bend#items`](../src/brief.bend#L338), [`src/brief.bend#checkpoint`](../src/brief.bend#L56), [`src/brief.bend#next_cursor`](../src/brief.bend#L142), [`src/brief.bend#window_uids`](../src/brief.bend#L49), [`src/imap.bend#key_str`](../src/imap.bend#L533), [`src/tools.bend#brief_selected`](../src/tools.bend#L5537), [`src/tools.bend#brief_headers.complete`](../src/tools.bend#L5506), [`src/tools.bend#brief_output`](../src/tools.bend#L5437), [`src/response.bend#bounded`](../src/response.bend#L254)
+- Code: [`src/brief.bend#items`](../src/brief.bend#L338), [`src/brief.bend#checkpoint`](../src/brief.bend#L56), [`src/brief.bend#next_cursor`](../src/brief.bend#L142), [`src/brief.bend#window_uids`](../src/brief.bend#L49), [`src/imap.bend#key_str`](../src/imap.bend#L533), [`src/tools.bend#brief_selected`](../src/tools.bend#L5560), [`src/tools.bend#brief_headers.complete`](../src/tools.bend#L5529), [`src/tools.bend#brief_output`](../src/tools.bend#L5460), [`src/response.bend#bounded`](../src/response.bend#L254)
 
 ## Laws without a public claim
 
