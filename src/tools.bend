@@ -6819,6 +6819,100 @@ def respond_context(jev: Jev.Switch, reply: Bool, all: Bool, m: I.Msg) -> Jev.Co
     case Jev.On{c}:
       Jev.original_context(reply, all, Jev.whole_facts(m))
 
+# Optional post-acceptance marking
+# -------------------------------
+
+type Original is Data:
+  Original{folder: String, uid: U32, uidv: U32}
+
+type OriginalMark is Data:
+  OriginalMarked{}
+  OriginalNotMarked{reason: String}
+  OriginalUnverified{reason: String}
+
+def original_request(+args: J.Json, reply: Bool) -> Maybe<&2, Original>:
+  Bool.pick(Maybe<&2, Original>, reply && Policy.bool_arg(args, "mark_answered", False{}) &&
+    Bool.not(Policy.bool_arg(args, "as_draft", False{})) && Bool.not(dry_arg(args)),
+    Some{Original{folder_arg(args), u32_arg(args, "uid", 0), uidv_arg(args)}}, None{})
+
+def original_mark.fields(r: OriginalMark) -> List<&2, J.Json>:
+  match r:
+    case OriginalMarked{}:
+      [J.kv("original_marked", J.bool(True{})),
+       J.kv("original_mark_reason", J.str("answered_observed"))]
+    case OriginalNotMarked{reason}:
+      [J.kv("original_marked", J.bool(False{})), J.kv("original_mark_reason", J.str(reason))]
+    case OriginalUnverified{reason}:
+      [J.kv("original_marked", J.str("unverified")), J.kv("original_mark_reason", J.str(reason))]
+
+def original_mark.flags(flags: Maybe<&2, List<&2, String>>) -> OriginalMark:
+  match flags:
+    case Some{fs}:
+      Bool.pick(OriginalMark, I.has_attr(fs, "\\Answered"), OriginalMarked{},
+        OriginalNotMarked{"answered_absent"})
+    case None{}:
+      OriginalUnverified{"original_not_observed"}
+
+def original_mark.readback(complete: Bool, lines: List<&2, I.RLine>, uid: U32) -> OriginalMark:
+  match complete:
+    case True{}:
+      original_mark.flags(last_flags(refresh_flags(I.replies(lines, 4)), uid, None{}))
+    case False{}:
+      OriginalUnverified{"mark_unverified"}
+
+def original_mark.identity(now: Maybe<&2, U32>, want: U32) -> String:
+  match now:
+    case Some{n}:
+      Bool.pick(String, U32.is_eq(n, want), "", "identity_changed")
+    case None{}:
+      ""
+
+def original_mark.refusal(+lines: List<&2, I.RLine>, uidv: U32) -> String:
+  first_of(Bool.pick(String, I.refused(lines, 1), "selection_refused", ""),
+    first_of(Bool.pick(String, ok_at(lines, 1),
+      original_mark.identity(positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY")), uidv), ""),
+      first_of(Bool.pick(String, I.refused(lines, 2), "search_refused", ""),
+        Bool.pick(String, I.refused(lines, 3), "store_refused", ""))))
+
+def original_mark.transcript(
+  problem: String, +lines: List<&2, I.RLine>, uid: U32, uidv: U32
+) -> OriginalMark:
+  match problem:
+    case SCon{h, t}:
+      OriginalNotMarked{SCon{h, t}}
+    case SNil{}:
+      original_mark.readback(ok_at(lines, 1) && ok_at(lines, 2) && ok_at(lines, 3) &&
+        ok_at(lines, 4) && uidv_is(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"), uidv), lines, uid)
+
+def original_mark.result(p: Policy.Proc, original: Original) -> OriginalMark:
+  match p:
+    case Policy.ProcRefused{msg}:
+      OriginalNotMarked{"helper_not_started"}
+    case Policy.ProcFail{code, msg}:
+      OriginalUnverified{"mark_unverified"}
+    case Policy.ProcOk{code, out, err}:
+      Original{folder, uid, +uidv} = original
+      +lines = I.frame(out)
+      original_mark.transcript(original_mark.refusal(lines, uidv), lines, uid, uidv)
+
+def original_mark.if(accepted: Bool, out: Policy.Out, +original: Original) -> IO(Policy.Out):
+  match accepted:
+    case False{}:
+      pure_out(out)
+    case True{}:
+      Original{folder, uid, uidv} = original
+      do IO<Policy.Out>:
+        p : Policy.Proc <- imap_proc(Ops.plan_answered(folder, uid, uidv))
+        return with_fields(out, original_mark.fields(original_mark.result(p, original)))
+
+def original_mark.after(out: Policy.Out, request: Maybe<&2, Original>) -> IO(Policy.Out):
+  match out request:
+    case Policy.Ok{+j} Some{original}:
+      original_mark.if(String.eq(Policy.str_arg(j, "smtp_outcome", ""), "accepted") &&
+        Policy.bool_arg(j, "sent", False{}), Policy.Ok{j}, original)
+    case _ _:
+      pure_out(out)
+
 # Fetches the original (read-only, PEEK), then replies (mode 0) or
 # forwards (mode 1).
 def orig_msg(
@@ -6837,8 +6931,11 @@ def orig_msg(
     case +m <> t:
       I.Msg{uid, flags, date, +size, headers, body, _} = m
       +reply = U32.is_eq(mode, 0)
-      respond_to(reply, U32.is_gt(size, max), size, body, args, me,
-        respond_context(jev, reply, Policy.bool_arg(args, "reply_all", False{}), m), jev)
+      original = original_request(args, reply)
+      do IO<Policy.Out>:
+        out : Policy.Out <- respond_to(reply, U32.is_gt(size, max), size, body, args, me,
+          respond_context(jev, reply, Policy.bool_arg(args, "reply_all", False{}), m), jev)
+        original_mark.after(out, original)
 
 def orig_found.if(
   stale: Bool,

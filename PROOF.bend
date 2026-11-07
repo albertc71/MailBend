@@ -498,6 +498,12 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
     case False{}:
       {==}
 
+def Laws.answered_plan_exact(folder, uid, uidv):
+  {==}
+
+def Laws.answered_changes_only_original(folder, uid, uidv):
+  {==}
+
 def Laws.mark_changes_only_seen(mbox, uids, seen, uidv):
   {==}
 

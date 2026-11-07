@@ -796,6 +796,9 @@ def run_all(work, *, tool_scenarios_only=False):
     finally:
         srv.stop()
     quota_reporting(work)
+    reply_marking(work)
+    reply_marking_refusal(work)
+    reply_marking_cases(work)
     reply_quoting(work)
     reply_unicode_quoting(work)
     authentication_login(work)
@@ -1647,6 +1650,66 @@ def compose(srv):
     s = srv.st()
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
+
+
+def reply_marking(work):
+    """Only an opted-in accepted reply marks its exact original as Answered."""
+    srv = Server(work)
+    try:
+        before = copy.deepcopy(srv.st()["mailboxes"])
+        c, r = tool(srv, "mail_reply", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "Synthetic answer",
+            "mark_answered": True})
+        check("reply marking: accepted send reports observed Answered",
+              c == 0 and r.get("smtp_outcome") == "accepted"
+              and r.get("sent") is True and r.get("original_marked") is True
+              and r.get("original_mark_reason") == "answered_observed"
+              and "Do not resend" in r.get("next_action", ""), r)
+        expected = copy.deepcopy(before)
+        original = next(m for m in expected["INBOX"]["messages"] if m["uid"] == 1)
+        original["flags"] = sorted(set(original["flags"]) | {"\\Answered"})
+        after = srv.st()["mailboxes"]
+        for box in after.values():
+            for message in box["messages"]:
+                message["flags"] = sorted(message["flags"])
+        for box in expected.values():
+            for message in box["messages"]:
+                message["flags"] = sorted(message["flags"])
+        check("reply marking: only the original flag changes", after == expected)
+        stores = [line.split(" ", 1)[1] for line in srv.log_lines()
+                  if " STORE " in line]
+        check("reply marking: exactly one singleton Answered store",
+              stores == ["UID STORE 1 +FLAGS.SILENT (\\Answered)"], stores)
+        check("reply marking: one accepted reply reaches SMTP",
+              len(srv.st()["sent"]) == 1)
+    finally:
+        srv.stop()
+
+
+def reply_marking_refusal(work):
+    srv = Server(work, extra=["--reject", "STORE"])
+    try:
+        before = copy.deepcopy(srv.st()["mailboxes"])
+        c, r = tool(srv, "mail_reply", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "Synthetic answer",
+            "mark_answered": True})
+        check("reply marking: rejected STORE preserves accepted reply and reports false",
+              c == 0 and r.get("sent") is True and r.get("smtp_outcome") == "accepted"
+              and r.get("original_marked") is False
+              and r.get("original_mark_reason") == "store_refused"
+              and "Do not resend" in r.get("next_action", ""), r)
+        check("reply marking: refused STORE never retries or changes other mail",
+              len(srv.st()["sent"]) == 1 and srv.st()["mailboxes"] == before
+              and sum(" STORE " in line for line in srv.log_lines()) == 1)
+    finally:
+        srv.stop()
+
+
+def reply_marking_cases(work):
+    spec = importlib.util.spec_from_file_location("reply_marking_cases", ROOT / "tests/reply-marking-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
 
 
 def reply_quoting(work):
