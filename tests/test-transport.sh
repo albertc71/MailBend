@@ -916,6 +916,16 @@ case_selected_section
 case_refresh
 case_smtp_modes
 case_auth_refusals
+if python3 "$ROOT/tests/test-auth-sequence-controls.py" "$FIXTURE"; then
+  pass "LOGIN sequence observer rejects hidden commands"
+else
+  fail "LOGIN sequence observer rejects hidden commands" "synthetic harness controls failed"
+fi
+if python3 "$ROOT/tests/auth_sequence_controls.py" "$HELPER" "$CERTDIR" "$FIXTURE"; then
+  pass "LOGIN reply precedence and bounded continuation"
+else
+  fail "LOGIN reply precedence and bounded continuation" "synthetic sequence controls failed"
+fi
 case_smtp_auth_selection
 case2
 if python3 "$ROOT/tests/test-process-protection.py"; then
