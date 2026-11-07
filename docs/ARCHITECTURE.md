@@ -525,6 +525,12 @@ These tests use the fake TLS server, not a live provider.
   `quoted_original_truncated`, `quoted_bytes` and `original_bytes`, and a
   larger original also gets a note in the quote that it may be incomplete,
   so a partial quote is never mistaken for the whole message.
+- Optional reply marking retains the original folder, UID and UIDVALIDITY
+  before composing. Only an opted-in accepted send runs `plan_answered`.
+  Its single Answered STORE and flags readback use the same identity fence.
+  Follow-up failures are fields on the accepted result, not send failures.
+  Missing or malformed readback stays unverified. Forward marking and flag
+  permanence are not implemented.
 - Saved drafts keep a `Bcc:` header (a mail client sends them later); sent
   mail never carries one, Bcc goes only into the SMTP envelope.
 - Every tool call (MCP or CLI) is checked against the tool's input schema

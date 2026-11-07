@@ -1,10 +1,10 @@
 {
-  "status": "known_unsupported",
+  "status": "conformant",
   "wire": "valid",
   "source": {
     "kind": "synthetic",
     "license": "MIT",
-    "description": "MailBend does not apply the multipart/digest default message/rfc822 type. Inner text is currently mistaken for outer text."
+    "description": "A multipart/digest child without Content-Type defaults to an opaque message/rfc822 attachment."
   },
   "references": [
     "https://www.rfc-editor.org/rfc/rfc2046"
@@ -32,21 +32,5 @@
         "size": 109
       }
     ]
-  },
-  "known_wrong": {
-    "from": "Synthetic Sender <sender@example.invalid>",
-    "to": "reader@example.invalid",
-    "cc": "",
-    "reply_to": "",
-    "subject": "digest-default-message",
-    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
-    "message_id": "<digest-default-message@corpus.invalid>",
-    "in_reply_to": "",
-    "references": "",
-    "text": "Attached text.",
-    "html": "",
-    "html_available": false,
-    "attachments": []
-  },
-  "diagnostic": "MailBend does not apply the multipart/digest default message/rfc822 type. Inner text is currently mistaken for outer text."
+  }
 }

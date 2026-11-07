@@ -36,7 +36,7 @@ and flag changes are writes too.
 - `mail_rename_folder(from, to, dry_run)`: Rename a folder and its subfolders.
 - `mail_save_draft(to, cc, bcc, subject, body, in_reply_to, references, attachments, dry_run)`: Save a newly composed draft.
 - `mail_send(to, cc, bcc, subject, body, in_reply_to, references, attachments, dry_run)`: Send approved content to approved recipients.
-- `mail_reply(folder, uid, uidvalidity, body, reply_all, bcc, attachments, as_draft, dry_run)`: Reply or reply-all; use as_draft for a draft.
+- `mail_reply(folder, uid, uidvalidity, body, reply_all, mark_answered, bcc, attachments, as_draft, dry_run)`: Reply or reply-all; use as_draft for a draft. Optional mark_answered adds \Answered to the original only after SMTP accepts the reply. A failed or unverified mark never permits resending.
 - `mail_forward(folder, uid, uidvalidity, to, cc, bcc, body, attachments, as_draft, dry_run)`: Forward with original attached; use as_draft for a draft.
 
 For a permanent-delete request, consult the advertised confirmation requirement

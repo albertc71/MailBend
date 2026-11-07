@@ -12,3 +12,11 @@ updates:
     directory: /native
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /native/fuzz
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

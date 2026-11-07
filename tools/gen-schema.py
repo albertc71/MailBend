@@ -370,6 +370,9 @@ def output_schema(name):
         if name != "mail_send":
             successes += [DRAFT, IMAP_PREVIEW]
         if name == "mail_reply":
+            successes += [extended(SMTP_ACCEPTED, {
+                "original_marked": {"anyOf": [B, {"const": "unverified"}]},
+                "original_mark_reason": S})]
             # reply_want appends quote evidence only to successful results.
             successes = [{**v, "properties": {**v["properties"], **QUOTE},
                           "required": [*v["required"], *QUOTE]} for v in successes]
@@ -965,6 +968,13 @@ TOOLS = [
           "body": param("string"),
           "reply_all": param(
               "boolean", "Also answer the original To and Cc. Default false."),
+          "mark_answered": param("boolean",
+              "Default false. After an accepted non-draft reply, store \\Answered on "
+              "this original folder/UID/UIDVALIDITY and read its flags back once. "
+              "Reports original_marked true, false or unverified plus original_mark_reason. "
+              "A failed or uncertain mark never changes SMTP acceptance. Never resend "
+              "the reply to retry its mark. No marking for dry runs or unaccepted sends. "
+              "True reports observed flags, not permanence beyond the session."),
           "bcc": ADDRESSES,
           "attachments": ATTACHMENTS,
           "as_draft": AS_DRAFT},

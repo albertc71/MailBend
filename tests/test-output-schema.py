@@ -150,6 +150,20 @@ for outcome, phase, reason in [('not_sent', 'before_smtp', 'local_refusal'),
         check(name, value)
         check(name, {**value, 'smtp_phase': 'accepted'}, False)
 removed = dict(subject=1, body=2, to=[1], cc=[])
+reply = {**sent, "removed_tags": removed, "quoted_original_truncated": False,
+         "quoted_bytes": 12, "original_bytes": 12}
+check("mail_reply", reply)
+for marked in (True, False, "unverified"):
+    value = {**reply, "original_marked": marked, "original_mark_reason": "fixture"}
+    check("mail_reply", value)
+    check("mail_reply", {k: v for k, v in value.items() if k != "original_mark_reason"}, False)
+    check("mail_reply", {**value, "smtp_outcome": "unknown"}, False)
+    check("mail_forward", value, False)
+check("mail_reply", {**reply, "original_marked": "yes", "original_mark_reason": "fixture"}, False)
+reply_input = next(t["inputSchema"] for t in schema.TOOLS if t["name"] == "mail_reply")
+assert "mark_answered" not in reply_input["required"]
+assert reply_input["properties"]["mark_answered"]["type"] == "boolean"
+checks += 2
 for name in ('mail_reply', 'mail_forward'):
     failure = dict(error='fixture', smtp_outcome='unknown', smtp_phase='data_reply',
                    smtp_reason='acceptance_unconfirmed', next_action='Inspect evidence.',

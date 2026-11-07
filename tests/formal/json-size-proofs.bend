@@ -1,6 +1,8 @@
 # Correspondence of the actual JSON serializer and its modular U32 counter.
 
 import Base
+import ./json-size-reference.bend as Reference
+import ./json-size-builder-proofs.bend as Show
 import ./json-size-arithmetic.bend as Arithmetic
 import ../../src/codec.bend as C
 import ../../src/json.bend as J
@@ -93,11 +95,11 @@ def frame(+left: String, +s: String, +right: String,
           C.utf8_len(right), 1, last)), swap_last(1, C.utf8_len(s), 1)))
 
 def quote(+s: String)
-  -> {C.utf8_len(J.quote(s)) == U32.add(2, C.utf8_len(J.esc(s))) : U32}:
+  -> {C.utf8_len(Reference.quote(s)) == U32.add(2, C.utf8_len(J.esc(s))) : U32}:
   frame("\"", J.esc(s), "\"", {==}, {==})
 
 def separator(t: J.Json)
-  -> {C.utf8_len(J.sep(t)) == Response.bytes.separator(t) : U32}:
+  -> {C.utf8_len(Reference.sep(t)) == Response.bytes.separator(t) : U32}:
   match t:
     case J.JEnd{}:
       {==}
@@ -129,7 +131,7 @@ def count_three(+a: String, +b: String, +c: String, +x: U32, +y: U32, +z: U32,
 
 # Json itself contains chains and object members; the induction therefore
 # includes those cases without assuming that every tree is a valid JSON AST.
-def show_bytes(j: J.Json) -> {C.utf8_len(J.show(j)) == Response.bytes(j) : U32}:
+def reference_bytes(j: J.Json) -> {C.utf8_len(Reference.show(j)) == Response.bytes(j) : U32}:
   match j:
     case J.JNull{}:
       {==}
@@ -144,28 +146,34 @@ def show_bytes(j: J.Json) -> {C.utf8_len(J.show(j)) == Response.bytes(j) : U32}:
     case J.JStr{s}:
       quote(s)
     case J.JArr{+items}:
-      Equal.trans(U32, C.utf8_len("[" ++ J.show(items) ++ "]"),
-        U32.add(2, C.utf8_len(J.show(items))), U32.add(2, Response.bytes(items)),
-        frame("[", J.show(items), "]", {==}, {==}),
-        Equal.cong(U32, U32, n => U32.add(2, n), C.utf8_len(J.show(items)),
-          Response.bytes(items), show_bytes(items)))
+      Equal.trans(U32, C.utf8_len("[" ++ Reference.show(items) ++ "]"),
+        U32.add(2, C.utf8_len(Reference.show(items))), U32.add(2, Response.bytes(items)),
+        frame("[", Reference.show(items), "]", {==}, {==}),
+        Equal.cong(U32, U32, n => U32.add(2, n), C.utf8_len(Reference.show(items)),
+          Response.bytes(items), reference_bytes(items)))
     case J.JObj{+items}:
-      Equal.trans(U32, C.utf8_len("{" ++ J.show(items) ++ "}"),
-        U32.add(2, C.utf8_len(J.show(items))), U32.add(2, Response.bytes(items)),
-        frame("{", J.show(items), "}", {==}, {==}),
-        Equal.cong(U32, U32, n => U32.add(2, n), C.utf8_len(J.show(items)),
-          Response.bytes(items), show_bytes(items)))
+      Equal.trans(U32, C.utf8_len("{" ++ Reference.show(items) ++ "}"),
+        U32.add(2, C.utf8_len(Reference.show(items))), U32.add(2, Response.bytes(items)),
+        frame("{", Reference.show(items), "}", {==}, {==}),
+        Equal.cong(U32, U32, n => U32.add(2, n), C.utf8_len(Reference.show(items)),
+          Response.bytes(items), reference_bytes(items)))
     case J.JCons{+h, +t}:
-      count_three(J.show(h), J.sep(t), J.show(t), Response.bytes(h),
-        Response.bytes.separator(t), Response.bytes(t), show_bytes(h), separator(t), show_bytes(t))
+      count_three(Reference.show(h), Reference.sep(t), Reference.show(t), Response.bytes(h),
+        Response.bytes.separator(t), Response.bytes(t), reference_bytes(h), separator(t), reference_bytes(t))
     case J.JEnd{}:
       {==}
     case J.JKv{+k, +v}:
-      Equal.trans(U32, C.utf8_len(J.quote(k) ++ ":" ++ J.show(v)),
+      Equal.trans(U32, C.utf8_len(Reference.quote(k) ++ ":" ++ Reference.show(v)),
         U32.add(U32.add(U32.add(2, C.utf8_len(J.esc(k))), 1), Response.bytes(v)),
         U32.add(U32.add(3, C.utf8_len(J.esc(k))), Response.bytes(v)),
-        count_three(J.quote(k), ":", J.show(v), U32.add(2, C.utf8_len(J.esc(k))),
-          1, Response.bytes(v), quote(k), {==}, show_bytes(v)),
+        count_three(Reference.quote(k), ":", Reference.show(v), U32.add(2, C.utf8_len(J.esc(k))),
+          1, Response.bytes(v), quote(k), {==}, reference_bytes(v)),
         Equal.cong(U32, U32, n => U32.add(n, Response.bytes(v)),
           U32.add(U32.add(2, C.utf8_len(J.esc(k))), 1), U32.add(3, C.utf8_len(J.esc(k))),
           swap_last(2, C.utf8_len(J.esc(k)), 1)))
+
+
+def show_bytes(+j: J.Json) -> {C.utf8_len(J.show(j)) == Response.bytes(j) : U32}:
+  Equal.trans(U32, C.utf8_len(J.show(j)), C.utf8_len(Reference.show(j)), Response.bytes(j),
+    Equal.cong(String, U32, s => C.utf8_len(s), J.show(j), Reference.show(j),
+      Show.show_equal(j)), reference_bytes(j))

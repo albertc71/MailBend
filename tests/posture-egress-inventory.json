@@ -35,7 +35,7 @@
     },
     {
       "path": "native/README.md",
-      "sha256": "3600c91187045455355b707aa16a33f8867e7cd6f04753dbcf4287d1693bbda1"
+      "sha256": "84d02d214627bd486caeb3150c2cf27093b99761970965507867d3788583219c"
     },
     {
       "path": "native/clippy.toml",
@@ -51,7 +51,7 @@
     },
     {
       "path": "native/fuzz/Cargo.lock",
-      "sha256": "660a165d5622fb57f1c2d44383f834706b8bd6224cf7b9b15247adaa849a63c9"
+      "sha256": "197fc7212b408bfec4bbb9074fa03d3a633db4d700cdfa7d37fa48661b6577c9"
     },
     {
       "path": "native/fuzz/Cargo.toml",
@@ -207,7 +207,7 @@
     },
     {
       "path": "native/mailbend-stdio/src/relay.rs",
-      "sha256": "b42ac79f825ba45549f0b892bc82bf3e287421432395b9503150fbcc68201581"
+      "sha256": "738414ef3d820e9a7f52cc0e74e23cf0c5d9dbbdf08c077e6c8bc231b0f6afb7"
     },
     {
       "path": "native/mailbend-tls/Cargo.toml",
@@ -227,15 +227,15 @@
     },
     {
       "path": "native/mailbend-tls/src/diagnostic.rs",
-      "sha256": "07049dae0d8cdf6bc39cff8440fa96baa60d7b5042a4c90614a2cca5072656da"
+      "sha256": "bc050c940870784dc8b78d08660183860f0890809ef2a51c32bf1635affaf72d"
     },
     {
       "path": "native/mailbend-tls/src/exit.rs",
-      "sha256": "6a12867a527d0aea8f3a994369c0d91ff3f6855d01b92b262530b814354fbb65"
+      "sha256": "43f19763cb986284e1c19de816e4c9511d3ebcf0329358a3065a85c5ab98e248"
     },
     {
       "path": "native/mailbend-tls/src/imap/response.rs",
-      "sha256": "648ef28ec35645a746ef316bf5d330ac9561e9abe101697013b1d6812e8a5195"
+      "sha256": "04d7607dae84ec0c339e5d0752bdc08e68b7b7d906314ccaa22f9f97f85e3717"
     },
     {
       "path": "native/mailbend-tls/src/imap/script.rs",
@@ -243,7 +243,7 @@
     },
     {
       "path": "native/mailbend-tls/src/imap/session.rs",
-      "sha256": "b6f4308feeb880063e6fb98b62da8a50ab60ae0208b63715e6080c233d56cdc3"
+      "sha256": "e479c07061a95ac085ea27f9f107ad59570cee79b8c950c50fad512db0c3ffe3"
     },
     {
       "path": "native/mailbend-tls/src/imap.rs",
@@ -259,7 +259,7 @@
     },
     {
       "path": "native/mailbend-tls/src/main.rs",
-      "sha256": "6894ea40075d46b029f9119bdf857d2cbb466e524e2ab24103c3b934db455d89"
+      "sha256": "af6a8350dd709b4b2fc7a0018bbdc27ffbcf1a881a2fa90937980f93c0a14c3e"
     },
     {
       "path": "native/mailbend-tls/src/route.rs",
@@ -279,7 +279,7 @@
     },
     {
       "path": "native/mailbend-tls/src/smtp/session.rs",
-      "sha256": "5309d33cc63365a1111ebc13cc9d0d1deb680b46f864e4c377129cb6474c4bfa"
+      "sha256": "352e93b587cbca6245501aaec4609cc1060d006d29c73f8e1d9b9205ce860d81"
     },
     {
       "path": "native/mailbend-tls/src/smtp.rs",

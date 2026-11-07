@@ -46,6 +46,13 @@ MailBend has four small native programs:
 (cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe -p mailbend-stdio)
 ```
 
+After `scripts/install.sh`, run `python3 scripts/check-native-hardening.py`.
+It inspects the four installed native helpers in `bin/` for ELF hardening
+and unexpected shared-library dependencies. See the
+[contributor checks](../CONTRIBUTING.md#native-elf-checks) for the exact
+policy and real-ELF negative controls. This metadata check does not prove
+memory safety, exploit resistance or the trustworthiness of a library.
+
 The Rust workspace (`native/Cargo.toml`) pins its Rust release, the MSRV, in
 `native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
 up. Our crates forbid `unsafe` code. `native/deny.toml` bans the
@@ -113,8 +120,10 @@ exits. SMTP requires a successful progress write before message bytes, so a
 closed core progress pipe stops a send that has not crossed that boundary.
 A helper cannot report a new plan result after the core exits, and shutdown
 does not retry the plan. Numeric exit codes are preserved and the direct child is reaped.
-Core exit after a forwarded termination signal, or a signalled core exit,
-does not wait for blocked output or descendants that retain its output pipe.
+A nonzero core exit after a forwarded termination signal, or a signalled core
+exit, does not wait for blocked output or descendants that retain its output
+pipe. A successful core exit still drains output, even if the core ignored or
+handled a forwarded signal and continued running.
 A termination signal during post-exit draining also stops the adapter.
 The adapter never signals a core PID after reaping it.
 The adapter re-raises termination signals where possible; an ignored signal
@@ -330,6 +339,23 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   Bend interprets the latest marker even after process interruption; absent
   evidence is unknown. Exit status alone never proves SMTP acceptance.
   QUIT remains best effort after acceptance or refusal.
+- **Authentication refusal evidence**: after a refused login or greeting,
+  stderr adds one fixed `mailbend-auth: <token>` line. Tokens are
+  `credentials`, `temporary`, `limit`, `in_use`, `expired`, `contact_admin`,
+  `greeting_refused` and `unknown`. IMAP reads only a bracketed response code
+  immediately after an exact `NO`, `BAD` or login-time `BYE`; it never searches
+  the server's prose. `AUTHENTICATIONFAILED` and a bare LOGIN `NO` mean
+  `credentials`; `UNAVAILABLE`, `LIMIT`, `INUSE`, `EXPIRED` and `CONTACTADMIN`
+  have their corresponding fixed tokens. Unknown codes mean `unknown`.
+  SMTP AUTH 4xx replies mean `temporary`, 535 means `credentials`, and other
+  rejections mean `unknown`, including either AUTH LOGIN challenge. A 4xx
+  SMTP greeting is temporary; other refused greetings use `greeting_refused`.
+  Auth exchanges and refused greetings are not copied to the transcript.
+  Diagnostic modes print the failed stage and that same fixed token instead
+  of stderr evidence. Bend maps tokens to guidance; no server prose, address,
+  credential or AUTH payload enters the token. Older helpers with no token
+  retain the existing exit-code fallback. No retry is introduced, and no
+  token changes the SMTP acceptance evidence or permits retrying an operation.
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
 

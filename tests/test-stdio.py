@@ -199,6 +199,14 @@ if sys.argv[1:] in (["helper"], ["afterexit"]):
     os._exit(0)
 mode = sys.stdin.buffer.readline().strip()
 signal.signal(signal.SIGTERM, lambda *_: os._exit(73))
+if mode in (b"hup-ignore", b"hup-handle"):
+    signal.signal(signal.SIGHUP, signal.SIG_IGN if mode == b"hup-ignore" else
+                  lambda *_: (root / "survived-hup").touch())
+    print('"ready"', flush=True)
+    sys.stdin.buffer.readline()
+    sys.stdout.buffer.write(b"0123456789abcdef" * 6250)
+    sys.stdout.buffer.flush()
+    os._exit(0)
 if mode == b"afterexit":
     subprocess.Popen([sys.executable, __file__, "afterexit"], stdin=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL)
@@ -293,6 +301,27 @@ os._exit(23)
             self.assertEqual(session.proc.wait(timeout=10), 73)
             (root / "resume").touch()
             wait_until(lambda: (root / "finished").exists())
+
+    def test_survived_signal_does_not_discard_successful_output(self):
+        for mode in (b"hup-ignore", b"hup-handle"):
+            for nonblocking in (False, True):
+                with self.subTest(mode=mode, nonblocking=nonblocking), self.core() as (root, adapter), Session(
+                        adapter, duplex=True, nonblocking=nonblocking, send_buffer=4096) as session:
+                    session.send(mode + b"\n")
+                    self.assertEqual(session.line(), "ready")
+                    session.proc.send_signal(signal.SIGHUP)
+                    if mode == b"hup-handle":
+                        wait_until(lambda: (root / "survived-hup").exists())
+                    session.send(b"write\n")
+                    wait_until(lambda: not select.select([], [session.output_observer], [], 0)[1])
+                    self.assertEqual(os.get_blocking(session.output_observer.fileno()), not nonblocking)
+                    session.output_observer.close()
+                    session.output_observer = None
+                    received = self.read_all(session.output)
+                    self.assertEqual(session.proc.wait(timeout=10), 0)
+                    self.assertEqual(session.proc.stderr.read(), b"")
+                    self.assertEqual(len(received), 100000)
+                    self.assertEqual(received, self.PATTERN * 6250)
 
     def test_output_disconnect_fails_without_killing_started_helper(self):
         with self.core() as (root, adapter), Session(
