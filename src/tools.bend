@@ -2323,31 +2323,22 @@ def thread_rounds(f: Fs(), st: Threading, +mbox: String, uid: U32,
         two : Thread() <- thread_round(one, folders, Policy.checked)
         return thread_out(two, fs, folders, mbox, uid)
 
-def thread_probe(r: Run(), st: Threading, mbox: String, uid: U32,
-  Policy.checked: Bool) -> IO(Shown):
-  match r:
-    case Fail{m}:
-      pure_shown(Policy.Err{m})
-    case Done{lines}:
-      do IO<Shown>:
-        f : Fs() <- folders_io(lines)
-        thread_rounds(f, st, mbox, uid, Policy.checked)
-
 # A read that starts at the message `start`, which its session found in
 # `mbox`: the IDs it names are searched for first.
 def first_threading(+start: T.Node, mbox: String, uidv: Maybe<&2, U32>) -> Threading:
   Threading{T.next_ids([start], []), [], [start], [Found{mbox, uidv, [], []}]}
 
 def thread_start.put(
-  ms: List<&2, I.Msg>, +uidv: Maybe<&2, U32>, +mbox: String, uid: U32, Policy.checked: Bool
+  ms: List<&2, I.Msg>, lines: List<&2, I.RLine>, +uidv: Maybe<&2, U32>,
+  +mbox: String, uid: U32, Policy.checked: Bool
 ) -> IO(Shown):
   match ms:
     case Nil{}:
       pure_shown(Policy.Err{no_message(uid, mbox)})
     case m <> t:
       do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_probe())
-        thread_probe(r, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid,
+        f : Fs() <- folders_io(lines)
+        thread_rounds(f, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid,
           Policy.checked)
 
 def thread_start(r: Run(), mbox: String, +uid: U32, Policy.checked: Bool) -> IO(Shown):
@@ -2355,15 +2346,15 @@ def thread_start(r: Run(), mbox: String, +uid: U32, Policy.checked: Bool) -> IO(
     case Fail{m}:
       pure_shown(Policy.Err{m})
     case Done{+lines}:
-      thread_start.put(with_uid(I.fetched(lines), uid, False{}), I.ok_code(lines, "UIDVALIDITY"),
-        mbox, uid, Policy.checked)
+      thread_start.put(with_uid(I.fetched(I.replies(lines, 2)), uid, False{}), lines,
+        I.ok_code(I.replies(lines, 1), "UIDVALIDITY"), mbox, uid, Policy.checked)
 
 def thread_uid(u: Result<&2, &2, String, U32>, +mbox: String,
   v: Result<&2, &2, String, Maybe<&2, U32>>) -> IO(Shown):
   match u v:
     case Done{+uid} Done{+uidv}:
       do IO<Shown>:
-        r : Run() <- imap_run(Ops.plan_headers_checked(mbox, [uid], uidv))
+        r : Run() <- imap_run(Ops.plan_thread_start(mbox, uid, uidv))
         thread_start(checked_read(r, uidv), mbox, uid, Maybe.is_some(&2, U32, uidv))
     case Fail{m} _:
       pure_shown(Policy.Err{m})

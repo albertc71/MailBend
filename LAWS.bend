@@ -312,6 +312,32 @@ law refresh_plan:
      I.CFetch{uids, [I.IUid{}, I.IFlags{}]}, I.CSearch{[I.KUids{uids}]}]
     : List<&2, I.Cmd>})
 
+# LAW: a thread seed and its folder discovery never change mail.
+law thread_start_writes_nothing:
+  for mbox: String
+  for uid: U32
+  for uidv: Maybe<&2, U32>
+  {I.any_writes(Ops.plan_thread_start(mbox, uid, uidv)) == False{} : Bool}
+
+# LAW: a checked thread start guards its exact folder and UID before discovery.
+law thread_start_checked_exact:
+  for mbox: String
+  for uid: U32
+  for uidv: U32
+  {Ops.plan_thread_start(mbox, uid, Some{uidv}) ==
+    [I.CExamine{mbox}, I.CExpect{I.uidv_line(uidv)},
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]},
+      I.CCapability{}, I.CList{}] : List<&2, I.Cmd>}
+
+# LAW: an unchecked thread start fetches its exact seed before discovery.
+law thread_start_unchecked_exact:
+  for mbox: String
+  for uid: U32
+  {Ops.plan_thread_start(mbox, uid, None{}) ==
+    [I.CExamine{mbox},
+      I.CFetch{[uid], [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]},
+      I.CCapability{}, I.CList{}] : List<&2, I.Cmd>}
+
 # LAW: for every folder list, key list and UIDs per folder, the plans that
 # read a thread write nothing
 law thread_plans_write_nothing:
