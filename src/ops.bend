@@ -411,6 +411,9 @@ def plan_headers_checked(mbox: String, uids: List<&2, U32>, uidv: Maybe<&2, U32>
       [I.CExamine{mbox}, I.CExpect{I.uidv_line(v)},
         I.CFetch{uids, [I.IUid{}, I.IFlags{}, I.IDate{}, I.ISize{}, I.IHeaders{}]}]
 
+def plan_thread_start(mbox: String, uid: U32, uidv: Maybe<&2, U32>) -> List<&2, I.Cmd>:
+  List.append(&2, I.Cmd, plan_headers_checked(mbox, [uid], uidv), plan_probe())
+
 def plan_classify_checked(mbox: String, uids: List<&2, U32>, body: Bool, max: U32,
   uidv: Maybe<&2, U32>) -> List<&2, I.Cmd>:
   match uidv:
