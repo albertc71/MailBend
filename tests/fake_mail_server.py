@@ -239,6 +239,7 @@ class State:
         self.seen = {}
         self.examine_count = 0
         self.examine_changes = fixture.get("examine_changes", [])
+        self.select_uidvalidity = fixture.get("select_uidvalidity", {})
         self.uidnext_response = fixture.get("uidnext_response", {})
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
@@ -1015,6 +1016,9 @@ class IMAPSession:
                 self.mailbox = None
                 self.send(f'{tag} NO [NONEXISTENT] no such mailbox\r\n')
                 return
+            if not readonly and name in self.state.select_uidvalidity:
+                mb['uidvalidity'] = self.state.select_uidvalidity[name]
+                self.state.save()
             if readonly:
                 self.state.examine_count += 1
                 for change in self.state.examine_changes:

@@ -147,6 +147,8 @@ jobs:
           fi
       - name: Unit tests
         run: sh tests/run-unit.sh
+      - name: Accepted-reply marking transition mutations
+        run: python3 tests/formal/check-reply-marking.py
       - name: Client-side prompt proof mutations
         run: python3 tests/formal/check-hook.py
       - name: Image request cap and the fake TypeSafe's image rules

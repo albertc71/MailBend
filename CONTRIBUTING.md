@@ -113,6 +113,7 @@ python3 tests/test-cli-tools.py                   # credential-free filtered CLI
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
 python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
+python3 tests/formal/check-reply-marking.py        # post-acceptance marking transition laws
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP

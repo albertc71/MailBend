@@ -485,6 +485,24 @@ law flag_never_deletes:
       I.any_marks_deleted(Ops.plan_unflag(mbox, uids, uidv)),
       I.any_expunges(Ops.plan_unflag(mbox, uids, uidv))) == False{} : Bool})
 
+# LAW: the accepted-reply follow-up pins one original and adds only Answered.
+law answered_plan_exact:
+  for folder: String
+  for uid: U32
+  for uidv: U32
+  {Ops.plan_answered(folder, uid, uidv) == [
+    I.CSelect{folder}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{[uid]}]},
+    I.CStore{[uid], True{}, I.FAnswered{}}, I.CFetch{[uid], [I.IUid{}, I.IFlags{}]}
+  ] : List<&2, I.Cmd>}
+
+# LAW: the only mail change is one Answered store on the caller's original UID.
+law answered_changes_only_original:
+  for folder: String
+  for uid: U32
+  for uidv: U32
+  {Ops.mail_changes(Ops.plan_answered(folder, uid, uidv)) ==
+    [I.CStore{[uid], True{}, I.FAnswered{}}] : List<&2, I.Cmd>}
+
 # LAW: marking read or unread changes mail only by one store of the
 # caller's Seen value, for exactly the caller's UIDs; no other flag changes.
 law mark_changes_only_seen:

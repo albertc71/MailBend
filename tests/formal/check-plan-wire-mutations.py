@@ -16,6 +16,22 @@ ROOT = Path(__file__).resolve().parents[2]
 GUARD = '[I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]'
 IMAGE_ROUND = 'I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> image_reads(reads)'
 MUTATIONS = (
+    ("answered plan targets another UID", "src/ops.bend",
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)',
+     'plan_flag_stores(mbox, [uid], [I.CStore{[99], True{}, I.FAnswered{}}], uidv)',
+     "answered_plan_exact"),
+    ("answered plan stores Seen", "src/ops.bend",
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)',
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FSeen{}}], uidv)',
+     "answered_plan_exact"),
+    ("answered plan drops caller identity", "src/ops.bend",
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)',
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], 0)',
+     "answered_plan_exact"),
+    ("answered plan expunges original", "src/ops.bend",
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)',
+     'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}, I.CExpunge{[uid]}], uidv)',
+     "answered_plan_exact"),
     ("image round omits identity guard", "src/ops.bend", IMAGE_ROUND,
      'I.CExamine{mbox} <> image_reads(reads)', "image_round_guarded"),
     ("image round fetches before identity guard", "src/ops.bend", IMAGE_ROUND,

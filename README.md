@@ -588,6 +588,37 @@ are `local_refusal`, `helper_not_started`, `stopped_before_data`,
 `explicit_rejection`, `acceptance_unconfirmed`, `missing_progress`, or
 `accepted_by_server`.
 
+### Marking accepted replies
+
+`mail_reply` accepts `mark_answered: true`. The default is false. After a
+non-draft, non-dry-run reply is accepted by SMTP, MailBend opens the original
+folder, checks the caller's same `uidvalidity`, and adds `\Answered` to that
+same UID. The plan has one flag store and one flags readback. It cannot store
+`\Seen` or `\Deleted`, expunge, or target another UID. <!-- claim:answered-original -->
+
+An opted-in accepted reply adds `original_marked` and `original_mark_reason`:
+
+- `true` means the STORE was acknowledged and the matching post-STORE FETCH
+  reported `\Answered` on the original.
+- `false` means a definite refusal or a valid readback without `\Answered`.
+- `"unverified"` means evidence is incomplete, including a missing original,
+  missing or malformed FLAGS, an interrupted helper, or an unanswered STORE.
+
+The guard's UID SEARCH does not stop a fixed command plan when it finds
+nothing. Its exact-UID STORE then has no target, and the absent flag readback
+is unverified. No retry or replacement target is chosen.
+
+The accepted send stays successful if marking fails or is unverified. A Sent
+copy failure also leaves acceptance intact and does not skip marking. Never
+resend an accepted reply to retry its mark. Inspect the original separately.
+All non-send, draft, dry-run, failed and unknown SMTP results omit both marking
+fields. Calls without the opt-in keep their existing output.
+
+`true` describes the observed flags, not whether they persist beyond the
+session. PERMANENTFLAGS handling, forward marking and `$Forwarded` remain
+outside this slice of [#50](https://github.com/albertc71/MailBend/issues/50).
+
+
 ## Local secret scan
 
 Set `MAILBEND_SECRET_SCAN=1` to scan outgoing sends, replies and forwards
