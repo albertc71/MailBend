@@ -288,6 +288,11 @@ jobs:
         if: matrix.suite == 'support'
       - name: Build
         run: scripts/install.sh
+      - name: Installed native ELF hardening and negative controls
+        if: matrix.suite == 'support'
+        run: |
+          python3 scripts/check-native-hardening.py
+          python3 tests/test-native-hardening.py
       - name: MIME and internationalisation corpus
         if: matrix.suite == 'support'
         run: python3 tests/test-mime-corpus.py
