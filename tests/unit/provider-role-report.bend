@@ -94,24 +94,27 @@ def main() -> IO(Unit):
     trash("empty listing", [], "")
     trash("no matching role", [I.Folder{"Unrelated", "/", []}], "")
     drafts("drafts same conventional names", [I.Folder{"Drafts", "/", []}], "")
+    sent("sent primary conventional name", [I.Folder{"Sent", "/", []}], "")
+    sent("sent both conventional names", [I.Folder{"Sent", "/", []},
+      I.Folder{"Sent Messages", "/", []}], "")
     sent("sent alternate name", [I.Folder{"Sent Messages", "/", []}], "")
     junk("junk advertised", [I.Folder{"Spam", "/", ["\\Junk"]}], "")
     archive("archive override", [I.Folder{"Saved", "/", []}], "Saved")
     drafts("drafts override", [I.Folder{"Saved", "/", []}], "Saved")
     drafts("drafts advertised", [I.Folder{"Provider Drafts", "/", ["\\Drafts"]}], "")
-    drafts("drafts name ignores sent", [I.Folder{"Drafts", "/", []},
+    drafts("drafts names exclude sent", [I.Folder{"Drafts", "/", []},
       I.Folder{"Sent", "/", []}], "")
     sent("sent override", [I.Folder{"Saved", "/", []}], "Saved")
     sent("sent advertised", [I.Folder{"Provider Sent", "/", ["\\Sent"]}], "")
-    sent("sent alternate ignores junk", [I.Folder{"Sent Messages", "/", []},
+    sent("sent names exclude junk", [I.Folder{"Sent Messages", "/", []},
       I.Folder{"Junk", "/", []}], "")
     junk("junk override", [I.Folder{"Saved", "/", []}], "Saved")
     junk("junk conventional name", [I.Folder{"Junk", "/", []}], "")
-    junk("junk name ignores sent", [I.Folder{"Junk", "/", []},
+    junk("junk names exclude sent", [I.Folder{"Junk", "/", []},
       I.Folder{"Sent", "/", []}], "")
     archive("archive advertised", [I.Folder{"Provider Archive", "/", ["\\Archive"]}], "")
     archive("archive conventional name", [I.Folder{"Archive", "/", []}], "")
-    archive("archive name ignores sent", [I.Folder{"Archive", "/", []},
+    archive("archive names exclude sent", [I.Folder{"Archive", "/", []},
       I.Folder{"Sent", "/", []}], "")
 
 #|inbox uppercase name True
@@ -146,18 +149,20 @@ def main() -> IO(Unit):
 #|empty listing unresolved True
 #|no matching role unresolved True
 #|drafts same conventional names name True
+#|sent primary conventional name name True
+#|sent both conventional names ambiguous True
 #|sent alternate name name True
 #|junk advertised advertised True
 #|archive override override True
 #|drafts override override True
 #|drafts advertised advertised True
-#|drafts name ignores sent name True
+#|drafts names exclude sent name True
 #|sent override override True
 #|sent advertised advertised True
-#|sent alternate ignores junk name True
+#|sent names exclude junk name True
 #|junk override override True
 #|junk conventional name name True
-#|junk name ignores sent name True
+#|junk names exclude sent name True
 #|archive advertised advertised True
 #|archive conventional name name True
-#|archive name ignores sent name True
+#|archive names exclude sent name True
