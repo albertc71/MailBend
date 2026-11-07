@@ -124,6 +124,16 @@ GET = record({**METADATA, **{k: S for k in ("folder", "internal_date", "from", "
               "uid": N, "uidvalidity": NN, "flags": STRINGS, "seen": B,
               "size": N, "truncated": B, "html_available": B,
               "attachments": array(ATTACHMENT)}, ANNOTATION)
+MEETING_FACTS = {
+    "facts": param("array", maxItems=16, items=record({
+        "kind": {"const": "meeting_link"},
+        "value": param("string", minLength=36, maxLength=36,
+                       pattern=r"^https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}$"),
+        "source": {"const": "text"}, "start": param("integer", minimum=0, maximum=65500),
+        "end": param("integer", minimum=36, maximum=65536),
+        "line": param("integer", minimum=1, maximum=65501), "untrusted": YES})),
+    "facts_scan": record({"scope": {"const": "returned_text"}, "limited": B}),
+}
 CLASSIFIED_FIELDS = {"uid": N, "category": NS, "jev": JEV}
 CLASSIFIED_OPTIONAL = {"new_category": S, "needs_new_category": YES,
                        "body_truncated": YES}
@@ -370,6 +380,9 @@ def output_schema(name):
         # Error and Partial results bypass response projection.
         variants += [projected(v, mode) for v in variants[1:]
                      for mode in ("full", "text", "html", "metadata")]
+    if name == "mail_get":
+        variants += [extended(GET, MEETING_FACTS),
+                     *[extended(projected(GET, mode), MEETING_FACTS) for mode in ("full", "text")]]
     if name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
         fields = {"hidden_unicode": HIDDEN_UNICODE}
         if name in ("mail_reply", "mail_forward"):
@@ -611,6 +624,13 @@ TOOLS = [
          {"folder": FOLDER,
           "uid": UID,
           "uidvalidity": READ_UIDVALIDITY,
+          "facts": param("boolean", "Opt in to literal canonical lowercase HTTPS Google Meet links "
+                         "from returned text only. Facts include exact values, zero-based half-open "
+                         "Unicode-scalar start/end offsets, one-based LF line, and untrusted=true. "
+                         "Scans at most 65536 scalars and emits at most 16 facts; facts_scan.limited "
+                         "marks source truncation or either cap. Only whole-message full/text reads. "
+                         "A response budget must fit the existing projection plus facts; raise it "
+                         "if the final result cannot fit. No links are opened."),
           "section": param("string", "Optional: list for section metadata, text/html for the first "
                            "inline part, or a numeric section from list. Requires uidvalidity. "
                            "Fetches only that part; incomplete or malformed content fails. "

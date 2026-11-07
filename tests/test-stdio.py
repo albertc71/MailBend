@@ -111,10 +111,14 @@ def child_pid(pid):
 
 
 class Session:
-    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False):
+    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False,
+                 send_buffer=None):
         self.peer, child = (None, None) if pipe else socket.socketpair()
         if child is not None:
+            if send_buffer is not None:
+                child.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, send_buffer)
             child.setblocking(not nonblocking)
+        self.output_observer = child.dup() if child is not None and send_buffer is not None else None
         self.proc = subprocess.Popen([str(launcher), "mcp"], stdin=child or subprocess.PIPE,
                                      stdout=child if duplex else subprocess.PIPE,
                                      stderr=subprocess.PIPE, env=env, cwd="/", start_new_session=True)
@@ -155,6 +159,8 @@ class Session:
         return self
 
     def __exit__(self, *_):
+        if self.output_observer is not None:
+            self.output_observer.close()
         if self.peer is not None:
             self.peer.close()
         if self.proc.poll() is None:
@@ -163,6 +169,175 @@ class Session:
         for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream is not None:
                 stream.close()
+
+
+class OutputRelayTests(unittest.TestCase):
+    PATTERN = b"0123456789abcdef"
+    CORE = r"""import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(__file__).parent
+if sys.argv[1:] in (["helper"], ["afterexit"]):
+    parent = os.getppid()
+    (root / "helper-ready").touch()
+    deadline = time.monotonic() + 10
+    if sys.argv[1:] == ["afterexit"]:
+        while os.getppid() == parent:
+            if time.monotonic() >= deadline:
+                os._exit(1)
+            time.sleep(0.001)
+        try:
+            sys.stdout.buffer.write(b'"after-core-exit"\n')
+            sys.stdout.buffer.flush()
+            sys.stdout.buffer.write(b"0123456789abcdef" * 65536)
+            sys.stdout.buffer.flush()
+        except (BrokenPipeError, BlockingIOError):
+            pass
+    while not (root / "resume").exists():
+        if time.monotonic() >= deadline:
+            os._exit(1)
+        time.sleep(0.01)
+    (root / "finished").touch()
+    os._exit(0)
+mode = sys.stdin.buffer.readline().strip()
+signal.signal(signal.SIGTERM, lambda *_: os._exit(73))
+if mode == b"afterexit":
+    subprocess.Popen([sys.executable, __file__, "afterexit"], stdin=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+    while not (root / "helper-ready").exists():
+        time.sleep(0.001)
+    os._exit(0)
+if mode in (b"stop", b"disconnect", b"selfsignal"):
+    subprocess.Popen([sys.executable, __file__, "helper"], stdin=subprocess.DEVNULL,
+                     stdout=None if mode == b"selfsignal" else subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+    while not (root / "helper-ready").exists():
+        time.sleep(0.01)
+size = 65536 if mode in (b"large", b"stop") else 1024
+try:
+    sys.stdout.buffer.write(b"0123456789abcdef" * size)
+    sys.stdout.buffer.flush()
+except (BrokenPipeError, BlockingIOError):
+    os._exit(0)
+(root / "written").touch()
+if mode == b"selfsignal":
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGTERM)
+if mode == b"disconnect":
+    sys.stdin.buffer.read()
+    os._exit(0)
+if mode == b"stop":
+    while True:
+        signal.pause()
+os._exit(23)
+"""
+
+    @contextlib.contextmanager
+    def core(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            adapter = root / "mailbend-stdio"
+            shutil.copy2(STDIO_BINARY, adapter)
+            core = root / "mailbend-core"
+            core.write_text(f"#!{sys.executable}\n" + self.CORE)
+            core.chmod(0o755)
+            try:
+                yield root, adapter
+            finally:
+                (root / "resume").touch()
+                if (root / "helper-ready").exists():
+                    wait_until(lambda: (root / "finished").exists())
+
+    def pressure(self, session):
+        wait_until(lambda: not select.select([], [session.output_observer], [], 0)[1])
+        self.assertFalse(os.get_blocking(session.output_observer.fileno()))
+        session.output_observer.close()
+        session.output_observer = None
+
+    def read_all(self, output):
+        data = bytearray()
+        deadline = time.monotonic() + 10
+        while True:
+            self.assertTrue(select.select([output], [], [], max(0, deadline - time.monotonic()))[0],
+                            "output did not drain before timeout")
+            chunk = os.read(output.fileno(), 65536)
+            if not chunk:
+                return bytes(data)
+            data.extend(chunk)
+
+    def test_large_output_drains_after_input_half_close(self):
+        with self.core() as (_, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"large\n")
+            session.close_input()
+            self.pressure(session)
+            self.assertEqual(self.read_all(session.output), self.PATTERN * 65536)
+            self.assertEqual(session.proc.wait(timeout=10), 23)
+            self.assertEqual(session.proc.stderr.read(), b"")
+
+    def test_numeric_exit_preserves_output_waiting_for_reader(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"small\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            self.assertIsNone(session.proc.poll())
+            self.assertEqual(self.read_all(session.output), self.PATTERN * 1024)
+            self.assertEqual(session.proc.wait(timeout=10), 23)
+            self.assertEqual(session.proc.stderr.read(), b"")
+
+    def test_signal_during_full_output_preserves_handler_status_and_helper(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"stop\n")
+            self.pressure(session)
+            session.proc.send_signal(signal.SIGTERM)
+            self.assertEqual(session.proc.wait(timeout=10), 73)
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_output_disconnect_fails_without_killing_started_helper(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"disconnect\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            session.peer.close()
+            self.assertEqual(session.proc.wait(timeout=10), 2)
+            self.assertIn(b"stdout closed before output was delivered", session.proc.stderr.read())
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_signal_during_post_exit_drain_does_not_signal_descendant(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"afterexit\n")
+            self.assertEqual(session.line(), "after-core-exit")
+            self.pressure(session)
+            session.proc.send_signal(signal.SIGTERM)
+            self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_post_exit_output_loss_fails_without_signalling_descendant(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"afterexit\n")
+            self.assertEqual(session.line(), "after-core-exit")
+            self.pressure(session)
+            session.peer.close()
+            self.assertEqual(session.proc.wait(timeout=10), 2)
+            self.assertIn(b"stdout closed before output was delivered", session.proc.stderr.read())
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_signalled_core_does_not_wait_for_descendant_output_eof(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"selfsignal\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
 
 
 class PausedMailServer:
@@ -599,6 +774,40 @@ class StdioTests(unittest.TestCase):
                             self.assertEqual(session.proc.wait(timeout=10), 0)
                             self.assertEqual(session.proc.stderr.read(), b"")
                             self.assertFalse(live(core))
+
+    def test_large_reply_survives_nonblocking_output_backpressure(self):
+        for launcher in LAUNCHERS:
+            for modern in (False, True):
+                for nonblocking in (False, True):
+                    with self.subTest(launcher=launcher.name, modern=modern,
+                                      nonblocking=nonblocking):
+                        with Session(launcher, duplex=True, nonblocking=nonblocking,
+                                     send_buffer=4096) as session:
+                            session.send(discovery(modern))
+                            self.assertEqual(session.line()["id"], 1)
+                            params = {"_meta": META} if modern else {}
+                            session.send(request("tools/list", 2, params))
+                            self.assertTrue(select.select([session.output], [], [], 10)[0],
+                                            "core did not start its response")
+                            wait_until(lambda: not select.select(
+                                [], [session.output_observer], [], 0)[1])
+                            self.assertEqual(os.get_blocking(session.output_observer.fileno()),
+                                             not nonblocking)
+                            session.output_observer.close()
+                            session.output_observer = None
+                            time.sleep(0.1)
+                            reply = session.line()
+                            self.assertEqual(reply["id"], 2)
+                            self.assertEqual({t["name"] for t in reply["result"]["tools"]},
+                                             READ_TOOLS)
+                            session.send(request("tools/list", 3, params))
+                            self.assertEqual(session.line()["id"], 3)
+                            session.close_input()
+                            self.assertEqual(session.proc.wait(timeout=10), 0)
+                            self.assertEqual(session.pending, b"")
+                            self.assertTrue(select.select([session.peer], [], [], 10)[0])
+                            self.assertEqual(session.peer.recv(1), b"")
+                            self.assertEqual(session.proc.stderr.read(), b"")
 
     def test_pipe_file_and_empty_input(self):
         for launcher in LAUNCHERS:

@@ -142,7 +142,9 @@ jobs:
             exit 1
           fi
       - name: Unit tests
-        run: sh tests/run-unit.sh
+        run: |
+          sh tests/run-unit.sh
+          python3 tests/test-facts-extraction.py
       - name: Client-side prompt proof mutations
         run: python3 tests/formal/check-hook.py
       - name: Image request cap and the fake TypeSafe's image rules
@@ -219,6 +221,8 @@ jobs:
         run: python3 tests/formal/check-policy.py
       - name: Response and image budget proof mutation checks
         run: python3 tests/formal/check-response-image-budgets.py
+      - name: Literal facts proof mutation checks
+        run: python3 tests/formal/check-facts.py
       - name: Change-plan and UID wire mutation checks
         run: python3 tests/formal/check-plan-wire-mutations.py
   claim-mutations:
@@ -316,6 +320,7 @@ jobs:
         run: |
           python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
+          python3 tests/test-facts.py
           python3 tests/test-e2e.py
       - name: Short synthetic MCP soak
         if: matrix.suite == 'soak'
@@ -325,6 +330,7 @@ jobs:
         if: matrix.suite == 'mcp'
         run: |
           python3 tests/test-plugin.py --runtime
+          MAILBEND_TEST_MCP=1 python3 tests/test-facts.py
           MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
       - name: Integrated results and scheduled recipes
         if: matrix.suite == 'support'
