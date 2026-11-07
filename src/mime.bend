@@ -50,6 +50,12 @@ type Leaf is Data:
 type PartKind is Data:
   PartKind{ct: String, typ: String, name: String, file: Bool}
 
+# The immediate multipart parent's rules for its children.
+type PartContext is Data:
+  Ordinary{}
+  Alternative{}
+  Digest{}
+
 # A range of code points, both ends included.
 type Range is Data:
   Range{lo: U32, hi: U32}
@@ -109,7 +115,13 @@ def split.go(s: String, acc: String) -> Split:
       split.go(t, SCon{c, acc})
 
 def split(msg: String) -> Split:
-  split.go(msg, "")
+  match msg:
+    case SCon{'\r', SCon{'\n', t}}:
+      Split{"", t}
+    case SCon{'\n', t}:
+      Split{"", t}
+    case _:
+      split.go(msg, "")
 
 def head_of(s: Split) -> String:
   Split{head, body} = s
@@ -737,6 +749,36 @@ def subparts(body: String, b: String, single: Bool) -> List<&2, String>:
 def multipart_limit() -> Nat:
   8n
 
+def part_context(typ: String) -> PartContext:
+  match typ:
+    case "multipart/alternative":
+      Alternative{}
+    case "multipart/digest":
+      Digest{}
+    case _:
+      Ordinary{}
+
+def part_context.alternative(c: PartContext) -> Bool:
+  match c:
+    case Alternative{}:
+      True{}
+    case _:
+      False{}
+
+def part_context.has_type(h: Hdr) -> Bool:
+  Hdr{name, value} = h
+  String.eq(name, "content-type")
+
+# RFC 2046 5.1.5 defaults only a digest child's absent Content-Type.
+# Normalize the parsed fields once; the enclosed message's bytes stay intact.
+def part_context.headers(c: PartContext, +hs: List<&2, Hdr>) -> List<&2, Hdr>:
+  match c:
+    case Digest{}:
+      present = List.any(~&2, ~Hdr, ~part_context.has_type, hs)
+      Bool.pick(List<&2, Hdr>, present, hs, Hdr{"content-type", "message/rfc822"} <> hs)
+    case _:
+      hs
+
 # A part's own leaf, then those of its subparts and of the parts after it.
 # Each comes with whether the bound left a part out, whether it holds a
 # text/plain and a text/html part, and whether such a text and HTML lie
@@ -758,12 +800,12 @@ def leaves.fin(
     a_apart || b_apart || apart)
 
 # The single parts of `parts`, in order, walking nested multiparts up to
-# `depth` levels, with what leaves.fin tells of them; `alt` says `parts`
-# are those of a multipart/alternative. A single part is a leaf and a
+# `depth` levels, with what leaves.fin tells of them; `context` describes
+# their immediate multipart parent. A single part is a leaf and a
 # multipart gives its subparts; the side not taken is empty, so each part
 # is parsed once.
 def leaves(
-  +depth: Nat, +alt: Bool, parts: List<&2, String>
+  +depth: Nat, +context: PartContext, parts: List<&2, String>
 ) -> List<&2, Leaf> & Bool & Bool & Bool & Bool:
   match depth:
     case 0n:
@@ -774,18 +816,18 @@ def leaves(
           ([], False{}, False{}, False{}, False{})
         case part <> rest:
           +entity = split(part)
-          +hs = headers(head_of(entity))
+          +hs = part_context.headers(context, headers(head_of(entity)))
           +body = body_of(entity)
           +b = boundary(hs)
           +single = String.is_empty(b)
-          inner_alt = String.eq(main_value(header(hs, "content-type")), "multipart/alternative")
-          leaves.fin(alt, leaves.one(hs, body, single),
-            leaves(p, inner_alt, subparts(body, b, single)), leaves(1n+p, alt, rest))
+          inner = part_context(main_value(header(hs, "content-type")))
+          leaves.fin(part_context.alternative(context), leaves.one(hs, body, single),
+            leaves(p, inner, subparts(body, b, single)), leaves(1n+p, context, rest))
 
 # A message's single parts, whether multipart_limit left any out, whether
 # it holds a text/plain and a text/html part, and whether those lie apart.
 def message_leaves.run(msg: String) -> List<&2, Leaf> & Bool & Bool & Bool & Bool:
-  leaves(multipart_limit(), False{}, [msg])
+  leaves(multipart_limit(), Ordinary{}, [msg])
 
 def message_leaves.cut.fin(
   w: List<&2, Leaf> & Bool & Bool & Bool & Bool

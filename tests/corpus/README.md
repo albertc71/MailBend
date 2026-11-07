@@ -29,8 +29,10 @@ The legacy charset diagnostics link to [#135](https://github.com/albertc71/MailB
 They are test metadata. They do not claim that MailBend currently reports a charset
 status. Flowed text is unsupported rendering, not an automatic RFC violation;
 [RFC 3676 section 4](https://www.rfc-editor.org/rfc/rfc3676#section-4) permits a receiver
-not to interpret it. The implicit `multipart/digest` default is a separate known
-reading gap under [RFC 2046 section 5.1.5](https://www.rfc-editor.org/rfc/rfc2046#section-5.1.5).
+not to interpret it. The implicit `multipart/digest` default follows
+[RFC 2046 section 5.1.5](https://www.rfc-editor.org/rfc/rfc2046#section-5.1.5).
+A child without Content-Type is one opaque `message/rfc822` attachment, not outer
+body text. An explicit child Content-Type still overrides that default.
 A terminal quoted-printable `=` is malformed under [RFC 2045 §6.7](https://www.rfc-editor.org/rfc/rfc2045#section-6.7). The one-CRLF
 `qp-final-soft-break` fixture pins recovery because [RFC 2046 §5.1.1](https://www.rfc-editor.org/rfc/rfc2046#section-5.1.1) assigns that CRLF to
 the boundary; the `-complete` companion supplies a separate soft-break CRLF and
