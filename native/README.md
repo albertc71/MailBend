@@ -46,6 +46,13 @@ MailBend has four small native programs:
 (cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe -p mailbend-stdio)
 ```
 
+After `scripts/install.sh`, run `python3 scripts/check-native-hardening.py`.
+It inspects the four installed native helpers in `bin/` for ELF hardening
+and unexpected shared-library dependencies. See the
+[contributor checks](../CONTRIBUTING.md#native-elf-checks) for the exact
+policy and real-ELF negative controls. This metadata check does not prove
+memory safety, exploit resistance or the trustworthiness of a library.
+
 The Rust workspace (`native/Cargo.toml`) pins its Rust release, the MSRV, in
 `native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
 up. Our crates forbid `unsafe` code. `native/deny.toml` bans the

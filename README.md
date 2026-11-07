@@ -614,7 +614,9 @@ Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
 tool asks it. The local secret scan above is independent. With Jev on:
 
 - **Reads** (`mail_search`, `mail_get`, `mail_get_new`, `mail_get_thread`)
-  add Jev's notes to each message they show.
+  add Jev's notes to each message they show. Their category options exclude
+  INBOX itself, other reserved folders, and descendants of those other
+  folders, as do classification and triage categories.
 - **Sends** (`mail_send`, and replies and forwards that are not drafts) pass
   a local secret scan and then Jev, and **permanent deletes**
   (`mail_delete`) pass Jev. The scan or Jev can block them, and so can

@@ -142,6 +142,8 @@ def check_filename_parameters(part, filename):
 
 
 def check_input(raw, message, draft, case_name):
+    for name in ('from', 'to', 'cc', 'bcc', 'subject', 'message-id', 'in-reply-to', 'references'):
+        require(len(message.get_all(name, [])) <= 1, 'duplicate composed ' + name + ' header')
     require(message.get_content_type() == ('multipart/mixed' if draft['attachments'] else 'text/plain'),
             'root media type differs from input Draft')
     require(str(message['Subject']) == draft['subject'], 'composed Subject differs from input Draft')
@@ -321,6 +323,7 @@ def input_self_test():
              'attachments': [{'filename': 'notes.bin', 'content_type': 'application/octet-stream', 'data': 'aGk='}]}
     check_input(raw, parse(raw), draft, 'control')
     changes = [(b'From: Sender', b'From: Other'), (b'To: reader@', b'To: other@'),
+               (b'To: reader@example.invalid', b'To: reader@example.invalid\r\nTo: extra@example.invalid'),
                (b'Subject: original', b'Subject: =?UTF-8?B?SGFja2Vk?='),
                (b'Date: Sat, 31 Oct', b'Date: Fri, 30 Oct'), (b'<self@', b'<other@'),
                (b'<before@', b'<other@'), (b'<root@', b'<other@'),
@@ -340,6 +343,43 @@ def input_self_test():
         raise AssertionError('input negative control was accepted: ' + repr(before))
     return len(changes)
 
+
+
+def header_self_test():
+    raw = (b'From: Sender <sender@example.invalid>\r\n'
+           b'To: Reader <reader@example.invalid>,\r\n Second <second@example.invalid>\r\n'
+           b'Cc: copy@example.invalid\r\nBcc: hidden@example.invalid\r\nSubject: original\r\n'
+           b'Date: Sat, 31 Oct 2026 12:00:00 +0000\r\nMessage-ID: <self@corpus.invalid>\r\n'
+           b'In-Reply-To: <before@corpus.invalid>\r\nReferences: <root@corpus.invalid>\r\n'
+           b'Content-Type: text/plain; charset=utf-8\r\n\r\nhello')
+    draft = {'from': 'Sender <sender@example.invalid>',
+             'to': ['Reader <reader@example.invalid>', 'Second <second@example.invalid>'],
+             'cc': ['copy@example.invalid'], 'bcc': ['hidden@example.invalid'],
+             'subject': 'original', 'date': 'Sat, 31 Oct 2026 12:00:00 +0000',
+             'message_id': '<self@corpus.invalid>', 'in_reply_to': '<before@corpus.invalid>',
+             'references': '<root@corpus.invalid>', 'text': 'hello', 'attachments': []}
+    check_input(raw, parse(raw), draft, 'control')
+    optional = [b'Cc: copy@example.invalid\r\n', b'Bcc: hidden@example.invalid\r\n',
+                b'In-Reply-To: <before@corpus.invalid>\r\n', b'References: <root@corpus.invalid>\r\n']
+    without_optional = raw
+    for field in optional:
+        without_optional = without_optional.replace(field, b'', 1)
+    sparse = dict(draft, cc=[], bcc=[], in_reply_to='', references='')
+    check_input(without_optional, parse(without_optional), sparse, 'control')
+    fields = [b'From: Sender <sender@example.invalid>',
+              b'To: Reader <reader@example.invalid>,\r\n Second <second@example.invalid>',
+              b'Cc: copy@example.invalid', b'Bcc: hidden@example.invalid', b'Subject: original',
+              b'Message-ID: <self@corpus.invalid>', b'In-Reply-To: <before@corpus.invalid>',
+              b'References: <root@corpus.invalid>']
+    for field in fields:
+        for duplicate in (field, field.lower().split(b':', 1)[0] + b': changed@example.invalid'):
+            broken = raw.replace(b'\r\n\r\n', b'\r\n' + duplicate + b'\r\n\r\n', 1)
+            try:
+                check_input(broken, parse(broken), draft, 'control')
+            except AssertionError:
+                continue
+            raise AssertionError('duplicate Draft header was accepted: ' + repr(duplicate))
+    return len(fields) * 2
 
 
 def filename_self_test():

@@ -104,9 +104,6 @@ def esc.go(s: String, acc: String) -> String:
 def esc(s: String) -> String:
   String.reverse(esc.go(s, ""))
 
-def quote(s: String) -> String:
-  "\"" ++ esc(s) ++ "\""
-
 # The separator before the rest t of a chain.
 def sep(t: Json) -> String:
   match t:
@@ -115,26 +112,32 @@ def sep(t: Json) -> String:
     case _:
       ","
 
-def show(j: Json) -> String:
+def show.quote(s: String, acc: String) -> String:
+  SCon{'"', esc.go(s, SCon{'"', acc})}
+
+def show.go(j: Json, acc: String) -> String:
   match j:
     case JNull{}:
-      "null"
+      esc.onto("null", acc)
     case JBool{b}:
-      Bool.pick(String, b, "true", "false")
+      esc.onto(Bool.pick(String, b, "true", "false"), acc)
     case JNum{raw}:
-      raw
+      esc.onto(raw, acc)
     case JStr{s}:
-      quote(s)
+      show.quote(s, acc)
     case JArr{items}:
-      "[" ++ show(items) ++ "]"
+      SCon{']', show.go(items, SCon{'[', acc})}
     case JObj{items}:
-      "{" ++ show(items) ++ "}"
+      SCon{'}', show.go(items, SCon{'{', acc})}
     case JCons{h, +t}:
-      show(h) ++ sep(t) ++ show(t)
+      show.go(t, esc.onto(sep(t), show.go(h, acc)))
     case JEnd{}:
-      ""
+      acc
     case JKv{k, v}:
-      quote(k) ++ ":" ++ show(v)
+      show.go(v, SCon{':', show.quote(k, acc)})
+
+def show(j: Json) -> String:
+  String.reverse(show.go(j, ""))
 
 # Access
 # ------

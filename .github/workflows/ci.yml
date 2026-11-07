@@ -53,8 +53,12 @@ jobs:
         run: python3 tests/test-toolchain-installers.py
       - name: Documentation source names and drift mutations
         run: |
+          python3 tools/gen-llms.py --check
+          python3 tests/test-llms.py
           python3 scripts/check-docs.py
           python3 tests/test-docs.py
+      - name: Unit runner scheduling and cleanup contracts
+        run: python3 tests/test-unit-runner.py
       - name: Claude plugin declarations and isolated launcher fixture
         run: python3 tests/test-plugin.py
       - name: Law catalogue and public safety claims
@@ -284,6 +288,11 @@ jobs:
         if: matrix.suite == 'support'
       - name: Build
         run: scripts/install.sh
+      - name: Installed native ELF hardening and negative controls
+        if: matrix.suite == 'support'
+        run: |
+          python3 scripts/check-native-hardening.py
+          python3 tests/test-native-hardening.py
       - name: MIME and internationalisation corpus
         if: matrix.suite == 'support'
         run: python3 tests/test-mime-corpus.py

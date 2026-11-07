@@ -18,7 +18,7 @@ Other versions need their own verification.
 ### Run the recipe
 
 1. Build MailBend with `scripts/install.sh`. Complete the
-   [password-file setup](../README.md#configuration) first. The file must be an
+   [password-file setup](../README.md#configure) first. The file must be an
    absolute path, owned by you, with mode `600`, outside any attachment directory.
 2. Install the optional dependencies into a separate Python 3.12 virtual
    environment. The complete, hash-checked lock targets Linux x86-64/Python 3.12.

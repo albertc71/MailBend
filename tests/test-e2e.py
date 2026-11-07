@@ -6298,7 +6298,49 @@ def gates(work):
         gates_annotations(srv, work, key_file)
     finally:
         srv.stop()
+    gates_digest_encoding(work)
     gates_delete(work, key_file)
+
+
+def gates_digest_encoding(work):
+    inner = "Subject: inner\r\n\r\nHello."
+    uuencoded = ('begin 644 enclosed.eml\r\n'
+                 'D4W5B:F5C=#H@:6YN97(-"@T*4&%S<W=O<F0Z(&AU;G1E<C(R\n`\r\nend\r\n')
+    cases = [
+        ("implicit unsupported", "", "x-uuencode", uuencoded, "incomplete"),
+        ("explicit unsupported", "Content-Type: message/rfc822\r\n", "x-uuencode", uuencoded, "incomplete"),
+        ("global unsupported", "Content-Type: message/global\r\n", "x-uuencode", uuencoded, "incomplete"),
+        ("clean 7bit", "", "7bit", inner, "clean"),
+        ("clean base64", "", "base64", base64.b64encode(inner.encode()).decode(), "clean"),
+        ("clean quoted-printable", "", "quoted-printable", "Subject: inner\r\n\r\nHel=6Co.", "clean"),
+        ("encoded secret", "", "base64", base64.b64encode(
+            f"Subject: inner\r\n\r\n{GATE_PASSWORD}".encode()).decode(), "found"),
+    ]
+    fixture = copy.deepcopy(FIX)
+    inbox = fixture["mailboxes"]["INBOX"]
+    inbox["messages"] = [gate_message(uid,
+        f"Subject: digest wrapper\r\nContent-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n"
+        f"{ct}Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--d--\r\n")
+        for uid, (_, ct, encoding, body, _) in enumerate(cases, 1)]
+    inbox["uidnext"] = len(cases) + 1
+    srv = Server(work, fixture=fixture)
+    try:
+        for uid, (title, _, _, _, expected) in enumerate(cases, 1):
+            before, start, sent = srv.st(), len(srv.log_records()), sent_count(srv)
+            code, result = tool(srv, "mail_forward", {"uid": uid, "uidvalidity": inbox["uidvalidity"],
+                "to": FRIEND}, MAILBEND_SECRET_SCAN="1", MAILBEND_SAVE_SENT="1")
+            logged = srv.log_records()[start:]
+            if expected == "clean":
+                check("digest scan: " + title + " forwards after a clean scan",
+                      code == 0 and result.get("secret_scan") == "clean" and sent_count(srv) == sent + 1,
+                      result)
+            else:
+                check("digest scan: " + title + " blocks before SMTP or APPEND",
+                      code != 0 and result.get("secret_scan") == expected
+                      and result.get("smtp_outcome") == "not_sent" and srv.st() == before
+                      and not any(x["proto"] == "smtp" or " APPEND " in x["line"] for x in logged), result)
+    finally:
+        srv.stop()
 
 
 def gates_tool_list(srv, work, key_file):

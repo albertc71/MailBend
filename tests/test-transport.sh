@@ -103,22 +103,27 @@ stop_server() {
 # (path), CODE (exit status), and tracks password leaks. Protocol-specific
 # defaults precede caller overrides, so failure cases can replace them.
 call_helper() {
-  local protocol="$1" script="$2" password="$PASSWORD" assignment
+  local protocol="$1" script="$2" password="$PASSWORD" email="$FIXTURE_USER" login="" assignment
+  local -a deadline=()
   shift 2
   # env uses the last assignment, including negative cases that replace the
   # fixture password. Inspect that actual input without printing it.
   for assignment in "$@"; do
     case "$assignment" in
       MAILBEND_APP_PASSWORD=*) password="${assignment#*=}" ;;
+      MAILBEND_EMAIL=*) email="${assignment#*=}" ;;
+      MAILBEND_LOGIN=*) login="${assignment#*=}" ;;
     esac
   done
+  # Keep the outer deadline in this wrapper so timeout cases are checked too.
+  if [ -n "${HELPER_TIMEOUT_S:-}" ]; then deadline=(timeout "$HELPER_TIMEOUT_S"); fi
   printf '%s' "$script" >"$WORK/in.txt"
   OUT="$WORK/out.bin"; ERR="$WORK/err.txt"
-  env -u MAILBEND_SMTP_TLS_MODE -u MAILBEND_LOGIN MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
+  "${deadline[@]}" env -u MAILBEND_SMTP_TLS_MODE -u MAILBEND_LOGIN MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
       MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_TIMEOUT_MS="${TIMEOUT_MS:-5000}" \
       "$@" "$HELPER" "$protocol" <"$WORK/in.txt" >"$OUT" 2>"$ERR"
   CODE=$?
-  check_leak "$password"
+  check_leak "$password" "${login:-$email}"
 }
 
 # call_imap SCRIPT_TEXT [ENV_ASSIGNMENT...]
@@ -138,47 +143,81 @@ call_smtp() {
 }
 
 check_leak() {
-  local password="$1"
-  # Empty passwords have no bytes to leak. Use a literal, option-protected
-  # match so punctuation in synthetic credentials cannot change the check.
-  if [ -n "$password" ] && grep -aFq -- "$password" "$OUT" "$ERR" 2>/dev/null; then
+  local password="$1" login="$2" encoded_password encoded_plain
+  # An empty password has no secret bytes. Match literal bytes, including
+  # SMTP's LOGIN password and PLAIN NUL-user-NUL-password encodings.
+  [ -n "$password" ] || return 0
+  encoded_password=$(printf '%s' "$password" | base64 | tr -d '\n') || return 1
+  encoded_plain=$(printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n') || return 1
+  if grep -aFq -e "$password" -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
     GLOBAL_LEAK=1
     return 1
   fi
   return 0
 }
 
-# Negative controls for the checker itself. All values and output here are
-# synthetic; shadow the aggregate so intentional leaks cannot poison it.
+# Negative controls for the checker itself. Python independently encodes
+# synthetic output; it does not reuse the checker's base64 implementation.
+# Shadow the aggregate so intentional leaks cannot poison later cases.
 case_password_leak_check() {
   local GLOBAL_LEAK=0 PASSWORD="fixture-synthetic-password"
   local HELPER="$WORK/synthetic-leak-helper" OUT ERR CODE
-  local password stream expected status ok=1
-  cat >"$HELPER" <<'SH'
-#!/usr/bin/env bash
-case "$SYNTHETIC_LEAK_STREAM" in
-  stdout) printf '%s\n' "$MAILBEND_APP_PASSWORD" ;;
-  stderr) printf '%s\n' "$MAILBEND_APP_PASSWORD" >&2 ;;
-  none) printf '%s\n' 'ordinary output' ;;
-  near) printf '%s\n' '-synthetic-any-password' ;;
-esac
-SH
+  local password identity form stream expected status ok=1
+  local -a identity_env=()
+  cat >"$HELPER" <<'PY'
+#!/usr/bin/env python3
+import base64
+import os
+import sys
+
+password = os.environb[b'MAILBEND_APP_PASSWORD']
+login = os.environb.get(b'MAILBEND_LOGIN') or os.environb[b'MAILBEND_EMAIL']
+stream = os.environ['SYNTHETIC_LEAK_STREAM']
+if stream == 'superseded':
+    password = b'overridden-synthetic-password'
+form = os.environ['SYNTHETIC_LEAK_FORM']
+if form == 'login':
+    output = base64.b64encode(password)
+elif form == 'plain':
+    output = base64.b64encode(b'\0' + login + b'\0' + password)
+else:
+    output = password
+if stream == 'none':
+    output = b'ordinary output'
+elif stream == 'near':
+    output = b'-synthetic-any-password'
+target = sys.stderr.buffer if stream == 'stderr' else sys.stdout.buffer
+target.write(b'prefix\0' + output + b'\0suffix\n')
+PY
   chmod +x "$HELPER"
-  for password in "$PASSWORD" "wrong-synthetic-password" '-[synthetic].*password'; do
-    for stream in stdout stderr none near; do
-      GLOBAL_LEAK=0
-      expected=0
-      case "$stream" in stdout|stderr) expected=1 ;; esac
-      call_helper imap '' MAILBEND_APP_PASSWORD="overridden-synthetic-password" \
-          MAILBEND_APP_PASSWORD="$password" SYNTHETIC_LEAK_STREAM="$stream"
-      status=$?
-      if [ "$CODE" -ne 0 ] || [ "$status" -ne "$expected" ] || [ "$GLOBAL_LEAK" -ne "$expected" ]; then
-        ok=0
-      fi
+  for password in "$PASSWORD" "wrong-synthetic-password" '-[synthetic].*password' ''; do
+    for identity in default email login empty-login; do
+      identity_env=()
+      case "$identity" in
+        email) identity_env=(MAILBEND_EMAIL=old@example.com MAILBEND_EMAIL=active@example.com) ;;
+        login) identity_env=(MAILBEND_EMAIL=other@example.com MAILBEND_LOGIN=old-login MAILBEND_LOGIN=active-login) ;;
+        empty-login) identity_env=(MAILBEND_EMAIL=active@example.com MAILBEND_LOGIN=old-login MAILBEND_LOGIN=) ;;
+      esac
+      for form in raw login plain; do
+        for stream in stdout stderr none near superseded; do
+          GLOBAL_LEAK=0
+          expected=0
+          if [ -n "$password" ]; then
+            case "$stream" in stdout|stderr) expected=1 ;; esac
+          fi
+          call_helper smtp '' MAILBEND_APP_PASSWORD="overridden-synthetic-password" \
+              MAILBEND_APP_PASSWORD="$password" "${identity_env[@]}" \
+              SYNTHETIC_LEAK_FORM="$form" SYNTHETIC_LEAK_STREAM="$stream"
+          status=$?
+          if [ "$CODE" -ne 0 ] || [ "$status" -ne "$expected" ] || [ "$GLOBAL_LEAK" -ne "$expected" ]; then
+            ok=0
+          fi
+        done
+      done
     done
   done
   if [ "$ok" -eq 1 ]; then
-    pass "password leak checker detects actual input on stdout/stderr literally"
+    pass "password leak checker detects active literal/LOGIN/PLAIN bytes on stdout/stderr"
   else
     fail "password leak checker" "synthetic detection or clean-output control failed"
   fi
@@ -466,17 +505,10 @@ case15() {
 case16() {
   start_server case16 --silent-port || { fail 16 "server did not start"; return; }
   if [ -z "$SILENT_PORT" ]; then fail "16 timeout against a silent listener" "no silent port"; stop_server; return; fi
-  save_imap_port="$IMAP_PORT"
-  IMAP_PORT="$SILENT_PORT"
   start_ts=$(date +%s)
-  TIMEOUT_MS=1500 timeout 6 env MAILBEND_EMAIL="$FIXTURE_USER" MAILBEND_APP_PASSWORD="$PASSWORD" \
-      MAILBEND_CA_FILE="$CERTDIR/ca.pem" MAILBEND_IMAP_HOST=localhost \
-      MAILBEND_IMAP_PORT="$IMAP_PORT" MAILBEND_TIMEOUT_MS=1500 \
-      "$HELPER" imap </dev/null >"$WORK/out.bin" 2>"$WORK/err.txt"
-  CODE=$?
+  TIMEOUT_MS=1500 HELPER_TIMEOUT_S=6 call_imap '' MAILBEND_IMAP_PORT="$SILENT_PORT"
   end_ts=$(date +%s)
   elapsed=$((end_ts - start_ts))
-  IMAP_PORT="$save_imap_port"
   if { [ "$CODE" -eq 3 ] || [ "$CODE" -eq 6 ]; } && [ "$elapsed" -le 5 ]; then
     pass "16 timeout against a silent listener"
   else
@@ -512,12 +544,12 @@ case18() {
   start_server case18 --echo-login || { fail 18 "server did not start"; return; }
   ok=1; detail=""
   call_imap $'a1 NOOP\r\n'
-  if [ "$CODE" -ne 0 ] || grep -aq -- "$PASSWORD" "$OUT" || grep -aq "LOGIN completed" "$OUT"; then
+  if [ "$CODE" -ne 0 ] || grep -aq "LOGIN completed" "$OUT"; then
     ok=0; detail="imap exit=$CODE"
   fi
   body=$'Subject: echo\r\n\r\nhi\r\n'
   call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
-  if [ "$CODE" -ne 0 ] || grep -aq -- "$PASSWORD" "$OUT" || grep -aq "^235" "$OUT"; then
+  if [ "$CODE" -ne 0 ] || grep -aq "^235" "$OUT"; then
     ok=0; detail="$detail smtp exit=$CODE"
   fi
   if [ "$ok" -eq 1 ]; then
@@ -757,7 +789,11 @@ auth_lines = {'PLAIN': 1, 'LOGIN': 3, 'none': 0}[mechanism]
 expected += ['AUTH <redacted>'] * auth_lines
 if code == 0:
     expected.append('QUIT')
-assert lines == expected, f'expected {mechanism} authentication sequence (wire mismatch)'
+# Only fixed, redacted command labels may appear in diagnostics. A broken
+# fake-server redactor must fail without copying credential bytes to CI.
+safe_lines = [line if line in {hello, 'STARTTLS', 'AUTH <redacted>', 'QUIT'}
+              else '<unexpected line redacted>' for line in lines]
+assert lines == expected, f'expected {expected!r}, got {safe_lines!r}'
 with open(sys.argv[2], encoding='utf-8') as source:
     assert not json.load(source).get('sent'), 'authentication test sent mail'
 PY
