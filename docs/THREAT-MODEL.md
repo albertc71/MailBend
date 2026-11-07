@@ -80,7 +80,8 @@ The boundaries follow [AGENTS.md](../AGENTS.md#native-boundaries):
 2. `mailbend-stdio` converts inherited socket stdin to a bounded pipe for the
    fixed sibling core, with an interpreter fallback. It creates no sockets,
    reads no credentials, and makes no JSON or mail decisions. It
-   inherits the launch environment. Its 64 KiB relay buffer and process
+   inherits the launch environment. In socket-input mode it also relays
+   nonblocking stdout. Its 64 KiB buffer for each relayed direction and process
    supervision are transport mechanics, not an authentication or OS sandbox.
 3. The core supplies complete scripts or envelopes to `mailbend-tls` over
    stdin. That helper owns sockets, credential reads, verified TLS, protocol
@@ -287,7 +288,8 @@ Jev never grants human approval or makes untrusted mail safe to follow.
 The [end-to-end `smtp_outcomes` tests](../tests/test-e2e.py) check native progress
 wiring. SMTP acceptance is not recipient delivery. The
 [stdio lifecycle tests](../tests/test-stdio.py) check that a started helper may
-continue after the core stops. No result then reaches the client.
+continue after the core stops. The helper cannot report a new plan result then,
+although already-written response bytes can still drain to the client.
 MailBend does not replay SMTP automatically.
 
 The [MCP input loop](../main.bend) bounds lines to 8 MiB. The
