@@ -24,16 +24,22 @@ CHECKER = ROOT / "scripts/check-docs.py"
 
 class DriftChecks(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="mailbend-docs-")
+        self.temp = tempfile.TemporaryDirectory(prefix="mailbend-docs-", dir=ROOT)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         files = [*ROOT.glob("*.md"), ROOT / "LAWS.bend", ROOT / "main.bend",
                  ROOT / ".env.example", ROOT / "scripts/mailbend", ROOT / "tools/gen-schema.py",
-                 ROOT / "tests/test-transport.sh", ROOT / ".github/ISSUE_TEMPLATE/provider-report.yml",
+                 ROOT / "tests/test-transport.sh", ROOT / "LICENSE", ROOT / ".github/CODEOWNERS",
                  *ROOT.glob("src/*.bend"), *ROOT.glob("native/*/src/**/*.rs"),
                  *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md"),
                  *ROOT.glob(".github/ISSUE_TEMPLATE/*.yml")]
-        for source in files:
+        for pattern in ("*.bend", "scripts/*", "tests/**/*.md", "tests/*.py", "tests/*.json",
+                        "tests/formal/*", "tests/unit/*", "tests/incidents/*.eml",
+                        "examples/**/*", "native/*.md", "native/*.toml",
+                        "native/*/tests/*.rs", "docs/**/*.json", "docs/**/*.tla",
+                        ".github/workflows/*.yml", ".agents/skills/**/*.md"):
+            files.extend(path for path in ROOT.glob(pattern) if path.is_file())
+        for source in sorted(set(files)):
             target = self.root / source.relative_to(ROOT)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
@@ -256,6 +262,84 @@ class DriftChecks(unittest.TestCase):
     def test_missing_skill_reference_fails(self):
         (self.root / "skills/mailbend/references/cli.md").unlink()
         self.check("references/cli.md: missing skill file")
+
+    def test_contained_directory_links_are_allowed(self):
+        directory = self.root / "examples/synthetic.md"
+        directory.mkdir()
+        self.append("docs/PROVIDERS.md", "\n[Directory](../examples/synthetic.md/)\n")
+        self.check()
+
+    def test_root_and_nested_document_links_are_checked(self):
+        for relative in ("EXTRA.md", "docs/nested/EXTRA.md"):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("[Missing](absent.md)\n")
+                self.check(f"{relative}: missing linked file absent.md")
+                path.unlink()
+
+    def test_directory_links_preserve_containment(self):
+        for target in ("../", "examples/absent/", "examples/synthetic.md/#heading"):
+            with self.subTest(target=target):
+                (self.root / "examples/synthetic.md").mkdir(exist_ok=True)
+                (self.root / "EXTRA.md").write_text(f"[Directory]({target})\n")
+                diagnostic = ("outside repository" if target == "../" else
+                              "missing linked heading" if "#" in target else "missing linked file")
+                self.check(diagnostic)
+
+    def test_link_symlinks_preserve_containment(self):
+        (self.root / "examples/escape").symlink_to(self.root.parent, target_is_directory=True)
+        (self.root / "EXTRA.md").write_text("[Outside](examples/escape/)\n")
+        self.check("EXTRA.md: linked file outside repository")
+        (self.root / "examples/inside").symlink_to(self.root / "examples/scheduled", target_is_directory=True)
+        (self.root / "EXTRA.md").write_text("[Inside](examples/inside/)\n")
+        self.check()
+
+    def test_new_document_sources_cannot_escape_repository(self):
+        with tempfile.TemporaryDirectory(prefix="mailbend-outside-", dir=ROOT) as outside:
+            sentinel = Path(outside) / "EXTRA.md"
+            sentinel.write_bytes(b"\xff")
+            for relative in ("EXTRA.md", "docs/EXTRA.md"):
+                with self.subTest(relative=relative):
+                    path = self.root / relative
+                    path.symlink_to(sentinel)
+                    self.check(f"{relative}: document outside repository")
+                    path.unlink()
+
+    def test_document_directory_cannot_escape_repository(self):
+        with tempfile.TemporaryDirectory(prefix="mailbend-outside-", dir=ROOT) as outside:
+            (Path(outside) / "EXTRA.md").write_bytes(b"\xff")
+            for relative in ("docs", "skills/mailbend"):
+                with self.subTest(relative=relative):
+                    directory = self.root / relative
+                    saved = directory.with_name(directory.name + "-saved")
+                    directory.rename(saved)
+                    directory.symlink_to(outside, target_is_directory=True)
+                    self.check(f"{relative}: document directory outside repository")
+                    directory.unlink()
+                    saved.rename(directory)
+
+    def test_linked_file_symlink_cannot_escape_repository(self):
+        with tempfile.TemporaryDirectory(prefix="mailbend-outside-", dir=ROOT) as outside:
+            sentinel = Path(outside) / "target.md"
+            sentinel.write_bytes(b"\xff")
+            (self.root / "target.md").symlink_to(sentinel)
+            (self.root / "EXTRA.md").write_text("[Outside](target.md#heading)\n")
+            self.check("target.md: document outside repository")
+            (self.root / "target.md").unlink()
+            (self.root / "examples/target.md").symlink_to(sentinel)
+            (self.root / "EXTRA.md").write_text("[Outside](examples/target.md#heading)\n")
+            self.check("EXTRA.md: linked file outside repository")
+
+    def test_new_document_external_links_remain_offline(self):
+        (self.root / "EXTRA.md").write_text(
+            "[Foreign](https://example.test/absent.md#absent)\n"
+            "[Other branch](https://github.com/albertc71/MailBend/blob/mainland/absent.md)\n")
+        self.check()
+
+    def test_framework_configuration_anchor_is_checked(self):
+        self.replace("docs/FRAMEWORKS.md", "../README.md#configure", "../README.md#configure-missing")
+        self.check("docs/FRAMEWORKS.md: missing linked heading ../README.md#configure-missing")
 
     def test_provider_jev_heading_rename_is_rejected(self):
         self.replace("README.md", "## Jev (optional)", "## Jev renamed")

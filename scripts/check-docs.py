@@ -131,6 +131,9 @@ def markdown_links(path, root):
             destination = (path.parent / relative).resolve() if relative else path
         if not destination.is_relative_to(root):
             errors.append(f"{label}: linked file outside repository {target}")
+        elif destination.is_dir():
+            if anchor:
+                errors.append(f"{label}: missing linked heading {target}")
         elif not destination.is_file():
             errors.append(f"{label}: missing linked file {target}")
         elif anchor and destination.suffix == ".md":
@@ -190,7 +193,6 @@ def skill_references(root):
         for name, argument in sorted(arguments):
             if name in tools and argument not in tools[name]:
                 errors.append(f"{label}: unknown argument {name}.{argument}")
-        errors.extend(markdown_links(path, root))
     errors.extend(f"skills/mailbend/references/tools.md: missing tool {name}"
                   for name in sorted(tools.keys() - listed))
     return errors
@@ -280,12 +282,20 @@ def contributor_onramps(root):
 
 
 def check(root):
-    errors = skill_references(root) + contributor_onramps(root)
-    laws = required(set(re.findall(r"^law (" + NAME + r")\s*:", (root / "LAWS.bend").read_text(), re.M)), "law declarations")
+    for directory in (root / "docs", root / "skills/mailbend"):
+        if not directory.resolve().is_relative_to(root):
+            return [f"{directory.relative_to(root)}: document directory outside repository"]
     docs = (sorted(root.glob("*.md")) + sorted((root / "docs").rglob("*.md"))
             + sorted((root / "skills/mailbend").rglob("*.md")))
+    errors = [f"{path.relative_to(root)}: document outside repository" for path in docs
+              if not path.resolve().is_relative_to(root)]
+    if errors:
+        return errors
+    errors = skill_references(root) + contributor_onramps(root)
+    laws = required(set(re.findall(r"^law (" + NAME + r")\s*:", (root / "LAWS.bend").read_text(), re.M)), "law declarations")
     count = 0
     for path in docs:
+        errors.extend(markdown_links(path, root))
         refs = law_references(path.read_text(), path, root)
         count += len(refs)
         errors.extend(f"{path.relative_to(root)}: unknown law {name}" for name in sorted(refs - laws))
@@ -301,7 +311,6 @@ def check(root):
     documented = required(set(re.findall(r"\b" + ENV_NAME.pattern + r"\b", (root / ".env.example").read_text())), ".env.example variable names")
     errors.extend(f".env.example: missing {name}" for name in sorted(variables - documented))
     provider_guide = root / "docs/PROVIDERS.md"
-    errors.extend(markdown_links(provider_guide, root))
     provider_variables = set(ENV_NAME.findall(provider_guide.read_text()))
     errors.extend(f"docs/PROVIDERS.md: unknown environment variable {name}"
                   for name in sorted(provider_variables - variables))
@@ -350,7 +359,7 @@ def main():
         print("Documentation drift:\n" + "\n".join(errors), file=sys.stderr)
         return 1
     print("Documentation checks pass: laws, environment, CLI usage, source layers, skill tools, "
-          "provider-guide links, issue chooser and bug/feature form contracts (provider form not parsed)")
+          "documentation links, issue chooser and bug/feature form contracts (provider form not parsed)")
     return 0
 
 
