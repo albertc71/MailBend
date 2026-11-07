@@ -44,6 +44,10 @@ impl BoundedStream {
         BoundedStream { sock, deadline }
     }
 
+    pub fn into_inner(self) -> TcpStream {
+        self.sock
+    }
+
     fn bound(&self) -> io::Result<()> {
         let left = self
             .deadline

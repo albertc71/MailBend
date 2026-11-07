@@ -232,6 +232,7 @@ class State:
         self.smtp_greeting = fixture.get('smtp_greeting', 'fake ESMTP')
         # Synthetic protocol refusals, including deliberately hostile server text.
         self.imap_auth_refusal = fixture.get('imap_auth_refusal', '')
+        self.imap_auth_bye = fixture.get('imap_auth_bye', '')
         self.imap_greeting_refusal = fixture.get('imap_greeting_refusal', '')
         self.smtp_auth_refusal = fixture.get('smtp_auth_refusal', '')
         self.smtp_auth_refusal_stage = fixture.get('smtp_auth_refusal_stage', 'command')
@@ -961,6 +962,11 @@ class IMAPSession:
         self.send(f'{tag} OK CAPABILITY completed\r\n')
 
     def cmd_login(self, tag, args):
+        if self.state.imap_auth_bye:
+            self.send('* ' + self.state.imap_auth_bye + '\r\n')
+            if not self.state.imap_auth_refusal:
+                self.done = True
+                return
         if self.state.imap_auth_refusal:
             self.send(f'{tag} {self.state.imap_auth_refusal}\r\n')
             return
