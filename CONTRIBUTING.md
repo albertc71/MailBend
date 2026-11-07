@@ -223,10 +223,20 @@ IMAP `Cmd` type, directly or inside a container. Every def in `src/ops.bend` and
 does not apply to other modules or proof files. A `Cmd` parameter alone does
 not make a def command-returning. Return annotations support named types and
 generic containers with numeric multiplicities such as `List<&2, I.Cmd>`.
-Other return-type syntax fails closed. The check does not infer return types,
-expand type aliases, inspect user-defined data types or their fields, or follow
-higher-order values and call chains. It does not prove that plan output reaches
-the transport unchanged.
+Other return-type syntax fails closed.
+
+In `src/ops.bend` and `src/imap.bend`, the check also rejects data fields whose
+declared types name the IMAP `Cmd`, directly or inside a container. This prevents
+a local record from hiding a command-returning helper behind its record type.
+The canonical `Cmd` declaration in `src/imap.bend` is exempt. Other modules may
+keep command records, such as the tool layer's plan previews. The field check
+supports nongeneric `type Name is Data` declarations with named field types and
+generic containers. It checks field tokens and bracket balance, not the full
+Bend type grammar. Unsupported declaration forms or field tokens fail closed.
+It resolves import aliases but does not infer return types, expand type aliases,
+follow imported record fields, or analyze higher-order values and call chains.
+An imported record can still hide a command. This check does not prove that
+plan output reaches the transport unchanged.
 
 Proof and test files remain free to construct expected commands. This source
 reader is not a Bend parser or type checker. It supports the repository's
