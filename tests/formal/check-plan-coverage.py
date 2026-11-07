@@ -83,20 +83,45 @@ def references(path, module, laws_only=False):
     return names
 
 
-def plan_names(ops):
-    tokens = list(TOKEN.finditer(source_code(ops)))
-    names = set()
+def def_returns(path):
+    tokens = [token[0] for token in TOKEN.finditer(source_code(path))]
+    definitions = {}
     for index, token in enumerate(tokens):
-        if token[0] != "def":
+        if token != "def":
             continue
-        if index + 2 >= len(tokens) or not re.fullmatch(IDENTIFIER, tokens[index + 1][0]) \
-                or tokens[index + 2][0] not in ("(", ":"):
-            raise ValueError("src/ops.bend: unsupported def declaration")
-        name = tokens[index + 1][0]
-        if name in names:
-            raise ValueError(f"src/ops.bend: duplicate def {name}")
-        names.add(name)
-    return {name for name in names if name.startswith("plan_")}
+        if index + 2 >= len(tokens) or not re.fullmatch(IDENTIFIER, tokens[index + 1]) \
+                or tokens[index + 2] not in ("(", ":"):
+            raise ValueError(f"{path}: unsupported def declaration")
+        name = tokens[index + 1]
+        if name in definitions:
+            raise ValueError(f"{path}: duplicate def {name}")
+        cursor = index + 2
+        if tokens[cursor] == "(":
+            depth = 1
+            cursor += 1
+            while cursor < len(tokens) and depth:
+                if tokens[cursor] in ("def", "type", "law", "import"):
+                    break
+                depth += (tokens[cursor] == "(") - (tokens[cursor] == ")")
+                cursor += 1
+            if depth:
+                raise ValueError(f"{path}: unsupported def parameters: {name}")
+        annotation = []
+        if tokens[cursor:cursor + 2] == ["-", ">"]:
+            cursor += 2
+            while cursor < len(tokens) and tokens[cursor] not in (":", "def", "type", "law", "import"):
+                token = tokens[cursor]
+                if not re.fullmatch(IDENTIFIER + r"|[0-9<>,&]", token) or \
+                        (token == "&" and (cursor + 1 == len(tokens) or not tokens[cursor + 1].isdigit())):
+                    raise ValueError(f"{path}: unsupported def return type: {name}")
+                annotation.append(tokens[cursor])
+                cursor += 1
+        if not annotation:
+            raise ValueError(f"{path}: missing def return type: {name}")
+        if tokens[cursor:cursor + 1] != [":"]:
+            raise ValueError(f"{path}: unsupported def return declaration: {name}")
+        definitions[name] = annotation
+    return definitions
 
 
 def command_names(imap):
@@ -156,14 +181,26 @@ def check(root):
     root = root.resolve()
     ops = root / "src/ops.bend"
     paths = [root / "main.bend", *sorted((root / "src").rglob("*.bend"))]
-    plans = plan_names(ops)
+    definitions = def_returns(ops)
+    plans = {name for name in definitions if name.startswith("plan_")}
     public = set().union(*(references(path, ops) for path in paths if path != ops)) & plans
     missing = public - references(root / "LAWS.bend", ops, laws_only=True)
     if missing:
         raise ValueError("public plans missing from LAWS.bend: " + ", ".join(sorted(missing)))
     imap = root / "src/imap.bend"
+    cmd_types = {f"{alias}.Cmd" for alias in module_aliases(ops, source_code(ops), imap)}
+    wrappers = {name for name, annotation in definitions.items()
+                if name not in plans and cmd_types.intersection(annotation)}
+    factories = {name for name, annotation in def_returns(imap).items() if "Cmd" in annotation}
     commands = command_names(imap)
     for path in paths:
+        for module, producers in ((ops, wrappers), (imap, factories)):
+            if path == module:
+                continue
+            forbidden = references(path, module) & producers
+            if forbidden:
+                raise ValueError(f"{path.relative_to(root)}: command-returning defs outside "
+                                 "src/ops.bend plan_* boundary: " + ", ".join(sorted(forbidden)))
         if path not in (ops, imap):
             check_commands(path, imap, commands, root)
     return len(public)

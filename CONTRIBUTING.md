@@ -10,6 +10,13 @@ Documentation fixes, tests, and synthetic fixtures are useful first contribution
 [Governance](GOVERNANCE.md) explains proposals, owner approval for every pull
 request, and law changes.
 
+The offline documentation checker validates selected declaration contracts for the
+issue chooser and bug/feature forms, including their visible privacy warnings.
+It does not parse `provider-report.yml`, validate every GitHub form field, or
+verify GitHub's rendered forms. Review the provider form separately when changing
+it; its diagnostic/report workflow is described in
+[Provider reports](docs/PROVIDER-REPORTS.md).
+
 ## Ground rules
 
 - Read [AGENTS.md](AGENTS.md): it holds the invariants every change must keep
@@ -94,8 +101,10 @@ python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
 python3 tests/test-posture.py                     # offline capability report and redaction
+python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
 python3 tests/test-output-schema.py               # strict result contract variants
+python3 tests/test-cli-tools.py                   # credential-free filtered CLI discovery
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
 python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
@@ -161,16 +170,33 @@ The transport suite exercises the actual helper.
 The plan-coverage check runs offline without Bend. Every `plan_*` definition in
 `src/ops.bend` referenced by `main.bend` or a file under `src/` must also have a
 reference inside a `law` statement in `LAWS.bend`. Internal-only helpers are
-excluded. An externally referenced dotted helper still needs coverage. Comments and string literals do
-not count, and a function-value reference counts even without a call.
+excluded. An externally referenced dotted helper still needs coverage. Comments
+and string literals do not count, and a function-value reference counts even
+without a call.
 This checks the presence of a reference, not the strength of a law or its proof.
+A tautological law referencing the plan satisfies this check.
 
 The same check rejects IMAP command construction in production files outside
 `src/ops.bend` and `src/imap.bend`. It derives constructor names from `I.Cmd`,
 resolves import aliases, and permits constructor patterns before a `case` colon.
-Proof and test files remain free to construct expected commands. The reader
-supports the repository's explicitly aliased local imports and fails on an
-unsupported import or relevant declaration. Qualified plan bindings are
+It also rejects external references to command-returning defs in `src/ops.bend`
+unless their names start with `plan_`. External references to command-returning
+defs in `src/imap.bend` are rejected even if their names start with `plan_`:
+plans belong in `src/ops.bend`. This uses declared return types that name the
+IMAP `Cmd` type, directly or inside a container. Every def in `src/ops.bend` and
+`src/imap.bend` must have an explicit, nonempty return annotation. This requirement
+does not apply to other modules or proof files. A `Cmd` parameter alone does
+not make a def command-returning. Return annotations support named types and
+generic containers with numeric multiplicities such as `List<&2, I.Cmd>`.
+Other return-type syntax fails closed. The check does not infer return types,
+expand type aliases, inspect user-defined data types or their fields, or follow
+higher-order values and call chains. It does not prove that plan output reaches
+the transport unchanged.
+
+Proof and test files remain free to construct expected commands. This source
+reader is not a Bend parser or type checker. It supports the repository's
+explicitly aliased local imports and fails on an unsupported import or relevant
+declaration. Qualified plan bindings are
 rejected. A qualified plan name immediately before a colon is also rejected
 as an ambiguous binding or annotation. Helper definitions in `LAWS.bend` do
 not supply coverage. Add a fixture to

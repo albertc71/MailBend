@@ -543,11 +543,13 @@ SEND_RULES = (
     "send. SMTP attempts report smtp_outcome (accepted, not_sent, unknown), "
     "smtp_phase, smtp_reason and next_action. Accepted means accepted by the "
     "SMTP server, not recipient delivery. Never automatically retry unknown; "
-    "a missing Sent copy does not prove non-delivery. With MAILBEND_TYPESAFE on, "
-    "the message is first scanned locally "
-    "for secrets, then checked by Jev; a secret, unreadable text, a Jev "
-    "block or a TypeSafe failure stops the send (the result has secret_scan "
-    "and jev). Saving a draft (mail_save_draft) is never checked by Jev." + HIDDEN_RULES)
+    "a missing Sent copy does not prove non-delivery. With MAILBEND_SECRET_SCAN "
+    "or MAILBEND_TYPESAFE on, the message is scanned locally for secrets; a "
+    "secret or unreadable text stops the send and the result has secret_scan. "
+    "With MAILBEND_TYPESAFE on, a clean message is then checked by Jev; a "
+    "veto or TypeSafe failure stops it and the result also has jev. "
+    "MAILBEND_SECRET_SCAN defaults off and cannot disable Jev's scan. "
+    "Saving a draft is never secret-scanned or checked by Jev." + HIDDEN_RULES)
 JEV_NOTES = (
     " With MAILBEND_TYPESAFE on, each message also has a jev object with "
     "Jev's notes (reply_needed, action_required, priority, "

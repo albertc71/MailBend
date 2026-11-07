@@ -129,13 +129,14 @@ def python_headers(path):
 
     Functions, methods and nested defs are valid targets only when their name
     is unique across the file. Same-named classes anywhere, and Assign/AnnAssign
-    name stores in module scope (including control-flow blocks), add collisions
-    but never become targets themselves. Annotation-only statements do not bind.
+    name stores in module or class scope (including control-flow blocks), add
+    collisions but never become targets themselves. Class bodies count file-wide,
+    including classes nested inside functions. Annotation-only statements do not bind.
     Unrelated duplicates do not reject a uniquely named test. Decorators do not
     move links away from the def/async def line reported by the AST.
 
     This is not Python name resolution: imports, other binding statements,
-    assignments inside functions/classes and dynamic effects are not modeled.
+    ordinary function-local assignments and dynamic effects are not modeled.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     positions = {}
@@ -146,9 +147,9 @@ def python_headers(path):
         if isinstance(node, ast.ClassDef) and node.name in positions:
             positions[node.name].append(node.lineno)
 
-    class ModuleAssignments(ast.NodeVisitor):
+    class ScopeAssignments(ast.NodeVisitor):
         def visit_FunctionDef(self, node):
-            pass  # Do not count stores in a function or class scope.
+            pass  # Function locals are excluded; class bodies are visited separately.
 
         visit_AsyncFunctionDef = visit_FunctionDef
         visit_ClassDef = visit_FunctionDef
@@ -170,7 +171,14 @@ def python_headers(path):
             if node.value is not None:
                 self.target(node.target)
 
-    ModuleAssignments().visit(tree)
+    assignments = ScopeAssignments()
+    assignments.visit(tree)
+    # Visit every class body once, even below a function that the visitor skips.
+    # Nested class bodies are skipped here and reached independently by ast.walk.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for statement in node.body:
+                assignments.visit(statement)
     return {name: tuple(sorted(lines)) for name, lines in positions.items()}
 
 
@@ -196,7 +204,7 @@ def reference_location(root, value, kind, cache=None):
     lines = positions[name]
     require(len(lines) == 1,
             f"ambiguous {kind} reference: {value}; declarations or bindings at lines "
-            + ", ".join(map(str, lines)))
+            + ", ".join(map(str, sorted(set(lines)))))
     return relative, name, lines[0]
 
 
