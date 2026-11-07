@@ -183,7 +183,9 @@ fn transfer(
             }
         }
         if let Some(status) = *status
-            && (stopping || status.signal().is_some() || output.as_ref().is_none_or(Output::done))
+            && ((stopping && !status.success())
+                || status.signal().is_some()
+                || output.as_ref().is_none_or(Output::done))
         {
             if status.success() && output.as_ref().is_some_and(|out| out.disconnected) {
                 return Err("stdout closed before output was delivered");

@@ -35,7 +35,7 @@
     },
     {
       "path": "native/README.md",
-      "sha256": "3600c91187045455355b707aa16a33f8867e7cd6f04753dbcf4287d1693bbda1"
+      "sha256": "d738eefd4a72f4c9c0ba37b3d947a9546c3fd40b8d64ff174aa77d18790f5bb0"
     },
     {
       "path": "native/clippy.toml",
@@ -207,7 +207,7 @@
     },
     {
       "path": "native/mailbend-stdio/src/relay.rs",
-      "sha256": "b42ac79f825ba45549f0b892bc82bf3e287421432395b9503150fbcc68201581"
+      "sha256": "738414ef3d820e9a7f52cc0e74e23cf0c5d9dbbdf08c077e6c8bc231b0f6afb7"
     },
     {
       "path": "native/mailbend-tls/Cargo.toml",

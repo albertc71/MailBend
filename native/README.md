@@ -113,8 +113,10 @@ exits. SMTP requires a successful progress write before message bytes, so a
 closed core progress pipe stops a send that has not crossed that boundary.
 A helper cannot report a new plan result after the core exits, and shutdown
 does not retry the plan. Numeric exit codes are preserved and the direct child is reaped.
-Core exit after a forwarded termination signal, or a signalled core exit,
-does not wait for blocked output or descendants that retain its output pipe.
+A nonzero core exit after a forwarded termination signal, or a signalled core
+exit, does not wait for blocked output or descendants that retain its output
+pipe. A successful core exit still drains output, even if the core ignored or
+handled a forwarded signal and continued running.
 A termination signal during post-exit draining also stops the adapter.
 The adapter never signals a core PID after reaping it.
 The adapter re-raises termination signals where possible; an ignored signal
