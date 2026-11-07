@@ -1,4 +1,6 @@
-# Original recursive serializer, retained only as a compatibility specification.
+# The original recursive serializer's structure, retained only as a compatibility
+# specification. It escapes through the production J.esc, so equality with it
+# does not freeze escape bytes; escaping has its own proofs and unit goldens.
 
 import Base
 import ../../src/json.bend as J
