@@ -1298,7 +1298,7 @@ def review_folders(trash: Maybe<&2, String>) -> Policy.Folders:
     None{}, None{}}
 
 def pending(uid: U32, sender: Maybe<&2, String>) -> T.Pending:
-  T.Pending{Jev.Fetched{Jev.facts_of(classify_msg(uid)), Jev.Text{"", Jev.Complete{}}, 0}, [],
+  T.Pending{Jev.Fetched{Jev.facts_of(classify_msg(uid)), Jev.MessageText{"", Jev.Complete{}}, 0}, [],
     sender}
 
 def review_problem_of(f: Policy.Folders) -> String:

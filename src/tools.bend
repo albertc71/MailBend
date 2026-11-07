@@ -1535,7 +1535,7 @@ def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
       Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
         "; message incomplete]\n" ++ Jev.plain_text(M.readable_text(parts)), True{})
     case False{} Part.Part{path, ct, cd, encoding, size}:
-      Jev.Text{"[Selected MIME section " ++ I.section_str(path) ++
+      Jev.MessageText{"[Selected MIME section " ++ I.section_str(path) ++
         "; no text body fetched]", Jev.Partial{}}
 
 def part_get.text(+p: Part.Part, bytes: String) -> Jev.Text:
@@ -6271,7 +6271,7 @@ def send_ask(
   +vs: List<&2, Jev.Veto>,
   r: Ready
 ) -> IO(Policy.Out):
-  Jev.Text{shown, whole} = t
+  Jev.MessageText{shown, whole} = t
   do IO<Policy.Out>:
     a : Asked <- ask_jev(Retried{}, Jev.plain_cargo(Jev.outgoing_request(c, o, vs, shown)))
     send_decided(Secrets.Clean{}, outgoing_answered(a, c, vs, whole), r)
@@ -8215,9 +8215,9 @@ def pending_of.text(
   +vetoes: List<&2, String>,
   m: I.Msg
 ) -> Pending:
-  Jev.Text{text, +whole} = t
-  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.Text{text, whole}, 0}, vetoes,
-    m)
+  Jev.MessageText{text, +whole} = t
+  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.MessageText{text, whole}, 0},
+    vetoes, m)
 
 # A message with its code vetoes; its sender is looked up only while it
 # can still be found safe to delete.
@@ -8283,7 +8283,7 @@ def settle(t: Triaging, written: Maybe<&2, List<&2, String>>) -> Triaging:
 
 # Whether a message is asked about in a request of its own.
 def asked_alone(c: Jev.Content, p: Pending) -> Bool:
-  Pending{Jev.Fetched{f, Jev.Text{text, whole}, r}, vetoes, sender} = p
+  Pending{Jev.Fetched{f, Jev.MessageText{text, whole}, r}, vetoes, sender} = p
   Jev.may_review(c, whole, vetoes)
 
 # The messages asked about together (`alone` False) or one per request.
@@ -8824,14 +8824,14 @@ def listed_fetched(ms: List<&2, I.Msg>, +n: U32) -> List<&2, Jev.Fetched>:
     case Nil{}:
       []
     case m <> t:
-      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.Text{"", Jev.Complete{}}, 0} <>
+      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.MessageText{"", Jev.Complete{}}, 0} <>
         listed_fetched(t, (n + 1 : U32))
 
 # The message mail_get read whole; its text only in body mode.
 def whole_fetched(c: Jev.Content, +m: I.Msg, max: U32) -> Jev.Fetched:
   match c:
     case Jev.Headers{}:
-      Jev.Fetched{Jev.whole_facts(m), Jev.Text{"", Jev.Complete{}}, 0}
+      Jev.Fetched{Jev.whole_facts(m), Jev.MessageText{"", Jev.Complete{}}, 0}
     case Jev.Body{}:
       Jev.Fetched{Jev.whole_facts(m), Jev.text_of(m, max), 0}
 
