@@ -24,6 +24,13 @@ You should get an acknowledgement within a week. Fixes are released on
 
 ## Scope
 
+The [threat model and assurance map](docs/THREAT-MODEL.md) describes the assets,
+trust boundaries, evidence, and residual risks behind this scope.
+
+The [audit preparation pack](docs/audit/SCOPE.md) gives prospective reviewers a
+frozen source target, build steps, and fake-server-only testing rules. It is not
+an independent audit report or a change to this reporting policy.
+
 In scope: anything that breaks the guarantees in the README's
 [Safety](README.md#safety) section and [AGENTS.md](AGENTS.md), for example
 

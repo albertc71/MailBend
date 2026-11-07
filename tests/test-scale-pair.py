@@ -325,6 +325,48 @@ class PairTests(unittest.TestCase):
     def test_reviewed_launcher_hash_is_literal(self):
         self.assertEqual(pair.CANDIDATE_LAUNCHER_SHA256,
                          "68cf6c6e6c671585d8752b653d8e76728d00306a1cd76b6f7723257d1546ffd8")
+        self.assertEqual(pair.CANDIDATE_REPORT_LAUNCHER_SHA256,
+                         "251f054ca4f223c180602b00c16192f08dc7ff88d77522951efbfd3a021af26e")
+
+    def test_current_launcher_passes_production_preflight(self):
+        names = ("scripts/mailbend", *pair.INSTALLERS)
+        original = {name: (ROOT / name).read_bytes() for name in names}
+        original["scripts/mailbend"] = b"#!/bin/sh\n# historical launcher fixture\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = tuple(pathlib.Path(tmp) / side for side in pair.SIDES)
+            for root in roots:
+                for name in (*pair.PINNED, *names):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(original[name] if name in original else
+                                     (ROOT / name).read_bytes())
+            (roots[1] / "scripts/mailbend").write_bytes((ROOT / "scripts/mailbend").read_bytes())
+
+            def git(root, *args):
+                if args == ("rev-parse", "HEAD"):
+                    return (pair.REFERENCE_SHA if root == roots[0] else "a" * 40).encode()
+                if args[0] == "status":
+                    return b""
+                if args[0] == "rev-parse":
+                    return pair.REFERENCE_SHA.encode()
+                self.assertEqual(args[0], "show")
+                return original[args[1].split(":", 1)[1]]
+
+            with mock.patch.object(pair, "git", side_effect=git):
+                self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                launcher = roots[1] / "scripts/mailbend"
+                current = launcher.read_bytes()
+                for case, data in (("unknown", b"#!/bin/sh\n# unreviewed launcher fixture\n"),
+                                   ("comment", current + b"\n# unreviewed comment\n"),
+                                   ("executable", current + b"\nexit 0\n")):
+                    with self.subTest(candidate=case):
+                        launcher.write_bytes(data)
+                        with self.assertRaisesRegex(ValueError, "candidate launcher is not a reviewed revision"):
+                            pair.preflight(*roots, "a" * 40)
+                launcher.write_bytes(current)
+                (roots[0] / "scripts/mailbend").write_bytes(current)
+                with self.assertRaisesRegex(ValueError, "fixed launcher/installer changed"):
+                    pair.preflight(*roots, "a" * 40)
 
     def test_candidate_launcher_migration_through_real_preflight(self):
         names = ("scripts/mailbend", *pair.INSTALLERS)

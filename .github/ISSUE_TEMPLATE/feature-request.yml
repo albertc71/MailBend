@@ -1,0 +1,53 @@
+{
+  "name": "Feature request",
+  "description": "Describe a problem, the desired outcome, and the safety constraints a change would touch.",
+  "title": "Feature: ",
+  "body": [
+    {
+      "type": "markdown",
+      "attributes": {
+        "value": "Never include real credentials (including app passwords such as MAILBEND_APP_PASSWORD and the TypeSafe key file), account addresses, or mail. Use synthetic examples. Report suspected vulnerabilities through [private vulnerability reporting](https://github.com/albertc71/MailBend/security/advisories/new), not this public form. If an app password may have been exposed, revoke it with your provider first. Discuss larger changes before writing them."
+      }
+    },
+    {
+      "type": "textarea",
+      "id": "problem",
+      "attributes": {
+        "label": "Problem to solve",
+        "description": "Describe who encounters the problem and what they cannot do today. Use fake data rather than real mail."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "outcome",
+      "attributes": {
+        "label": "Desired outcome",
+        "description": "Describe an observable result and how a synthetic test could show it works. Include alternatives you considered."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea",
+      "id": "constraints",
+      "attributes": {
+        "label": "AGENTS.md constraints touched",
+        "description": "Name the AGENTS.md constraints this proposal touches and how it preserves them. Include any proposed law change. If none apply, explain why. Do not propose weakening a law to make code pass."
+      },
+      "validations": {"required": true}
+    },
+    {
+      "type": "checkboxes",
+      "id": "privacy",
+      "attributes": {
+        "label": "Privacy review",
+        "options": [
+          {
+            "label": "I reviewed this proposal. It contains no real credentials, account addresses, or mail.",
+            "required": true
+          }
+        ]
+      }
+    }
+  ]
+}

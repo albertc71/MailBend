@@ -131,6 +131,24 @@ class RunningDemo:
         self.proc.stderr.close()
 
 
+class ObservedLock:
+    """Signal a real failed acquisition, optionally for one selected thread."""
+
+    def __init__(self, lock, contended, thread=None):
+        self.lock = lock
+        self.contended = contended
+        self.thread = thread
+
+    def __enter__(self):
+        if not self.lock.acquire(blocking=False):
+            if self.thread is None or threading.current_thread() is self.thread:
+                self.contended.set()
+            self.lock.acquire()
+
+    def __exit__(self, *_args):
+        self.lock.release()
+
+
 class ProcessLifetime(unittest.TestCase):
     def setUp(self):
         loader = importlib.machinery.SourceFileLoader('mailbend_demo_lifetime', str(DEMO))
@@ -191,15 +209,7 @@ class ProcessLifetime(unittest.TestCase):
         reaping = threading.Event()
         release = threading.Event()
         contended = threading.Event()
-        original_lock = self.demo.lock
-        class ObservedLock:
-            def __enter__(self):
-                if not original_lock.acquire(blocking=False):
-                    contended.set()  # A real failed acquisition, not thread entry.
-                    original_lock.acquire()
-            def __exit__(self, *_args):
-                original_lock.release()
-        self.demo.lock = ObservedLock()
+        self.demo.lock = ObservedLock(self.demo.lock, contended)
         errors = []
         real_wait = proc.wait
         def delayed_wait(*args, **kwargs):
@@ -252,7 +262,10 @@ class ProcessLifetime(unittest.TestCase):
         release = threading.Event()
         observed = threading.Event()
         errors = []
-        def grace_sleep(_delay):
+        real_sleep = time.sleep
+        def grace_sleep(delay):
+            if threading.current_thread() is not stopper:
+                return real_sleep(delay)
             waiting.set()
             if not release.wait(5):
                 raise AssertionError('unrelated child blocked during grace wait')
@@ -263,15 +276,17 @@ class ProcessLifetime(unittest.TestCase):
                 errors.append(error)
         def observe():
             try:
+                # The grace seam must not stall a sleep in an unrelated thread.
+                time.sleep(.001)
                 other, _ = self.start('pass')
                 self.demo.exited(other)
                 observed.set()
             except Exception as error:
                 errors.append(error)
+        stopper = threading.Thread(target=stop)
+        observer = threading.Thread(target=observe)
         with mock.patch.object(self.module.time, 'sleep', grace_sleep), \
              mock.patch.object(self.module, 'STOP_TIMEOUT', .05):
-            stopper = threading.Thread(target=stop)
-            observer = threading.Thread(target=observe)
             stopper.start()
             try:
                 self.assertTrue(waiting.wait(5))
@@ -300,43 +315,57 @@ class ProcessLifetime(unittest.TestCase):
         finished = threading.Event()
         results = []
         errors = []
-        def grace_sleep(_delay):
+        real_sleep = time.sleep
+        real_event = threading.Event
+        def observed_event():
+            event = real_event()
+            real_wait = event.wait
+            def wait(*args, **kwargs):
+                if threading.current_thread() is other:
+                    contended.set()
+                return real_wait(*args, **kwargs)
+            event.wait = wait
+            return event
+        def grace_sleep(delay):
+            if threading.current_thread() is not owner:
+                return real_sleep(delay)
             grace.set()
             if not release.wait(5):
                 raise AssertionError('second stopper did not wait for owner')
         def stop(second=False):
             try:
+                if second:
+                    time.sleep(.001)  # Must not enter the owner's grace seam.
                 results.append(self.demo.stop(proc))
             except Exception as error:
                 errors.append(error)
             finally:
                 if second:
                     finished.set()
+        # Observe either an event wait or lock contention, without depending on
+        # the private reservation registry. A lock-held grace wait is caught by
+        # test_grace_wait_does_not_block_other_children, not by this test.
+        # Construct Thread's own events before patching Event.
+        owner = threading.Thread(target=stop)
+        other = threading.Thread(target=stop, args=(True,))
+        self.demo.lock = ObservedLock(self.demo.lock, contended, thread=other)
         with mock.patch.object(self.module.time, 'sleep', grace_sleep), \
+             mock.patch.object(self.module.threading, 'Event', observed_event), \
              mock.patch.object(self.module, 'STOP_TIMEOUT', .05), \
              mock.patch.object(self.module.os, 'killpg', wraps=os.killpg) as kill_mock, \
              mock.patch.object(proc, 'wait', wraps=proc.wait) as wait_mock:
-            owner = threading.Thread(target=stop)
-            other = threading.Thread(target=stop, args=(True,))
             owner.start()
             try:
                 self.assertTrue(grace.wait(5))
-                with self.demo.lock:
-                    pending = self.demo.stop_owners[proc]
-                real_wait = pending.wait
-                def observed_wait(*args, **kwargs):
-                    contended.set()
-                    return real_wait(*args, **kwargs)
-                with mock.patch.object(pending, 'wait', observed_wait):
-                    other.start()
-                    self.assertTrue(contended.wait(5))
-                    self.assertFalse(finished.is_set())
-                    self.assertEqual(kill_mock.call_args_list,
-                                     [mock.call(proc.pid, signal.SIGTERM)])
-                    wait_mock.assert_not_called()
-                    release.set()
-                    owner.join(5)
-                    other.join(5)
+                other.start()
+                self.assertTrue(contended.wait(5))
+                self.assertFalse(finished.is_set())
+                self.assertEqual(kill_mock.call_args_list,
+                                 [mock.call(proc.pid, signal.SIGTERM)])
+                wait_mock.assert_not_called()
+                release.set()
+                owner.join(5)
+                other.join(5)
             finally:
                 release.set()
                 owner.join(5)
@@ -350,7 +379,10 @@ class ProcessLifetime(unittest.TestCase):
             self.assertEqual(kill_mock.call_args_list,
                              [mock.call(proc.pid, signal.SIGTERM),
                               mock.call(proc.pid, signal.SIGKILL)])
-            self.assertEqual(self.demo.stop_owners, {})
+            self.assertEqual(self.demo.children, set())
+            self.assertEqual(self.demo.stop(proc), -signal.SIGKILL)
+            self.assertEqual(wait_mock.call_count, 1)
+            self.assertEqual(kill_mock.call_count, 2)
 
     def test_already_reaped_leader_is_never_signaled(self):
         for use_popen in (True, False):

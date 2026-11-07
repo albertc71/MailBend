@@ -11,8 +11,8 @@ use crate::{Exit, Outcome, Protocol, creds, imap, route, smtp};
 
 /// Always completes with fixed facts, never an error message or transcript.
 /// The Bend caller additionally enforces a 30-second process deadline.
-pub fn run(protocol: Protocol, network: bool) -> Result<Outcome, Exit> {
-    if let Err((stage, reason)) = check(protocol, network) {
+pub fn run(protocol: Protocol, network: bool, report: bool) -> Result<Outcome, Exit> {
+    if let Err((stage, reason)) = check(protocol, network, report) {
         println!("{stage} {reason}");
     }
     Ok(Outcome::Completed)
@@ -20,7 +20,7 @@ pub fn run(protocol: Protocol, network: bool) -> Result<Outcome, Exit> {
 
 type Problem = (&'static str, &'static str);
 
-fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
+fn check(protocol: Protocol, network: bool, report: bool) -> Result<(), Problem> {
     mailbend_io::process::no_dumps().map_err(|_| ("configuration", "invalid"))?;
     refuse_typesafe_api_key().map_err(|_| ("configuration", "invalid"))?;
     let settings = Settings::from_env(protocol).map_err(|_| ("configuration", "invalid"))?;
@@ -46,7 +46,7 @@ fn check(protocol: Protocol, network: bool) -> Result<(), Problem> {
     );
     let sock = connect_any(&addresses, &deadline).map_err(|_| ("connect", "failed"))?;
     set_timeouts(&sock, settings.timeout).map_err(|_| ("connect", "failed"))?;
-    let mut conn = Connection::diagnostic(sock);
+    let mut conn = Connection::diagnostic(sock, report);
     // Empty plans mean authentication and orderly disconnect only.
     // Diagnostics bypass envelope parsing and never accept message input.
     let result = match protocol {

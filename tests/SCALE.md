@@ -109,9 +109,11 @@ was complete. Changing it requires explicit review, never automatic promotion.
 Both checkouts are clean, separate directories with independent in-tree
 builds. `tests/scale_pair.py` verifies the source identities and immutable
 apparatus before any measurement. The harness, generator and three snapshot
-files must match the reviewed hashes in both trees. The launcher must match
-the fixed reference, whose helper defaults point inside its own tree; the
-harness removes inherited helper overrides. Core, launcher and all four
+files must match the reviewed hashes in both trees. The reference launcher
+must match the fixed reference exactly. The candidate launcher must match
+either that reference or one of the exact revisions reviewed below. Their
+helper defaults point inside their own trees, and the harness removes inherited
+helper overrides. Core, launcher and all four
 native helper paths must be regular, executable, tree-local files, not
 symlinked or shared outputs. Their hashes are recorded and checked again
 before acceptance. Both reports must name the expected source and core hash.
@@ -436,7 +438,7 @@ The literal tuple assertion is a pin-change alarm, not that provenance proof.
 The hook launcher revision in #272 at
 `2920a261a1361e1631631b4f218707a9ffbb52dc` has SHA256
 `68cf6c6e6c671585d8752b653d8e76728d00306a1cd76b6f7723257d1546ffd8`.
-The candidate may use either the original launcher or these exact bytes.
+The #110 migration admitted either the original launcher or these exact bytes.
 The reference launcher still must match the fixed reference exactly. Both
 `install.sh` files, the helper-tuple policy, and frozen measurement files keep
 their existing checks. No hash is derived from candidate bytes for admission.
@@ -457,3 +459,28 @@ The candidate-provided policy still requires independent review. This narrow
 migration does not change the fixed reference, toolchain, sample count,
 profiling, deadlines, absolute limits, or ratio gates. The final combined head
 needs its own fresh paired comparison before review completion.
+
+### Reviewed report usage comment migration (#292)
+
+The launcher in merged #292 at
+`947fcc06a8c31bde25fa935d10443f7b1690dd28` has SHA256
+`251f054ca4f223c180602b00c16192f08dc7ff88d77522951efbfd3a021af26e`.
+The complete diff from the approved #272 launcher adds only `[--report]` to
+the `diagnose` usage comment. All executable shell lines are unchanged.
+
+Candidate preflight now also accepts these exact bytes. The original and
+#272 candidate revisions remain accepted, and the reference must still match
+the immutable reference launcher. This is an explicit hash addition, with no
+comment stripping, normalization, or approval derived from candidate files.
+Both `install.sh` files, the helper tuple, frozen apparatus, toolchain setup,
+measurement checks, and all timing limits retain their existing policy.
+
+A source-check regression runs the real preflight with this checkout's actual
+launcher and the production hash policy. Future launcher edits therefore fail
+until their exact bytes receive a separate reviewed migration. Independent
+synthetic controls still cover the prior candidate policy. Negative controls
+reject unknown bytes, added comments or executable lines, and substitution of
+the report launcher on the reference side. The literal pin assertions are
+change alarms, not a substitute for reviewing the complete launcher diff.
+This migration requires independent review and a fresh paired comparison on
+the final combined head. A preflight pass alone is not performance evidence.

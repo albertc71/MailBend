@@ -35,7 +35,7 @@
     },
     {
       "path": "native/README.md",
-      "sha256": "1b2d72b971fbf9c0ed2f13770cc04997f58c02600468c589d42d221016920a06"
+      "sha256": "84d02d214627bd486caeb3150c2cf27093b99761970965507867d3788583219c"
     },
     {
       "path": "native/clippy.toml",
@@ -203,11 +203,11 @@
     },
     {
       "path": "native/mailbend-stdio/src/main.rs",
-      "sha256": "ae22ac64f8494bbbc9e828216c8d873b6556101e65717b78cb7011dea7decb21"
+      "sha256": "197c9a597c0a601287a5edd6e7c07dadaa7d4b5dff1267f5de5cc6dab61eaa89"
     },
     {
       "path": "native/mailbend-stdio/src/relay.rs",
-      "sha256": "b51600ee21a2ae46fa8816b05a6d930574005ee9d6d2f767e226e0f42c9a0925"
+      "sha256": "738414ef3d820e9a7f52cc0e74e23cf0c5d9dbbdf08c077e6c8bc231b0f6afb7"
     },
     {
       "path": "native/mailbend-tls/Cargo.toml",
@@ -215,7 +215,7 @@
     },
     {
       "path": "native/mailbend-tls/src/connection.rs",
-      "sha256": "75ac32ef1d23211e3467e513500a3b88c9008dc584144360b700c0c9f9d60e4c"
+      "sha256": "ab39cc7c11ac80654d8ac2c41377eea6f2873cc4a0f5f719f3541abf776f4ed5"
     },
     {
       "path": "native/mailbend-tls/src/credential_lifetime.rs",
@@ -227,7 +227,7 @@
     },
     {
       "path": "native/mailbend-tls/src/diagnostic.rs",
-      "sha256": "9be9382e8728eb2828283e96bda80f1073dcac6ebcacbf5ee81e76e7df2d68fa"
+      "sha256": "bc050c940870784dc8b78d08660183860f0890809ef2a51c32bf1635affaf72d"
     },
     {
       "path": "native/mailbend-tls/src/exit.rs",
@@ -259,7 +259,7 @@
     },
     {
       "path": "native/mailbend-tls/src/main.rs",
-      "sha256": "868c4ee1f227a8b18301f7dc955c862b2707e994b24f9494cf90d154f197e474"
+      "sha256": "af6a8350dd709b4b2fc7a0018bbdc27ffbcf1a881a2fa90937980f93c0a14c3e"
     },
     {
       "path": "native/mailbend-tls/src/route.rs",
@@ -275,11 +275,11 @@
     },
     {
       "path": "native/mailbend-tls/src/smtp/reply.rs",
-      "sha256": "23be45e962a49ffd03ad50c525087465d8d1ff12f088ef42372a1e30949c809a"
+      "sha256": "3e8f1c33445f5f842176841e5c9522494584e77ad850a435757429f834812aa1"
     },
     {
       "path": "native/mailbend-tls/src/smtp/session.rs",
-      "sha256": "7441f41b42c015e97608a7089fa1837a044eca7b37229398b071c9c5e3b39ec7"
+      "sha256": "352e93b587cbca6245501aaec4609cc1060d006d29c73f8e1d9b9205ce860d81"
     },
     {
       "path": "native/mailbend-tls/src/smtp.rs",

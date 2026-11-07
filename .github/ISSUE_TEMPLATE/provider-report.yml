@@ -1,0 +1,78 @@
+name: Provider conformance report
+description: Share redacted setup evidence from an authorized provider account.
+title: "Provider report: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for compatibility evidence, not security reports. Report suspected vulnerabilities privately using SECURITY.md.
+        Never include passwords, tokens, account addresses, private hosts, folder names, message content or unredacted transcripts.
+        Run `mailbend diagnose --imap --smtp --report` only on an account you are authorized to test. Review the JSON before sharing it.
+        Do not paste `mail_probe`, `setup --check`, environment files or client configuration. See docs/PROVIDER-REPORTS.md.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider name and account product
+      description: Public provider and product only, such as a consumer or business plan. No account address or organization identifier.
+    validations:
+      required: true
+  - type: input
+    id: imap
+    attributes:
+      label: Public IMAP hostname and port
+      description: Use only the provider's public documented endpoint. Write "private endpoint omitted" for a private or account-specific host. IMAP requires implicit TLS.
+      placeholder: "imap.provider.example:993, implicit TLS"
+    validations:
+      required: true
+  - type: input
+    id: smtp
+    attributes:
+      label: Public SMTP hostname and port
+      description: Use only the provider's public documented endpoint. Write "private endpoint omitted" for a private or account-specific host.
+      placeholder: "smtp.provider.example:587"
+    validations:
+      required: true
+  - type: dropdown
+    id: smtp_tls
+    attributes:
+      label: SMTP TLS mode
+      options:
+        - STARTTLS
+        - Implicit TLS
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: MailBend commit and test date
+      description: Include the exact commit in addition to the version embedded in the report.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Redacted diagnose report
+      description: Paste only the JSON from `mailbend diagnose --imap --smtp --report`. Inspect it first. Failed checks are useful too.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: readonly_results
+    attributes:
+      label: Read-only tool results
+      description: For each tool you actually tested, write its name and pass or fail. Say "not tested" otherwise. Do not paste tool output, UIDs, folder names, addresses or message content.
+      placeholder: |
+        mail_probe: pass
+        mail_list: not tested
+        mail_get: not tested
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy and authorization
+      options:
+        - label: I am authorized to test this account and have reviewed this report. It contains no credentials, account addresses, private endpoints, folder names, message content or unredacted transcripts.
+          required: true
+        - label: I understand that a successful diagnostic does not verify sending, Sent filing, label behavior or delete semantics.
+          required: true

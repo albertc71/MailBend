@@ -10,6 +10,16 @@ def parsed(s: String) -> J.Json:
 def main() -> IO(Unit):
   do IO<Unit>:
     IO.print(J.show(MCP.versions()))
+    IO.print("latest legacy structured " ++ Bool.show(MCP.is_structured(MCP.latest_legacy_version())))
+    IO.print("November 2025 structured " ++ Bool.show(MCP.is_structured("2025-11-25")))
+    IO.print("June 2025 structured " ++ Bool.show(MCP.is_structured("2025-06-18")))
+    IO.print("March 2025 structured " ++ Bool.show(MCP.is_structured("2025-03-26")))
+    IO.print("November 2024 structured " ++ Bool.show(MCP.is_structured("2024-11-05")))
+    IO.print("modern structured " ++ Bool.show(MCP.is_structured(MCP.modern_version())))
+    # These unknown/empty cases test only the helper. Legacy negotiation maps them
+    # to the latest legacy revision, which supports structured results.
+    IO.print("unknown structured " ++ Bool.show(MCP.is_structured("2099-01-01")))
+    IO.print("empty structured " ++ Bool.show(MCP.is_structured("")))
     IO.print("valid metadata " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}"))))
     IO.print("missing capabilities " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}"))))
     IO.print("null version " ++ Bool.show(MCP.metadata_ok(parsed("{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":null,\"io.modelcontextprotocol/clientCapabilities\":{}}}"))))
@@ -30,6 +40,14 @@ def main() -> IO(Unit):
     IO.print(J.show(MCP.cacheable_result(True{}, J.obj([]), "1")))
 
 #|["2026-07-28","2025-11-25","2025-06-18","2025-03-26","2024-11-05"]
+#|latest legacy structured True
+#|November 2025 structured True
+#|June 2025 structured True
+#|March 2025 structured False
+#|November 2024 structured False
+#|modern structured False
+#|unknown structured False
+#|empty structured False
 #|valid metadata True
 #|missing capabilities False
 #|null version False

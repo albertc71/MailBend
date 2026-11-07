@@ -1,6 +1,6 @@
-# The local secret scan. With Jev on, an outgoing message is first scanned
-# here, without TypeSafe, for three kinds of secret: a private key block, a
-# token with a well-known prefix, and a password line. It reads the content
+# The local secret scan. With Jev or MAILBEND_SECRET_SCAN on, an outgoing
+# message is scanned without TypeSafe for private key blocks, tokens with
+# well-known prefixes and password lines. It reads the content
 # before transfer encoding: the header fields, the body, each attachment's
 # name and bytes, and a forwarded message's header section and parts. Any
 # text it cannot read makes the scan Incomplete, which blocks the send just
@@ -388,6 +388,8 @@ def part_pieces.put(
     case True{} _ _ 0n:
       [Unreadable{label ++ " nests forwarded messages more than " ++ Nat.show(forward_limit()) ++
         " levels deep"}]
+    case True{} _ False{} _:
+      [Unreadable{"the forwarded message " ++ label ++ " cannot be decoded"}]
     case True{} _ _ 1n+f:
       [Message{label, M.leaf_bytes(hs, body), f}]
     case False{} True{} True{} _:
@@ -407,9 +409,11 @@ def part_pieces.kind(
   part: String
 ) -> List<&2, Piece>:
   M.PartKind{ct, +typ, name, file} = k
-  part_pieces.put(String.eq(typ, "message/rfc822") || String.eq(typ, "message/global"),
+  +forward = String.eq(typ, "message/rfc822") || String.eq(typ, "message/global")
+  charset = Bool.pick(String, forward, "", M.param(ct, "charset"))
+  part_pieces.put(forward,
     String.starts_with(typ, "text/"),
-    scannable_encoding(M.header(hs, "content-transfer-encoding"), M.param(ct, "charset")),
+    scannable_encoding(M.header(hs, "content-transfer-encoding"), charset),
     forwards, hs, body, part ++ " > " ++ typ)
 
 def part_pieces(forwards: Nat, part: String, l: M.Leaf) -> List<&2, Piece>:

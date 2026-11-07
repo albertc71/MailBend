@@ -25,6 +25,44 @@ law hidden_tags_refuse_send_and_draft:
 def hidden_tags_refuse_send_and_draft(first, rest, w, from):
   {==}
 
+# Unknown time refuses composition regardless of either random result.
+law unknown_clock_refuses_stamp:
+  for a: Result<&1, &1, U32 & String, U32>
+  for b: Result<&1, &1, U32 & String, U32>
+  {Tools.stamp_checked(0, a, b) ==
+    Fail{"system clock is unavailable or invalid"} : Result<&2, &2, String, Tools.Stamp>}
+
+def unknown_clock_refuses_stamp(a, b):
+  {==}
+
+# The reservation-time refusal is pure IO, with no counter or SMTP effect,
+# including when the daily limit is zero.
+law unknown_clock_refuses_reservation:
+  for envelope: String
+  for limit: U32
+  for dir: String
+  for s: Tools.Sent
+  {Tools.send_allowed.clock(Tools.clock_checked(0), envelope, limit, dir, s) ==
+    Tools.pure_out(Tools.send_not_attempted(
+      Policy.Err{"system clock is unavailable or invalid; nothing was sent"})) : IO(Policy.Out)}
+
+def unknown_clock_refuses_reservation(envelope, limit, dir, s):
+  {==}
+
+# The rejected correspondence window returns the selected page without IO.
+# Runtime tests cover the clock sample, threshold and callers.
+law invalid_brief_clock_keeps_selected_page:
+  for p: Tools.BriefPage
+  for me: String
+  for now: U32
+  {Tools.brief_contacts.clock(False{}, p, me, now) ==
+    IO.pure(Tools.Shown, Tools.brief_output(p, Tools.contacts_failed("",
+      "not scanned: system clock cannot support the 30-day correspondence window"), me, "")) :
+    IO(Tools.Shown)}
+
+def invalid_brief_clock_keeps_selected_page(p, me, now):
+  {==}
+
 # Offline posture
 # ---------------
 

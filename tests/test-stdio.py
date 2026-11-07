@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import contextlib
 import ctypes
+import itertools
 import json
 import os
 import pathlib
@@ -17,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import fake_mail_server as fake
 
@@ -62,11 +64,24 @@ def wait_until(predicate, timeout=10):
     raise AssertionError("condition did not become true within timeout")
 
 
+def process_state(pid):
+    # comm can contain ") "; the fields begin after its final closing parenthesis.
+    return pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+
+
+def stopped(pid):
+    # An exited or vanished core must fail the barrier, not satisfy or outwait it.
+    state = process_state(pid)
+    if state in "ZXx":
+        raise AssertionError(f"process {pid} exited before being observed stopped (state {state})")
+    return state == "T"
+
+
 def live(pid):
     # Z is an unreaped zombie and X a task its reaper is releasing; both have
     # exited, and kill() on an X task already fails with ESRCH.
     try:
-        return pathlib.Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] not in "ZXx"
+        return process_state(pid) not in "ZXx"
     except (FileNotFoundError, ProcessLookupError):
         return False
 
@@ -96,10 +111,14 @@ def child_pid(pid):
 
 
 class Session:
-    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False):
+    def __init__(self, launcher, duplex=False, nonblocking=False, env=ENV, pipe=False,
+                 send_buffer=None):
         self.peer, child = (None, None) if pipe else socket.socketpair()
         if child is not None:
+            if send_buffer is not None:
+                child.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, send_buffer)
             child.setblocking(not nonblocking)
+        self.output_observer = child.dup() if child is not None and send_buffer is not None else None
         self.proc = subprocess.Popen([str(launcher), "mcp"], stdin=child or subprocess.PIPE,
                                      stdout=child if duplex else subprocess.PIPE,
                                      stderr=subprocess.PIPE, env=env, cwd="/", start_new_session=True)
@@ -140,6 +159,8 @@ class Session:
         return self
 
     def __exit__(self, *_):
+        if self.output_observer is not None:
+            self.output_observer.close()
         if self.peer is not None:
             self.peer.close()
         if self.proc.poll() is None:
@@ -148,6 +169,204 @@ class Session:
         for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
             if stream is not None:
                 stream.close()
+
+
+class OutputRelayTests(unittest.TestCase):
+    PATTERN = b"0123456789abcdef"
+    CORE = r"""import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(__file__).parent
+if sys.argv[1:] in (["helper"], ["afterexit"]):
+    parent = os.getppid()
+    (root / "helper-ready").touch()
+    deadline = time.monotonic() + 10
+    if sys.argv[1:] == ["afterexit"]:
+        while os.getppid() == parent:
+            if time.monotonic() >= deadline:
+                os._exit(1)
+            time.sleep(0.001)
+        try:
+            sys.stdout.buffer.write(b'"after-core-exit"\n')
+            sys.stdout.buffer.flush()
+            sys.stdout.buffer.write(b"0123456789abcdef" * 65536)
+            sys.stdout.buffer.flush()
+        except (BrokenPipeError, BlockingIOError):
+            pass
+    while not (root / "resume").exists():
+        if time.monotonic() >= deadline:
+            os._exit(1)
+        time.sleep(0.01)
+    (root / "finished").touch()
+    os._exit(0)
+mode = sys.stdin.buffer.readline().strip()
+signal.signal(signal.SIGTERM, lambda *_: os._exit(73))
+if mode in (b"hup-ignore", b"hup-handle"):
+    signal.signal(signal.SIGHUP, signal.SIG_IGN if mode == b"hup-ignore" else
+                  lambda *_: (root / "survived-hup").touch())
+    print('"ready"', flush=True)
+    sys.stdin.buffer.readline()
+    sys.stdout.buffer.write(b"0123456789abcdef" * 6250)
+    sys.stdout.buffer.flush()
+    os._exit(0)
+if mode == b"afterexit":
+    subprocess.Popen([sys.executable, __file__, "afterexit"], stdin=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+    while not (root / "helper-ready").exists():
+        time.sleep(0.001)
+    os._exit(0)
+if mode in (b"stop", b"disconnect", b"selfsignal"):
+    subprocess.Popen([sys.executable, __file__, "helper"], stdin=subprocess.DEVNULL,
+                     stdout=None if mode == b"selfsignal" else subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+    while not (root / "helper-ready").exists():
+        time.sleep(0.01)
+size = 65536 if mode in (b"large", b"stop") else 1024
+try:
+    sys.stdout.buffer.write(b"0123456789abcdef" * size)
+    sys.stdout.buffer.flush()
+except (BrokenPipeError, BlockingIOError):
+    os._exit(0)
+(root / "written").touch()
+if mode == b"selfsignal":
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGTERM)
+if mode == b"disconnect":
+    sys.stdin.buffer.read()
+    os._exit(0)
+if mode == b"stop":
+    while True:
+        signal.pause()
+os._exit(23)
+"""
+
+    @contextlib.contextmanager
+    def core(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            adapter = root / "mailbend-stdio"
+            shutil.copy2(STDIO_BINARY, adapter)
+            core = root / "mailbend-core"
+            core.write_text(f"#!{sys.executable}\n" + self.CORE)
+            core.chmod(0o755)
+            try:
+                yield root, adapter
+            finally:
+                (root / "resume").touch()
+                if (root / "helper-ready").exists():
+                    wait_until(lambda: (root / "finished").exists())
+
+    def pressure(self, session):
+        wait_until(lambda: not select.select([], [session.output_observer], [], 0)[1])
+        self.assertFalse(os.get_blocking(session.output_observer.fileno()))
+        session.output_observer.close()
+        session.output_observer = None
+
+    def read_all(self, output):
+        data = bytearray()
+        deadline = time.monotonic() + 10
+        while True:
+            self.assertTrue(select.select([output], [], [], max(0, deadline - time.monotonic()))[0],
+                            "output did not drain before timeout")
+            chunk = os.read(output.fileno(), 65536)
+            if not chunk:
+                return bytes(data)
+            data.extend(chunk)
+
+    def test_large_output_drains_after_input_half_close(self):
+        with self.core() as (_, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"large\n")
+            session.close_input()
+            self.pressure(session)
+            self.assertEqual(self.read_all(session.output), self.PATTERN * 65536)
+            self.assertEqual(session.proc.wait(timeout=10), 23)
+            self.assertEqual(session.proc.stderr.read(), b"")
+
+    def test_numeric_exit_preserves_output_waiting_for_reader(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"small\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            self.assertIsNone(session.proc.poll())
+            self.assertEqual(self.read_all(session.output), self.PATTERN * 1024)
+            self.assertEqual(session.proc.wait(timeout=10), 23)
+            self.assertEqual(session.proc.stderr.read(), b"")
+
+    def test_signal_during_full_output_preserves_handler_status_and_helper(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"stop\n")
+            self.pressure(session)
+            session.proc.send_signal(signal.SIGTERM)
+            self.assertEqual(session.proc.wait(timeout=10), 73)
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_survived_signal_does_not_discard_successful_output(self):
+        for mode in (b"hup-ignore", b"hup-handle"):
+            for nonblocking in (False, True):
+                with self.subTest(mode=mode, nonblocking=nonblocking), self.core() as (root, adapter), Session(
+                        adapter, duplex=True, nonblocking=nonblocking, send_buffer=4096) as session:
+                    session.send(mode + b"\n")
+                    self.assertEqual(session.line(), "ready")
+                    session.proc.send_signal(signal.SIGHUP)
+                    if mode == b"hup-handle":
+                        wait_until(lambda: (root / "survived-hup").exists())
+                    session.send(b"write\n")
+                    wait_until(lambda: not select.select([], [session.output_observer], [], 0)[1])
+                    self.assertEqual(os.get_blocking(session.output_observer.fileno()), not nonblocking)
+                    session.output_observer.close()
+                    session.output_observer = None
+                    received = self.read_all(session.output)
+                    self.assertEqual(session.proc.wait(timeout=10), 0)
+                    self.assertEqual(session.proc.stderr.read(), b"")
+                    self.assertEqual(len(received), 100000)
+                    self.assertEqual(received, self.PATTERN * 6250)
+
+    def test_output_disconnect_fails_without_killing_started_helper(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"disconnect\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            session.peer.close()
+            self.assertEqual(session.proc.wait(timeout=10), 2)
+            self.assertIn(b"stdout closed before output was delivered", session.proc.stderr.read())
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_signal_during_post_exit_drain_does_not_signal_descendant(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"afterexit\n")
+            self.assertEqual(session.line(), "after-core-exit")
+            self.pressure(session)
+            session.proc.send_signal(signal.SIGTERM)
+            self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_post_exit_output_loss_fails_without_signalling_descendant(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"afterexit\n")
+            self.assertEqual(session.line(), "after-core-exit")
+            self.pressure(session)
+            session.peer.close()
+            self.assertEqual(session.proc.wait(timeout=10), 2)
+            self.assertIn(b"stdout closed before output was delivered", session.proc.stderr.read())
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
+
+    def test_signalled_core_does_not_wait_for_descendant_output_eof(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"selfsignal\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
+            (root / "resume").touch()
+            wait_until(lambda: (root / "finished").exists())
 
 
 class PausedMailServer:
@@ -585,6 +804,40 @@ class StdioTests(unittest.TestCase):
                             self.assertEqual(session.proc.stderr.read(), b"")
                             self.assertFalse(live(core))
 
+    def test_large_reply_survives_nonblocking_output_backpressure(self):
+        for launcher in LAUNCHERS:
+            for modern in (False, True):
+                for nonblocking in (False, True):
+                    with self.subTest(launcher=launcher.name, modern=modern,
+                                      nonblocking=nonblocking):
+                        with Session(launcher, duplex=True, nonblocking=nonblocking,
+                                     send_buffer=4096) as session:
+                            session.send(discovery(modern))
+                            self.assertEqual(session.line()["id"], 1)
+                            params = {"_meta": META} if modern else {}
+                            session.send(request("tools/list", 2, params))
+                            self.assertTrue(select.select([session.output], [], [], 10)[0],
+                                            "core did not start its response")
+                            wait_until(lambda: not select.select(
+                                [], [session.output_observer], [], 0)[1])
+                            self.assertEqual(os.get_blocking(session.output_observer.fileno()),
+                                             not nonblocking)
+                            session.output_observer.close()
+                            session.output_observer = None
+                            time.sleep(0.1)
+                            reply = session.line()
+                            self.assertEqual(reply["id"], 2)
+                            self.assertEqual({t["name"] for t in reply["result"]["tools"]},
+                                             READ_TOOLS)
+                            session.send(request("tools/list", 3, params))
+                            self.assertEqual(session.line()["id"], 3)
+                            session.close_input()
+                            self.assertEqual(session.proc.wait(timeout=10), 0)
+                            self.assertEqual(session.pending, b"")
+                            self.assertTrue(select.select([session.peer], [], [], 10)[0])
+                            self.assertEqual(session.peer.recv(1), b"")
+                            self.assertEqual(session.proc.stderr.read(), b"")
+
     def test_pipe_file_and_empty_input(self):
         for launcher in LAUNCHERS:
             for data in (b"", discovery(), discovery(True)):
@@ -753,7 +1006,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
-                wait_until(lambda: pathlib.Path(f"/proc/{core}/stat").read_text().split(") ", 1)[1][0] == "T")
+                wait_until(lambda: stopped(core))
                 session.proc.kill()
                 self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                 # Exercise the real core; the separate input-independent child
@@ -779,7 +1032,7 @@ class StdioTests(unittest.TestCase):
                 child = session.core_pid()
                 os.kill(child, signal.SIGSTOP)
                 try:
-                    wait_until(lambda: pathlib.Path(f"/proc/{child}/stat").read_text().split(") ", 1)[1][0] == "T")
+                    wait_until(lambda: stopped(child))
                     session.proc.kill()
                     self.assertEqual(session.proc.wait(timeout=10), -signal.SIGKILL)
                     # Orphan groups receive HUP+CONT. This child ignores HUP and
@@ -807,6 +1060,7 @@ class StdioTests(unittest.TestCase):
             core = session.core_pid()
             os.kill(core, signal.SIGSTOP)
             try:
+                wait_until(lambda: stopped(core))
                 session.peer.setblocking(False)
                 while True:
                     try:
@@ -820,7 +1074,8 @@ class StdioTests(unittest.TestCase):
                     return int(pending, 16) & (1 << (signal.SIGTERM - 1))
                 wait_until(term_pending)
             finally:
-                os.kill(core, signal.SIGCONT)
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(core, signal.SIGCONT)
             self.assertEqual(session.proc.wait(timeout=10), -signal.SIGTERM)
             self.assertFalse(live(core))
 
@@ -872,6 +1127,115 @@ class StdioTests(unittest.TestCase):
             self.assertEqual(session.proc.wait(timeout=10), 6)
             self.assertEqual(session.proc.stdout.read(), b"")
             self.assertIn(b"use scripts/mailbend mcp", session.proc.stderr.read())
+
+
+class ProcessStateTests(unittest.TestCase):
+    # These synthetic controls need neither built binaries nor visible /proc children.
+    def test_state_uses_final_comm_delimiter(self):
+        for comm in ("mailbend-core", "name) T fake", "name) Z fake", "(nested) ) X"):
+            for state in "RSDTtZXx":
+                with self.subTest(comm=comm, state=state), mock.patch.object(
+                        pathlib.Path, "read_text", autospec=True,
+                        return_value=f"123 ({comm}) {state} 1 2 3\n") as read:
+                    self.assertEqual(process_state(123), state)
+                    if state in "ZXx":
+                        with self.assertRaisesRegex(AssertionError, "exited before being observed stopped"):
+                            stopped(123)
+                    else:
+                        self.assertEqual(stopped(123), state == "T")
+                    self.assertEqual(live(123), state not in "ZXx")
+                    self.assertEqual(read.call_args_list,
+                                     [mock.call(pathlib.Path("/proc/123/stat"))] * 3)
+
+    def test_disappearance_fails_stop_barrier_but_is_not_live(self):
+        for error in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=error), mock.patch.object(
+                    pathlib.Path, "read_text", side_effect=error):
+                with self.assertRaises(error):
+                    wait_until(lambda: stopped(123))
+                self.assertFalse(live(123))
+
+    def test_other_read_errors_are_not_hidden(self):
+        with mock.patch.object(pathlib.Path, "read_text", side_effect=PermissionError):
+            for predicate in (stopped, live):
+                with self.subTest(predicate=predicate.__name__), self.assertRaises(PermissionError):
+                    predicate(123)
+
+    def test_exited_core_fails_stop_barrier_without_polling(self):
+        for state in "ZXx":
+            with self.subTest(state=state), mock.patch.object(
+                    pathlib.Path, "read_text", return_value=f"123 (core) {state} 1\n") as read, \
+                    mock.patch.object(time, "monotonic", side_effect=itertools.count()), \
+                    mock.patch.object(time, "sleep") as sleep:
+                with self.assertRaisesRegex(
+                        AssertionError, f"process 123 exited before being observed stopped \\(state {state}\\)"):
+                    wait_until(lambda: stopped(123))
+                read.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_stop_barrier_keeps_default_deadline(self):
+        now = 0.0
+        clock_reads = 0
+
+        def monotonic():
+            nonlocal clock_reads
+            clock_reads += 1
+            # Allow extra observations without advancing time, but fail a busy
+            # loop even when a regression removes the sleep that moves the clock.
+            self.assertLessEqual(clock_reads, 10_000, "polling clock made no bounded progress")
+            return now
+
+        def advance(seconds):
+            nonlocal now
+            now += seconds
+
+        predicate = mock.Mock(side_effect=lambda: stopped(123))
+        with mock.patch.object(pathlib.Path, "read_text", return_value="123 (core) S 1\n"), \
+                mock.patch.object(time, "monotonic", side_effect=monotonic), \
+                mock.patch.object(time, "sleep", side_effect=advance) as sleep:
+            with self.assertRaisesRegex(AssertionError, "within timeout"):
+                wait_until(predicate)
+            self.assertGreater(predicate.call_count, 0)
+            self.assertEqual(predicate.call_count, sleep.call_count)
+            self.assertGreaterEqual(now, 10)
+            self.assertLessEqual(now, 10 + 0.01 + 1e-9)
+
+    def test_backpressure_waits_for_observed_stop_before_flood_and_term(self):
+        events = []
+        states = iter("RST")
+
+        def read(path):
+            if path == pathlib.Path("/proc/123/stat"):
+                state = "Z" if (123, signal.SIGCONT) in events else next(states, "T")
+                events.append(state)
+                return f"123 (name) T fake) {state} 1\n"
+            self.assertEqual(path, pathlib.Path("/proc/123/status"))
+            events.append("pending")
+            return f"ShdPnd:\t{1 << (signal.SIGTERM - 1):x}\n"
+
+        def flood(_):
+            self.assertIn("T", events, "input reached a core not observed stopped")
+            events.append("flood")
+            raise BlockingIOError
+
+        with mock.patch(f"{__name__}.Session") as session_class, \
+                mock.patch.object(pathlib.Path, "read_text", autospec=True, side_effect=read), \
+                mock.patch.object(time, "sleep"), \
+                mock.patch.object(os, "kill", side_effect=lambda pid, sig: events.append((pid, sig))):
+            session = session_class.return_value.__enter__.return_value
+            session.core_pid.return_value = 123
+            session.peer.send.side_effect = flood
+            session.proc.terminate.side_effect = lambda: events.append("terminate")
+            session.proc.wait.return_value = -signal.SIGTERM
+            case = StdioTests("test_backpressure_still_forwards_signals")
+            case.test_backpressure_still_forwards_signals()
+            session.proc.wait.assert_called_once_with(timeout=10)
+        required = [(123, signal.SIGSTOP), "T", "flood", "terminate",
+                    "pending", (123, signal.SIGCONT), "Z"]
+        for event in ((123, signal.SIGSTOP), "flood", "terminate", (123, signal.SIGCONT)):
+            self.assertEqual(events.count(event), 1, events)
+        for before, after in zip(required, required[1:]):
+            self.assertLess(events.index(before), events.index(after), events)
 
 
 if __name__ == "__main__":

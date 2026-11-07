@@ -134,12 +134,12 @@ def config() -> IO(Policy.Config):
 # Send settings
 # -------------
 
-# What sending must also do: keep a Sent copy; refuse recipients outside
-# the allowlist (empty for none); and stay within the daily limit (0 for
-# none), counted in a file in `state_dir`. Only sending reads them, so a bad
-# value refuses every send and leaves drafts and reads alone.
+# Send settings cover the Sent copy, recipient allowlist, daily limit and
+# independent local secret scan. An empty allowlist and a zero limit mean
+# unrestricted. Only sending reads them, so a bad value refuses every send
+# and leaves drafts and reads alone.
 type Sending is Data:
-  Sending{save_sent: Bool, allow: List<&2, String>, limit: U32, state_dir: String}
+  Sending{save_sent: Bool, allow: List<&2, String>, limit: U32, state_dir: String, scan: Bool}
 
 def Sends() -> Data:
   Result<&2, &2, String, Sending>
@@ -230,14 +230,16 @@ def sending_of(
   max: String,
   dir: String,
   xdg: String,
-  home: String
+  home: String,
+  scan: String
 ) -> Sends():
   do Result<&2, &2, String, Sending>:
     save_sent : Bool <- Policy.flag_on(Policy.flag_value("MAILBEND_SAVE_SENT", save))
+    scan_on : Bool <- Policy.flag_on(Policy.flag_value("MAILBEND_SECRET_SCAN", scan))
     entries : List<&2, String> <- allowlist(allow)
     limit : U32 <- send_limit(max)
     state : String <- state_dir(dir, xdg, home)
-    return Sending{save_sent, entries, limit, state}
+    return Sending{save_sent, entries, limit, state, scan_on}
 
 def sending() -> IO(Sends()):
   do IO<Sends()>:
@@ -247,7 +249,8 @@ def sending() -> IO(Sends()):
     dir : String <- env_or("MAILBEND_STATE_DIR", "")
     xdg : String <- env_or("XDG_STATE_HOME", "")
     home : String <- env_or("HOME", "")
-    return sending_of(save, allow, max, dir, xdg, home)
+    scan : String <- env_or("MAILBEND_SECRET_SCAN", "")
+    return sending_of(save, allow, max, dir, xdg, home, scan)
 
 # Every helper is started only from an absolute path, which
 # scripts/mailbend sets, never from a path relative to the working
@@ -859,13 +862,36 @@ def msg_uids(ms: List<&2, I.Msg>) -> List<&2, U32>:
     case m <> t:
       msg_uid(m) <> msg_uids(t)
 
-# The UIDs of `us` that are not in `seen`, each once, in order.
-def unseen(us: List<&2, U32>, +seen: List<&2, U32>) -> List<&2, U32>:
+def unseen.seed(us: List<&2, U32>, seen: Set()) -> Set():
+  match us:
+    case Nil{}:
+      seen
+    case u <> t:
+      unseen.seed(t, Set.add(seen, U32.show(u)))
+
+def unseen.put(u: U32, key: String, rest: Set() -> List<&2, U32>, checked: Set() & Bool)
+  -> List<&2, U32>:
+  match checked:
+    case Tuple{seen, True{}}:
+      rest(seen)
+    case Tuple{seen, False{}}:
+      u <> rest(Set.add(seen, key))
+
+def unseen.go(us: List<&2, U32>, seen: Set()) -> List<&2, U32>:
   match us:
     case Nil{}:
       []
     case +u <> t:
-      List.filter.put(U32, u, unseen(t, u <> seen), Bool.not(uid_in(u, seen)))
+      +key = U32.show(u)
+      unseen.put(u, key, s => unseen.go(t, s), Set.has(seen, key))
+
+# The UIDs of `us` that are not in `seen`, each once, in order.
+def unseen(us: List<&2, U32>, seen: List<&2, U32>) -> List<&2, U32>:
+  match us:
+    case Nil{}:
+      []
+    case u <> t:
+      unseen.go(u <> t, unseen.seed(seen, Set.new()))
 
 def uidv_is(have: Maybe<&2, U32>, want: U32) -> Bool:
   match have:
@@ -4676,7 +4702,7 @@ type Stamp is Data:
 
 # What the tools want composed; Bcc goes only into the SMTP envelope. With
 # `draft` the message is saved instead of sent; with `dry` that is only shown.
-# `about` is what the message answers, and `jev` whether the gates check a
+# `about` is what the message answers, and `jev` whether TypeSafe checks a
 # send.
 type Want is Data:
   Want{
@@ -4694,12 +4720,24 @@ type Want is Data:
     jev: Jev.Switch
   }
 
+def secs_of.number(n: Maybe<&2, U32>, raw: String) -> U32:
+  match n:
+    case Some{+v}:
+      Bool.pick(U32, U32.is_gt(v, 0) && String.eq(raw, U32.show(v)), v, 0)
+    case None{}:
+      0
+
 def secs_of(p: Policy.Proc) -> U32:
   match p:
     case Policy.ProcOk{code, out, err}:
-      Maybe.default(&2, U32, U32.read(String.trim(out)), 0)
+      +raw = String.trim(out)
+      Bool.pick(U32, U32.is_eq(code, 0), secs_of.number(U32.read(raw), raw), 0)
     case _:
       0
+
+def clock_checked(+secs: U32) -> Result<&2, &2, String, U32>:
+  Bool.pick(Result<&2, &2, String, U32>, U32.is_eq(secs, 0),
+    Fail{"system clock is unavailable or invalid"}, Done{secs})
 
 def rand_of(r: Result<&1, &1, U32 & String, U32>) -> Result<&2, &2, String, U32>:
   match r:
@@ -4717,9 +4755,10 @@ def stamp_checked(
   b: Result<&1, &1, U32 & String, U32>
 ) -> Result<&2, &2, String, Stamp>:
   do Result<&2, &2, String, Stamp>:
+    now : U32 <- clock_checked(secs)
     x : U32 <- rand_of(a)
     y : U32 <- rand_of(b)
-    return stamp_of(secs, x, y)
+    return stamp_of(now, x, y)
 
 # The time in seconds since the epoch; 0 when it cannot be read.
 def now_seconds() -> IO(U32):
@@ -5461,6 +5500,17 @@ def brief_roles(r: Run(), p: BriefPage, me: String, since: String, now: U32) -> 
           merge_folders(I.folders(lines), []))
         brief_sent_role(fs, p, me, since, now)
 
+def brief_contacts.clock(valid: Bool, p: BriefPage, me: String, +now: U32) -> IO(Shown):
+  match valid:
+    case False{}:
+      IO.pure(Shown, brief_output(p, contacts_failed("",
+        "not scanned: system clock cannot support the 30-day correspondence window"), me, ""))
+    case True{}:
+      do IO<Shown>:
+        r : Run() <- await_raw(Ops.plan_probe())
+        brief_roles(r, p, me, Maybe.default(&2, String,
+          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+
 def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
   match empty:
     case True{}:
@@ -5468,9 +5518,7 @@ def brief_contacts.if(empty: Bool, p: BriefPage, me: String) -> IO(Shown):
     case False{}:
       do IO<Shown>:
         +now : U32 <- now_seconds()
-        r : Run() <- await_raw(Ops.plan_probe())
-        brief_roles(r, p, me, Maybe.default(&2, String,
-          I.imap_date(M.iso_date((now - 2592000 : U32))), ""), now)
+        brief_contacts.clock(U32.is_ge(now, 2592000), p, me, now)
 
 def brief_contacts(+p: BriefPage) -> IO(Shown):
   BriefPage{folder, uidv, next, more, window, ms} = p
@@ -6106,13 +6154,27 @@ def unlisted_msg(refused: List<&2, String>) -> String:
   "MAILBEND_ALLOWED_RECIPIENTS does not allow sending to " ++ String.join(refused, ", ") ++
     "; nothing was sent"
 
+def send_allowed.clock(
+  clock: Result<&2, &2, String, U32>,
+  envelope: String,
+  limit: U32,
+  dir: String,
+  s: Sent
+) -> IO(Policy.Out):
+  match clock:
+    case Fail{problem}:
+      send_allowed.if(problem, envelope, s)
+    case Done{secs}:
+      do IO<Policy.Out>:
+        problem : String <- reserve(limit, dir, M.iso_date(secs))
+        send_allowed.if(problem, envelope, s)
+
 # The send counts against the UTC day read just before its reservation,
 # after the gates, which may take a while.
 def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(Policy.Out):
   do IO<Policy.Out>:
     secs : U32 <- now_seconds()
-    problem : String <- reserve(limit, dir, M.iso_date(secs))
-    send_allowed.if(problem, envelope, s)
+    send_allowed.clock(clock_checked(secs), envelope, limit, dir, s)
 
 # A message ready to send once the gates pass it: the bare sender and
 # recipients, the message, the allowlist and daily limit it goes under,
@@ -6147,7 +6209,7 @@ def send_refused(
 
 # The send itself: only an envelope lets it go, and only then is a place in
 # the daily count reserved. A dry run reserves none and shows what the
-# envelope is built from. `report` is what the gates found, with Jev on.
+# envelope is built from. `report` is what the enabled gates found.
 def send_allowed(
   envelope: Maybe<&2, String>,
   blocked: String,
@@ -6279,10 +6341,21 @@ def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Policy.Out)
   Ready{f, rcpts, m, allow, l, dr, s, y, p} = r
   send_jev.put(S.refused(allow, rcpts), c, w, from, r)
 
-def send_gated(jev: Jev.Switch, w: Want, from: String, r: Ready) -> IO(Policy.Out):
+def send_local(on: Bool, w: Want, from: String, r: Ready) -> IO(Policy.Out):
+  match on:
+    case False{}:
+      send_checked(Secrets.Clean{}, Jev.JevOff{}, [], r)
+    case True{}:
+      Want{to, cc, bcc, subject, text, irt, refs, atts, draft, dry, about, jev} = w
+      fields = outgoing_fields(from, to, cc, bcc, subject)
+      +scan = Secrets.secret_scan(List.append(&2, M.Hdr, fields,
+        [M.Hdr{"in-reply-to", irt}, M.Hdr{"references", refs}]), text, atts)
+      send_checked(scan, Jev.JevOff{}, scan_kvs(scan), r)
+
+def send_gated(jev: Jev.Switch, scan: Bool, w: Want, from: String, r: Ready) -> IO(Policy.Out):
   match jev:
     case Jev.Off{}:
-      send_checked(Secrets.Clean{}, Jev.JevOff{}, [], r)
+      send_local(scan, w, from, r)
     case Jev.On{c}:
       send_jev(c, w, from, r)
 
@@ -6290,12 +6363,12 @@ def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Policy.Ou
   match cfg:
     case Fail{m}:
       pure_out(Policy.Err{"configuration error: " ++ m})
-    case Done{Sending{+save, allow, limit, dir}}:
+    case Done{Sending{+save, allow, limit, dir, scan}}:
       +d = draft_of(w, from, st, False{})
       +rcpts = specs(all_rcpts(w))
       +sender = M.addr_spec(from)
       +msg = M.compose(d, boundary_of(st))
-      send_gated(want_jev(w), w, from, Ready{sender, rcpts, msg, allow, limit, dir,
+      send_gated(want_jev(w), scan, w, from, Ready{sender, rcpts, msg, allow, limit, dir,
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
           draft_of(w, from, st, True{}), boundary_of(st)},
         is_dry(w), SmtpPreview{sender, rcpts, msg, save}})
@@ -9033,7 +9106,7 @@ def posture(c: Policy.Config, sending: Sending, endpoints: PostureEndpoints) -> 
     case Policy.ConfigBad{msg}:
       Policy.Err{"configuration error: " ++ msg}
     case Policy.Config{+ro, +drafts, +jev, +images}:
-      Sending{save_sent, +allow, +limit, state_dir} = sending
+      Sending{save_sent, +allow, +limit, state_dir, scan} = sending
       PostureEndpoints{imap, smtp, tls, doh, proxy, proxy_set, doh_proxy, typesafe_proxy,
         imap_ip, smtp_ip, attach, download, trust} = endpoints
       +on = Jev.is_on(jev)

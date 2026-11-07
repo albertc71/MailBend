@@ -53,13 +53,23 @@ jobs:
         run: python3 tests/test-toolchain-installers.py
       - name: Documentation source names and drift mutations
         run: |
+          python3 tools/gen-llms.py --check
+          python3 tests/test-llms.py
           python3 scripts/check-docs.py
           python3 tests/test-docs.py
+      - name: Unit runner scheduling and cleanup contracts
+        run: python3 tests/test-unit-runner.py
+      - name: Claude plugin declarations and isolated launcher fixture
+        run: python3 tests/test-plugin.py
       - name: Law catalogue and public safety claims
         run: |
           python3 tools/gen-laws.py --check
           python3 tools/check-claims.py --check
           python3 tests/formal/test-claims.py
+      - name: Public plan coverage and command construction
+        run: |
+          python3 tests/formal/check-plan-coverage.py
+          python3 tests/formal/test-plan-coverage.py
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -143,6 +153,7 @@ jobs:
         run: |
           python3 tests/test-image-budget.py
           python3 tests/test-image-assets.py
+          python3 tests/test-image-replies-probe.py
       - name: Bounded exhaustive search-pagination model
         run: |
           python3 tests/formal/search-pagination-model.py
@@ -277,6 +288,11 @@ jobs:
         if: matrix.suite == 'support'
       - name: Build
         run: scripts/install.sh
+      - name: Installed native ELF hardening and negative controls
+        if: matrix.suite == 'support'
+        run: |
+          python3 scripts/check-native-hardening.py
+          python3 tests/test-native-hardening.py
       - name: MIME and internationalisation corpus
         if: matrix.suite == 'support'
         run: python3 tests/test-mime-corpus.py
@@ -292,6 +308,9 @@ jobs:
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
         if: matrix.suite == 'support'
+      - name: Outgoing clock failure boundaries
+        run: python3 tests/test-clock.py
+        if: matrix.suite == 'support'
       - name: Offline posture boundary and redaction
         run: python3 tests/test-posture.py
         if: matrix.suite == 'support'
@@ -304,6 +323,7 @@ jobs:
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
         run: |
+          python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
           python3 tests/test-e2e.py
       - name: Short synthetic MCP soak
@@ -312,7 +332,9 @@ jobs:
         run: python3 tests/test-soak.py --profile short
       - name: Structured MCP tool scenarios
         if: matrix.suite == 'mcp'
-        run: MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
+        run: |
+          python3 tests/test-plugin.py --runtime
+          MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
       - name: Integrated results and scheduled recipes
         if: matrix.suite == 'support'
         run: |-
