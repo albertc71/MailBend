@@ -44,6 +44,7 @@ Source index for MailBend, a Linux IMAP/SMTP connector for AI agents.
 - [Thread reads](docs/THREADS.md)
 - [Threat model and assurance map](docs/THREAT-MODEL.md)
 - [Write and prove a MailBend law](docs/WRITING-LAWS.md)
+- [Independent audit preparation](docs/audit/SCOPE.md)
 
 ## Agent skill
 

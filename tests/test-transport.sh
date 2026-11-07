@@ -746,6 +746,82 @@ PY
   done
 }
 
+# Authentication replies are private. Only exact fixed evidence escapes the helper.
+case_auth_refusals() {
+  local name protocol stage reason expected attempts fixture mode extra actual count
+  python3 - "$ROOT/tests" "$FIXTURE" "$WORK" <<'PYCASES'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from auth_refusal_cases import cases
+fixture = json.loads(pathlib.Path(sys.argv[2]).read_text())
+work = pathlib.Path(sys.argv[3])
+with (work / 'auth-cases.tsv').open('w') as listing:
+    for name, protocol, stage, reason, expected, attempts, changes in cases(fixture['password']):
+        path = work / (name + '.json')
+        path.write_text(json.dumps({**fixture, **changes}))
+        print(name, protocol, stage, reason, expected, attempts, path, sep='\t', file=listing)
+PYCASES
+  while IFS=$'\t' read -r name protocol stage reason expected attempts fixture; do
+    for mode in starttls implicit; do
+      # IMAP has only implicit verified TLS.
+      [ "$protocol" = imap ] && [ "$mode" = starttls ] && continue
+      extra=()
+      [ "$mode" = implicit ] && extra=(--smtp-implicit)
+      start_server "$name-$mode" --fixture "$fixture" "${extra[@]}" || {
+        fail "$name-$mode" "server did not start"; continue;
+      }
+      if [ "$protocol" = imap ]; then
+        call_imap $'a1 NOOP\r\n'
+      else
+        call_smtp $'MAIL FROM:<user@example.com>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\nSubject: forbidden\r\n\r\nbody\r\n.\r\n' MAILBEND_SMTP_TLS_MODE="$mode"
+      fi
+      actual=$(grep '^mailbend-auth: ' "$ERR")
+      count=$(python3 - "$LOG_FILE" "$protocol" "$stage" <<'PYCOUNT'
+import json, sys
+records = [json.loads(line) for line in open(sys.argv[1])]
+protocol, stage = sys.argv[2:]
+lines = [r['line'] for r in records if r['proto'] == protocol]
+if stage == 'greeting':
+    assert sum(r['proto'] == protocol + '-refusal' for r in records) == 1
+    assert not lines
+else:
+    assert not any('NOOP' in line or line.startswith(('MAIL ', 'RCPT ', 'DATA')) for line in lines)
+print(sum(' LOGIN ' in line or line == 'AUTH <redacted>' for line in lines))
+PYCOUNT
+      )
+      if [ "$CODE" -eq "$expected" ] && [ "$actual" = "mailbend-auth: $reason" ] && \
+         [ "$count" = "$attempts" ] && ! grep -aq 'private-server-marker' "$OUT" "$ERR" && \
+         ! grep -aq -- "$PASSWORD" "$OUT" "$ERR"; then
+        pass "$name-$mode fixed evidence, no retry or credential leak"
+      else
+        fail "$name-$mode fixed evidence" "exit=$CODE reason=$actual auth_lines=$count"
+      fi
+      call_helper "diagnose-$protocol" '' MAILBEND_IMAP_HOST=localhost \
+          MAILBEND_IMAP_PORT="$IMAP_PORT" MAILBEND_SMTP_HOST=localhost \
+          MAILBEND_SMTP_PORT="$SMTP_PORT" MAILBEND_SMTP_TLS_MODE="$mode"
+      if [ "$CODE" -eq 0 ] && grep -axq "$stage $reason" "$OUT" && [ ! -s "$ERR" ] && \
+         ! grep -aq 'private-server-marker' "$OUT" && ! grep -aq -- "$PASSWORD" "$OUT" && \
+         python3 - "$LOG_FILE" "$protocol" "$stage" "$attempts" <<'PYDIAG'
+import json, sys
+records = [json.loads(line) for line in open(sys.argv[1])]
+protocol, stage, attempts = sys.argv[2:]
+lines = [r['line'] for r in records if r['proto'] == protocol]
+assert sum(' LOGIN ' in line or line == 'AUTH <redacted>' for line in lines) == int(attempts) * 2
+assert not any('NOOP' in line or line.startswith(('MAIL ', 'RCPT ', 'DATA')) for line in lines)
+if stage == 'greeting':
+    assert sum(r['proto'] == protocol + '-refusal' for r in records) == 2
+    assert not lines
+PYDIAG
+      then
+        pass "$name-$mode native diagnosis is redacted and does not retry"
+      else
+        fail "$name-$mode native diagnosis" "exit=$CODE"
+      fi
+      stop_server
+    done
+  done < "$WORK/auth-cases.tsv"
+}
+
 # Exercise authenticate through the actual helper, not only has_auth. The
 # fake server redacts every AUTH command and LOGIN challenge response: one
 # redacted line is PLAIN, three are LOGIN. Check the complete wire sequence
@@ -839,6 +915,7 @@ case_smtp_progress
 case_selected_section
 case_refresh
 case_smtp_modes
+case_auth_refusals
 case_smtp_auth_selection
 case2
 if python3 "$ROOT/tests/test-process-protection.py"; then

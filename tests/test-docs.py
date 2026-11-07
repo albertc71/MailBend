@@ -30,6 +30,8 @@ class DriftChecks(unittest.TestCase):
         files = [*ROOT.glob("*.md"), ROOT / "LAWS.bend", ROOT / "main.bend",
                  ROOT / ".env.example", ROOT / "scripts/mailbend", ROOT / "tools/gen-schema.py",
                  ROOT / "tests/test-transport.sh", ROOT / "LICENSE", ROOT / ".github/CODEOWNERS",
+                 ROOT / "native/Cargo.lock", *ROOT.glob(".claude-plugin/*.json"),
+                 *ROOT.glob("hooks/*.json"),
                  *ROOT.glob("src/*.bend"), *ROOT.glob("native/*/src/**/*.rs"),
                  *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/mailbend/**/*.md"),
                  *ROOT.glob(".github/ISSUE_TEMPLATE/*.yml")]

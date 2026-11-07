@@ -559,6 +559,10 @@ def plan_flag_stores(
   guarded(mbox, uids, uidv,
     List.append(&2, I.Cmd, stores, [I.CFetch{uids, [I.IUid{}, I.IFlags{}]}]))
 
+# One original, one Answered store, then the exact UID's flag readback.
+def plan_answered(mbox: String, +uid: U32, uidv: U32) -> List<&2, I.Cmd>:
+  plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)
+
 # One store per colour bit, setting or clearing it.
 def colour_stores(+uids: List<&2, U32>, bits: I.Bits) -> List<&2, I.Cmd>:
   I.Bits{b0, b1, b2} = bits
