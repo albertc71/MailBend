@@ -12,6 +12,20 @@ def cases(password):
         response = 'NO ' + (f'[{code}]' if code else '') + hostile
         yield 'imap-' + (code or 'no-code'), 'imap', 'authentication', reason, 4, 1, {
             'imap_auth_refusal': response}
+    for bye, label in (('BYE', 'codeless'), ('BYE [UNAVAILABLE]', 'temporary')):
+        for response, reason in (('NO [AUTHENTICATIONFAILED]', 'credentials'),
+                                 ('NO', 'credentials'),
+                                 ('NO [UNAVAILABLE]', 'temporary'),
+                                 ('BAD', 'unknown')):
+            suffix = response.replace(' ', '-').replace('[', '').replace(']', '')
+            yield f'imap-bye-{label}-then-{suffix}', 'imap', 'authentication', reason, 4, 1, {
+                'imap_auth_bye': bye + hostile,
+                'imap_auth_refusal': response + hostile}
+    for bye, reason in (('BYE', 'unknown'), ('BYE [UNAVAILABLE]', 'temporary'),
+                        ('BYE [X-PRIVATE]', 'unknown')):
+        label = bye.replace(' ', '-').replace('[', '').replace(']', '')
+        yield f'imap-{label}-then-close', 'imap', 'authentication', reason, 6, 1, {
+            'imap_auth_bye': bye + hostile}
     # Substrings and server prose cannot impersonate a response code.
     for code in ('XUNAVAILABLE', 'UNAVAILABLEX'):
         yield 'imap-' + code, 'imap', 'authentication', 'unknown', 4, 1, {
