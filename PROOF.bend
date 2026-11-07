@@ -498,12 +498,6 @@ def Laws.mark_never_deletes(mbox, uids, seen, uidv):
     case False{}:
       {==}
 
-def Laws.answered_plan_exact(folder, uid, uidv):
-  {==}
-
-def Laws.answered_changes_only_original(folder, uid, uidv):
-  {==}
-
 def Laws.mark_changes_only_seen(mbox, uids, seen, uidv):
   {==}
 
@@ -870,6 +864,13 @@ def Laws.label_opens_callers_folder(mbox, uids, label, uidplus, uidv):
 
 def Laws.delete_opens_callers_folder(mbox, uids, uidv):
   ({==}, {==})
+
+# Keep shared-guard diagnostics before the reply-specific exact-plan proofs.
+def Laws.answered_plan_exact(folder, uid, uidv):
+  {==}
+
+def Laws.answered_changes_only_original(folder, uid, uidv):
+  {==}
 
 # Drafts
 # ------
