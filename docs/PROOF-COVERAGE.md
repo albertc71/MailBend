@@ -246,9 +246,9 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`json_serialized_bytes`](../LAWS.bend#L2040)
 - Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1253)
-- Code: [`src/json.bend#show`](../src/json.bend#L118), [`src/response.bend#bytes`](../src/response.bend#L16)
-- Seeded bug: `json-bytes-negative-control` in `src/json.bend`. Expected rejection at `tests/formal/json-size-proofs.bend#show_bytes`.
-- Observer relationship to [`json_serialized_bytes`](../LAWS.bend#L2040): The root proof calls JsonSize.show_bytes directly to equate the serializer byte count with the response counter.
+- Code: [`src/json.bend#show`](../src/json.bend#L142), [`src/response.bend#bytes`](../src/response.bend#L16)
+- Seeded bug: `json-bytes-negative-control` in `src/json.bend`. Expected rejection at `tests/formal/json-size-builder-proofs.bend#show_onto`.
+- Observer relationship to [`json_serialized_bytes`](../LAWS.bend#L2040): The root proof calls JsonSize.show_bytes, which transfers the reference byte count through Show.show_equal and its universal accumulator correspondence show_onto.
 
 ## policy-gates
 
