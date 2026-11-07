@@ -230,6 +230,12 @@ class State:
         self.smtp_auth = fixture.get('smtp_auth', 'PLAIN LOGIN')
         self.smtp_auth_before_tls = fixture.get('smtp_auth_before_tls', '')
         self.smtp_greeting = fixture.get('smtp_greeting', 'fake ESMTP')
+        # Synthetic protocol refusals, including deliberately hostile server text.
+        self.imap_auth_refusal = fixture.get('imap_auth_refusal', '')
+        self.imap_greeting_refusal = fixture.get('imap_greeting_refusal', '')
+        self.smtp_auth_refusal = fixture.get('smtp_auth_refusal', '')
+        self.smtp_auth_refusal_stage = fixture.get('smtp_auth_refusal_stage', 'command')
+        self.smtp_greeting_refusal = fixture.get('smtp_greeting_refusal', '')
         self.seen = {}
         self.examine_count = 0
         self.examine_changes = fixture.get("examine_changes", [])
@@ -756,6 +762,10 @@ class IMAPSession:
                 self.logger.log('imap-bytes', str(len(text)))
 
     def run(self):
+        if self.state.imap_greeting_refusal:
+            self.logger.log('imap-refusal', 'greeting')
+            self.send('* ' + self.state.imap_greeting_refusal + '\r\n')
+            return
         self.send('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] fake ready\r\n')
         while not self.done:
             try:
@@ -951,6 +961,9 @@ class IMAPSession:
         self.send(f'{tag} OK CAPABILITY completed\r\n')
 
     def cmd_login(self, tag, args):
+        if self.state.imap_auth_refusal:
+            self.send(f'{tag} {self.state.imap_auth_refusal}\r\n')
+            return
         if len(args) < 2:
             self.send(f'{tag} BAD malformed LOGIN\r\n')
             return
@@ -1488,6 +1501,10 @@ class SMTPSession:
             return user == self.state.data['user'] and pw == self.state.data['password']
 
     def run(self):
+        if self.state.smtp_greeting_refusal:
+            self.logger.log('smtp-refusal', 'greeting')
+            self.send(self.state.smtp_greeting_refusal + '\r\n')
+            return
         self.send('220 ' + self.state.smtp_greeting + '\r\n')
         while True:
             raw = self.conn.readline()
@@ -1505,13 +1522,26 @@ class SMTPSession:
                 self.conn.sock.close()
                 return
 
+    def refuse_auth(self, stage):
+        if self.state.smtp_auth_refusal and self.state.smtp_auth_refusal_stage == stage:
+            self.send(self.state.smtp_auth_refusal + '\r\n')
+            self.auth_login_stage = 0
+            if self.state.smtp_auth_refusal.startswith('421'):
+                self.closing = True
+            return True
+        return False
+
     def handle_line(self, text: str) -> bool:
         if self.auth_login_stage == 1:
+            if self.refuse_auth('user'):
+                return True
             self._pending_user = self._b64decode_safe(text)
             self.send('334 ' + base64.b64encode(b'Password:').decode('ascii') + '\r\n')
             self.auth_login_stage = 2
             return True
         if self.auth_login_stage == 2:
+            if self.refuse_auth('password'):
+                return True
             pw = self._b64decode_safe(text)
             self.auth_login_stage = 0
             if self._check_creds(self._pending_user or '', pw):
@@ -1574,6 +1604,8 @@ class SMTPSession:
     def cmd_auth(self, rest: str):
         if not self.tls_active:
             self.send('530 5.7.0 STARTTLS required\r\n')
+            return
+        if self.refuse_auth('command'):
             return
         parts = rest.strip().split(' ', 1)
         mech = parts[0].upper() if parts and parts[0] else ''
