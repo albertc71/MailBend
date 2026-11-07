@@ -53,6 +53,102 @@ class PlanCoverage(unittest.TestCase):
         self.append("src/tools.bend", "\ndef bypass() -> List<I.Cmd>:\n  Ops.store_cmd()\n")
         self.check(1, "store_cmd")
 
+    def test_ops_data_cannot_wrap_commands_outside_plan_boundary(self):
+        self.append("src/ops.bend", "\ntype Package is Data:\n"
+                    "  Package{command: I.Cmd}\n"
+                    "def package() -> Package:\n  Package{I.CStore{7}}\n")
+        self.append("src/tools.bend", "\ndef bypass() -> Ops.Package:\n"
+                    "  Ops.package()\n")
+        self.check(1, "command field Package.command")
+
+    def test_canonical_cmd_can_contain_nested_commands(self):
+        self.append("src/imap.bend", "  CBatch{commands: List<&2, Cmd>}\n")
+        self.check()
+        self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.CBatch{[]}\n")
+        self.check(1, "command I.CBatch")
+
+    def test_imap_data_cannot_wrap_commands_outside_plan_boundary(self):
+        self.append("src/imap.bend", "\ntype Package is Data:\n"
+                    "  Empty{}\n  Wrapped{commands: List<&2, Cmd>}\n"
+                    "def package() -> Package:\n  Wrapped{[CStore{7}]}\n")
+        self.append("src/tools.bend", "\ndef bypass() -> I.Package:\n  I.package()\n")
+        self.check(1, "command field Package.commands")
+
+    def test_command_field_rejection_does_not_depend_on_a_producer(self):
+        self.append("src/ops.bend", "\ntype Hidden is Data:\n"
+                    "  Hidden{items: List<&2, I.Cmd>}\n"
+                    "type Outer is Data:\n  Outer{inner: Hidden}\n")
+        self.check(1, "command field Hidden.items")
+
+    def test_command_fields_use_resolved_aliases_in_both_modules(self):
+        for relative in ("src/ops.bend", "src/imap.bend"):
+            with self.subTest(relative=relative):
+                previous = (self.root / relative).read_text()
+                self.append(relative, "\nimport ./imap.bend as Mail\n"
+                            "type Package is Data:\n  Package{\n"
+                            "    harmless: U32,\n"
+                            "    commands: Maybe<&2, List<&2, Mail.Cmd>>\n  }\n")
+                self.check(1, "command field Package.commands")
+                self.write(relative, previous)
+
+    def test_ops_type_named_cmd_has_no_canonical_exemption(self):
+        self.append("src/ops.bend", "\ntype Cmd is Data:\n  Wrapped{command: I.Cmd}\n")
+        self.check(1, "command field Cmd.command")
+
+    def test_ops_local_cmd_type_is_not_the_imap_type(self):
+        self.append("src/ops.bend", "\ntype Cmd is Data:\n  Local{}\n"
+                    "type Package is Data:\n  Package{command: Cmd}\n"
+                    "def local() -> Package:\n  Package{Local{}}\n")
+        self.append("src/tools.bend", "\ndef local() -> Ops.Package:\n  Ops.local()\n")
+        self.check()
+
+    def test_unrelated_cmd_fields_and_recursive_data_are_allowed(self):
+        self.write("src/other.bend", "type Cmd is Data:\n  Local{}\n")
+        for relative in ("src/ops.bend", "src/imap.bend"):
+            self.append(relative, "\nimport ./other.bend as Other\n"
+                        "type Package is Data:\n"
+                        "  Empty{}\n  Wrapped{Cmd: U32, local: Other.Cmd, next: List<&2, Package>}\n"
+                        "def local() -> Package:\n  Empty{}\n")
+        self.append("src/tools.bend", "\ndef local() -> Data:\n  (Ops.local(), I.local())\n")
+        self.check()
+
+    def test_cmd_text_in_comments_and_literals_is_not_a_field(self):
+        self.append("src/ops.bend", "\ntype Package is Data:\n"
+                    "  Package{value: U32} # command: I.Cmd\n"
+                    "def description() -> String:\n"
+                    '  "type Hidden is Data:\\n  Hidden{command: I.Cmd}"\n')
+        self.check()
+
+    def test_other_modules_may_keep_command_data(self):
+        self.append("src/tools.bend", "\ntype Preview is Data:\n"
+                    "  Preview{commands: List<&2, I.Cmd>}\n"
+                    "def preview() -> Preview:\n  Preview{Ops.plan_read()}\n")
+        self.check()
+
+    def test_imported_command_carriers_remain_outside_the_field_check(self):
+        self.write("src/other.bend", "import ./imap.bend as I\n"
+                   "type Package is Data:\n  Package{command: I.Cmd}\n")
+        self.append("src/ops.bend", "\nimport ./other.bend as Other\n"
+                    "type Local is Data:\n  Local{value: Other.Package}\n"
+                    "def package() -> Local:\n  Local{Other.Package{I.CRead{}}}\n")
+        self.append("src/tools.bend", "\ndef bypass() -> Ops.Local:\n  Ops.package()\n")
+        self.check()
+
+    def test_unsupported_data_declarations_fail_closed(self):
+        original = (self.root / "src/ops.bend").read_text()
+        for declaration in ("type Package<T> is Data:\n  Package{value: T}\n",
+                            "type Package is Data:\n",
+                            "type Package is Other:\n  Package{value: I.Cmd}\n",
+                            "type Package is Data:\n  Package{value}\n",
+                            "type Package is Data:\n  Package{value: }\n",
+                            "type Package is Data:\n  Package{value: List<I.Cmd}\n",
+                            "type Package is Data:\n  Package{value: I.Cmd>}\n",
+                            "type Package is Data:\n  Package{value: &item: I.Cmd -> U32}\n",
+                            "type Package is Data:\n  Package{value: U32\n"):
+            with self.subTest(declaration=declaration):
+                self.write("src/ops.bend", original + "\n" + declaration)
+                self.check(1, "data")
+
     def test_production_cannot_call_imap_command_factory(self):
         self.append("src/imap.bend", "\ndef store(uid: U32) -> Cmd:\n  CStore{uid}\n")
         self.append("src/tools.bend", "\ndef bypass() -> I.Cmd:\n  I.store(7)\n")

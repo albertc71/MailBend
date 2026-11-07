@@ -1,0 +1,65 @@
+# MailBend documentation
+
+Source index for MailBend, a Linux IMAP/SMTP connector for AI agents.
+
+## Reference documentation
+
+- [MailBend](README.md)
+- [Try it without an account](README.md#try-it-without-an-account)
+- [Why MailBend](README.md#why-mailbend)
+- [What it can do](README.md#what-it-can-do)
+- [Install (Linux)](README.md#install-linux)
+- [Configure](README.md#configure)
+- [Use](README.md#use)
+- [Local secret scan](README.md#local-secret-scan)
+- [Jev (optional)](README.md#jev-optional)
+- [Polling known messages](README.md#polling-known-messages)
+- [Privacy Policy](README.md#privacy-policy)
+- [Safety](README.md#safety)
+- [How it works](README.md#how-it-works)
+- [Development](README.md#development)
+- [Reading email links](README.md#reading-email-links)
+- [Known limits](README.md#known-limits)
+- [License](README.md#license)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Ask before sending or permanently deleting in Claude Code](docs/CLAUDE-HOOK.md)
+- [Install the MailBend plugin in Claude Code](docs/CLAUDE-PLUGIN.md)
+- [CLI contract](docs/CLI.md)
+- [Grok Bot / Cursor cloud setup and recovery](docs/CLOUD_AGENT.md)
+- [Email connector comparison](docs/COMPARISON.md)
+- [Use MailBend with agent frameworks](docs/FRAMEWORKS.md)
+- [Compromised-agent incident matrix](docs/INCIDENTS.md)
+- [Jev: optional checks by TypeSafe](docs/JEV.md)
+- [Law catalogue](docs/LAWS.md)
+- [MCP compatibility](docs/MCP.md)
+- [Connect MailBend to an MCP client](docs/MCP_CLIENTS.md)
+- [Operate and recover MailBend](docs/OPERATIONS.md)
+- [Privacy Policy and data handling](docs/PRIVACY.md)
+- [Safety claim coverage](docs/PROOF-COVERAGE.md)
+- [Share a provider report](docs/PROVIDER-REPORTS.md)
+- [Provider setup and evidence](docs/PROVIDERS.md)
+- [Run scheduled mail jobs without sending](docs/RECIPES.md)
+- [Bounded refresh experiment](docs/REFRESH.md)
+- [Maintain the safety claims](docs/SAFETY-CLAIMS.md)
+- [Thread reads](docs/THREADS.md)
+- [Threat model and assurance map](docs/THREAT-MODEL.md)
+- [Write and prove a MailBend law](docs/WRITING-LAWS.md)
+- [Independent audit preparation](docs/audit/SCOPE.md)
+
+## Agent skill
+
+- [MailBend](skills/mailbend/SKILL.md)
+- [CLI reference](skills/mailbend/references/cli.md)
+- [Tool reference](skills/mailbend/references/tools.md)
+
+## Design proposals and history
+
+These documents describe proposals and historical designs, not implementation guarantees.
+
+- [Selected MIME parts (#23)](docs/plans/2026-10-24-selected-mime-parts.md)
+- [Awaiting replies](docs/plans/awaiting-reply.md)
+- [Bounded read responses](docs/plans/bounded-read-responses.md)
+- [Deterministic metadata attention brief](docs/plans/deterministic-brief.md)
+- [Request-level image rounds](docs/plans/image-rounds.md)
+- [Storage quota observations](docs/plans/storage-quota.md)
+- [Structured MCP results](docs/plans/structured-mcp-results.md)

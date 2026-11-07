@@ -302,8 +302,10 @@ class Runtime(unittest.TestCase):
         cases = (
             ({"MAILBEND_TYPESAFE_API_KEY": ""}, "MAILBEND_TYPESAFE_API_KEY must not be set"),
             ({"MAILBEND_TYPESAFE_CONTENT": "invalid"}, "MAILBEND_TYPESAFE_CONTENT must be"),
-            ({"MAILBEND_TYPESAFE_ZERO_RETENTION": "invalid"}, "MAILBEND_TYPESAFE_ZERO_RETENTION"),
-            ({"MAILBEND_TYPESAFE_IMAGES": "invalid"}, "MAILBEND_TYPESAFE_IMAGES"),
+            ({"MAILBEND_TYPESAFE_ZERO_RETENTION": "invalid"},
+             "MAILBEND_TYPESAFE_ZERO_RETENTION must be 1, true, 0, false or empty"),
+            ({"MAILBEND_TYPESAFE_IMAGES": "invalid"},
+             "MAILBEND_TYPESAFE_IMAGES must be 1, true, 0, false or empty"),
             ({"MAILBEND_TYPESAFE_CONTENT": "body"}, "MAILBEND_TYPESAFE_ZERO_RETENTION=1"),
             ({"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "0"},
              "MAILBEND_TYPESAFE_ZERO_RETENTION=1"),
@@ -326,6 +328,47 @@ class Runtime(unittest.TestCase):
                 self.assertTrue(reply["result"]["isError"])
                 self.assertIn(error, reply["result"]["structuredContent"]["error"])
                 self.assertFalse(marker.exists(), "invalid config started a mail helper")
+
+    def test_jev_off_accepts_inherited_supported_settings_before_tls_helper(self):
+        """Valid settings reach a synthetic TLS failure, without mail or TypeSafe access."""
+        marker = self.work / "helper-called"
+        self.env["MARKER"] = str(marker)
+        for name in ("TLS", "ATTACH", "TYPESAFE"):
+            helper = self.work / f"forbidden-{name.lower()}-helper"
+            helper.write_text(
+                f"#!/bin/sh\nprintf '%s\\n' {name} >> \"$MARKER\"\n"
+                "printf '%s\\n' 'mailbend-tls: synthetic plugin probe boundary' >&2\n"
+                "exit 97\n")
+            helper.chmod(0o700)
+            self.env[f"MAILBEND_{name}_HELPER"] = str(helper)
+        command, overrides = resolve_command(self.plugin["mcpServers"]["mailbend"], self.config)
+        requests = [
+            {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18"}},
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "mail_probe", "arguments": {}}}]
+        cases = (
+            {"MAILBEND_TYPESAFE_CONTENT": "body", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1",
+             "MAILBEND_TYPESAFE_IMAGES": "1"},
+            {"MAILBEND_TYPESAFE_CONTENT": "headers", "MAILBEND_TYPESAFE_ZERO_RETENTION": "1"},
+        )
+        for inherited in cases:
+            with self.subTest(inherited=inherited):
+                marker.unlink(missing_ok=True)
+                result = subprocess.run(command,
+                                        input="".join(json.dumps(r) + "\n" for r in requests),
+                                        capture_output=True, text=True,
+                                        env=self.env | inherited | overrides, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                replies = [json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual([reply["id"] for reply in replies], [0, 1])
+                reply = replies[1]["result"]
+                self.assertTrue(reply["isError"])
+                self.assertEqual(reply["structuredContent"]["error"],
+                                 "mail server error: synthetic plugin probe boundary")
+                self.assertTrue(marker.exists(), "supported config did not reach the TLS helper")
+                self.assertEqual(marker.read_text().splitlines(), ["TLS"],
+                                 "probe started an attachment or TypeSafe helper")
 
 
 if __name__ == "__main__":
