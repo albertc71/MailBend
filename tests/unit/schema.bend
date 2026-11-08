@@ -157,8 +157,8 @@ def main() -> IO(Unit):
 #|mail_rename_folder | destructiveHint,openWorldHint | required from,to | from:string to:string dry_run:boolean
 #|mail_save_draft | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
 #|mail_send | openWorldHint | required - | to:array cc:array bcc:array subject:string body:string in_reply_to:string references:string attachments:array dry_run:boolean
-#|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
+#|mail_reply | openWorldHint | required uid,uidvalidity,body | folder:string uid:integer uidvalidity:integer body:string reply_all:boolean mark_answered:boolean bcc:array attachments:array as_draft:boolean dry_run:boolean
 #|mail_forward | openWorldHint | required uid,uidvalidity,to | folder:string uid:integer uidvalidity:integer to:array cc:array bcc:array body:string attachments:array as_draft:boolean dry_run:boolean
 #|operation policy agrees True
-#|486362 characters
-#|hash 3854109305
+#|491626 characters
+#|hash 2082543030

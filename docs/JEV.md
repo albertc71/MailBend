@@ -185,6 +185,12 @@ every text part of the attachments and of a forwarded original, the headers
 of attached or forwarded messages, and, best effort, every other part's
 bytes; compressed formats are not inspected.
 
+An attached message, including an implicit `multipart/digest` child, must use
+a supported Content-Transfer-Encoding before the scan opens it. An unsupported
+wrapper encoding prevents a clean scan. Charset parameters on a message
+wrapper do not describe its enclosed parts; each inner text part keeps its own
+charset check.
+
 A secret found blocks the send, and so does text the scan cannot read in
 full (its limits are in the
 [enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced)).

@@ -151,6 +151,33 @@
       }
     },
     {
+      "id": "answered-original",
+      "claim": "The reply-marking plan pins the caller's folder, UID and UIDVALIDITY and changes mail only with one Answered store on that UID.",
+      "anchor": "marking-accepted-replies",
+      "status": "proven",
+      "laws": [
+        "answered_plan_exact",
+        "answered_changes_only_original"
+      ],
+      "tests": [
+        "tests/test-e2e.py#reply_marking",
+        "tests/test-e2e.py#reply_marking_refusal",
+        "tests/formal/check-plan-wire-mutations.py#main"
+      ],
+      "code": [
+        "src/ops.bend#plan_answered"
+      ],
+      "mutation": {
+        "id": "answered-original-negative-control",
+        "path": "src/ops.bend",
+        "before": "plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)",
+        "after": "plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FDeleted{}}], uidv)",
+        "proof": "PROOF.bend#Laws.answered_plan_exact",
+        "law": "answered_plan_exact",
+        "observer_reason": "The exact-plan law rejects a different flag before any interpretation of effects."
+      }
+    },
+    {
       "id": "move-delete-plans",
       "claim": "Move, trash and confirmed delete plans have the stated exact UID changes, copy-before-expunge order and capability guards.",
       "anchor": "safety",

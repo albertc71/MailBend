@@ -46,6 +46,13 @@ MailBend has four small native programs:
 (cd native && cargo build --release --locked -p mailbend-tls -p mailbend-attach -p mailbend-typesafe -p mailbend-stdio)
 ```
 
+After `scripts/install.sh`, run `python3 scripts/check-native-hardening.py`.
+It inspects the four installed native helpers in `bin/` for ELF hardening
+and unexpected shared-library dependencies. See the
+[contributor checks](../CONTRIBUTING.md#native-elf-checks) for the exact
+policy and real-ELF negative controls. This metadata check does not prove
+memory safety, exploit resistance or the trustworthiness of a library.
+
 The Rust workspace (`native/Cargo.toml`) pins its Rust release, the MSRV, in
 `native/rust-toolchain.toml`; build from inside `native/` so rustup picks it
 up. Our crates forbid `unsafe` code. `native/deny.toml` bans the
@@ -88,12 +95,22 @@ settings and the key file. The checks, including the cargo ones, are in
 ## MCP stdin adapter
 
 The public launchers route MCP through `mailbend-stdio`. Non-socket stdin
-executes the core in place. MCP stream-socket input uses one 64 KiB buffer and a pipe;
-stdout and stderr stay inherited, with no adapter output on stdout. Only the
-pipe write end is made nonblocking, preserving sockets shared with stdout.
-Polling observes input, backpressure, child exit and signals without a reader
-thread. EOF drains pending bytes and closes the pipe, then waits for the core's
-existing work; it introduces no new request timeout.
+executes the core in place and requires blocking stdout. MCP stream-socket
+input uses one 64 KiB buffer and a pipe. Blocking stdout stays inherited.
+When inherited stdout is nonblocking, a second pipe gives the core blocking
+output. The adapter relays those bytes with a separate 64 KiB buffer, retrying
+partial writes and temporary backpressure. Only the adapter's private pipe
+ends are made nonblocking. Inherited descriptor flags stay unchanged,
+including sockets shared between stdin and stdout. Stderr stays inherited.
+The adapter writes no protocol content of its own.
+
+Polling observes input, output backpressure, child exit and signals without a
+reader thread. Input EOF drains pending input and closes the core's input
+pipe, then waits for its existing work. Normal numeric core exit drains
+pending output to EOF before returning its status. An output disconnect closes
+the private pipe ends and waits for the core without killing its helpers.
+Lost output makes an otherwise successful exit fail. There is no new request
+or output timeout.
 
 INT, TERM, HUP and QUIT are forwarded to the core's PID, not its process
 group. As with pipe stdin, a helper plan already started can continue after
@@ -101,8 +118,14 @@ the core exits. The helper still stops on rejection, protocol failure or a
 per-operation I/O timeout. There is no total-plan deadline after the core
 exits. SMTP requires a successful progress write before message bytes, so a
 closed core progress pipe stops a send that has not crossed that boundary.
-No result can be reported after the core exits, and shutdown does not retry
-the plan. Numeric exit codes are preserved and the direct child is reaped.
+A helper cannot report a new plan result after the core exits, and shutdown
+does not retry the plan. Numeric exit codes are preserved and the direct child is reaped.
+A nonzero core exit after a forwarded termination signal, or a signalled core
+exit, does not wait for blocked output or descendants that retain its output
+pipe. A successful core exit still drains output, even if the core ignored or
+handled a forwarded signal and continued running.
+A termination signal during post-exit draining also stops the adapter.
+The adapter never signals a core PID after reaping it.
 The adapter re-raises termination signals where possible; an ignored signal
 uses shell-equivalent `128 + signal` (including Rust's ignored SIGPIPE,
 reported as 141).
@@ -110,7 +133,8 @@ Before exec, a guarded child mode
 sets Linux's parent-death signal and checks its expected parent, so killing the
 adapter with SIGKILL also kills the direct core. This does not promise to kill
 descendants already spawned by the core after an uncatchable parent kill.
-An adapter failure still kills the core's entire process group with SIGKILL.
+An unexpected adapter failure still kills an unreaped core's entire process
+group with SIGKILL. Output disconnects do not use this cleanup.
 Clients that terminate a broader process tree can also kill helpers; these
 PID-signal semantics do not establish compatibility with a particular client.
 Bend retains all framing, UTF-8 validation, request limits and mail policy.
@@ -315,6 +339,23 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   Bend interprets the latest marker even after process interruption; absent
   evidence is unknown. Exit status alone never proves SMTP acceptance.
   QUIT remains best effort after acceptance or refusal.
+- **Authentication refusal evidence**: after a refused login or greeting,
+  stderr adds one fixed `mailbend-auth: <token>` line. Tokens are
+  `credentials`, `temporary`, `limit`, `in_use`, `expired`, `contact_admin`,
+  `greeting_refused` and `unknown`. IMAP reads only a bracketed response code
+  immediately after an exact `NO`, `BAD` or login-time `BYE`; it never searches
+  the server's prose. `AUTHENTICATIONFAILED` and a bare LOGIN `NO` mean
+  `credentials`; `UNAVAILABLE`, `LIMIT`, `INUSE`, `EXPIRED` and `CONTACTADMIN`
+  have their corresponding fixed tokens. Unknown codes mean `unknown`.
+  SMTP AUTH 4xx replies mean `temporary`, 535 means `credentials`, and other
+  rejections mean `unknown`, including either AUTH LOGIN challenge. A 4xx
+  SMTP greeting is temporary; other refused greetings use `greeting_refused`.
+  Auth exchanges and refused greetings are not copied to the transcript.
+  Diagnostic modes print the failed stage and that same fixed token instead
+  of stderr evidence. Bend maps tokens to guidance; no server prose, address,
+  credential or AUTH payload enters the token. Older helpers with no token
+  retain the existing exit-code fallback. No retry is introduced, and no
+  token changes the SMTP acceptance evidence or permits retrying an operation.
 - **Transport exit status**: 0 ok, 2 usage/config, 3 connect/TLS/verification,
   4 authentication rejected, 5 command rejected, 6 protocol/timeout/limit.
 

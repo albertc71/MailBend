@@ -588,6 +588,37 @@ are `local_refusal`, `helper_not_started`, `stopped_before_data`,
 `explicit_rejection`, `acceptance_unconfirmed`, `missing_progress`, or
 `accepted_by_server`.
 
+### Marking accepted replies
+
+`mail_reply` accepts `mark_answered: true`. The default is false. After a
+non-draft, non-dry-run reply is accepted by SMTP, MailBend opens the original
+folder, checks the caller's same `uidvalidity`, and adds `\Answered` to that
+same UID. The plan has one flag store and one flags readback. It cannot store
+`\Seen` or `\Deleted`, expunge, or target another UID. <!-- claim:answered-original -->
+
+An opted-in accepted reply adds `original_marked` and `original_mark_reason`:
+
+- `true` means the STORE was acknowledged and the matching post-STORE FETCH
+  reported `\Answered` on the original.
+- `false` means a definite refusal or a valid readback without `\Answered`.
+- `"unverified"` means evidence is incomplete, including a missing original,
+  missing or malformed FLAGS, an interrupted helper, or an unanswered STORE.
+
+The guard's UID SEARCH does not stop a fixed command plan when it finds
+nothing. Its exact-UID STORE then has no target, and the absent flag readback
+is unverified. No retry or replacement target is chosen.
+
+The accepted send stays successful if marking fails or is unverified. A Sent
+copy failure also leaves acceptance intact and does not skip marking. Never
+resend an accepted reply to retry its mark. Inspect the original separately.
+All non-send, draft, dry-run, failed and unknown SMTP results omit both marking
+fields. Calls without the opt-in keep their existing output.
+
+`true` describes the observed flags, not whether they persist beyond the
+session. PERMANENTFLAGS handling, forward marking and `$Forwarded` remain
+outside this slice of [#50](https://github.com/albertc71/MailBend/issues/50).
+
+
 ## Local secret scan
 
 Set `MAILBEND_SECRET_SCAN=1` to scan outgoing sends, replies and forwards
@@ -614,7 +645,9 @@ Jev is [TypeSafe](https://docs.typesafe.ai)'s model. It is off unless you set
 tool asks it. The local secret scan above is independent. With Jev on:
 
 - **Reads** (`mail_search`, `mail_get`, `mail_get_new`, `mail_get_thread`)
-  add Jev's notes to each message they show.
+  add Jev's notes to each message they show. Their category options exclude
+  INBOX itself, other reserved folders, and descendants of those other
+  folders, as do classification and triage categories.
 - **Sends** (`mail_send`, and replies and forwards that are not drafts) pass
   a local secret scan and then Jev, and **permanent deletes**
   (`mail_delete`) pass Jev. The scan or Jev can block them, and so can
@@ -752,6 +785,9 @@ questions. Never post credentials or real mail.
 The [threat model and assurance map](docs/THREAT-MODEL.md) connects these controls
 to their assumptions, evidence, and residual risks across the OWASP MCP and
 Agentic Top 10.
+
+The [audit preparation pack](docs/audit/SCOPE.md) defines a frozen source target,
+review boundaries, and build steps for a future independent audit.
 
 - **TLS is always verified**: certificate chain and host name, TLS 1.2+, with <!-- claim:native-boundaries -->
   no option to turn verification off. SMTP uses STARTTLS by default;

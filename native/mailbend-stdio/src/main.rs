@@ -1,4 +1,4 @@
-//! Adapts inherited socket stdin to a pipe for Bend's pathname-based File.open.
+//! Adapts inherited socket stdin and nonblocking stdout to private core pipes.
 //! The only target is the sibling core in MCP mode (or the existing Bend fallback).
 
 use std::os::unix::fs::PermissionsExt;

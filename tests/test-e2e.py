@@ -37,6 +37,7 @@ import time
 from jsonschema import Draft202012Validator
 
 import mime_oracle
+from auth_refusal_cases import cases as auth_refusal_cases
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAUNCHER = str(ROOT / "scripts" / "mailbend")
@@ -582,6 +583,75 @@ def setup_diagnostics(work):
             srv.stop()
 
 
+def authentication_refusals(work, *, tool_scenarios_only=False):
+    for name, protocol, stage, reason, expected, attempts, changes in auth_refusal_cases(PASSWORD):
+        srv = Server(work, fixture={**FIX, **changes})
+        try:
+            before = srv.st()
+            if not tool_scenarios_only:
+                code, checks = diagnose(srv, "--" + protocol)
+                check(name + ": diagnostic uses only the fixed refusal reason", code != 0
+                      and diagnosed(checks, protocol, stage, "failed", reason), checks)
+                if stage == "greeting":
+                    check(name + ": authentication remains skipped", diagnosed(
+                        checks, protocol, "authentication", "skipped"))
+                report = subprocess.run([LAUNCHER, "diagnose", "--" + protocol, "--report"],
+                                        env=srv.env(), capture_output=True, text=True, timeout=135)
+                outputs.extend([report.stdout, report.stderr])
+                body = json.loads(report.stdout)
+                check(name + ": provider report preserves redacted refusal guidance",
+                      report.returncode != 0 and body["checks"] == checks
+                      and "private-server-marker" not in report.stdout
+                      and PASSWORD not in report.stdout, body)
+                expected_auth = ({"mechanisms": [changes["smtp_auth"]], "unknown_count": 0}
+                                 if protocol == "smtp" and stage == "authentication" else None)
+                check(name + ": provider report only retains protected SMTP offers",
+                      body["server_facts"]["smtp_auth"] == expected_auth
+                      and body["server_facts"]["imap_capabilities"] is None
+                      and body["server_facts"]["roles"] is None, body["server_facts"])
+            start = len(srv.log_records())
+            operation = "mail_list_folders" if protocol == "imap" else "mail_send"
+            arguments = {} if protocol == "imap" else {
+                "to": "friend@example.com", "subject": "Not sent", "body": "Synthetic"}
+            code, result = tool(srv, operation, arguments)
+            error = result.get("error", "")
+            if protocol == "smtp":
+                check(name + ": refusal remains definitely not sent",
+                      result.get("smtp_outcome") == "not_sent"
+                      and result.get("smtp_phase") == "before_data"
+                      and result.get("smtp_reason") == "stopped_before_data", result)
+            check(name + ": tool reports useful redacted refusal guidance", code != 0
+                  and bool(error) and "private-server-marker" not in json.dumps(result)
+                  and PASSWORD not in json.dumps(result), result)
+            guidance = {
+                "credentials": "check MAILBEND_EMAIL (or MAILBEND_LOGIN)",
+                "temporary": "refused for now",
+                "limit": "reported a limit",
+                "in_use": "account is in use",
+                "expired": "app-password renewal",
+                "contact_admin": "administrator help",
+                "greeting_refused": "refused the connection",
+                "unknown": "unrecognized reason",
+            }
+            check(name + ": tool guidance matches the fixed reason", guidance[reason] in error, result)
+            if reason in ("temporary", "limit", "in_use", "greeting_refused"):
+                check(name + ": temporary refusal does not ask for a replacement password",
+                      any(word in error.lower() for word in ("later", "retry", "wait", "limit", "busy"))
+                      and "app-specific password" not in error.lower(), result)
+            records = srv.log_records()[start:]
+            lines = [r["line"] for r in records if r["proto"] == protocol]
+            check(name + ": no automatic auth retry or mail operation",
+                  sum(" LOGIN " in line or line == "AUTH <redacted>" for line in lines) == attempts
+                  and not any(" LIST " in line or line.startswith(("MAIL ", "RCPT ", "DATA"))
+                              for line in lines)
+                  and srv.st() == before, lines)
+            if stage == "greeting":
+                check(name + ": no greeting reconnect", sum(
+                    r["proto"] == protocol + "-refusal" for r in records) == 1)
+        finally:
+            srv.stop()
+
+
 def provider_reports(work):
     fixture = copy.deepcopy(FIX)
     private_folder = "private-folder@example.com"
@@ -712,6 +782,7 @@ def run_all(work, *, tool_scenarios_only=False):
         setup_folder_suggestions(work)
         setup_diagnostics(work)
         provider_reports(work)
+    authentication_refusals(work, tool_scenarios_only=tool_scenarios_only)
     srv = Server(work)
     try:
         reads(srv)
@@ -725,6 +796,9 @@ def run_all(work, *, tool_scenarios_only=False):
     finally:
         srv.stop()
     quota_reporting(work)
+    reply_marking(work)
+    reply_marking_refusal(work)
+    reply_marking_cases(work)
     reply_quoting(work)
     reply_unicode_quoting(work)
     authentication_login(work)
@@ -1579,6 +1653,66 @@ def compose(srv):
     s = srv.st()
     check("reply/forward left the originals unread-state untouched", "\\Seen" not in flags(s, "INBOX", 2) and "\\Seen" in flags(s, "INBOX", 5))
 
+
+
+def reply_marking(work):
+    """Only an opted-in accepted reply marks its exact original as Answered."""
+    srv = Server(work)
+    try:
+        before = copy.deepcopy(srv.st()["mailboxes"])
+        c, r = tool(srv, "mail_reply", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "Synthetic answer",
+            "mark_answered": True})
+        check("reply marking: accepted send reports observed Answered",
+              c == 0 and r.get("smtp_outcome") == "accepted"
+              and r.get("sent") is True and r.get("original_marked") is True
+              and r.get("original_mark_reason") == "answered_observed"
+              and "Do not resend" in r.get("next_action", ""), r)
+        expected = copy.deepcopy(before)
+        original = next(m for m in expected["INBOX"]["messages"] if m["uid"] == 1)
+        original["flags"] = sorted(set(original["flags"]) | {"\\Answered"})
+        after = srv.st()["mailboxes"]
+        for box in after.values():
+            for message in box["messages"]:
+                message["flags"] = sorted(message["flags"])
+        for box in expected.values():
+            for message in box["messages"]:
+                message["flags"] = sorted(message["flags"])
+        check("reply marking: only the original flag changes", after == expected)
+        stores = [line.split(" ", 1)[1] for line in srv.log_lines()
+                  if " STORE " in line]
+        check("reply marking: exactly one singleton Answered store",
+              stores == ["UID STORE 1 +FLAGS.SILENT (\\Answered)"], stores)
+        check("reply marking: one accepted reply reaches SMTP",
+              len(srv.st()["sent"]) == 1)
+    finally:
+        srv.stop()
+
+
+def reply_marking_refusal(work):
+    srv = Server(work, extra=["--reject", "STORE"])
+    try:
+        before = copy.deepcopy(srv.st()["mailboxes"])
+        c, r = tool(srv, "mail_reply", {
+            "uid": 1, "uidvalidity": INBOX_VALIDITY, "body": "Synthetic answer",
+            "mark_answered": True})
+        check("reply marking: rejected STORE preserves accepted reply and reports false",
+              c == 0 and r.get("sent") is True and r.get("smtp_outcome") == "accepted"
+              and r.get("original_marked") is False
+              and r.get("original_mark_reason") == "store_refused"
+              and "Do not resend" in r.get("next_action", ""), r)
+        check("reply marking: refused STORE never retries or changes other mail",
+              len(srv.st()["sent"]) == 1 and srv.st()["mailboxes"] == before
+              and sum(" STORE " in line for line in srv.log_lines()) == 1)
+    finally:
+        srv.stop()
+
+
+def reply_marking_cases(work):
+    spec = importlib.util.spec_from_file_location("reply_marking_cases", ROOT / "tests/reply-marking-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
 
 
 def reply_quoting(work):
@@ -6425,7 +6559,49 @@ def gates(work):
         gates_annotations(srv, work, key_file)
     finally:
         srv.stop()
+    gates_digest_encoding(work)
     gates_delete(work, key_file)
+
+
+def gates_digest_encoding(work):
+    inner = "Subject: inner\r\n\r\nHello."
+    uuencoded = ('begin 644 enclosed.eml\r\n'
+                 'D4W5B:F5C=#H@:6YN97(-"@T*4&%S<W=O<F0Z(&AU;G1E<C(R\n`\r\nend\r\n')
+    cases = [
+        ("implicit unsupported", "", "x-uuencode", uuencoded, "incomplete"),
+        ("explicit unsupported", "Content-Type: message/rfc822\r\n", "x-uuencode", uuencoded, "incomplete"),
+        ("global unsupported", "Content-Type: message/global\r\n", "x-uuencode", uuencoded, "incomplete"),
+        ("clean 7bit", "", "7bit", inner, "clean"),
+        ("clean base64", "", "base64", base64.b64encode(inner.encode()).decode(), "clean"),
+        ("clean quoted-printable", "", "quoted-printable", "Subject: inner\r\n\r\nHel=6Co.", "clean"),
+        ("encoded secret", "", "base64", base64.b64encode(
+            f"Subject: inner\r\n\r\n{GATE_PASSWORD}".encode()).decode(), "found"),
+    ]
+    fixture = copy.deepcopy(FIX)
+    inbox = fixture["mailboxes"]["INBOX"]
+    inbox["messages"] = [gate_message(uid,
+        f"Subject: digest wrapper\r\nContent-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n"
+        f"{ct}Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--d--\r\n")
+        for uid, (_, ct, encoding, body, _) in enumerate(cases, 1)]
+    inbox["uidnext"] = len(cases) + 1
+    srv = Server(work, fixture=fixture)
+    try:
+        for uid, (title, _, _, _, expected) in enumerate(cases, 1):
+            before, start, sent = srv.st(), len(srv.log_records()), sent_count(srv)
+            code, result = tool(srv, "mail_forward", {"uid": uid, "uidvalidity": inbox["uidvalidity"],
+                "to": FRIEND}, MAILBEND_SECRET_SCAN="1", MAILBEND_SAVE_SENT="1")
+            logged = srv.log_records()[start:]
+            if expected == "clean":
+                check("digest scan: " + title + " forwards after a clean scan",
+                      code == 0 and result.get("secret_scan") == "clean" and sent_count(srv) == sent + 1,
+                      result)
+            else:
+                check("digest scan: " + title + " blocks before SMTP or APPEND",
+                      code != 0 and result.get("secret_scan") == expected
+                      and result.get("smtp_outcome") == "not_sent" and srv.st() == before
+                      and not any(x["proto"] == "smtp" or " APPEND " in x["line"] for x in logged), result)
+    finally:
+        srv.stop()
 
 
 def gates_tool_list(srv, work, key_file):

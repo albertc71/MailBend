@@ -9,8 +9,9 @@ use zeroize::Zeroizing;
 
 use crate::connection::Connection;
 use crate::creds::Credentials;
+use crate::exit::AuthReason;
 use crate::imap::response::{
-    Greeting, Status, greeting, is_continuation, is_untagged, tagged_status,
+    Greeting, Status, greeting, is_bye, is_continuation, is_untagged, refusal_reason, tagged_status,
 };
 use crate::imap::script::{Command, Expect};
 use crate::imap::{LOGIN_TAG, LOGOUT_TAG, literal_len, push_quoted};
@@ -31,6 +32,7 @@ enum Answer {
 struct Reply {
     answer: Answer,
     expectation_met: bool,
+    auth_reason: Option<AuthReason>,
 }
 
 pub fn run(
@@ -46,6 +48,10 @@ pub fn run(
     let first = conn
         .read_line()?
         .ok_or_else(|| Exit::protocol("no greeting"))?;
+    if is_bye(&first) {
+        return Err(Exit::protocol("server refused the connection")
+            .with_auth_reason(refusal_reason(&first, AuthReason::GreetingRefused)));
+    }
     conn.emit(&first)?;
     match greeting(&first) {
         Some(Greeting::Ok) => {
@@ -68,7 +74,8 @@ fn login(conn: &mut Connection, creds: &Credentials) -> Result<(), Exit> {
     match reply.answer {
         Answer::Tagged(Status::Ok) => Ok(()),
         Answer::Closed => Err(Exit::protocol("server closed the connection during login")),
-        Answer::Tagged(_) | Answer::Continue => Err(Exit::auth("IMAP login rejected")),
+        Answer::Tagged(_) | Answer::Continue => Err(Exit::auth("IMAP login rejected")
+            .with_auth_reason(reply.auth_reason.unwrap_or(AuthReason::Unknown))),
     }
 }
 
@@ -131,6 +138,7 @@ fn send_command(conn: &mut Connection, command: &Command<'_>) -> Result<Reply, E
                 return Ok(Reply {
                     answer: refused,
                     expectation_met,
+                    auth_reason: reply.auth_reason,
                 });
             }
         }
@@ -140,6 +148,7 @@ fn send_command(conn: &mut Connection, command: &Command<'_>) -> Result<Reply, E
     Ok(Reply {
         answer: reply.answer,
         expectation_met: expectation_met || reply.expectation_met,
+        auth_reason: reply.auth_reason,
     })
 }
 
@@ -160,6 +169,7 @@ fn wait(
             return Ok(Reply {
                 answer: Answer::Closed,
                 expectation_met,
+                auth_reason: None,
             });
         };
         if is_continuation(&line) {
@@ -169,7 +179,14 @@ fn wait(
             return Ok(Reply {
                 answer: Answer::Continue,
                 expectation_met,
+                auth_reason: None,
             });
+        }
+        // A later command's BYE is not evidence of an authentication failure.
+        // Leave command transcripts and partial-change interpretation unchanged.
+        if tag == LOGIN_TAG && is_bye(&line) {
+            return Err(Exit::protocol("server closed the connection")
+                .with_auth_reason(refusal_reason(&line, AuthReason::Temporary)));
         }
         conn.emit(&line)?;
         if is_untagged(&line) {
@@ -182,6 +199,16 @@ fn wait(
         return Ok(Reply {
             answer: Answer::Tagged(status),
             expectation_met,
+            auth_reason: if tag == LOGIN_TAG && status != Status::Ok {
+                let fallback = if status == Status::No {
+                    AuthReason::Credentials
+                } else {
+                    AuthReason::Unknown
+                };
+                Some(refusal_reason(&line, fallback))
+            } else {
+                None
+            },
         });
     }
 }
@@ -247,7 +274,7 @@ mod tests {
     fn a_rejected_login_is_an_authentication_failure() {
         assert_eq!(
             login_against(b"L NO [AUTHENTICATIONFAILED] invalid\r\n"),
-            Err(Exit::auth("IMAP login rejected"))
+            Err(Exit::auth("IMAP login rejected").with_auth_reason(AuthReason::Credentials))
         );
     }
 
@@ -257,5 +284,34 @@ mod tests {
             login_against(b""),
             Err(Exit::protocol("server closed the connection during login"))
         );
+    }
+
+    #[test]
+    fn a_bye_during_login_is_fixed_evidence_not_a_credential_failure() {
+        assert_eq!(
+            login_against(b"* BYE [UNAVAILABLE] fixture-password\r\n"),
+            Err(Exit::protocol("server closed the connection")
+                .with_auth_reason(AuthReason::Temporary))
+        );
+    }
+
+    #[test]
+    fn login_refusals_keep_the_exit_status_and_only_the_allow_listed_reason() {
+        for (line, reason) in [
+            (
+                b"L NO [UNAVAILABLE] fixture-password\r\n".as_slice(),
+                AuthReason::Temporary,
+            ),
+            (b"L NO [INUSE] fixture-password\r\n", AuthReason::InUse),
+            (b"L NO [LIMIT] fixture-password\r\n", AuthReason::Limit),
+            (b"L NO fixture-password\r\n", AuthReason::Credentials),
+            (b"L BAD fixture-password\r\n", AuthReason::Unknown),
+        ] {
+            let result = login_against(line);
+            assert_eq!(
+                result,
+                Err(Exit::auth("IMAP login rejected").with_auth_reason(reason))
+            );
+        }
     }
 }

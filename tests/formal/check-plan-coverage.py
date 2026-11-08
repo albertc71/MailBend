@@ -151,6 +151,59 @@ def command_names(imap):
     return names
 
 
+def check_command_fields(path, imap):
+    source = source_code(path)
+    cmd_types = {f"{alias}.Cmd" for alias in module_aliases(path, source, imap)}
+    if path == imap:
+        cmd_types.add("Cmd")
+    tokens = [token[0] for token in TOKEN.finditer(source)]
+    declarations = [index for index, token in enumerate(tokens)
+                    if token in ("type", "def", "law", "import", "@")]
+    for index, start in enumerate(declarations):
+        if tokens[start] != "type":
+            continue
+        end = declarations[index + 1] if index + 1 < len(declarations) else len(tokens)
+        name = tokens[start + 1] if start + 1 < end else "<missing>"
+        if not re.fullmatch(IDENTIFIER, name) or tokens[start + 2:start + 5] != ["is", "Data", ":"]:
+            raise ValueError(f"{path}: unsupported data declaration: {name}")
+        cursor = start + 5
+        if cursor == end:
+            raise ValueError(f"{path}: data declaration has no constructors: {name}")
+        while cursor < end:
+            if not re.fullmatch(IDENTIFIER, tokens[cursor]) or tokens[cursor + 1:cursor + 2] != ["{"]:
+                raise ValueError(f"{path}: unsupported data constructor: {name}")
+            cursor += 2
+            while cursor < end and tokens[cursor] != "}":
+                field = tokens[cursor]
+                if not re.fullmatch(IDENTIFIER, field) or tokens[cursor + 1:cursor + 2] != [":"]:
+                    raise ValueError(f"{path}: unsupported data field: {name}")
+                cursor += 2
+                annotation = []
+                depth = 0
+                while cursor < end:
+                    token = tokens[cursor]
+                    if token == "}" or (token == "," and depth == 0):
+                        break
+                    if not re.fullmatch(IDENTIFIER + r"|[0-9<>,&]", token) or \
+                            (token == "&" and (cursor + 1 == end or not tokens[cursor + 1].isdigit())):
+                        raise ValueError(f"{path}: unsupported data field type: {name}.{field}")
+                    depth += (token == "<") - (token == ">")
+                    if depth < 0:
+                        raise ValueError(f"{path}: unsupported data field type: {name}.{field}")
+                    annotation.append(token)
+                    cursor += 1
+                if not annotation or depth:
+                    raise ValueError(f"{path}: unsupported data field type: {name}.{field}")
+                if cmd_types.intersection(annotation) and (path != imap or name != "Cmd"):
+                    raise ValueError(f"{path}: command field {name}.{field} "
+                                     "can hide a command-returning def outside the plan_* boundary")
+                if cursor < end and tokens[cursor] == ",":
+                    cursor += 1
+            if cursor == end:
+                raise ValueError(f"{path}: unclosed data constructor: {name}")
+            cursor += 1
+
+
 def check_commands(path, imap, commands, root):
     source = source_code(path)
     names = {f"{alias}.{name}" for alias in module_aliases(path, source, imap)
@@ -193,6 +246,8 @@ def check(root):
                 if name not in plans and cmd_types.intersection(annotation)}
     factories = {name for name, annotation in def_returns(imap).items() if "Cmd" in annotation}
     commands = command_names(imap)
+    check_command_fields(ops, imap)
+    check_command_fields(imap, imap)
     for path in paths:
         for module, producers in ((ops, wrappers), (imap, factories)):
             if path == module:

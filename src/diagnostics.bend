@@ -206,15 +206,22 @@ def stage_fact(protocol: String, +stage: String, +lines: List<&2, String>) -> J.
   +invalid = List.contains(~String, ~String.eq, lines, stage ++ " invalid")
   +tls = List.contains(~String, ~String.eq, lines, stage ++ " unsupported_tls")
   +auth = List.contains(~String, ~String.eq, lines, stage ++ " unsupported_auth")
-  status = Bool.pick(String, ok, "ok",
-    Bool.pick(String, bad || invalid || tls || auth, "failed", "skipped"))
-  reason = Bool.pick(String, ok, Bool.pick(String, trust, source, "verified"),
+  +refusal = Bool.pick(String, String.eq(stage, "authentication") || String.eq(stage, "greeting"),
+    Policy.auth_reason(stage ++ " ", lines), "")
+  +has_refusal = Bool.not(String.eq(refusal, ""))
+  # A well-formed helper cannot both complete and refuse this stage.
+  +refusal = Bool.pick(String, ok && has_refusal, "unknown", refusal)
+  status = Bool.pick(String, has_refusal, "failed", Bool.pick(String, ok, "ok",
+    Bool.pick(String, bad || invalid || tls || auth, "failed", "skipped")))
+  reason = Bool.pick(String, has_refusal, refusal,
+    Bool.pick(String, ok, Bool.pick(String, trust, source, "verified"),
     Bool.pick(String, invalid, "invalid_configuration",
     Bool.pick(String, tls, "unsupported_tls",
     Bool.pick(String, auth, "unsupported_auth",
     Bool.pick(String, bad, "failed",
-    Bool.pick(String, skipped, "skipped", "not_checked"))))))
-  fact(protocol, stage, status, reason)
+    Bool.pick(String, skipped, "skipped", "not_checked")))))))
+  help = Bool.pick(String, has_refusal, Policy.auth_guidance(refusal), guidance(stage))
+  fact_guided(protocol, stage, status, reason, help)
 
 def stage_facts(
   xs: List<&2, String>, +protocol: String, +lines: List<&2, String>

@@ -257,8 +257,78 @@ def helper_cause(code: U32) -> String:
       Bool.pick(String, signalled(code), "the TLS helper was killed by a signal: ",
         "mail server error: ")
 
-def helper_error(code: U32, err: String) -> String:
-  helper_cause(code) ++ helper_msg(err)
+# Authentication evidence is a separate fixed-token channel. Unknown strings
+# never become a reason; conflicting valid markers become "unknown".
+def auth_token(token: String) -> String:
+  match token:
+    case "credentials": "credentials"
+    case "temporary": "temporary"
+    case "limit": "limit"
+    case "in_use": "in_use"
+    case "expired": "expired"
+    case "contact_admin": "contact_admin"
+    case "greeting_refused": "greeting_refused"
+    case "unknown": "unknown"
+    case _: ""
+
+def auth_reason.line(prefix: String, line: String, has: Bool) -> String:
+  match has:
+    case True{}:
+      auth_token(String.drop(line, String.length(prefix)))
+    case False{}:
+      ""
+
+def auth_reason.step(+current: String, +next: String) -> String:
+  Bool.pick(String, String.eq(next, ""), current,
+    Bool.pick(String, String.eq(current, "") || String.eq(current, next), next, "unknown"))
+
+def auth_reason.go(+prefix: String, lines: List<&2, String>, current: String) -> String:
+  match lines:
+    case Nil{}:
+      current
+    case +line <> rest:
+      next = auth_reason.line(prefix, line, String.starts_with(line, prefix))
+      auth_reason.go(prefix, rest, auth_reason.step(current, next))
+
+def auth_reason(prefix: String, lines: List<&2, String>) -> String:
+  auth_reason.go(prefix, lines, "")
+
+# Guidance stays in Bend. Waiting for another login never authorizes retrying
+# a mail operation, and this evidence never changes the SMTP outcome fields.
+def auth_guidance(reason: String) -> String:
+  match reason:
+    case "credentials":
+      "authentication failed (check MAILBEND_EMAIL (or MAILBEND_LOGIN) " ++
+        "and the app-specific password)"
+    case "temporary":
+      "the server refused for now; wait before another login; do not change the password"
+    case "limit":
+      "the server reported a limit; wait before another login; do not change the password"
+    case "in_use":
+      "the account is in use; wait before another login; do not change the password"
+    case "expired":
+      "authentication expired; check the provider's app-password renewal instructions"
+    case "contact_admin":
+      "the server requires account administrator help; do not repeatedly retry login"
+    case "greeting_refused":
+      "the server refused the connection; wait before another login; do not change the password"
+    case "unknown":
+      "the server refused authentication for an unrecognized reason; " ++
+        "check provider availability and password-login support before another login"
+    case _:
+      ""
+
+def helper_error.reason(code: U32, err: String, reason: String) -> String:
+  match reason:
+    case "":
+      helper_cause(code) ++ helper_msg(err)
+    case _:
+      auth_guidance(reason)
+
+def helper_error(+code: U32, +err: String) -> String:
+  reason = Bool.pick(String, U32.is_eq(code, 4) || U32.is_eq(code, 6),
+    auth_reason("mailbend-auth: ", String.lines(err)), "")
+  helper_error.reason(code, err, reason)
 
 # Whether the helper may have acted on the mailbox without leaving a whole
 # transcript: it failed after it started (or may have), or a signal killed

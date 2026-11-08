@@ -114,6 +114,31 @@ def heading_slugs(text):
     return slugs
 
 
+def markdown_links(path, root):
+    """Check the existing simple inline-link syntax without visiting websites."""
+    errors = []
+    text = path.read_text()
+    label = str(path.relative_to(root))
+    for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", text):
+        repository_prefix = "https://github.com/albertc71/MailBend/blob/main/"
+        if target.startswith(repository_prefix):
+            relative, _, anchor = target[len(repository_prefix):].partition("#")
+            destination = (root / relative).resolve()
+        elif re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            continue
+        else:
+            relative, _, anchor = target.partition("#")
+            destination = (path.parent / relative).resolve() if relative else path
+        if not destination.is_relative_to(root):
+            errors.append(f"{label}: linked file outside repository {target}")
+        elif not destination.is_file():
+            errors.append(f"{label}: missing linked file {target}")
+        elif anchor and destination.suffix == ".md":
+            if anchor not in heading_slugs(destination.read_text()):
+                errors.append(f"{label}: missing linked heading {target}")
+    return errors
+
+
 def skill_references(root):
     errors = []
     directory = root / "skills/mailbend"
@@ -165,23 +190,7 @@ def skill_references(root):
         for name, argument in sorted(arguments):
             if name in tools and argument not in tools[name]:
                 errors.append(f"{label}: unknown argument {name}.{argument}")
-        for target in re.findall(r"\[[^]\n]+\]\(([^)\s]+)\)", text):
-            repository_prefix = "https://github.com/albertc71/MailBend/blob/main/"
-            if target.startswith(repository_prefix):
-                relative, _, anchor = target[len(repository_prefix):].partition("#")
-                destination = (root / relative).resolve()
-            elif re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
-                continue
-            else:
-                relative, _, anchor = target.partition("#")
-                destination = (path.parent / relative).resolve() if relative else path
-            if not destination.is_relative_to(root):
-                errors.append(f"{label}: linked file outside repository {target}")
-            elif not destination.is_file():
-                errors.append(f"{label}: missing linked file {target}")
-            elif anchor and destination.suffix == ".md":
-                if anchor not in heading_slugs(destination.read_text()):
-                    errors.append(f"{label}: missing linked heading {target}")
+        errors.extend(markdown_links(path, root))
     errors.extend(f"skills/mailbend/references/tools.md: missing tool {name}"
                   for name in sorted(tools.keys() - listed))
     return errors
@@ -292,6 +301,7 @@ def check(root):
     documented = required(set(re.findall(r"\b" + ENV_NAME.pattern + r"\b", (root / ".env.example").read_text())), ".env.example variable names")
     errors.extend(f".env.example: missing {name}" for name in sorted(variables - documented))
     provider_guide = root / "docs/PROVIDERS.md"
+    errors.extend(markdown_links(provider_guide, root))
     provider_variables = set(ENV_NAME.findall(provider_guide.read_text()))
     errors.extend(f"docs/PROVIDERS.md: unknown environment variable {name}"
                   for name in sorted(provider_variables - variables))
@@ -340,7 +350,7 @@ def main():
         print("Documentation drift:\n" + "\n".join(errors), file=sys.stderr)
         return 1
     print("Documentation checks pass: laws, environment, CLI usage, source layers, skill tools, "
-          "issue chooser and bug/feature form contracts (provider form not parsed)")
+          "provider-guide links, issue chooser and bug/feature form contracts (provider form not parsed)")
     return 0
 
 

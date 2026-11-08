@@ -25,6 +25,100 @@ law hidden_tags_refuse_send_and_draft:
 def hidden_tags_refuse_send_and_draft(first, rest, w, from):
   {==}
 
+# Accepted-reply marking is a separate follow-up, never a send retry.
+law original_mark_no_request_skips:
+  for out: Policy.Out
+  {Tools.original_mark.after(out, None{}) == Tools.pure_out(out) : IO(Policy.Out)}
+
+def original_mark_no_request_skips(out):
+  match out:
+    case Policy.Ok{j}:
+      {==}
+    case Policy.Err{m}:
+      {==}
+    case Policy.Partial{j}:
+      {==}
+
+law original_mark_errors_skip:
+  for msg: String
+  for j: J.Json
+  for original: Tools.Original
+  ({Tools.original_mark.after(Policy.Err{msg}, Some{original}) ==
+    Tools.pure_out(Policy.Err{msg}) : IO(Policy.Out)} &
+   {Tools.original_mark.after(Policy.Partial{j}, Some{original}) ==
+    Tools.pure_out(Policy.Partial{j}) : IO(Policy.Out)})
+
+def original_mark_errors_skip(msg, j, original):
+  ({==}, {==})
+
+law original_mark_defaults_off:
+  {Tools.original_request(J.obj([]), True{}) == None{} : Maybe<&2, Tools.Original>}
+
+def original_mark_defaults_off():
+  {==}
+
+law original_mark_drafts_skip:
+  {Tools.original_request(J.obj([
+    J.kv("mark_answered", J.bool(True{})), J.kv("as_draft", J.bool(True{}))]), True{}) ==
+    None{} : Maybe<&2, Tools.Original>}
+
+def original_mark_drafts_skip():
+  {==}
+
+law original_mark_dry_runs_skip:
+  {Tools.original_request(J.obj([
+    J.kv("mark_answered", J.bool(True{})), J.kv("dry_run", J.bool(True{}))]), True{}) ==
+    None{} : Maybe<&2, Tools.Original>}
+
+def original_mark_dry_runs_skip():
+  {==}
+
+law original_mark_forwards_skip:
+  for args: J.Json
+  {Tools.original_request(args, False{}) == None{} : Maybe<&2, Tools.Original>}
+
+def original_mark_forwards_skip(args):
+  {==}
+
+law original_mark_keeps_identity:
+  {Tools.original_request(J.obj([J.kv("folder", J.str("Original")), J.kv("uid", J.num(7)),
+    J.kv("uidvalidity", J.num(91)), J.kv("mark_answered", J.bool(True{}))]), True{}) ==
+    Some{Tools.Original{"Original", 7, 91}} : Maybe<&2, Tools.Original>}
+
+def original_mark_keeps_identity():
+  {==}
+
+def reply_evidence(outcome: String) -> Policy.Out:
+  Policy.Ok{J.obj([J.kv("sent", J.bool(True{})), J.kv("smtp_outcome", J.str(outcome))])}
+
+law original_mark_unaccepted_skips:
+  for original: Tools.Original
+  ({Tools.original_mark.after(reply_evidence("not_sent"), Some{original}) ==
+    Tools.pure_out(reply_evidence("not_sent")) : IO(Policy.Out)} &
+   {Tools.original_mark.after(reply_evidence("unknown"), Some{original}) ==
+    Tools.pure_out(reply_evidence("unknown")) : IO(Policy.Out)} &
+   {Tools.original_mark.after(reply_evidence(""), Some{original}) ==
+    Tools.pure_out(reply_evidence("")) : IO(Policy.Out)})
+
+def original_mark_unaccepted_skips(original):
+  ({==}, {==}, {==})
+
+law original_mark_accepted_runs:
+  for folder: String
+  for uid: U32
+  for uidv: U32
+  {Tools.original_mark.after(reply_evidence("accepted"),
+    Some{Tools.Original{folder, uid, uidv}}) ==
+    do IO<Policy.Out>:
+      p : Policy.Proc <- Tools.imap_proc(Ops.plan_answered(folder, uid, uidv))
+      return Tools.with_fields(reply_evidence("accepted"),
+        Tools.original_mark.fields(Tools.original_mark.result(p,
+          Tools.Original{folder, uid, uidv})))
+    : IO(Policy.Out)}
+
+def original_mark_accepted_runs(folder, uid, uidv):
+  {==}
+
 # Unknown time refuses composition regardless of either random result.
 law unknown_clock_refuses_stamp:
   for a: Result<&1, &1, U32 & String, U32>

@@ -43,6 +43,9 @@ fn main() -> ExitCode {
             ExitCode::from(outcome.code())
         }
         Err(exit) => {
+            if let Some(reason) = exit.auth_reason {
+                report("mailbend-auth", reason.token());
+            }
             report(PROGRAM, &exit.message);
             ExitCode::from(exit.code())
         }

@@ -68,6 +68,8 @@ scripts/install.sh --install-bend --install-rust  # build; installs Bend and Rus
 sh scripts/scan-secrets.sh                        # redacted secret scan, tree and history
 python3 scripts/check-docs.py                     # documented names and skill tool arguments resolve
 python3 tests/test-docs.py                        # drift mutations and client snippets
+python3 tools/gen-llms.py --check                  # complete source index is current
+python3 tests/test-llms.py                         # offline index CLI and failure paths
 python3 tests/test-plugin.py                      # plugin declarations and isolated launcher fixture
 python3 tests/test-toolchain-installers.py        # pinned asset URLs and installer refusal paths
 sh scripts/install-lean.sh                        # once: the Lean that bend --verdict needs
@@ -83,6 +85,7 @@ python3 tests/formal/check-writing-laws.py         # compile the guide and rejec
 python3 tests/formal/check-plan-wire-mutations.py   # exact caller guards and UID wire commands
 python3 tests/formal/check-plan-coverage.py        # public plan references and command construction
 python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
+python3 tests/test-unit-runner.py                 # offline unit scheduling and cleanup contracts
 sh tests/run-unit.sh
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
@@ -99,6 +102,8 @@ python3 tests/test-stdio.py
 python3 tests/test-demo.py                        # isolated loopback demo, MCP flow and cleanup
 python3 tests/test-install.py
 python3 tests/formal/check-install-swap.py
+python3 scripts/check-native-hardening.py         # installed native ELF metadata, after install.sh
+python3 tests/test-native-hardening.py             # real C-linked positive and negative controls
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
@@ -108,12 +113,43 @@ python3 tests/test-cli-tools.py                   # credential-free filtered CLI
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
 python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
+python3 tests/formal/check-reply-marking.py        # post-acceptance marking transition laws
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+The unit runner stays serial by default. To opt into bounded parallel execution,
+run `sh tests/run-unit.sh --jobs 2`. The decimal job count must be between 1 and 8.
+The runner needs Python 3, Linux `/proc`, and the existing `bend`, `sed`, `cmp`,
+and `diff` commands.
+It runs sorted unit files in batches of at most that many compiler processes.
+A batch finishes and reports in filename order before the next batch starts, so
+idle slots do not refill while another file in the batch is still running.
+Failures still allow later files to run. A test passes only when Bend exits
+successfully and its combined stdout and stderr match the `#|` lines byte for byte.
+Failure diagnostics retain the first 20 lines of `diff` output.
+
+Each run keeps compiler output in private temporary files. Before comparing an
+output file, it terminates any descendants left in that compiler's process group.
+It retains the unreaped leader until the group stops, then reaps and forgets it.
+This keeps process-group IDs reserved until the last signal and prevents late
+output writes after comparison. Launch or file errors,
+SIGINT, and SIGTERM stop new launches and terminate owned process groups, with a
+half-second grace per group before SIGKILL. A group still running one second
+after SIGKILL is an infrastructure failure. The runner reaps direct children and removes its
+temporary files before exiting. An uninterruptible kernel wait can delay reaping,
+error reporting, and cleanup of other groups; shutdown has no guaranteed time bound.
+This cleanup cannot cover SIGKILL of the runner
+itself or descendants that deliberately escape their process group. Ordinary
+compiler failures produce the final pass/fail count; infrastructure errors and
+interruptions exit without that summary.
+
+CI exercises the synthetic scheduling and cleanup contracts on both architectures.
+Its actual Bend unit invocation remains serial until separate x86-64 and ARM64
+resource measurements support changing it. This option makes no speedup claim.
 
 When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
 the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).
@@ -188,10 +224,20 @@ IMAP `Cmd` type, directly or inside a container. Every def in `src/ops.bend` and
 does not apply to other modules or proof files. A `Cmd` parameter alone does
 not make a def command-returning. Return annotations support named types and
 generic containers with numeric multiplicities such as `List<&2, I.Cmd>`.
-Other return-type syntax fails closed. The check does not infer return types,
-expand type aliases, inspect user-defined data types or their fields, or follow
-higher-order values and call chains. It does not prove that plan output reaches
-the transport unchanged.
+Other return-type syntax fails closed.
+
+In `src/ops.bend` and `src/imap.bend`, the check also rejects data fields whose
+declared types name the IMAP `Cmd`, directly or inside a container. This prevents
+a local record from hiding a command-returning helper behind its record type.
+The canonical `Cmd` declaration in `src/imap.bend` is exempt. Other modules may
+keep command records, such as the tool layer's plan previews. The field check
+supports nongeneric `type Name is Data` declarations with named field types and
+generic containers. It checks field tokens and bracket balance, not the full
+Bend type grammar. Unsupported declaration forms or field tokens fail closed.
+It resolves import aliases but does not infer return types, expand type aliases,
+follow imported record fields, or analyze higher-order values and call chains.
+An imported record can still hide a command. This check does not prove that
+plan output reaches the transport unchanged.
 
 Proof and test files remain free to construct expected commands. This source
 reader is not a Bend parser or type checker. It supports the repository's
@@ -230,9 +276,65 @@ filesystem: `MAILBEND_TEST_TMPDIR=/tmp python3 tests/test-e2e.py`. This changes
 only the temporary fixture directory; the attachment sandbox checks remain
 in force.
 
+### Native ELF checks
+
+`python3 scripts/check-native-hardening.py [BIN_DIRECTORY]` checks the four
+installed native helpers, defaulting to this checkout's `bin/` regardless of
+the current directory. It requires GNU `readelf` from binutils. The fixture
+suite also requires a C compiler available as `cc`; missing prerequisites
+fail rather than skip. Ordinary CI runs both checks after installation in
+the support suite on x86_64 and aarch64.
+
+Each helper must be a little-endian ELF64 PIE for a supported architecture,
+with GNU_RELRO, immediate binding, a present non-executable GNU_STACK and
+the matching Linux interpreter. Direct NEEDED entries may contain only
+`libc.so.6`, `libgcc_s.so.1` and that architecture's loader basename. The
+check reads ELF metadata without executing the helpers or using `ldd`. It
+does not inspect transitive dependencies, prove memory safety or exploit
+resistance, or establish library trust. The Bend core is outside this check.
+
 After editing `tools/gen-schema.py`, regenerate `src/schema.bend` with
 `python3 tools/gen-schema.py`, and update the length and hash pinned in
 `tests/unit/schema.bend`.
+
+## Documentation source index
+
+Run `python3 tools/gen-llms.py` after adding, removing or renaming documentation,
+or changing a page title or README section heading. Commit the resulting
+`llms.txt`. `python3 tools/gen-llms.py --check` compares exact bytes without
+writing; the documentation source-checks CI step runs it and
+`python3 tests/test-llms.py`. Both commands are offline and use only Python's
+standard library. `--root PATH` selects another repository fixture independently
+of the working directory.
+
+The index discovers README, its H2 sections in source order, every `docs/**/*.md`
+page, and every `skills/mailbend/**/*.md` page. Page paths are sorted within each
+group. Internal `.agents` skills are excluded. `docs/plans/` has a separate
+proposal/history list and is not evidence that a feature is implemented. This
+is a source index only; it does not publish a site or copy document bodies.
+
+The reader supports single-line ATX headings with up to three leading spaces,
+optional closing hashes, and backtick or tilde fences. Pages need a nonempty
+first heading at H1. README anchors support ASCII plain-text headings: lowercase,
+remove punctuation except hyphens/underscores, replace spaces with hyphens,
+and suffix collisions in source order across all heading levels. It is not a
+CommonMark parser: Setext headings, HTML, inline links, entities and other
+rendered inline markup are not interpreted. Keep README headings in the supported
+plain-text subset. Every README heading level is checked because each consumes
+an anchor. Brackets, angle brackets, emphasis/code/escape markers (`*`, `_`,
+backticks and backslashes), double tildes and entity references are rejected
+before writing. Ordinary punctuation such as parentheses and slashes is allowed.
+README HTML blocks and multiline comments are also rejected outside fences;
+one-line body comments such as claim markers remain supported. Standalone runs
+of hyphens or equals signs (up to three leading spaces) are rejected outside
+fences to avoid Setext headings consuming anchors; this also rejects some
+horizontal rules. Blockquote/list-contained headings and other container syntax
+are not parsed or comprehensively rejected. Keep README headings at the document
+level in the supported ATX subset; these checks are not general Markdown validation.
+This conservative restriction applies only to README anchors, not page-title
+labels elsewhere. Labels are Markdown-escaped and destinations URL-encoded.
+Invalid UTF-8, missing titles, unclosed fences, or missing mandatory README,
+CLI, recipes, frameworks or skill entrypoint fail before replacing the index.
 
 ## MIME and charset regressions
 
@@ -361,8 +463,11 @@ policy migration before treating a helper update as ready:
    verify that the run tested the exact proposed head.
 
 Keep the fixed reference, frozen apparatus and `install.sh` checks intact.
-Launcher revisions require a separately reviewed exact-byte migration, as in
-[the candidate hook launcher migration](tests/SCALE.md#reviewed-candidate-launcher-migration-110).
+Ordinary CI's source checks run preflight on the checkout's actual launcher, so
+any launcher byte change, including a comment edit, fails until those exact bytes
+receive a separately reviewed migration. See the
+[report usage-comment migration](tests/SCALE.md#reviewed-report-usage-comment-migration-292)
+and the earlier [candidate hook launcher migration](tests/SCALE.md#reviewed-candidate-launcher-migration-110).
 The paired job installs Bend from the reference helper for both builds;
 admitting candidate helper bytes does not validate a new compiler in that
 paired run. Compiler acceptance still requires the full Bend runbook and

@@ -565,7 +565,7 @@
       "sent": [],
       "budget": {
         "calls": 1,
-        "imap_logins": 6,
+        "imap_logins": 5,
         "result_bytes": 3635,
         "estimated_tokens": 909
       }

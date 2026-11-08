@@ -104,9 +104,6 @@ def esc.go(s: String, acc: String) -> String:
 def esc(s: String) -> String:
   String.reverse(esc.go(s, ""))
 
-def quote(s: String) -> String:
-  "\"" ++ esc(s) ++ "\""
-
 # The separator before the rest t of a chain.
 def sep(t: Json) -> String:
   match t:
