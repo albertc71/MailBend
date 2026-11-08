@@ -1,0 +1,227 @@
+name: Case18 diagnostic oracle validation
+on:
+  push:
+    branches:
+      - validation/case18-exact-diagnostic-v3
+permissions:
+  contents: read
+concurrency:
+  group: case18-exact-diagnostic-validation
+  cancel-in-progress: false
+jobs:
+  sensitivity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install existing transport prerequisites
+        run: |
+          home="$RUNNER_TEMP/case18-oracle-home"
+          mkdir -p "$home"
+          printf 'HOME=%s\nCARGO_HOME=%s/.cargo\nRUSTUP_HOME=%s/.rustup\n' "$home" "$home" "$home" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential openssl
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install repository-pinned Rust
+        run: |
+          sh scripts/install-rust.sh
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Observe full-runner oracle sensitivity
+        shell: bash
+        run: |
+          set -eu
+          umask 077
+          ulimit -c 0
+          python3 -I - <<'PY'
+          try:
+              import hashlib
+              import itertools
+              import os
+              import pathlib
+              import re
+              import subprocess
+              import tempfile
+              import time
+          
+              BASE = "1970639fcfcc7589bc62e95adf8d49341b378136"
+              BASE_BLOB = "cc89adfe0beeabe7cf5bcc13c053d17bbeb4d7b5"
+              CANDIDATE_BLOB = "e2768d695c363316d042c7ec8bbb414b33fa8ccc"
+              SCRIPT = "tests/test-transport.sh"
+              WORKFLOW = ".github/workflows/case18-oracle-validation.yml"
+              ROOT = pathlib.Path.cwd()
+              target = ROOT / SCRIPT
+              deadline = time.monotonic() + 45 * 60
+          
+              def require(condition, label):
+                  if not condition:
+                      raise RuntimeError(label)
+          
+              def git(*args):
+                  return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL)
+          
+              def blob(data):
+                  return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+          
+              def source_state():
+                  paths = git("ls-files", "-z").split(b"\0")
+                  state = []
+                  for name in paths:
+                      if name:
+                          path = ROOT / os.fsdecode(name)
+                          content = os.fsencode(os.readlink(path)) if path.is_symlink() else path.read_bytes()
+                          state.append((name, path.lstat().st_mode, hashlib.sha256(content).digest()))
+                  return state
+          
+              labels = [
+                  f"18 attribution {protocol} {form} {stream}".encode()
+                  for protocol, form, stream in itertools.product(
+                      ("imap", "smtp"), ("clean", "raw", "login", "plain"), ("stdout", "stderr"))
+              ]
+              controls_ok = [b"PASS " + label for label in labels]
+              controls_bad = [
+                  b"FAIL " + label + b" -- wrong verdict, aggregate, or unsafe diagnostic"
+                  for label in labels
+              ]
+              aggregate_ok = b"PASS 2 password never leaks; LOGIN/AUTH redacted in the log"
+              anchor = b'          case18\n          [ "$FAIL_COUNT" -eq "$expected" ]'
+              mutation = b"          case18\n          printf '%s\\n' 'case18-synthetic-'\n          [ \"$FAIL_COUNT\" -eq \"$expected\" ]"
+              loop_anchor = b'  chmod +x "$HELPER"\n  for protocol in imap smtp; do\n    for form in clean raw login plain; do'
+              caller_anchor = b'        if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$expected"'
+              python_anchor = b"import sys\n\noutput = pathlib.Path(sys.argv[1]).read_bytes()\n"
+              shell_observer = rb'''  case18_observe_oracle() {
+              local status
+              python3 "$@" >"$WORK/case18-oracle-output" 2>&1
+              status=$?
+              printf 'CASE18_ORACLE_RESULT %s\n' "$status" >"$WORK/case18-oracle-expected"
+              if [ "$result" -eq 0 ] && { [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; } &&
+                  cmp -s "$WORK/case18-oracle-output" "$WORK/case18-oracle-expected"; then
+                printf '%s %s %s prerequisite=0 oracle=%s\n' "$protocol" "$form" "$stream" "$status" >>"$CASE18_ORACLE_EVIDENCE"
+              else
+                printf 'ORACLE_ERROR\n' >>"$CASE18_ORACLE_EVIDENCE"
+              fi
+              return "$status"
+            }
+          '''
+              python_observer = rb'''original_exit = sys.exit
+          
+          def observed_exit(status):
+              print(f"CASE18_ORACLE_RESULT {status}")
+              original_exit(status)
+          
+          sys.exit = observed_exit
+          
+          '''
+          
+              def instrument(data):
+                  for part in (loop_anchor, caller_anchor, python_anchor):
+                      require(data.count(part) == 1, "instrumentation-anchor")
+                  data = data.replace(loop_anchor, shell_observer + loop_anchor)
+                  data = data.replace(caller_anchor, caller_anchor.replace(b"python3", b"case18_observe_oracle"))
+                  return data.replace(python_anchor, b"import sys\n\n" + python_observer +
+                                      b"output = pathlib.Path(sys.argv[1]).read_bytes()\n")
+          
+              run_env = {key: os.environ[key] for key in
+                         ("PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "CARGO_BUILD_JOBS")
+                         if key in os.environ}
+              run_env.update({"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"})
+          
+              def observe(data, label, expected_failures, total, work):
+                  require(time.monotonic() < deadline - 10, "experiment-budget")
+                  observed = instrument(data)
+                  target.write_bytes(observed)
+                  stage_before = source_state()
+                  evidence = work / (label + "-oracle")
+                  evidence.write_bytes(b"")
+                  with (work / label).open("wb") as output:
+                      seconds = min(600, int(deadline - time.monotonic() - 10))
+                      require(seconds >= 1, "experiment-budget")
+                      result = subprocess.run(
+                          ["timeout", "--signal=TERM", "--kill-after=10s", f"{seconds}s", "bash", SCRIPT],
+                          cwd=ROOT, env={**run_env, "CASE18_ORACLE_EVIDENCE": str(evidence)},
+                          stdout=output, stderr=subprocess.STDOUT, check=False)
+                  require(time.monotonic() < deadline, "experiment-budget")
+                  require((work / label).stat().st_size <= 16 * 1024 * 1024, "capture-size")
+                  require(evidence.stat().st_size <= 4096, "evidence-size")
+                  oracle_status = 1 if expected_failures else 0
+                  expected_evidence = b"".join(
+                      label.removeprefix(b"18 attribution ") +
+                      f" prerequisite=0 oracle={oracle_status}\n".encode() for label in labels)
+                  require(evidence.read_bytes() == expected_evidence, "oracle-reason")
+                  lines = (work / label).read_bytes().splitlines()
+                  require(result.returncode == (1 if expected_failures else 0), "runner-status")
+                  summaries = [re.fullmatch(rb"transport: ([0-9]+) passed, ([0-9]+) failed", line)
+                               for line in lines if line.startswith(b"transport:")]
+                  require(len(summaries) == 1 and summaries[0] is not None, "runner-summary")
+                  passed, failed = map(int, summaries[0].groups())
+                  require(failed == expected_failures and passed >= 16, "runner-counts")
+                  if total is not None:
+                      require(passed + failed == total, "runner-total")
+                  expected_controls = controls_bad if expected_failures else controls_ok
+                  observed_controls = [line for line in lines
+                                       if line.startswith((b"PASS 18 attribution ", b"FAIL 18 attribution "))]
+                  require(observed_controls == expected_controls, "attribution-controls")
+                  require([line for line in lines if line.startswith(b"FAIL ")] ==
+                          (controls_bad if expected_failures else []), "unrelated-failure")
+                  require(lines.count(aggregate_ok) == 1, "aggregate-control")
+                  require(lines[-1] == summaries[0].group(0), "runner-completion")
+                  require(target.read_bytes() == observed, "runner-source-change")
+                  require(source_state() == stage_before, "runner-input-change")
+                  print(f"{label}: status={result.returncode} passed={passed} failed={failed} controls=16 oracle-results=16")
+                  return passed + failed
+          
+              candidate = None
+              before = None
+              try:
+                  git("diff", "--no-ext-diff", "--exit-code", "--quiet", "HEAD", "--")
+                  head_chain = git("rev-list", "--parents", "-n", "1", "HEAD").decode().split()
+                  require(len(head_chain) == 2, "validation-sole-parent")
+                  head, candidate_head = head_chain
+                  require(git("rev-list", "--parents", "-n", "1", candidate_head).decode().split()
+                          == [candidate_head, BASE], "candidate-sole-base-parent")
+                  require(git("diff", "--name-status", "--no-renames", BASE, candidate_head, "--")
+                          == f"M\t{SCRIPT}\n".encode(), "candidate-change")
+                  require(git("diff", "--name-status", "--no-renames", candidate_head, head, "--")
+                          == f"A\t{WORKFLOW}\n".encode(), "validation-addition")
+                  require(git("ls-tree", BASE, "--", SCRIPT)
+                          == f"100755 blob {BASE_BLOB}\t{SCRIPT}\n".encode(), "baseline-mode-and-blob")
+                  for revision in (candidate_head, head):
+                      require(git("ls-tree", revision, "--", SCRIPT)
+                              == f"100755 blob {CANDIDATE_BLOB}\t{SCRIPT}\n".encode(),
+                              "candidate-mode-and-blob")
+                  require(git("ls-tree", head, "--", WORKFLOW).startswith(b"100644 blob "),
+                          "workflow-mode")
+                  candidate = target.read_bytes()
+                  require(blob(candidate) == CANDIDATE_BLOB, "candidate-identity")
+                  base = git("show", f"{BASE}:{SCRIPT}")
+                  require(blob(base) == BASE_BLOB, "baseline-identity")
+                  before = source_state()
+                  require(base.count(anchor) == candidate.count(anchor) == 1, "mutation-anchor")
+                  print("validation-head=" + head)
+                  print("candidate-head=" + candidate_head)
+                  print("baseline-head=" + BASE)
+                  with tempfile.TemporaryDirectory(prefix="case18-oracle-") as scratch:
+                      work = pathlib.Path(scratch)
+                      total = observe(base, "baseline-healthy", 0, None, work)
+                      observe(candidate, "candidate-healthy", 0, total, work)
+                      observe(base.replace(anchor, mutation), "baseline-mutant", 0, total, work)
+                      observe(candidate.replace(anchor, mutation), "candidate-mutant", 16, total, work)
+                      observe(candidate, "candidate-marker-restored", 0, total, work)
+              finally:
+                  if candidate is not None:
+                      target.write_bytes(candidate)
+                  if before is not None:
+                      require(source_state() == before, "restored-source-identity")
+                      git("diff", "--no-ext-diff", "--exit-code", "--quiet", "HEAD", "--")
+              print("PASS case18 oracle sensitivity and restored source identities")
+          except BaseException:
+              print("FAIL case18 oracle validation")
+              raise SystemExit(1)
+          PY
