@@ -1,9 +1,9 @@
 {
   "kind": "Unexecuted source-only compile and documentation correction",
-  "base_commit": "0ebe9efa2eb06ec418cdcd1a9c9a4abdae4a9d42",
-  "base_tree": "32f4b0f1be1cc17dfc134fa20520cb8d15bffefd",
-  "before_product_tree": "567dc005e52bb15244f4fea46f94982606e2d036",
-  "candidate_tree": "6c4411297a59b4229c07fbc74a25cdd3d1ab956c",
+  "base_commit": "3a9f92ec4ab8e35d2fb8f543ee4dd9730024a416",
+  "base_tree": "23b13b6b9413ca447cbd1c33c103090bce1076c8",
+  "before_product_tree": "6c4411297a59b4229c07fbc74a25cdd3d1ab956c",
+  "candidate_tree": "d38a540b425726d8a88fda6818292b574b3f36ba",
   "files": {
     ".agents/skills/policy-proofs/SKILL.md": {
       "mode": "100644",
@@ -2227,9 +2227,9 @@
     },
     "tests/test-docs.py": {
       "mode": "100644",
-      "blob": "b461d7b5ac5e723068bb3ee5994708927efcd9b2",
-      "sha256": "99511152d9a2f844097323bc4643ff2a27a5ac58ada3b215f40175974f3090b2",
-      "bytes": 36283
+      "blob": "986a6c6263fab3652af634d8fcdc529a0914a2c7",
+      "sha256": "571ef370a64a0e733c18bde0d91d23cf09e7f8be4473d3607fc13c9a998e48e5",
+      "bytes": 36727
     },
     "tests/test-e2e.py": {
       "mode": "100644",
@@ -2875,9 +2875,9 @@
     },
     "src/nested.bend": {
       "mode": "100644",
-      "blob": "d56fd972fdc8e7a0d1718ed4c6b14efd58de6899",
-      "sha256": "d21cb62022c573781726450675d055d3f4bb88305975d30604d7f35109f755e3",
-      "bytes": 18299
+      "blob": "f0884d32c6caa0df0ae00d89bd00219b27b6dc00",
+      "sha256": "474d9313a5bd10d4bdce931ea23d506929d358cc75c1d4a4d8ccbbb2325334e9",
+      "bytes": 18733
     },
     "tests/corpus/nested/alternative.eml": {
       "mode": "100644",
@@ -3337,7 +3337,7 @@
     }
   },
   "source_fix_changes": [
-    "skills/mailbend/references/tools.md",
-    "src/nested.bend"
+    "src/nested.bend",
+    "tests/test-docs.py"
   ]
 }

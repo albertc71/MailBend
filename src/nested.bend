@@ -196,6 +196,13 @@ def base64_groups(raw: String, +count: U32) -> Bool:
       base64_groups(t, Bool.pick(U32, M.char_in(c, " \t\r\n"), count,
         ((count + 1 : U32) .&. 3 : U32)))
 
+def decode.base64.after(+raw: String, final: Budget)
+  -> Result<&2, &2, String, String & Budget>:
+  +decoded = C.b64_decode(raw)
+  do Result<&2, &2, String, String & Budget>:
+    check(same(C.b64_encode(decoded, False{}), compact.go(raw, "")), "malformed inner base64")
+    return (decoded, final)
+
 def decode(encoding: String, +raw: String, b: Budget)
   -> Result<&2, &2, String, String & Budget>:
   match encoding:
@@ -205,9 +212,7 @@ def decode(encoding: String, +raw: String, b: Budget)
         copy : Budget <- parse_bytes(raw, b)
         compact : Budget <- parse_bytes(raw, copy)
         final : Budget <- parse_bytes(raw, compact)
-        +decoded = C.b64_decode(raw)
-        check(same(C.b64_encode(decoded, False{}), compact.go(raw, "")), "malformed inner base64")
-        return (decoded, final)
+        decode.base64.after(raw, final)
     case "quoted-printable":
       do Result<&2, &2, String, String & Budget>:
         copy : Budget <- parse_bytes(raw, b)
@@ -305,6 +310,14 @@ def children(parts: List<&2, String>, +context: M.PartContext, +level: U32,
     case raw <> rest:
       Entity{raw, context, level, depth} <> children(rest, context, level, depth, tail)
 
+def multipart.after(hs: List<&2, M.Hdr>, body: String, bound: String, level: U32,
+  depth: Nat, todo: List<&2, Task>, current: Fragment, alt: Bool, reserved: Budget)
+  -> Result<&2, &2, String, Walk>:
+  +context = M.part_context(M.main_value(M.header(hs, "content-type")))
+  Done{Walking{children(cut(body, bound), context, level, depth,
+    EndMultipart{current, alt} <> todo), empty(),
+    M.part_context.alternative(context), reserved}}
+
 def multipart(depth: Nat, +hs: List<&2, M.Hdr>, +body: String, level: U32,
   todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
   -> Result<&2, &2, String, Walk>:
@@ -318,10 +331,7 @@ def multipart(depth: Nat, +hs: List<&2, M.Hdr>, +body: String, level: U32,
         scan : Budget <- parse_bytes(body, b)
         copied : Budget <- parse_bytes(body, scan)
         reserved : Budget <- framing(body, bound, copied)
-        +context = M.part_context(M.main_value(M.header(hs, "content-type")))
-        return Walking{children(cut(body, bound), context, level, d,
-          EndMultipart{current, alt} <> todo), empty(),
-          M.part_context.alternative(context), reserved}
+        multipart.after(hs, body, bound, level, d, todo, current, alt, reserved)
 
 def is_message(+typ: String) -> Bool:
   String.eq(typ, "message/rfc822") || String.eq(typ, "message/global")
