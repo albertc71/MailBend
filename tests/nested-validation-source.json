@@ -2,8 +2,8 @@
   "kind": "Selected nested-message source composed with current main",
   "base_commit": "94a10f939e995046a5137652e6f6d4b53cd0a936",
   "base_tree": "97023fa2d1528aa38bf626421c61fbba33855e4d",
-  "previous_proposal_head": "04dfa0ae65c7154ba9d76c9ecb4a07475ddf0a3f",
-  "candidate_tree": "91905bf2fa7df78cdf2b9e47f3aba6d8162061b8",
+  "previous_proposal_head": "1547a1a2a77ffa97bf028065c7dbe4b8b00cdf69",
+  "candidate_tree": "730d73c8b2dbb5bbe650bd779628c46fcdcc815a",
   "files": {
     ".agents/skills/policy-proofs/SKILL.md": {
       "mode": "100644",
@@ -259,8 +259,8 @@
     },
     "docs/PROOF-COVERAGE.md": {
       "mode": "100644",
-      "blob": "d20b7bcc585faec28efae3ec90d5e4d061e03985",
-      "sha256": "849e5c4752fd6dc056561f9935e47ebc164e14315d441f55b30708fff262561d",
+      "blob": "4cc44880f9f1502a51d0348e42f35bdb97ef55c6",
+      "sha256": "cb92e609c0ac30ecc54e2afa185ac59d58590e12fe1097add5764c0b58a38f17",
       "bytes": 35637
     },
     "docs/PROVIDER-REPORTS.md": {
@@ -2429,6 +2429,12 @@
       "sha256": "8b668850a2fe9a2ba0ed7803678efe76068a2b7d2efbefe35e7ed48f7890dd65",
       "bytes": 3421
     },
+    "tests/harness_output.py": {
+      "mode": "100644",
+      "blob": "2c6be2c0291e07867b8273a075c25fbaea0703da",
+      "sha256": "5a03f8c4e319e08bcf1e356703c87a6b92b8f52fd19f56d4dedeb20c1a876475",
+      "bytes": 1815
+    },
     "tests/image_fixtures.py": {
       "mode": "100644",
       "blob": "0b849cba6e230df409c074879766c9afd13088f4",
@@ -2557,9 +2563,15 @@
     },
     "tests/nested_reads.py": {
       "mode": "100644",
-      "blob": "375d17e352408a9527ff4ebea507e1747d31f06f",
-      "sha256": "f626ce9aefb908691e74774e3170127eacefb8106e14fedb66a6866457e1050b",
-      "bytes": 21332
+      "blob": "0fe3a7342703286c863a8c7c3ca8be992a69b16f",
+      "sha256": "ebf0482654bf355aa5286cf06251ba10a103c0e09c4d04889e2ae133dbde3c41",
+      "bytes": 21474
+    },
+    "tests/nested_supervision.py": {
+      "mode": "100644",
+      "blob": "431c9d95413aa521de268ff22a94508c28a523f9",
+      "sha256": "8152cbe1fc0e73d21da30952c7e5e406e2e5ab0e129a075aeeba440df020e39f",
+      "bytes": 15264
     },
     "tests/perf/README.md": {
       "mode": "100644",
@@ -2749,9 +2761,9 @@
     },
     "tests/test-e2e.py": {
       "mode": "100644",
-      "blob": "47026c4e27557a9c3eda4c634901035724c5dc22",
-      "sha256": "7f828929e014059493f0d5b0c345b7841ef583316a51e63512415a3f59892c1c",
-      "bytes": 445964
+      "blob": "b8387e6e367582fafd1ac6524dc3946bebe711df",
+      "sha256": "347aa288b97b1afdbae7b5d563fb8dab38d0ab5d6e83db733427cc9ab81c9fa5",
+      "bytes": 446909
     },
     "tests/test-facts-extraction.py": {
       "mode": "100644",
@@ -2776,6 +2788,12 @@
       "blob": "0873e56e25a4ab081e2a7922c400ae913a5c4815",
       "sha256": "1d3a5d085caf2b7a42deb0aff5c137cdf34b67e06b56192e64ec4edeffb936ee",
       "bytes": 15354
+    },
+    "tests/test-harness-output.py": {
+      "mode": "100644",
+      "blob": "a3df1dee37a353f725b03a21386fc96ee8729e93",
+      "sha256": "1e608d90d9803e1d402b3224f65f4c5c260e5fb0349f51226367cedd051bf04a",
+      "bytes": 7286
     },
     "tests/test-hook.py": {
       "mode": "100644",
@@ -2848,6 +2866,12 @@
       "blob": "96b24b0ac31254f360cfefa2cb8245e01c543d96",
       "sha256": "2b629aa1f16c87435c26aca60a6c4608bfa3bc90e5be147c51650ca91a60fcc2",
       "bytes": 10295
+    },
+    "tests/test-nested-supervision.py": {
+      "mode": "100644",
+      "blob": "9bc27adbbd69275084711902719cbb329e0d4df4",
+      "sha256": "5e0f6101c4c40546c877b26c94247a3785f67750741c5400ca18ec6a15a6d968",
+      "bytes": 29339
     },
     "tests/test-output-schema.py": {
       "mode": "100644",

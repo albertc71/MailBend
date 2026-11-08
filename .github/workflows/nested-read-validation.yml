@@ -80,6 +80,12 @@ jobs:
           python3 --version
           clang --version
           (cd native && rustc --version && cargo --version)
+      - name: Validate the synthetic supervision and diagnostic controls
+        timeout-minutes: 2
+        run: |
+          ulimit -c 0
+          env -i PATH="$PATH" HOME="$HOME" PYTHONDONTWRITEBYTECODE=1 python3 -B tests/test-nested-supervision.py
+          env -i PATH="$PATH" HOME="$HOME" PYTHONDONTWRITEBYTECODE=1 python3 -B tests/test-harness-output.py
       - name: Recheck all three Bend kernels
         timeout-minutes: 12
         run: |
@@ -102,11 +108,10 @@ jobs:
         timeout-minutes: 15
         run: |
           ulimit -c 0
-          ulimit -v 4194304
           getconf PAGE_SIZE
           getconf _PHYS_PAGES
           nproc
-          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" BEND_NO_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v python3 -B tests/test-mime-corpus.py --nested-resources
+          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" BEND_NO_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1 python3 -I -B tests/nested_supervision.py "$EXPECTED_SHA"
       - name: Final source and revision receipt
         if: always()
         run: |

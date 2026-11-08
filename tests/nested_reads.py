@@ -66,11 +66,13 @@ def wire(test, server, request):
         replies, code = test.mcp_session(server, [
             {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
             {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-             "params": {"name": "mail_get", "arguments": request}}])
+             "params": {"name": "mail_get", "arguments": request}}], require_tool=True)
         answer = replies[-1]["result"]
         return (1 if answer["isError"] else code), answer["content"][0]["text"]
+    child_env = server.env()
     proc = subprocess.run([test.LAUNCHER, "call", "mail_get", json.dumps(request)],
-                          env=server.env(), capture_output=True, text=True, timeout=120)
+                          env=child_env, capture_output=True, text=True, timeout=120)
+    test.cli_value(proc.stdout, proc.returncode, proc.stderr, test.transport_secrets(child_env))
     return proc.returncode, proc.stdout.rstrip("\n")
 
 

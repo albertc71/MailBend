@@ -37,6 +37,7 @@ import time
 from jsonschema import Draft202012Validator
 
 import mime_oracle
+from harness_output import cli_value, mcp_tool, transport_failure
 from auth_refusal_cases import cases as auth_refusal_cases
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -167,6 +168,13 @@ def tool(srv, name, args=None, **env):
     return tool_text(srv, name, json.dumps(args or {}), **env)
 
 
+def transport_secrets(env):
+    password = env.get("MAILBEND_APP_PASSWORD", PASSWORD) or ""
+    user = env.get("MAILBEND_EMAIL", FIX["user"]) or ""
+    return (PASSWORD, FIX["user"], TYPESAFE_KEY, password, user,
+            env.get("MAILBEND_TYPESAFE_API_KEY", "") or "", "\0" + user + "\0" + password)
+
+
 def tool_text(srv, name, text, **env):
     """Calls a tool with its arguments as raw JSON text."""
     if os.environ.get("MAILBEND_TEST_MCP") == "1":
@@ -183,22 +191,18 @@ def tool_text(srv, name, text, **env):
                 {"jsonrpc": "2.0", "id": 0, "method": "initialize",
                  "params": {"protocolVersion": "2025-06-18"}},
                 call,
-            ], **env)
+            ], require_tool=True, **env)
             result = replies[-1]["result"]
             out = json.loads(result["content"][0]["text"])
             check(f"mcp shared value: {name}", result.get("structuredContent") == out)
             validate_output(name, out)
             return (1 if result["isError"] else code), out
+    child_env = srv.env(**env)
     p = subprocess.run([LAUNCHER, "call", name, text], capture_output=True, text=True,
-                       env=srv.env(**env), timeout=120)
+                       env=child_env, timeout=120)
     outputs.extend([p.stdout, p.stderr])
-    try:
-        # NEL/LS/PS can be inside JSON strings; only LF frames CLI output.
-        out = json.loads(p.stdout.strip().split("\n")[-1]) if p.stdout.strip() else {}
-    except (json.JSONDecodeError, IndexError):
-        out = {"unparsed": p.stdout, "stderr": p.stderr}
-    if p.stdout.strip():
-        validate_output(name, out)
+    out = cli_value(p.stdout, p.returncode, p.stderr, transport_secrets(child_env))
+    validate_output(name, out)
     return p.returncode, out
 
 
@@ -1900,22 +1904,39 @@ os.execv(sys.argv[1], [sys.argv[1], 'mcp'])
               and all("inputSchema" in t for t in listed), listed)
 
 
-def mcp_bytes(srv, data, *, legacy=True, **env):
+def mcp_bytes(srv, data, *, legacy=True, require_tool=False, **env):
     if legacy:
         init = {"jsonrpc": "2.0", "id": "test-initialize", "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18"}}
         data = json.dumps(init).encode() + b"\n" + data
+    child_env = srv.env(**env)
+    secrets = transport_secrets(child_env)
     p = subprocess.Popen([LAUNCHER, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         env=srv.env(**env))
+                         env=child_env)
     out, err = p.communicate(data, timeout=180)
-    out, err = out.decode("utf-8"), err.decode("utf-8", "replace")
+    err = err.decode("utf-8", "replace")
+    try:
+        out = out.decode("utf-8")
+    except UnicodeDecodeError:
+        transport_failure("mcp UTF-8", p.returncode, None, err, secrets)
     outputs.extend([out, err])
     # MCP framing is LF, not every character Python treats as a line break.
-    replies = [json.loads(l) for l in out.split("\n") if l.strip()]
+    try:
+        replies = [json.loads(l) for l in out.split("\n") if l.strip()]
+        if not all(isinstance(reply, dict) for reply in replies):
+            raise ValueError("mcp reply shape")
+    except ValueError:
+        transport_failure("mcp framing", p.returncode, out, err, secrets)
     if legacy:
-        initialized = bool(replies) and replies[0].get("result", {}).get("protocolVersion") == "2025-06-18"
-        check("MCP fixture initializes legacy protocol", initialized, replies[:1])
+        initial = replies[0].get("result") if replies else None
+        initialized = isinstance(initial, dict) and initial.get("protocolVersion") == "2025-06-18"
+        check("MCP fixture initializes legacy protocol", initialized,
+              {"exit_code": p.returncode, "reply_count": len(replies)})
+        if not initialized:
+            transport_failure("mcp initialization", p.returncode, out, err, secrets)
         replies = replies[1:]
+    if require_tool:
+        mcp_tool(replies, p.returncode, err, secrets, stdout=out)
     return replies, p.returncode
 
 
