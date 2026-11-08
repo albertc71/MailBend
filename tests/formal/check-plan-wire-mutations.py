@@ -15,7 +15,19 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 GUARD = '[I.CSelect{mbox}, I.CExpect{I.uidv_line(uidv)}, I.CSearch{[I.KUids{uids}]}]'
 IMAGE_ROUND = 'I.CExamine{mbox} <> I.CExpect{I.uidv_line(uidv)} <> image_reads(reads)'
+THREAD_START = 'List.append(&2, I.Cmd, plan_headers_checked(mbox, [uid], uidv), plan_probe())'
 MUTATIONS = (
+    ("thread start mutates flags", "src/ops.bend", THREAD_START,
+     'List.append(&2, I.Cmd, plan_headers_checked(mbox, [uid], uidv), '
+     '[I.CStore{[1], True{}, I.FSeen{}}, I.CCapability{}, I.CList{}])',
+     "thread_start_writes_nothing"),
+    ("thread start omits identity guard", "src/ops.bend", THREAD_START,
+     THREAD_START.replace('[uid], uidv)', '[uid], None{})'), "thread_start_checked_exact"),
+    ("thread start fetches another UID", "src/ops.bend", THREAD_START,
+     THREAD_START.replace('[uid]', '[99]'), "thread_start_checked_exact"),
+    ("thread start discovers before seed guard", "src/ops.bend", THREAD_START,
+     'List.append(&2, I.Cmd, plan_probe(), plan_headers_checked(mbox, [uid], uidv))',
+     "thread_start_checked_exact"),
     ("answered plan targets another UID", "src/ops.bend",
      'plan_flag_stores(mbox, [uid], [I.CStore{[uid], True{}, I.FAnswered{}}], uidv)',
      'plan_flag_stores(mbox, [uid], [I.CStore{[99], True{}, I.FAnswered{}}], uidv)',

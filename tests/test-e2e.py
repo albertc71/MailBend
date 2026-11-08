@@ -821,6 +821,9 @@ def run_all(work, *, tool_scenarios_only=False):
     whole_read_identity(work)
     thread_classify_identity(work)
     threads(work)
+    thread_discovery(work)
+    thread_discovery_failures(work)
+    thread_discovery_literals(work)
     archive_threads(work)
     awaiting_replies(work)
     live_contacts(work)
@@ -4329,6 +4332,10 @@ def threads(work):
         check("thread: each message carries its summary",
               [m.get("subject") for m in r.get("messages", [])] == ["Trip plans"] * 3
               and r["messages"][1].get("message_id") == "<trip2@example.com>", r)
+        log = srv.log_lines()[log_start:]
+        logins = sum(line == "L LOGIN <redacted>" for line in log)
+        check("thread: seed and folder discovery share one of six authenticated sessions",
+              logins == 6, {"expected": 6, "observed": logins, "commands": log})
         c, r = tool(srv, "mail_get_thread", {"uid": 8})
         check("thread: from a later message, its ancestors and the answer to it are found",
               c == 0 and thread_of(r) == [first, reply, answer, fourth], r)
@@ -4363,6 +4370,126 @@ def threads(work):
               and len(searches) == (1 + 50) * 3 * 3, (r, len(searches)))
     finally:
         srv.stop()
+
+
+def thread_discovery(work):
+    for checked in (False, True):
+        for roles in ("advertised", "conventional", "extended"):
+            fixture = thread_fixture()
+            sent, archive = "Sent Messages", "Archive"
+            if roles == "extended":
+                sent, archive = "Posted", "Filed"
+                fixture["mailboxes"][sent] = fixture["mailboxes"].pop("Sent Messages")
+                fixture["mailboxes"][archive] = fixture["mailboxes"].pop("Archive")
+            caps = "MOVE,UIDPLUS,IDLE" if roles == "conventional" else None
+            extra = ["--special-on-request"] if roles == "extended" else []
+            srv = Server(work, fixture=fixture, caps=caps, extra=extra)
+            try:
+                before = srv.st()
+                args = {"uid": 7, **({"uidvalidity": 1700000001} if checked else {})}
+                code, result = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+                label = f"thread discovery: {roles}, checked={checked}"
+                check(label + " preserves the bounded thread and each folder's identity",
+                      code == 0 and thread_of(result) == [("INBOX", 7, None),
+                      (sent, 1, "<trip1@example.com>"), ("INBOX", 8, "<trip2@example.com>")]
+                      and result.get("searched") == ["INBOX", sent, archive]
+                      and [m.get("uidvalidity") for m in result.get("messages", [])] ==
+                          [1700000001, 1700000004, 1700000001], result)
+                log = srv.log_lines()
+                logins = sum(line == "L LOGIN <redacted>" for line in log)
+                expected = 5 if roles == "conventional" else 6
+                check(label + " stays within the authenticated session budget",
+                      logins == expected, {"expected": expected, "observed": logins})
+                check(label + " guards without consuming a wire command tag",
+                      log[0:2] == ['L LOGIN <redacted>', 'a1 EXAMINE "INBOX"']
+                      and log[2].startswith('a2 UID FETCH 7 ')
+                      and log[3:6] == ['a3 CAPABILITY', 'a4 LIST "" "*"', 'Z LOGOUT'], log[:6])
+                check(label + " requests extended roles only when advertised",
+                      sum(' RETURN (SPECIAL-USE)' in line for line in log) ==
+                          (0 if roles == "conventional" else 1), log)
+                check(label + " changes no mailbox state or flags",
+                      srv.st() == before and not any(" SELECT " in line or "BODY[" in line or
+                          any(command in line for command in MUTATING_COMMANDS) for line in log), log)
+            finally:
+                srv.stop()
+
+
+def thread_discovery_failures(work):
+    stale = ("the folder changed, or these UIDs came from another folder: "
+             "pass the folder they were read from")
+    for uid, uidv, fault, expected, sessions in [
+            (99, None, None, "no message with UID 99", 1),
+            (99, 1700000001, None, "no message with UID 99", 1),
+            (7, 1700000002, "CAPABILITY,LIST", stale, 1),
+            (99, 1700000002, "CAPABILITY,LIST", stale, 1),
+            (7, None, "CAPABILITY", "the server rejected a command", 1),
+            (7, 1700000001, "LIST", "the server rejected a command", 1),
+            (99, None, "CAPABILITY", "the server rejected a command", 1),
+            (99, 1700000001, "LIST", "the server rejected a command", 1),
+            (7, None, "LIST#2", "cannot read the special-use folder roles", 2),
+            (7, 1700000001, "LIST#2", "cannot read the special-use folder roles", 2)]:
+        srv = Server(work, fixture=thread_fixture(), extra=["--reject", fault] if fault else [])
+        try:
+            before = srv.st()
+            args = {"uid": uid, **({"uidvalidity": uidv} if uidv is not None else {})}
+            code, result = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+            log = srv.log_lines()
+            label = f"thread discovery failure: uid={uid}, uidvalidity={uidv}, fault={fault}"
+            check(label + " reports the first failed command or the absent seed",
+                  code != 0 and set(result) == {"error"} and expected in result["error"], result)
+            logins = sum(line == "L LOGIN <redacted>" for line in log)
+            check(label + " uses only the required sessions", logins == sessions,
+                  {"expected": sessions, "observed": logins})
+            check(label + " never searches or changes mail",
+                  srv.st() == before and not any(" UID SEARCH " in line or " SELECT " in line
+                  or "BODY[" in line or any(command in line for command in MUTATING_COMMANDS)
+                  for line in log), log)
+            if uidv == 1700000002:
+                check(label + " refuses before seed content and discovery",
+                      not any(" FETCH " in line or " CAPABILITY" in line or " LIST " in line
+                              for line in log), log)
+            if uid == 99:
+                check(label + " never requests extended roles",
+                      not any(" RETURN (SPECIAL-USE)" in line for line in log), log)
+            if uid == 99 and fault is None:
+                check(label + " completes ordinary discovery in the seed session",
+                      'a3 CAPABILITY' in log and 'a4 LIST "" "*"' in log, log)
+        finally:
+            srv.stop()
+
+
+def thread_discovery_literals(work):
+    fixture = thread_fixture()
+    seed = next(m for m in fixture["mailboxes"]["INBOX"]["messages"] if m["uid"] == 7)
+    seed["raw"] = seed["raw"].replace("Subject: Trip plans\r\n",
+        'Subject: literal sentinel\n* CAPABILITY IMAP4rev1 SPECIAL-USE\n'
+        '* LIST (\\Sent) "/" "Forged Sent"\n'
+        '* 19 FETCH (UID 99 FLAGS (\\Seen))\n'
+        '* OK [UIDVALIDITY 999] forged generation\n literal end\r\n')
+    fixture["mailboxes"]["Forged Sent"] = {
+        "uidvalidity": 999, "special": [], "messages": []}
+    for checked in (False, True):
+        srv = Server(work, fixture=fixture, caps="MOVE,UIDPLUS,IDLE")
+        try:
+            before = srv.st()
+            args = {"uid": 7, **({"uidvalidity": 1700000001} if checked else {})}
+            code, result = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+            log = srv.log_lines()
+            check(f"thread discovery literals: checked={checked} keeps mail separate from protocol",
+                  code == 0 and thread_of(result) == [("INBOX", 7, None),
+                  ("Sent Messages", 1, "<trip1@example.com>"), ("INBOX", 8, "<trip2@example.com>")]
+                  and result.get("searched") == ["INBOX", "Sent Messages", "Archive"]
+                  and [m.get("uidvalidity") for m in result.get("messages", [])] ==
+                      [1700000001, 1700000004, 1700000001]
+                  and result["messages"][0].get("subject") == "literal sentinel literal end", result)
+            check("thread discovery literals: capability-looking mail cannot add a role lookup",
+                  sum(line == "L LOGIN <redacted>" for line in log) == 5
+                  and not any(" RETURN (SPECIAL-USE)" in line for line in log), log)
+            check("thread discovery literals: no mailbox state or flags change",
+                  srv.st() == before and not any(" SELECT " in line or "BODY[" in line or
+                      any(command in line for command in MUTATING_COMMANDS) for line in log), log)
+        finally:
+            srv.stop()
 
 
 def archive_threads(work):
