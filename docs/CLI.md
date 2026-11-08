@@ -64,6 +64,11 @@ Argument or input errors print no tool result. Human diagnostics go to stderr.
 `tools` and `diagnose` print JSON; `version` prints human-readable version text.
 `mcp` uses its existing JSON-RPC stream and is not a one-result CLI command.
 
+`setup --provider <name> --email <address>` prints configuration text without
+connecting or applying settings. `setup --check` connects to the configured
+servers and prints private local JSON that can include folder names. Do not
+share that output.
+
 `hook claude-pretooluse` has a separate [client-side prompt contract](CLAUDE-HOOK.md).
 It accepts one event of at most 64 KiB and exits 0 with either an `ask` envelope
 or no output. Invalid input also produces `ask`, not the `call` error statuses.
