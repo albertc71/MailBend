@@ -1,0 +1,156 @@
+name: Helper inventory validation
+on:
+  push:
+    branches: [validation/helper-inventory-current-127-20261108]
+permissions:
+  contents: read
+jobs:
+  helper-inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - name: Check reviewed sources and required tools
+        run: |
+          set -eu
+          command -v cc
+          command -v readelf
+          command -v ar
+          command -v python3
+          printf '%s\n' \
+            '61b2858e8ed49de33d1cb88b2ff356bc7d0c026ed896624c3e3ba3ccb1e189a0  scripts/check-native-hardening.py' \
+            '3ce03a15892834a812be57385c4b70638f75cebd98c4d05dfe63f8170646b344  scripts/install.sh' \
+            '58ba184885e2f41aa927fff9010bf0512c656d725e7ea84d733851d0a0e45604  tests/test-native-hardening.py' | sha256sum --check
+          test "$(git rev-parse HEAD~2)" = 047add09caf8c5f58cc4a106ff5dc4fc0e5114e8
+          test "$(git rev-parse HEAD^:tests/test-native-hardening.py)" = 82100bf5f3e4450e3e918ffbb6f77488bf6075c0
+          test "$(git rev-parse HEAD~1^{tree})" = 4bcf7236c695ce3902b4cb2fb511f1d426d26b9f
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = .github/workflows/validate-helper-inventory.yml
+          git show --no-patch --format=fuller HEAD HEAD^
+      - name: Exercise independent inventory mutations and restoration
+        timeout-minutes: 6
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import subprocess
+          import sys
+          import tempfile
+
+          root = Path.cwd()
+          checker = Path('scripts/check-native-hardening.py')
+          installer = Path('scripts/install.sh')
+          test = Path('tests/test-native-hardening.py')
+          base = '047add09caf8c5f58cc4a106ff5dc4fc0e5114e8'
+          sources = {path: (root / path).read_bytes() for path in (checker, installer, test)}
+          old_tests = subprocess.run(['git', 'show', f'{base}:{test}'], check=True,
+                                     capture_output=True, timeout=10).stdout
+          declaration = b'helpers="mailbend-tls mailbend-attach mailbend-typesafe mailbend-stdio"'
+          inventory = b"HELPERS = ('mailbend-tls', 'mailbend-attach', 'mailbend-typesafe', 'mailbend-stdio')"
+          selected = 'NativeHardeningTests.test_accepts_four_hardened_executables'
+
+          def replace(data, before, after):
+              assert data.count(before) == 1, 'mutation target must occur exactly once'
+              return data.replace(before, after, 1)
+
+          def run(label, work, *, full=False, failure=()):
+              args = [sys.executable, str(work / test), '-v']
+              if not full:
+                  args.append(selected)
+              result = subprocess.run(args, cwd=work, capture_output=True, text=True, timeout=90)
+              output = result.stdout + result.stderr
+              print(f'--- {label}: exit {result.returncode} ---', flush=True)
+              print(output, flush=True)
+              assert f'Ran {16 if full else 1} test{"s" if full else ""} in ' in output, label
+              assert 'skipped' not in output.lower(), label
+              if failure:
+                  assert result.returncode == 1, label
+                  assert output.rstrip().endswith('FAILED (failures=1)'), label
+                  assert output.count('AssertionError:') == 1, label
+                  assert f'FAIL: test_accepts_four_hardened_executables' in output, label
+                  for expected in failure:
+                      assert expected in output, (label, expected)
+              else:
+                  assert result.returncode == 0, label
+                  assert output.rstrip().endswith('OK'), label
+
+          with tempfile.TemporaryDirectory(prefix='mailbend-inventory-', dir=os.environ['RUNNER_TEMP']) as temp:
+              work = Path(temp)
+
+              def reset():
+                  for path, data in sources.items():
+                      (work / path).parent.mkdir(exist_ok=True)
+                      (work / path).write_bytes(data)
+
+              reset()
+              (work / test).write_bytes(old_tests)
+              run('original ELF controls', work, full=True)
+              extra = replace(sources[installer], declaration,
+                              declaration[:-1] + b' mailbend-extra"')
+              (work / installer).write_bytes(extra)
+              run('old test misses installer-only fifth helper', work)
+              (work / test).write_bytes(sources[test])
+              run('new test rejects installer-only fifth helper', work,
+                  failure=('Element counts were not equal:', '/mailbend-extra: OK',
+                           'checker output must cover each installed helper exactly once'))
+              reset()
+              run('candidate ELF controls', work, full=True)
+
+              mutations = [
+                  ('checker omission', checker,
+                   replace(sources[checker], inventory,
+                           b"HELPERS = ('mailbend-tls', 'mailbend-attach', 'mailbend-typesafe')"),
+                   ('Element counts were not equal:', '/mailbend-stdio: OK')),
+                  ('duplicate checker output', checker,
+                   replace(sources[checker], inventory,
+                           inventory[:-1] + b", 'mailbend-tls')"),
+                   ('Element counts were not equal:', '/mailbend-tls: OK')),
+                  ('unexpected checker output', checker,
+                   replace(sources[checker], b'    return int(failed)',
+                           b"    print('unexpected helper output')\n    return int(failed)"),
+                   ('Element counts were not equal:', 'unexpected helper output')),
+                  ('missing declaration', installer,
+                   replace(sources[installer], declaration, b''),
+                   ('installer inventory needs exactly one helpers= declaration',)),
+                  ('multiple declarations', installer,
+                   replace(sources[installer], declaration, declaration + b'\n' + declaration),
+                   ('installer inventory needs exactly one helpers= declaration',)),
+                  ('empty declaration', installer,
+                   replace(sources[installer], declaration, b'helpers=""'),
+                   ('installer inventory must not be empty',)),
+                  ('duplicate declared helper', installer,
+                   replace(sources[installer], declaration, declaration[:-1] + b' mailbend-tls"'),
+                   ('duplicate installer helper name',)),
+                  ('unsupported shell expansion', installer,
+                   replace(sources[installer], declaration, b'helpers="$(printf mailbend-tls)"'),
+                   ('unsupported installer inventory declaration',)),
+                  ('unsupported single quotes', installer,
+                   replace(sources[installer], declaration, b"helpers='mailbend-tls'"),
+                   ('unsupported installer inventory declaration',)),
+                  ('unsupported helper name', installer,
+                   replace(sources[installer], declaration, b'helpers="other-helper"'),
+                   ('unsupported installer helper name',)),
+              ]
+              for label, path, data, expected in mutations:
+                  reset()
+                  (work / path).write_bytes(data)
+                  run(label, work, failure=expected)
+
+              reset()
+              (work / installer).write_bytes(replace(sources[installer], declaration,
+                  b'  helpers=" mailbend-stdio\tmailbend-typesafe  mailbend-attach mailbend-tls "  # inventory'))
+              run('installer order and whitespace control', work)
+              reset()
+              (work / checker).write_bytes(replace(sources[checker], inventory,
+                  b"HELPERS = ('mailbend-stdio', 'mailbend-typesafe', 'mailbend-attach', 'mailbend-tls')"))
+              run('checker output order control', work)
+              reset()
+              run('restored ELF controls', work, full=True)
+              for path, data in sources.items():
+                  assert (work / path).read_bytes() == data, path
+          for path, data in sources.items():
+              assert (root / path).read_bytes() == data, path
+          print('HELPER_INVENTORY_BASELINE_MUTATIONS_RESTORED_OK', flush=True)
+          PY
