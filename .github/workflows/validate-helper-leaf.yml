@@ -1,0 +1,85 @@
+name: Helper leaf validation
+on:
+  push:
+    branches: [validation/helper-leaf-127-20261108]
+permissions:
+  contents: read
+jobs:
+  helper-leaf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - name: Check reviewed sources and required tools
+        run: |
+          set -eu
+          command -v cc
+          command -v readelf
+          command -v ar
+          command -v python3
+          printf '%s\n' \
+            '61b2858e8ed49de33d1cb88b2ff356bc7d0c026ed896624c3e3ba3ccb1e189a0  scripts/check-native-hardening.py' \
+            '2b629aa1f16c87435c26aca60a6c4608bfa3bc90e5be147c51650ca91a60fcc2  tests/test-native-hardening.py' | sha256sum --check
+          test "$(git rev-parse HEAD~2)" = 1970639fcfcc7589bc62e95adf8d49341b378136
+          git show --no-patch --format=fuller HEAD
+          git show --no-patch --format=fuller HEAD^
+          git rev-parse HEAD^{tree} HEAD^:{scripts,tests}
+      - name: Reproduce, fix, remove the leaf check, and restore
+        timeout-minutes: 6
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import subprocess
+          import sys
+          import tempfile
+
+          root = Path.cwd()
+          checker = Path('scripts/check-native-hardening.py')
+          test = Path('tests/test-native-hardening.py')
+          base = '1970639fcfcc7589bc62e95adf8d49341b378136'
+          candidate = (root / checker).read_bytes()
+          tests = (root / test).read_bytes()
+
+          def run(label, directory, count, red=False):
+              result = subprocess.run([sys.executable, str(directory / test), '-v'],
+                                      cwd=directory, capture_output=True, text=True, timeout=60)
+              output = result.stdout + result.stderr
+              print(f'--- {label}: exit {result.returncode} ---', flush=True)
+              print(output, flush=True)
+              assert f'Ran {count} tests in ' in output, label
+              if red:
+                  assert result.returncode == 1, label
+                  assert output.count('AssertionError: 1 != 0 : leaf symlink must be refused') == 5, label
+                  assert output.rstrip().endswith('FAILED (failures=5)'), label
+              else:
+                  assert result.returncode == 0, label
+                  assert output.rstrip().endswith('OK'), label
+
+          with tempfile.TemporaryDirectory(prefix='mailbend-leaf-', dir=os.environ['RUNNER_TEMP']) as work:
+              work = Path(work)
+              for path in (checker, test):
+                  (work / path).parent.mkdir(exist_ok=True)
+                  original = subprocess.run(['git', 'show', f'{base}:{path}'], check=True,
+                                            capture_output=True, timeout=10).stdout
+                  (work / path).write_bytes(original)
+              run('unchanged baseline controls', work, 14)
+              (work / test).write_bytes(tests)
+              run('old checker accepts healthy leaf symlinks', work, 16, red=True)
+              (work / checker).write_bytes(candidate)
+              run('candidate refuses leaf symlinks', work, 16)
+              guard = b'if not stat.S_ISREG(path.lstat().st_mode):'
+              assert candidate.count(guard) == 1
+              (work / checker).write_bytes(candidate.replace(guard, b'if not path.is_file():'))
+              run('removing only leaf admission kills the new tests', work, 16, red=True)
+              (work / checker).write_bytes(candidate)
+              run('restored candidate controls', work, 16)
+              assert (work / checker).read_bytes() == candidate
+              assert (work / test).read_bytes() == tests
+          assert (root / checker).read_bytes() == candidate
+          assert (root / test).read_bytes() == tests
+          print('LEAF_SYMLINK_BASELINE_CANDIDATE_MUTATION_RESTORED_OK', flush=True)
+          PY
