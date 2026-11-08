@@ -634,6 +634,11 @@ def authentication_refusals(work, *, tool_scenarios_only=False):
                 "unknown": "unrecognized reason",
             }
             check(name + ": tool guidance matches the fixed reason", guidance[reason] in error, result)
+            if protocol == "smtp" and changes.get("smtp_auth_refusal", "").startswith("432"):
+                check(name + ": mechanism transition does not imply temporary failure or renewal",
+                      not any(phrase in error.lower() for phrase in (
+                          "refused for now", "wait before another login", "expired",
+                          "renewal", "replace", "change the password", "app-specific password")), result)
             if reason in ("temporary", "limit", "in_use", "greeting_refused"):
                 check(name + ": temporary refusal does not ask for a replacement password",
                       any(word in error.lower() for word in ("later", "retry", "wait", "limit", "busy"))
