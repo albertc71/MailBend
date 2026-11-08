@@ -6,6 +6,7 @@ import Base
 import ../../src/tools.bend as Tools
 import ../../src/policy.bend as Policy
 import ../../src/json.bend as J
+import ../../src/imap.bend as I
 import ../../src/ops.bend as Ops
 import ../../src/jev.bend as Jev
 
@@ -51,12 +52,14 @@ law original_mark_errors_skip:
 def original_mark_errors_skip(msg, j, original):
   ({==}, {==})
 
+# Example: empty JSON only; not a universal theorem about absent fields.
 law original_mark_defaults_off:
   {Tools.original_request(J.obj([]), True{}) == None{} : Maybe<&2, Tools.Original>}
 
 def original_mark_defaults_off():
   {==}
 
+# Example: the displayed draft JSON only; runtime covers the public gate.
 law original_mark_drafts_skip:
   {Tools.original_request(J.obj([
     J.kv("mark_answered", J.bool(True{})), J.kv("as_draft", J.bool(True{}))]), True{}) ==
@@ -65,6 +68,7 @@ law original_mark_drafts_skip:
 def original_mark_drafts_skip():
   {==}
 
+# Example: the displayed preview JSON only; runtime covers the public gate.
 law original_mark_dry_runs_skip:
   {Tools.original_request(J.obj([
     J.kv("mark_answered", J.bool(True{})), J.kv("dry_run", J.bool(True{}))]), True{}) ==
@@ -80,6 +84,7 @@ law original_mark_forwards_skip:
 def original_mark_forwards_skip(args):
   {==}
 
+# Example: Original/7/91 only; the plan laws quantify all identities.
 law original_mark_keeps_identity:
   {Tools.original_request(J.obj([J.kv("folder", J.str("Original")), J.kv("uid", J.num(7)),
     J.kv("uidvalidity", J.num(91)), J.kv("mark_answered", J.bool(True{}))]), True{}) ==
@@ -91,6 +96,7 @@ def original_mark_keeps_identity():
 def reply_evidence(outcome: String) -> Policy.Out:
   Policy.Ok{J.obj([J.kv("sent", J.bool(True{})), J.kv("smtp_outcome", J.str(outcome))])}
 
+# Mixed scope: any original, but only these three concrete evidence objects.
 law original_mark_unaccepted_skips:
   for original: Tools.Original
   ({Tools.original_mark.after(reply_evidence("not_sent"), Some{original}) ==
@@ -103,6 +109,9 @@ law original_mark_unaccepted_skips:
 def original_mark_unaccepted_skips(original):
   ({==}, {==}, {==})
 
+# Mixed scope: all original identities, with the fixed accepted/sent=true evidence.
+# Orchestration shape only: both sides reuse result/fields. Their returned
+# values are independently observed by the fixed result examples below.
 law original_mark_accepted_runs:
   for folder: String
   for uid: U32
@@ -118,6 +127,202 @@ law original_mark_accepted_runs:
 
 def original_mark_accepted_runs(folder, uid, uidv):
   {==}
+
+# Result-evidence observers
+# -------------------------
+# These laws inspect production result interpretation, not native execution.
+# I.has_attr and U32.is_eq are explicit premises, not claims that the server
+# is honest or that flags persist. The concrete witnesses below are separate.
+
+# Mixed scope: every original, with deliberately inconsistent accepted/false
+# evidence. This pins the independent sent conjunct without sending mail.
+law original_mark_sent_false_skips:
+  for original: Tools.Original
+  {Tools.original_mark.after(Policy.Ok{J.obj([
+    J.kv("sent", J.bool(False{})), J.kv("smtp_outcome", J.str("accepted"))])},
+    Some{original}) == Tools.pure_out(Policy.Ok{J.obj([
+      J.kv("sent", J.bool(False{})), J.kv("smtp_outcome", J.str("accepted"))])}) : IO(Policy.Out)}
+
+def original_mark_sent_false_skips(original):
+  {==}
+
+# Keep literal witnesses first so mutants fail on results, not rewrite motives.
+# Concrete positive and negative witnesses, not universal parser proofs.
+# The Answered witness rules out a classifier that always says unverified.
+law original_mark_flag_examples:
+  ({Tools.original_mark.flags(Some{[]}) ==
+    Tools.OriginalNotMarked{"answered_absent"} : Tools.OriginalMark} &
+   {Tools.original_mark.flags(Some{["\\Answered"]}) ==
+    Tools.OriginalMarked{} : Tools.OriginalMark} &
+   {Tools.original_mark.identity(Some{92}, 91) == "identity_changed" : String})
+
+def original_mark_flag_examples():
+  ({==}, {==}, {==})
+
+# Universal conditional promise: a valid observed list lacking Answered
+# cannot be reported marked, regardless of any other flags or list length.
+law original_mark_absent_flags_not_marked:
+  for flags: List<&2, String>
+  for absent: {I.has_attr(flags, "\\Answered") == False{} : Bool}
+  {Tools.original_mark.flags(Some{flags}) ==
+    Tools.OriginalNotMarked{"answered_absent"} : Tools.OriginalMark}
+
+def original_mark_absent_flags_not_marked(flags, absent):
+  %Equal.sym(Bool, I.has_attr(flags, "\\Answered"), False{}, absent) :
+    {Bool.pick(Tools.OriginalMark, _, Tools.OriginalMarked{},
+      Tools.OriginalNotMarked{"answered_absent"}) ==
+      Tools.OriginalNotMarked{"answered_absent"} : Tools.OriginalMark}
+  {==}
+
+law original_mark_present_flags_marked:
+  for flags: List<&2, String>
+  for present: {I.has_attr(flags, "\\Answered") == True{} : Bool}
+  {Tools.original_mark.flags(Some{flags}) == Tools.OriginalMarked{} : Tools.OriginalMark}
+
+def original_mark_present_flags_marked(flags, present):
+  %Equal.sym(Bool, I.has_attr(flags, "\\Answered"), True{}, present) :
+    {Bool.pick(Tools.OriginalMark, _, Tools.OriginalMarked{},
+      Tools.OriginalNotMarked{"answered_absent"}) == Tools.OriginalMarked{} : Tools.OriginalMark}
+  {==}
+
+# Missing evidence is not a valid empty list. This is one concrete constructor.
+law original_mark_missing_flags_unverified:
+  {Tools.original_mark.flags(None{}) ==
+    Tools.OriginalUnverified{"original_not_observed"} : Tools.OriginalMark}
+
+def original_mark_missing_flags_unverified():
+  {==}
+
+law original_mark_changed_identity_refuses:
+  for now: U32
+  for want: U32
+  for changed: {U32.is_eq(now, want) == False{} : Bool}
+  {Tools.original_mark.identity(Some{now}, want) == "identity_changed" : String}
+
+def original_mark_changed_identity_refuses(now, want, changed):
+  %Equal.sym(Bool, U32.is_eq(now, want), False{}, changed) :
+    {Bool.pick(String, _, "", "identity_changed") == "identity_changed" : String}
+  {==}
+
+law original_mark_incomplete_readback_unverified:
+  for lines: List<&2, I.RLine>
+  for uid: U32
+  {Tools.original_mark.readback(False{}, lines, uid) ==
+    Tools.OriginalUnverified{"mark_unverified"} : Tools.OriginalMark}
+
+def original_mark_incomplete_readback_unverified(lines, uid):
+  {==}
+
+# Nonempty typed/framed refusal evidence always wins over any flag transcript.
+law original_mark_refused_transcript_not_marked:
+  for first: Char
+  for rest: String
+  for lines: List<&2, I.RLine>
+  for uid: U32
+  for uidv: U32
+  {Tools.original_mark.transcript(SCon{first, rest}, lines, uid, uidv) ==
+    Tools.OriginalNotMarked{SCon{first, rest}} : Tools.OriginalMark}
+
+def original_mark_refused_transcript_not_marked(first, rest, lines, uid, uidv):
+  {==}
+
+# Universal at the parsed-evidence boundary. Parsing and the truth of a
+# provider's replies remain distinct runtime/native concerns.
+law original_mark_incomplete_transcript_unverified:
+  for lines: List<&2, I.RLine>
+  for uid: U32
+  for uidv: U32
+  for incomplete: {(Tools.ok_at(lines, 1) && Tools.ok_at(lines, 2) &&
+    Tools.ok_at(lines, 3) && Tools.ok_at(lines, 4) &&
+    Tools.uidv_is(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"), uidv)) == False{} : Bool}
+  {Tools.original_mark.transcript("", lines, uid, uidv) ==
+    Tools.OriginalUnverified{"mark_unverified"} : Tools.OriginalMark}
+
+def original_mark_incomplete_transcript_unverified(lines, uid, uidv, incomplete):
+  %Equal.sym(Bool, Tools.ok_at(lines, 1) && Tools.ok_at(lines, 2) &&
+    Tools.ok_at(lines, 3) && Tools.ok_at(lines, 4) &&
+    Tools.uidv_is(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"), uidv), False{}, incomplete) :
+    {Tools.original_mark.readback(_, lines, uid) ==
+      Tools.OriginalUnverified{"mark_unverified"} : Tools.OriginalMark}
+  {==}
+
+# An accepted, exact-command and exact-UID transcript is a non-vacuous witness.
+law original_mark_complete_transcript_example:
+  {Tools.original_mark.transcript("", I.frame(
+    "* OK [UIDVALIDITY 91] stable\r\na1 OK selected\r\n" ++
+    "* SEARCH 7\r\na2 OK searched\r\na3 OK stored\r\n" ++
+    "* 1 FETCH (UID 7 FLAGS (\\Answered))\r\na4 OK fetched\r\n"), 7, 91) ==
+    Tools.OriginalMarked{} : Tools.OriginalMark}
+
+def original_mark_complete_transcript_example():
+  {==}
+
+# Fixed wire examples connect UIDVALIDITY comparison to the actual refusal
+# caller. They are not universal parsing or refusal-precedence theorems.
+def reply_mark_good_transcript() -> String:
+  "* OK [UIDVALIDITY 91] stable\r\na1 OK selected\r\n" ++
+  "* SEARCH 7\r\na2 OK searched\r\na3 OK stored\r\n" ++
+  "* 1 FETCH (UID 7 FLAGS (\\Answered))\r\na4 OK fetched\r\n"
+
+def reply_mark_changed_transcript() -> String:
+  "* OK [UIDVALIDITY 92] changed\r\na1 OK selected\r\n" ++
+  "* SEARCH 7\r\na2 OK searched\r\na3 OK stored\r\n" ++
+  "* 1 FETCH (UID 7 FLAGS (\\Answered))\r\na4 OK fetched\r\n"
+
+law original_mark_refusal_identity_examples:
+  ({Tools.original_mark.refusal(I.frame(reply_mark_good_transcript()), 91) == "" : String} &
+   {Tools.original_mark.refusal(I.frame(reply_mark_changed_transcript()), 91) ==
+     "identity_changed" : String})
+
+def original_mark_refusal_identity_examples():
+  ({==}, {==})
+
+# A fixed accepted reply includes a failed Sent-copy result. Expectations
+# below are literal output objects, never derived by the helpers under test.
+def reply_mark_accepted_with_failed_copy() -> Policy.Out:
+  Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+    J.kv("smtp_outcome", J.str("accepted")),
+    J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused"))])}
+
+# Four concrete returned-output examples cover the result wrapper, refusal
+# wiring and all three original_marked encodings together. This is not a
+# theorem for arbitrary JSON/transcripts or native/storage/SMTP execution.
+law original_mark_result_fields_examples:
+  ({Tools.with_fields(reply_mark_accepted_with_failed_copy(),
+      Tools.original_mark.fields(Tools.original_mark.result(
+        Policy.ProcOk{0, reply_mark_good_transcript(), ""}, Tools.Original{"Original", 7, 91}))) ==
+    Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+      J.kv("smtp_outcome", J.str("accepted")),
+      J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused")),
+      J.kv("original_marked", J.bool(True{})),
+      J.kv("original_mark_reason", J.str("answered_observed"))])} : Policy.Out} &
+   {Tools.with_fields(reply_mark_accepted_with_failed_copy(),
+      Tools.original_mark.fields(Tools.original_mark.result(
+        Policy.ProcOk{0, reply_mark_changed_transcript(), ""}, Tools.Original{"Original", 7, 91}))) ==
+    Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+      J.kv("smtp_outcome", J.str("accepted")),
+      J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused")),
+      J.kv("original_marked", J.bool(False{})),
+      J.kv("original_mark_reason", J.str("identity_changed"))])} : Policy.Out} &
+   {Tools.with_fields(reply_mark_accepted_with_failed_copy(),
+      Tools.original_mark.fields(Tools.original_mark.result(
+        Policy.ProcRefused{"not started"}, Tools.Original{"Original", 7, 91}))) ==
+    Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+      J.kv("smtp_outcome", J.str("accepted")),
+      J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused")),
+      J.kv("original_marked", J.bool(False{})),
+      J.kv("original_mark_reason", J.str("helper_not_started"))])} : Policy.Out} &
+   {Tools.with_fields(reply_mark_accepted_with_failed_copy(),
+      Tools.original_mark.fields(Tools.original_mark.result(
+        Policy.ProcFail{1, "uncertain"}, Tools.Original{"Original", 7, 91}))) ==
+    Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+      J.kv("smtp_outcome", J.str("accepted")),
+      J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused")),
+      J.kv("original_marked", J.str("unverified")),
+      J.kv("original_mark_reason", J.str("mark_unverified"))])} : Policy.Out})
+
+def original_mark_result_fields_examples():
+  ({==}, {==}, {==}, {==})
 
 # Unknown time refuses composition regardless of either random result.
 law unknown_clock_refuses_stamp:
