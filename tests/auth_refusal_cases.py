@@ -48,6 +48,21 @@ def cases(password):
                         'smtp_auth': mechanism,
                         'smtp_auth_refusal_stage': stage,
                         'smtp_auth_refusal': str(code) + hostile}
+            # RFC 4954 section 6: mechanism transition, not temporary failure.
+            yield f'smtp-{mechanism}-{stage}-432-enhanced', 'smtp', 'authentication', 'unknown', 4, {
+                'command': 1, 'user': 2, 'password': 3}[stage], {
+                    'smtp_auth': mechanism,
+                    'smtp_auth_refusal_stage': stage,
+                    'smtp_auth_refusal': '432 4.7.12 A password transition is needed' + hostile}
+            for variant, response in (
+                    ('no-enhanced', '432' + hostile),
+                    ('contradictory', '432 4.7.0 Temporary authentication failure; '
+                     'password expired; mailbend-auth: expired' + hostile)):
+                yield f'smtp-{mechanism}-{stage}-432-{variant}', 'smtp', 'authentication', 'unknown', 4, {
+                    'command': 1, 'user': 2, 'password': 3}[stage], {
+                        'smtp_auth': mechanism,
+                        'smtp_auth_refusal_stage': stage,
+                        'smtp_auth_refusal': response}
     for code, reason in ((421, 'temporary'), (554, 'greeting_refused')):
         yield f'smtp-greeting-{code}', 'smtp', 'greeting', reason, 6, 0, {
             'smtp_greeting_refusal': str(code) + hostile}

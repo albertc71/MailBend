@@ -30,11 +30,16 @@ The following rows cover every class in
 A helper exit code is not the CLI's exit code and is not proof that a write
 had no effect. Apply the SMTP rules below to every send.
 
+For helper exits 4 and 6, a valid fixed authentication token takes precedence
+over the generic exit-code guidance. Without a valid token, the generic
+fallback remains. Conflicting valid tokens produce `unknown` guidance.
+Other exit classes do not use these tokens.
+
 | Symptom or helper class | Likely cause or evidence | Next safe action |
 | --- | --- | --- |
 | `configuration error` (helper exit 2) | An invalid host, port, TLS mode, switch, helper argument, or proxy setting. | Fix the documented setting. Run local diagnostics again. Do not disable TLS verification. |
 | `connection or TLS verification failed` (exit 3) | DNS, TCP connectivity, timeout, certificate trust, hostname, or clock failure. | Check the failed diagnostic stage. Check host time and certificate validity. Match the SMTP port to STARTTLS or implicit TLS. Resolve the network problem without replacing trust with an unverified certificate. |
-| Authentication refusal (exit 4) | Fixed evidence distinguishes `temporary`, `limit`, `in_use`, `expired`, `contact_admin`, `credentials` and `unknown`. A bare IMAP LOGIN `NO` still gets credential guidance for compatibility; it is not proof that a password is wrong. | Wait before another login for temporary or limit/in-use refusals; do not change the password. Follow provider renewal or administrator guidance for expired/contact-admin refusals. For credentials or unknown, check provider status and password-login support before changing settings. Never send a password in a report. |
+| Authentication or greeting refusal with fixed evidence (helper exit 4 or 6) | Fixed evidence distinguishes `temporary`, `limit`, `in_use`, `expired`, `contact_admin`, `credentials`, `greeting_refused` and `unknown`. A bare IMAP LOGIN `NO` still gets credential guidance for compatibility; it is not proof that a password is wrong. | Wait before another login for temporary or limit/in-use refusals; do not change the password. Follow provider renewal or administrator guidance for expired/contact-admin refusals. For `greeting_refused`, wait before another login without changing the password. For credentials or unknown, check provider status and password-login support before changing settings. Never send a password in a report. |
 | `the TLS helper was killed by a signal` (exit above 128) | The process was interrupted, killed, or stopped by resource limits. | Check host resource and process state locally. Inspect any partial result. If a send has no reliable outcome, follow `unknown` below. |
 | `mail server error` (other helper failures) | The server refused a command or returned an unexpected reply. Native exit 6 also covers protocol, timeout, or limit failures. A command refusal can also appear as `the server rejected a command`. | Inspect the operation and server status locally. Correct the specific problem, then inspect state before another write. Do not share the raw reply. |
 | `cannot run the TLS helper` | Missing, non-executable, or invalid helper path, or a process-start failure. | Check the configured absolute helper path. Rebuild a matching core and helper set with `scripts/install.sh`. Distinguish a confirmed failure to start from a process failure after it may have started. |
@@ -45,6 +50,16 @@ had no effect. Apply the SMTP rules below to every send.
 | Server stopped mid-call | Client shutdown, restart, signal, crash, or resource exhaustion. | Restart only after identifying the cause. A new process does not recover the old call's outcome. Reconcile writes before resuming scheduled work. |
 | DNS or resolver failure | System resolver failure, blocked DoH, proxy settings, or blocked raw mail ports. | Follow [Resolver and network catches](CLOUD_AGENT.md#resolver-and-network-catches). DoH does not open blocked TCP ports. Use only approved network routes. |
 | Daily send limit or counter error | The local reservation cap was reached, or the state directory cannot be read, locked, or written. | Check the shared state path and permissions. Keep existing reservations. Do not delete the counter or raise the cap to hide a failure. Wait for the next UTC day when the cap is reached. |
+
+SMTP AUTH 432 is reported as `unknown`, not `temporary` or `expired`.
+[RFC 4954 section 6](https://www.rfc-editor.org/rfc/rfc4954.html#section-6)
+defines it as a transition to the selected authentication mechanism. It is not
+proof that the password needs replacement. Check the provider's supported
+password-login mechanisms and transition instructions. MailBend does not retry
+AUTH, switch mechanisms after refusal, or perform the transition automatically.
+SMTP AUTH 454 remains `temporary`: wait before another login and do not replace
+the password for that refusal. These classifications use the primary numeric
+reply code, not enhanced status codes or server prose.
 
 For unresolved folder roles, inspect `mail_probe` only on the local machine.
 It can show account-specific folder names. Use an existing selectable

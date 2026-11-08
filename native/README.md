@@ -347,8 +347,12 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   the server's prose. `AUTHENTICATIONFAILED` and a bare LOGIN `NO` mean
   `credentials`; `UNAVAILABLE`, `LIMIT`, `INUSE`, `EXPIRED` and `CONTACTADMIN`
   have their corresponding fixed tokens. Unknown codes mean `unknown`.
-  SMTP AUTH 4xx replies mean `temporary`, 535 means `credentials`, and other
-  rejections mean `unknown`, including either AUTH LOGIN challenge. A 4xx
+  SMTP AUTH 432 means `unknown`: RFC 4954 defines a transition to the selected
+  authentication mechanism, not password expiry or a temporary server failure.
+  Other AUTH 4xx replies mean `temporary`, 535 means `credentials`, and other
+  rejections mean `unknown`, including either AUTH LOGIN challenge. Only the
+  primary numeric reply code determines the token, not enhanced status codes
+  or server prose. A 4xx
   SMTP greeting is temporary; other refused greetings use `greeting_refused`.
   Auth exchanges and refused greetings are not copied to the transcript.
   Diagnostic modes print the failed stage and that same fixed token instead
