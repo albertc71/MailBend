@@ -97,13 +97,43 @@ class InstallTests(unittest.TestCase):
         for name in TARGETS:
             self.assertEqual((bin_dir / name).read_bytes(), old[name], name)
 
-    def test_missing_clang_warns_when_existing_core_is_kept(self):
-        proc, before, after = self.install(old_core=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(after, before)
-        self.assertIn(b"keeping existing bin/mailbend-core", proc.stderr)
-        self.assertIn(b"may be out of date", proc.stderr)
-        self.assertNotIn(b"will run main.bend through bend", proc.stdout)
+    def test_missing_clang_refuses_existing_core_without_changing_any_binary(self):
+        old = {
+            "mailbend-tls": b"#!/bin/sh\necho OLD_TLS\n",
+            "mailbend-attach": b"#!/bin/sh\necho OLD_ATTACH\n",
+            "mailbend-typesafe": b"#!/bin/sh\necho OLD_TYPESAFE\n",
+            "mailbend-stdio": b"#!/bin/sh\necho OLD_STDIO\n",
+            "mailbend-core": b"#!/bin/sh\necho OLD_CORE\n",
+        }
+        outputs = {
+            "mailbend-tls": b"OLD_TLS\n",
+            "mailbend-attach": b"OLD_ATTACH\n",
+            "mailbend-typesafe": b"OLD_TYPESAFE\n",
+            "mailbend-stdio": b"OLD_STDIO\n",
+            "mailbend-core": b"OLD_CORE\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.prepare(root)
+            for name, data in old.items():
+                path = root / "bin" / name
+                path.write_bytes(data)
+                path.chmod(0o755)
+            proc = self.run_install(root)
+            with self.subTest(observation="refusal"):
+                self.assertNotEqual(proc.returncode, 0, "existing compiled installation must be refused")
+                self.assertIn(b"clang", proc.stderr)
+                self.assertIn(b"Install clang and rerun", proc.stderr)
+            self.assertEqual(sorted(p.name for p in (root / "bin").iterdir()), sorted(TARGETS))
+            for name in TARGETS:
+                with self.subTest(binary=name, observation="bytes"):
+                    self.assertEqual((root / "bin" / name).read_bytes(), old[name],
+                                     "previous executable bytes must remain unchanged")
+                with self.subTest(binary=name, observation="behavior"):
+                    result = subprocess.run([str(root / "bin" / name)], env=self.env(root),
+                                            capture_output=True, timeout=2)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (0, outputs[name], b""), "previous behavior must remain unchanged")
 
     def test_missing_clang_without_core_uses_source_fallback(self):
         proc, _, after = self.install()
