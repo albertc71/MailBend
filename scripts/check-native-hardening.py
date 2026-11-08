@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 
@@ -14,7 +15,7 @@ LOADERS = {'Advanced Micro Devices X86-64': '/lib64/ld-linux-x86-64.so.2',
 
 def violations(path):
     try:
-        if not path.is_file():
+        if not stat.S_ISREG(path.lstat().st_mode):
             return ['expected a regular ELF file']
         with path.open('rb') as binary:
             identity = binary.read(16)
