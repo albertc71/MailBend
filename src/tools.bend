@@ -6180,7 +6180,7 @@ def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(P
 # recipients, the message, the allowlist and daily limit it goes under,
 # what its result reports, and its dry run.
 type Ready is Data:
-  Ready{
+  SendReady{
     from: String,
     rcpts: List<&2, String>,
     msg: String,
@@ -6218,10 +6218,10 @@ def send_allowed(
 ) -> IO(Policy.Out):
   match envelope:
     case None{}:
-      Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
+      SendReady{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       pure_out(send_not_attempted(send_refused(blocked, allow, rcpts, report)))
     case Some{e}:
-      Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
+      SendReady{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       do IO<Policy.Out>:
         o : Policy.Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
         return with_fields_first(o, report)
@@ -6235,7 +6235,7 @@ def send_checked(
   report: List<&2, J.Json>,
   +r: Ready
 ) -> IO(Policy.Out):
-  Ready{from, rcpts, msg, allow, l, dr, s, y, p} = r
+  SendReady{from, rcpts, msg, allow, l, dr, s, y, p} = r
   send_allowed(Jev.outbound_checked(scan, allow, g, rcpts, from, msg),
     Jev.blocked_reason(scan, g), report, r)
 
@@ -6338,7 +6338,7 @@ def send_jev.put(
 # With Jev on, a send passes the allowlist, then the local secret scan of
 # its content, then Jev's veto questions, before its envelope is built.
 def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Policy.Out):
-  Ready{f, rcpts, m, allow, l, dr, s, y, p} = r
+  SendReady{f, rcpts, m, allow, l, dr, s, y, p} = r
   send_jev.put(S.refused(allow, rcpts), c, w, from, r)
 
 def send_local(on: Bool, w: Want, from: String, r: Ready) -> IO(Policy.Out):
@@ -6368,7 +6368,7 @@ def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Policy.Ou
       +rcpts = specs(all_rcpts(w))
       +sender = M.addr_spec(from)
       +msg = M.compose(d, boundary_of(st))
-      send_gated(want_jev(w), scan, w, from, Ready{sender, rcpts, msg, allow, limit, dir,
+      send_gated(want_jev(w), scan, w, from, SendReady{sender, rcpts, msg, allow, limit, dir,
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
           draft_of(w, from, st, True{}), boundary_of(st)},
         is_dry(w), SmtpPreview{sender, rcpts, msg, save}})

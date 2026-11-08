@@ -72,8 +72,12 @@ fn login(conn: &mut Connection, creds: &Credentials) -> Result<(), Exit> {
     conn.write(&login_command(creds))?;
     let reply = conn.quietly(|conn| wait(conn, LOGIN_TAG, false, None))?;
     match reply.answer {
-        Answer::Tagged(Status::Ok) => Ok(()),
-        Answer::Closed => Err(Exit::protocol("server closed the connection during login")),
+        Answer::Tagged(Status::Ok) => conn.finish_login_continuation(),
+        Answer::Closed => {
+            let mut failure = Exit::protocol("server closed the connection during login");
+            failure.auth_reason = reply.auth_reason;
+            Err(failure)
+        }
         Answer::Tagged(_) | Answer::Continue => Err(Exit::auth("IMAP login rejected")
             .with_auth_reason(reply.auth_reason.unwrap_or(AuthReason::Unknown))),
     }
@@ -164,12 +168,13 @@ fn wait(
     expect: Option<&Expect<'_>>,
 ) -> Result<Reply, Exit> {
     let mut expectation_met = false;
+    let mut bye_reason = None;
     loop {
         let Some(line) = conn.read_line()? else {
             return Ok(Reply {
                 answer: Answer::Closed,
                 expectation_met,
-                auth_reason: None,
+                auth_reason: bye_reason,
             });
         };
         if is_continuation(&line) {
@@ -182,11 +187,13 @@ fn wait(
                 auth_reason: None,
             });
         }
-        // A later command's BYE is not evidence of an authentication failure.
-        // Leave command transcripts and partial-change interpretation unchanged.
+        // A tagged LOGIN answer takes precedence. BYE is evidence only on EOF.
         if tag == LOGIN_TAG && is_bye(&line) {
-            return Err(Exit::protocol("server closed the connection")
-                .with_auth_reason(refusal_reason(&line, AuthReason::Temporary)));
+            if bye_reason.is_none() {
+                conn.begin_login_continuation()?;
+                bye_reason = Some(refusal_reason(&line, AuthReason::Unknown));
+            }
+            continue;
         }
         conn.emit(&line)?;
         if is_untagged(&line) {
@@ -263,7 +270,14 @@ mod tests {
             pass: Zeroizing::new(b"fixture-password".to_vec()),
             _drop_witness: None,
         };
-        let mut conn = Connection::new(TcpStream::connect(addr).expect("connect"));
+        let socket = TcpStream::connect(addr).expect("connect");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("read timeout");
+        socket
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("write timeout");
+        let mut conn = Connection::new(socket);
         let result = login(&mut conn, &creds);
         drop(conn);
         server.join().expect("server");
@@ -290,8 +304,65 @@ mod tests {
     fn a_bye_during_login_is_fixed_evidence_not_a_credential_failure() {
         assert_eq!(
             login_against(b"* BYE [UNAVAILABLE] fixture-password\r\n"),
-            Err(Exit::protocol("server closed the connection")
+            Err(Exit::protocol("server closed the connection during login")
                 .with_auth_reason(AuthReason::Temporary))
+        );
+    }
+
+    #[test]
+    fn a_tagged_login_answer_takes_precedence_over_an_untagged_bye() {
+        for (answer, reason) in [
+            (
+                b"* BYE fixture-password\r\nL NO [AUTHENTICATIONFAILED] invalid\r\n".as_slice(),
+                AuthReason::Credentials,
+            ),
+            (
+                b"* BYE [UNAVAILABLE] fixture-password\r\nL NO invalid\r\n",
+                AuthReason::Credentials,
+            ),
+            (
+                b"* BYE [AUTHENTICATIONFAILED] fixture-password\r\nL NO [UNAVAILABLE] later\r\n",
+                AuthReason::Temporary,
+            ),
+            (
+                b"* BYE [UNAVAILABLE] fixture-password\r\nL BAD invalid\r\n",
+                AuthReason::Unknown,
+            ),
+        ] {
+            assert_eq!(
+                login_against(answer),
+                Err(Exit::auth("IMAP login rejected").with_auth_reason(reason))
+            );
+        }
+        assert_eq!(
+            login_against(b"* BYE [UNAVAILABLE] fixture-password\r\nL OK completed\r\n"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_first_login_bye_is_retained_until_a_tagged_answer_or_eof() {
+        assert_eq!(
+            login_against(
+                b"* BYE [UNAVAILABLE] first\r\n* OK unrelated\r\n* BYE [LIMIT] second\r\n"
+            ),
+            Err(Exit::protocol("server closed the connection during login")
+                .with_auth_reason(AuthReason::Temporary))
+        );
+        assert_eq!(
+            login_against(
+                b"* BYE [UNAVAILABLE] first\r\n* BYE [LIMIT] second\r\nL NO rejected\r\n"
+            ),
+            Err(Exit::auth("IMAP login rejected").with_auth_reason(AuthReason::Credentials))
+        );
+    }
+
+    #[test]
+    fn a_codeless_login_bye_does_not_claim_a_temporary_refusal() {
+        assert_eq!(
+            login_against(b"* BYE fixture-password mailbend-auth: temporary\r\n"),
+            Err(Exit::protocol("server closed the connection during login")
+                .with_auth_reason(AuthReason::Unknown))
         );
     }
 

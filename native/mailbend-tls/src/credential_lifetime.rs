@@ -246,3 +246,134 @@ fn smtp_drops_credentials_before_commands() {
     session(&certs, Authentication::SmtpLogin, false);
     session(&certs, Authentication::SmtpPlain, true);
 }
+
+#[test]
+fn buffered_verified_tls_lines_and_literals_respect_login_deadlines() {
+    let certs = Certificates::new("buffered-login-deadline");
+    for literal in [false, true] {
+        let config = certs.server();
+        let (client_config, _) =
+            mailbend_net::tls::client_config(Some(&certs.0.join("ca.pem"))).expect("trust");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().expect("accept");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            socket
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let tls = ServerConnection::new(config).expect("server TLS");
+            let mut peer = BufReader::new(StreamOwned::new(tls, socket));
+            send(&mut peer, b"first\r\nsecond\r\n");
+        });
+        let socket = TcpStream::connect(address).expect("connect");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        socket
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let observer = socket.try_clone().expect("socket options");
+        let mut conn = Connection::new(socket);
+        conn.start_tls(&client_config, "localhost")
+            .expect("verified TLS");
+        observer
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .expect("timeout");
+        observer
+            .set_write_timeout(Some(Duration::from_millis(300)))
+            .expect("timeout");
+        assert_eq!(
+            conn.read_line().expect("first line"),
+            Some(b"first\r\n".to_vec())
+        );
+        conn.begin_login_continuation().expect("bounded");
+        std::thread::sleep(Duration::from_millis(350));
+        let result = if literal {
+            conn.pass_bytes(6)
+        } else {
+            conn.read_line().map(|_| ())
+        };
+        assert_eq!(
+            result,
+            Err(crate::Exit::protocol("read from server timed out"))
+        );
+        drop(conn);
+        server.join().expect("server");
+    }
+}
+
+#[test]
+fn verified_tls_login_restores_the_socket_and_both_original_timeouts() {
+    let certs = Certificates::new("restored-login-deadline");
+    let config = certs.server();
+    let (client_config, _) =
+        mailbend_net::tls::client_config(Some(&certs.0.join("ca.pem"))).expect("trust");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    let server = std::thread::spawn(move || {
+        let (socket, _) = listener.accept().expect("accept");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        socket
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let tls = ServerConnection::new(config).expect("server TLS");
+        let mut peer = BufReader::new(StreamOwned::new(tls, socket));
+        send(&mut peer, b"first\r\n");
+        assert_eq!(line(&mut peer), "begin\r\n");
+        std::thread::sleep(Duration::from_millis(200));
+        send(&mut peer, b"ready\r\n");
+        assert_eq!(line(&mut peer), "shrink\r\n");
+        assert_eq!(line(&mut peer), "after\r\n");
+        std::thread::sleep(Duration::from_millis(200));
+        send(&mut peer, b"restored\r\n");
+    });
+    let socket = TcpStream::connect(address).expect("connect");
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("timeout");
+    socket
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .expect("timeout");
+    let observer = socket.try_clone().expect("socket options");
+    let mut conn = Connection::new(socket);
+    conn.start_tls(&client_config, "localhost")
+        .expect("verified TLS");
+    assert_eq!(
+        conn.read_line().expect("first line"),
+        Some(b"first\r\n".to_vec())
+    );
+    observer
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .expect("read timeout");
+    observer
+        .set_write_timeout(Some(Duration::from_millis(700)))
+        .expect("write timeout");
+    conn.begin_login_continuation().expect("bounded");
+    conn.write(b"begin\r\n").expect("begin");
+    assert_eq!(
+        conn.read_line().expect("ready"),
+        Some(b"ready\r\n".to_vec())
+    );
+    conn.write(b"shrink\r\n").expect("bounded write");
+    conn.finish_login_continuation().expect("restored");
+    assert_eq!(
+        observer.read_timeout().expect("read timeout"),
+        Some(Duration::from_millis(300))
+    );
+    assert_eq!(
+        observer.write_timeout().expect("write timeout"),
+        Some(Duration::from_millis(700))
+    );
+    conn.write(b"after\r\n").expect("ordinary write");
+    assert_eq!(
+        conn.read_line().expect("restored read"),
+        Some(b"restored\r\n".to_vec())
+    );
+    drop(conn);
+    server.join().expect("server");
+}

@@ -541,16 +541,19 @@ case17() {
 # pass them on: authentication replies never reach the transcript.
 # =========================================================================
 case18() {
+  local leak_status
   start_server case18 --echo-login || { fail 18 "server did not start"; return; }
   ok=1; detail=""
   call_imap $'a1 NOOP\r\n'
-  if [ "$CODE" -ne 0 ] || grep -aq "LOGIN completed" "$OUT"; then
-    ok=0; detail="imap exit=$CODE"
+  leak_status=$?
+  if [ "$leak_status" -ne 0 ] || [ "$CODE" -ne 0 ] || grep -aq "LOGIN completed" "$OUT"; then
+    ok=0; detail="imap exit=$CODE leak_check=$leak_status"
   fi
   body=$'Subject: echo\r\n\r\nhi\r\n'
   call_smtp $'MAIL FROM:<'"$FIXTURE_USER"$'>\r\nRCPT TO:<friend@example.com>\r\nDATA\r\n'"$body"$'.\r\n'
-  if [ "$CODE" -ne 0 ] || grep -aq "^235" "$OUT"; then
-    ok=0; detail="$detail smtp exit=$CODE"
+  leak_status=$?
+  if [ "$leak_status" -ne 0 ] || [ "$CODE" -ne 0 ] || grep -aq "^235" "$OUT"; then
+    ok=0; detail="$detail smtp exit=$CODE leak_check=$leak_status"
   fi
   if [ "$ok" -eq 1 ]; then
     pass "18 echoed credentials never reach the transcript"
@@ -558,6 +561,69 @@ case18() {
     fail "18 echoed credentials never reach the transcript" "$detail"
   fi
   stop_server
+}
+
+
+# Exercise case18's diagnostic with synthetic helper output, without sockets.
+# Subshells keep the fake lifecycle and intentional leaks out of other cases.
+case18_leak_attribution() {
+  local HELPER="$WORK/case18-synthetic-helper" PASSWORD="case18-synthetic-password"
+  local FIXTURE_USER="case18@example.com" protocol form stream expected
+  local diagnostic="$WORK/case18-diagnostic.txt" result
+  cat >"$HELPER" <<'PY'
+#!/usr/bin/env python3
+import base64
+import os
+import sys
+
+password = os.environb[b'MAILBEND_APP_PASSWORD']
+login = os.environb[b'MAILBEND_EMAIL']
+form = os.environ['CASE18_FORM']
+output = {'raw': password, 'login': base64.b64encode(password),
+          'plain': base64.b64encode(b'\0' + login + b'\0' + password),
+          'clean': b'ordinary reply'}[form]
+if sys.argv[1] != os.environ['CASE18_PROTOCOL']:
+    output = b'ordinary reply'
+stream = sys.stderr.buffer if os.environ['CASE18_STREAM'] == 'stderr' else sys.stdout.buffer
+stream.write(output + b'\n')
+PY
+  chmod +x "$HELPER"
+  for protocol in imap smtp; do
+    for form in clean raw login plain; do
+      for stream in stdout stderr; do
+        expected=1
+        [ "$form" = clean ] && expected=0
+        (
+          start_server() { IMAP_PORT=1; SMTP_PORT=1; }
+          stop_server() { :; }
+          PASS_COUNT=0; FAIL_COUNT=0; GLOBAL_LEAK=0
+          export CASE18_PROTOCOL="$protocol" CASE18_FORM="$form" CASE18_STREAM="$stream"
+          case18
+          [ "$FAIL_COUNT" -eq "$expected" ] &&
+            [ "$PASS_COUNT" -eq "$((1 - expected))" ] &&
+            [ "$GLOBAL_LEAK" -eq "$expected" ]
+        ) >"$diagnostic" 2>&1
+        result=$?
+        if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$expected" <<'PY'
+import base64
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1]).read_bytes()
+password = b'case18-synthetic-password'
+secrets = [password, base64.b64encode(password),
+           base64.b64encode(b'\0case18@example.com\0' + password)]
+prefix = b'FAIL 18 ' if sys.argv[2] == '1' else b'PASS 18 '
+sys.exit(0 if output.startswith(prefix) and not any(s in output for s in secrets) else 1)
+PY
+        then
+          pass "18 attribution $protocol $form $stream"
+        else
+          fail "18 attribution $protocol $form $stream" "wrong verdict, aggregate, or unsafe diagnostic"
+        fi
+      done
+    done
+  done
 }
 
 # =========================================================================
@@ -908,6 +974,7 @@ case15
 case16
 case17
 case18
+case18_leak_attribution
 case19
 case20
 case21
@@ -916,6 +983,16 @@ case_selected_section
 case_refresh
 case_smtp_modes
 case_auth_refusals
+if python3 "$ROOT/tests/test-auth-sequence-controls.py" "$FIXTURE"; then
+  pass "LOGIN sequence observer rejects hidden commands"
+else
+  fail "LOGIN sequence observer rejects hidden commands" "synthetic harness controls failed"
+fi
+if python3 "$ROOT/tests/auth_sequence_controls.py" "$HELPER" "$CERTDIR" "$FIXTURE"; then
+  pass "LOGIN reply precedence and bounded continuation"
+else
+  fail "LOGIN reply precedence and bounded continuation" "synthetic sequence controls failed"
+fi
 case_smtp_auth_selection
 case2
 if python3 "$ROOT/tests/test-process-protection.py"; then
