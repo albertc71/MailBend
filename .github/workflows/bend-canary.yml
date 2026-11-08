@@ -1,21 +1,17 @@
-name: Bend upgrade canary
+name: Issue 207 matched Bend 2.0.39 canary
 
 on:
-  schedule:
-    - cron: '23 5 * * 1'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Official stable Bend version, or latest'
-        required: true
-        default: latest
-        type: string
+  push:
+    branches:
+      - validation/issue-207-bend-2-0-39
+    paths:
+      - .github/workflows/bend-canary.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: bend-canary-${{ github.ref }}
+  group: issue-207-canary-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -23,7 +19,15 @@ env:
 
 jobs:
   canary:
-    name: Latest Bend observation (not a required check)
+    name: Bend 2.0.39 ${{ matrix.case }} observation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: baseline
+            sha: 1970639fcfcc7589bc62e95adf8d49341b378136
+          - case: candidate
+            sha: 59826080d8575bccefd3b860b146ca460ed64e4c
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -31,7 +35,18 @@ jobs:
         id: checkout
         timeout-minutes: 3
         with:
+          ref: ${{ matrix.sha }}
           persist-credentials: false
+
+      - name: Verify the exact source checkout
+        id: identity
+        timeout-minutes: 1
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          actual="$(git rev-parse HEAD)"
+          printf 'Expected source %s\nActual source %s\n' "$EXPECTED_SHA" "$actual"
+          test "$actual" = "$EXPECTED_SHA"
 
       - name: Isolate the candidate toolchain
         id: isolate
@@ -61,7 +76,7 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         env:
-          REQUESTED_VERSION: ${{ inputs.version || 'latest' }}
+          REQUESTED_VERSION: '2.0.39'
         run: |
           python3 - <<'PY'
           import hashlib, json, os, pathlib, re, tarfile, urllib.request
@@ -86,6 +101,8 @@ jobs:
           if len(assets) != 1 or assets[0]['browser_download_url'] != url:
               raise SystemExit('The official linux-x64 asset is missing or ambiguous')
           digest = assets[0].get('digest', '')
+          if digest != 'sha256:6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab':
+              raise SystemExit('The official archive digest changed; review before running')
           if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
               raise SystemExit('The release API has no SHA256 for this asset')
           work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary'
@@ -210,6 +227,7 @@ jobs:
           spec = importlib.util.spec_from_file_location('canary_e2e', 'tests/test-e2e.py')
           suite = importlib.util.module_from_spec(spec)
           sys.modules[spec.name] = suite
+          sys.path.insert(0, str(pathlib.Path('tests').resolve()))
           spec.loader.exec_module(suite)
           with tempfile.TemporaryDirectory(prefix='canary-') as work:
               subprocess.run(['sh', 'tests/gen-test-certs.sh', str(pathlib.Path(work) / 'certs')], check=True)
@@ -239,7 +257,7 @@ jobs:
           steps = json.loads(os.environ['STEP_RESULTS'])
           candidate = steps.get('bend', {}).get('outputs', {})
           lean = steps.get('requirement', {}).get('outputs', {})
-          ids = ['checkout', 'isolate', 'dependencies', 'bend', 'requirement', 'lean', 'check', 'verdict', 'unit', 'build', 'smoke']
+          ids = ['checkout', 'identity', 'isolate', 'dependencies', 'bend', 'requirement', 'lean', 'check', 'verdict', 'unit', 'build', 'smoke']
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('## Bend upgrade observation\n\n')
               summary.write('This workflow does not run on pull requests. Do not make it a required check.\n\n')
