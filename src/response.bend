@@ -258,9 +258,38 @@ def bounded(+j: J.Json, +mode: String, +max: U32) -> Result<&2, &2, String, J.Js
   +floor = bytes(with_notice(empty_body(j), mode, max, False{}))
   bounded.if(U32.is_gt(floor, max), j, mode, max, floor)
 
-def apply(j: J.Json, +mode: String, max: U32) -> Result<&2, &2, String, J.Json>:
+def apply.legacy(j: J.Json, +mode: String, max: U32) -> Result<&2, &2, String, J.Json>:
   match max:
     case 0:
       Done{with_notice(select(j, mode), mode, 0, False{})}
     case _:
       bounded(select(j, mode), mode, max)
+
+
+def nested.sized(fits: Bool, j: J.Json, size: U32) -> Result<&2, &2, String, J.Json>:
+  match fits:
+    case True{}:
+      Done{j}
+    case False{}:
+      Fail{"max_response_bytes is too small for the complete nested representation: need " ++
+        U32.show(size) ++ "; raise the response budget or retry without nested_message"}
+
+def nested(j: J.Json, mode: String, +max: U32) -> Result<&2, &2, String, J.Json>:
+  match mode:
+    case "full":
+      +shown = with_notice(j, "full", max, False{})
+      +size = bytes(shown)
+      nested.sized(U32.is_eq(max, 0) || U32.is_le(size, max), shown, size)
+    case _:
+      Fail{"nested_message supports only projection=full"}
+
+def apply.if(message: Bool, j: J.Json, mode: String, max: U32)
+  -> Result<&2, &2, String, J.Json>:
+  match message:
+    case True{}:
+      nested(j, mode, max)
+    case False{}:
+      apply.legacy(j, mode, max)
+
+def apply(+j: J.Json, mode: String, max: U32) -> Result<&2, &2, String, J.Json>:
+  apply.if(String.eq(text(j, "content_encoding"), "message"), j, mode, max)

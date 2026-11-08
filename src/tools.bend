@@ -7,6 +7,7 @@ import ./codec.bend as C
 import ./json.bend as J
 import ./imap.bend as I
 import ./mime.bend as M
+import ./nested.bend as Nested
 import ./sections.bend as Part
 import ./smtp.bend as S
 import ./ops.bend as Ops
@@ -1619,10 +1620,135 @@ def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String) -> IO(Shown):
       part_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
         wanted, max)
 
-def t_get(+args: J.Json) -> IO(Shown):
+def t_get.legacy(+args: J.Json) -> IO(Shown):
   +wanted = Policy.str_arg(args, "section", "")
   t_get.if(String.is_empty(wanted), args,
     clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216), wanted)
+
+def nested_content(r: Result<&2, &2, String, J.Json>, p: Part.Part,
+  folder: String, uid: U32, uidv: U32) -> Policy.Out:
+  match r:
+    case Fail{why}:
+      Policy.Err{why}
+    case Done{node}:
+      Part.Part{path, ct, cd, encoding, size} = p
+      ok_obj([J.kv("folder", J.str(folder)), J.kv("uid", J.num(uid)),
+        J.kv("uidvalidity", J.num(uidv)), J.kv("section", J.str(I.section_str(path))),
+        J.kv("content_type", J.str(ct)), J.kv("complete", J.bool(True{})),
+        J.kv("scope", J.str("selected_part")), J.kv("message_complete", J.bool(False{})),
+        J.kv("content", node), J.kv("content_encoding", J.str("message"))])
+
+def nested_get.shown(r: Result<&2, &2, String, String>, ms: List<&2, I.Msg>,
+  +p: Part.Part, folder: String, uid: U32, uidv: U32) -> Shown:
+  match r ms:
+    case Fail{why} _:
+      Listed{Policy.Err{why}, []}
+    case _ Nil{}:
+      Listed{Policy.Err{"missing selected message metadata"}, []}
+    case Done{+bytes} m <> t:
+      Selected{nested_content(Nested.view(bytes), p, folder, uid, uidv),
+        Jev.Fetched{Jev.facts_of(m), part_get.text(p, bytes), 0}}
+
+def nested_get.fetched(r: Run(), +p: Part.Part, folder: String,
+  +uid: U32, +uidv: U32, max: U32) -> Shown:
+  match r:
+    case Fail{why}:
+      Listed{Policy.Err{why}, []}
+    case Done{+lines}:
+      nested_get.shown(part_bytes(Done{lines}, uid, uidv, p, max),
+        part_metadata.filter(I.fetched(lines), uid), p, folder, uid, uidv)
+
+def nested_get.message(+p: Part.Part) -> Result<&2, &2, String, Part.Part>:
+  Part.Part{path, ct, cd, encoding, size} = p
+  do Result<&2, &2, String, Part.Part>:
+    Part.check(Nested.is_message(M.main_value(ct)),
+      "nested_message requires a message/rfc822 or message/global section")
+    return p
+
+def nested_get.discovered(r: Run(), uid: U32, uidv: U32, wanted: String)
+  -> Result<&2, &2, String, Part.Part>:
+  do Result<&2, &2, String, Part.Part>:
+    p : Part.Part <- part_discovered(r, uid, uidv, wanted)
+    nested_get.message(p)
+
+def nested_get.fetch(r: Result<&2, &2, String, Part.Part>, +folder: String,
+  +uid: U32, +uidv: U32, +max: U32) -> IO(Shown):
+  match r:
+    case Fail{why}:
+      pure_shown(Policy.Err{why})
+    case Done{+p}:
+      do IO<Shown>:
+        lines : Run() <- imap_run(Ops.plan_part(folder, uid, uidv, Part.path(p), max))
+        return nested_get.fetched(lines, p, folder, uid, uidv, max)
+
+def nested_get(u: Result<&2, &2, String, U32>, +folder: String, +uidv: U32,
+  wanted: String, max: U32) -> IO(Shown):
+  match u uidv:
+    case Fail{why} _:
+      pure_shown(Policy.Err{why})
+    case _ 0:
+      pure_shown(Policy.Err{uidv_missing()})
+    case Done{+uid} _:
+      do IO<Shown>:
+        lines : Run() <- imap_run(Ops.plan_parts(folder, uid))
+        nested_get.fetch(nested_get.discovered(lines, uid, uidv, wanted), folder, uid, uidv, max)
+
+def nested_section(s: String, start: Bool, ok: Bool) -> Bool:
+  match s start ok:
+    case _ _ False{}:
+      False{}
+    case SNil{} _ True{}:
+      Bool.not(start)
+    case SCon{c, t} True{} True{}:
+      nested_section(t, False{}, M.char_in(c, "123456789"))
+    case SCon{'.', t} False{} True{}:
+      nested_section(t, True{}, True{})
+    case SCon{c, t} False{} True{}:
+      nested_section(t, False{}, M.char_in(c, "0123456789"))
+
+def nested_projection(value: Maybe<&2, J.Json>) -> Bool:
+  match value:
+    case None{}:
+      True{}
+    case Some{J.JStr{"full"}}:
+      True{}
+    case _:
+      False{}
+
+def nested_request.option(option: Maybe<&2, J.Json>, +args: J.Json)
+  -> Result<&2, &2, String, Bool>:
+  match option:
+    case None{}:
+      Done{False{}}
+    case Some{J.JBool{False{}}}:
+      Done{False{}}
+    case Some{J.JBool{True{}}}:
+      do Result<&2, &2, String, Bool>:
+        Part.check(nested_section(Policy.str_arg(args, "section", ""), True{}, True{}),
+          "nested_message requires a canonical numeric section")
+        Part.check(nested_projection(J.get(args, "projection")),
+          "nested_message supports only projection=full")
+        Part.check(U32.is_gt(uidv_arg(args), 0), uidv_missing())
+        return True{}
+    case _:
+      Fail{"nested_message must be a boolean"}
+
+def nested_request(+args: J.Json) -> Result<&2, &2, String, Bool>:
+  nested_request.option(J.get(args, "nested_message"), args)
+
+def t_get.nested(mode: Result<&2, &2, String, Bool>, +args: J.Json) -> IO(Shown):
+  match mode:
+    case Fail{why}:
+      pure_shown(Policy.Err{why})
+    case Done{False{}}:
+      t_get.legacy(args)
+    case Done{True{}}:
+      nested_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
+        Policy.str_arg(args, "section", ""),
+        clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
+
+def t_get(+args: J.Json) -> IO(Shown):
+  t_get.nested(nested_request(args), args)
 
 # mail_get_new
 # ------------
@@ -8999,11 +9125,59 @@ def projected.if(enabled: Bool, o: Policy.Out, +args: J.Json) -> Policy.Out:
       projected.out(o, Policy.str_arg(args, "projection", "full"),
         u32_arg(args, "max_response_bytes", 0))
 
-def projected(+args: J.Json, jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out):
+def nested_coverage.fields(xs: List<&2, J.Json>, +why: String) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JKv{"reasons", J.JArr{items}} <> t:
+      J.kv("reasons", J.arr(List.append(&2, J.Json, J.unchain(items), [J.str(why)]))) <>
+        nested_coverage.fields(t, why)
+    case kv <> t:
+      kv <> nested_coverage.fields(t, why)
+
+def nested_coverage.jev(j: J.Json, c: Jev.Content) -> J.Json:
+  match j c:
+    case J.JObj{fields} Jev.Headers{}:
+      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields),
+        "Only parent header facts were eligible for checking; " ++
+          "nested headers and text were not included."),
+        [J.kv("coverage", J.str("headers_only"))]))
+    case J.JObj{fields} Jev.Body{}:
+      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields),
+        "Nested message text was not included in the Jev request."),
+        [J.kv("coverage", J.str("partial"))]))
+    case _ _:
+      j
+
+def nested_coverage.items(xs: List<&2, J.Json>, +c: Jev.Content) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JKv{"jev", j} <> t:
+      J.kv("jev", nested_coverage.jev(j, c)) <> nested_coverage.items(t, c)
+    case kv <> t:
+      kv <> nested_coverage.items(t, c)
+
+def nested_coverage.if(nested: Bool, j: J.Json, c: Jev.Content) -> J.Json:
+  match nested j:
+    case True{} J.JObj{fields}:
+      J.obj(nested_coverage.items(J.unchain(fields), c))
+    case _ _:
+      j
+
+def nested_coverage(o: Policy.Out, jev: Jev.Switch) -> Policy.Out:
+  match o jev:
+    case Policy.Ok{+j} Jev.On{c}:
+      Policy.Ok{nested_coverage.if(
+        String.eq(Response.text(j, "content_encoding"), "message"), j, c)}
+    case _ _:
+      o
+
+def projected(+args: J.Json, +jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out):
   do IO<Policy.Out>:
     o : Policy.Out <- annotated(jev, read)
     return projected.if(Maybe.is_some(&2, J.Json, J.get(args, "projection")) ||
-      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), o, args)
+      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), nested_coverage(o, jev), args)
 
 # Dispatch
 # ========

@@ -1,0 +1,6 @@
+Subject: file
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="report.txt"
+Content-Transfer-Encoding: base64
+
+aGVsbG8=

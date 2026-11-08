@@ -1,0 +1,147 @@
+{
+  "status": "source proposals only; no mutations executed",
+  "mutations": [
+    {
+      "name": "message-depth",
+      "path": "src/nested.bend",
+      "old": "file.message(U32.is_lt(level, 3),",
+      "new": "file.message(U32.is_lt(level, 4),",
+      "anchor_occurrences": 1,
+      "discriminator": "forward-depth literal must reject a fourth opened message",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "entity-credit",
+      "path": "src/nested.bend",
+      "old": "Budget{128, 16777216, 16777216}",
+      "new": "Budget{129, 16777216, 16777216}",
+      "anchor_occurrences": 1,
+      "discriminator": "entities-over and message-siblings-over must reject 129 entities",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "parse-one-byte",
+      "path": "src/nested.bend",
+      "old": "Budget{128, 16777216, 16777216}",
+      "new": "Budget{128, 16777217, 16777216}",
+      "anchor_occurrences": 1,
+      "discriminator": "parse-over adds exactly one charged header byte and must fail",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "view-one-character",
+      "path": "src/nested.bend",
+      "old": "Budget{128, 16777216, 16777216}",
+      "new": "Budget{128, 16777216, 16777220}",
+      "anchor_occurrences": 1,
+      "discriminator": "view-over and huge-header-over must fail one input character beyond conservative credit",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "reset-sibling-fuel",
+      "path": "src/nested.bend",
+      "old": "next : Budget <- entity_budget(b)\n        admitted : Budget <- parse_bytes(bytes, next)",
+      "new": "next : Budget <- entity_budget(Budget{128, 16777216, 16777216})\n        admitted : Budget <- parse_bytes(bytes, next)",
+      "anchor_occurrences": 1,
+      "discriminator": "message-siblings-over must fail although each individual message is small",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "qp-terminal",
+      "path": "src/nested.bend",
+      "old": "case SCon{'=', t} True{}:\n      False{}",
+      "new": "case SCon{'=', t} True{}:\n      True{}",
+      "anchor_occurrences": 1,
+      "discriminator": "bad-qp-terminal fails while legacy P.qp_ok(\"A=\") remains True",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "base64-canonical",
+      "path": "src/nested.bend",
+      "old": "check(same(C.b64_encode(decoded, False{}), compact.go(raw, \"\")), \"malformed inner base64\")",
+      "new": "check(True{}, \"malformed inner base64\")",
+      "anchor_occurrences": 1,
+      "discriminator": "bad-base64-0 and bad-base64-2 reject invalid alphabet/noncanonical padding bits",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "header-sanitizer",
+      "path": "src/nested.bend",
+      "old": "J.str(M.header_line(raw))",
+      "new": "J.str(raw)",
+      "anchor_occurrences": 1,
+      "discriminator": "sanitized-headers, unicode-headers and bounded-header literal controls reject every displayed unsafe header",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "omit-propagation",
+      "path": "src/nested.bend",
+      "old": "Fragment{\"\", \"\", [attached], omissions}",
+      "new": "Fragment{\"\", \"\", [attached], []}",
+      "anchor_occurrences": 1,
+      "discriminator": "forward-depth expects depth_limit at every ancestor",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "legacy-false-route",
+      "path": "src/tools.bend",
+      "old": "case Some{J.JBool{False{}}}:\n      Done{False{}}",
+      "new": "case Some{J.JBool{False{}}}:\n      Done{True{}}",
+      "anchor_occurrences": 1,
+      "discriminator": "absent/false ordinary and opaque literal byte controls fail false opt-in rerouting",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "nested-privacy",
+      "path": "src/tools.bend",
+      "old": "Selected{nested_content(Nested.view(bytes), p, folder, uid, uidv),\n        Jev.Fetched{Jev.facts_of(m), part_get.text(p, bytes), 0}}",
+      "new": "Selected{nested_content(Nested.view(bytes), p, folder, uid, uidv),\n        Jev.Fetched{Jev.facts_of(m), Jev.Text{bytes, Jev.Partial{}}, 0}}",
+      "anchor_occurrences": 1,
+      "discriminator": "captured fake body requests must not contain INNER_HEADER_MARKER or INNER_BODY_MARKER; ordinary text positive control still visible",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "scope-removed",
+      "path": "src/tools.bend",
+      "old": ")), nested_coverage(o, jev), args)",
+      "new": ")), o, args)",
+      "anchor_occurrences": 1,
+      "discriminator": "successful and unchecked Jev scope controls plus final exact-budget literals fail",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "atomic-exact-fit",
+      "path": "src/response.bend",
+      "old": "U32.is_eq(max, 0) || U32.is_le(size, max)",
+      "new": "U32.is_eq(max, 0) || U32.is_lt(size, max)",
+      "anchor_occurrences": 1,
+      "discriminator": "exact-sized bare and annotated literals must succeed; one byte short must fail",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "schema-opaque-complete",
+      "path": "tools/gen-schema.py",
+      "old": "attachment = opaque if complete or level < 3 else ATTACHMENT",
+      "new": "attachment = ATTACHMENT",
+      "anchor_occurrences": 1,
+      "discriminator": "negative schema complete level-three opaque message literal must fail",
+      "execution": "NOT RUN; apply only within a separately authorized exact-source hosted mutation run"
+    },
+    {
+      "name": "materialize-before-reserve",
+      "path": "src/nested.bend",
+      "location": "multipart: move cut(body, bound) into an evaluated prior binding before framing(body, bound, copied)",
+      "discriminator": "Static allocation-dominance review must reject this order. Ordinary 129-entity output tests can still fail correctly and do not kill this mutation. Use a separately reviewed resource-sensitive wide-line input, approved memory envelope and exact-candidate peak-memory comparison; no result or universal threshold is claimed here.",
+      "execution": "NOT RUN; requires explicit resource-sensitive hosted release"
+    },
+    {
+      "name": "short-base64-reserve",
+      "path": "src/nested.bend",
+      "old": "check(base64_groups(raw, 0), \"malformed inner base64\")",
+      "new": "check(True{}, \"malformed inner base64\")",
+      "anchor_occurrences": 1,
+      "discriminator": "Static reservation arithmetic for AA must fail: decoded 1 + compact 2 + canonical 4 = 7 exceeds three raw-length credits 6. Ordinary rejection still occurs and is not a behavioral kill. Padded AA== is the positive source/corpus control.",
+      "execution": "NOT RUN; requires reviewed accounting instrumentation or source proof, not a claimed ordinary-output kill"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+Content-Type: multipart/digest; boundary=b
+
+--b
+
+Subject: inner
+
+hello
+--b--

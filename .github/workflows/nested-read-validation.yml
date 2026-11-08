@@ -1,0 +1,197 @@
+name: Nested read validation
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      stage:
+        type: choice
+        options: [baseline, mutation]
+        default: baseline
+        required: true
+      expected_sha:
+        description: Exact reviewed commit to run; must equal the selected ref
+        type: string
+        required: true
+      mutation:
+        type: choice
+        options:
+          - message-depth
+          - entity-credit
+          - parse-one-byte
+          - view-one-character
+          - reset-sibling-fuel
+          - qp-terminal
+          - base64-canonical
+          - header-sanitizer
+          - omit-propagation
+          - legacy-false-route
+          - nested-privacy
+          - scope-removed
+          - atomic-exact-fit
+          - schema-opaque-complete
+        default: qp-terminal
+        required: true
+permissions:
+  contents: read
+env:
+  BEND_NO_TELEMETRY: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  EXPECTED_SHA: ${{ inputs.expected_sha || github.event.pull_request.head.sha }}
+jobs:
+  baseline:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.stage == 'baseline') ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'nested-baseline' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind the exact reviewed source
+        timeout-minutes: 2
+        run: |
+          test "$EXPECTED_SHA" = "$(git rev-parse HEAD)"
+          python3 -I -B tests/nested-validation-probe.py guard
+          sha256sum scripts/install-bend.sh scripts/install-lean.sh scripts/install-rust.sh
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install the supported pinned toolchains
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq time
+          python3 -m pip install jsonschema==4.26.0
+          sh scripts/install-rust.sh
+          sh scripts/install-bend.sh
+          sh scripts/install-lean.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build the actual pinned candidate
+        timeout-minutes: 6
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" BEND_NO_TELEMETRY=1 sh scripts/install.sh
+          sha256sum "$HOME/.bend/bin/bend" bin/mailbend-core bin/mailbend-tls bin/mailbend-typesafe bin/mailbend-stdio bin/mailbend-attach
+          python3 --version
+          clang --version
+          (cd native && rustc --version && cargo --version)
+      - name: Recheck all three Bend kernels
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          index=0
+          for source in PROOF.bend src/tools.bend tests/formal/tool-laws.bend; do
+            index=$((index + 1))
+            env -i PATH="$PATH" HOME="$HOME" BEND_NO_TELEMETRY=1 bend "$source" --verdict 2>&1 | tee "$RUNNER_TEMP/kernel-$index.log"
+            grep -F 'ALL PROOFS CHECK' "$RUNNER_TEMP/kernel-$index.log"
+          done
+      - name: New pure tracers and generated schema pins
+        timeout-minutes: 5
+        run: |
+          for name in nested-messages nested-selected nested-annotations schema; do
+            env -i PATH="$PATH" HOME="$HOME" BEND_NO_TELEMETRY=1 bend "tests/unit/$name.bend" > "$RUNNER_TEMP/$name.actual"
+            sed -n 's/^#|//p' "tests/unit/$name.bend" > "$RUNNER_TEMP/$name.expected"
+            diff -u "$RUNNER_TEMP/$name.expected" "$RUNNER_TEMP/$name.actual"
+          done
+      - name: Synthetic CLI/MCP, privacy and admission boundaries
+        timeout-minutes: 15
+        run: |
+          ulimit -c 0
+          ulimit -v 4194304
+          getconf PAGE_SIZE
+          getconf _PHYS_PAGES
+          nproc
+          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" BEND_NO_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v python3 -B tests/test-mime-corpus.py --nested-resources
+      - name: Final source and revision receipt
+        if: always()
+        run: |
+          git rev-parse HEAD
+          python3 -I -B tests/nested-validation-probe.py guard
+          git status --short
+  mutation:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.stage == 'mutation') ||
+      (github.event_name == 'pull_request' && startsWith(github.event.label.name, 'nested-mutation-') &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      REQUESTED_MUTATION: ${{ inputs.mutation || github.event.label.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind source and the single named mutation
+        timeout-minutes: 2
+        run: |
+          test "$EXPECTED_SHA" = "$(git rev-parse HEAD)"
+          mutation=${REQUESTED_MUTATION#nested-mutation-}
+          case "$mutation" in
+            message-depth|entity-credit|parse-one-byte|view-one-character|reset-sibling-fuel|qp-terminal|base64-canonical|header-sanitizer|omit-propagation|legacy-false-route|nested-privacy|scope-removed|atomic-exact-fit|schema-opaque-complete) ;;
+            *) echo 'Unreviewed mutation name' >&2; exit 1 ;;
+          esac
+          echo "MUTATION=$mutation" >> "$GITHUB_ENV"
+          python3 -I -B tests/nested-validation-probe.py guard
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install the supported pinned build inputs
+        timeout-minutes: 8
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl time
+          python3 -m pip install jsonschema==4.26.0
+          sh scripts/install-rust.sh
+          sh scripts/install-bend.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Build the unmodified control
+        timeout-minutes: 6
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" BEND_NO_TELEMETRY=1 sh scripts/install.sh
+          sha256sum "$HOME/.bend/bin/bend" bin/mailbend-core bin/mailbend-tls bin/mailbend-typesafe bin/mailbend-stdio bin/mailbend-attach
+      - name: Require the unmodified behavioral control
+        timeout-minutes: 6
+        run: |
+          ulimit -c 0
+          ulimit -v 4194304
+          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" BEND_NO_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v python3 -I -B tests/nested-validation-probe.py probe "$MUTATION" "$RUNNER_TEMP/baseline.json"
+      - name: Apply exactly one source mutation and compile if needed
+        timeout-minutes: 4
+        run: |
+          python3 -I -B tests/nested-validation-probe.py apply "$MUTATION" "$RUNNER_TEMP/mutation.json"
+          if [ "$MUTATION" != schema-opaque-complete ]; then
+            env -i PATH="$PATH" HOME="$HOME" BEND_NO_TELEMETRY=1 bend main.bend -o bin/mailbend-core.mutant
+            mv bin/mailbend-core.mutant bin/mailbend-core
+          fi
+      - name: Observe the named mutant on both transports
+        timeout-minutes: 6
+        run: |
+          ulimit -c 0
+          ulimit -v 4194304
+          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" BEND_NO_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v python3 -I -B tests/nested-validation-probe.py probe "$MUTATION" "$RUNNER_TEMP/mutant.json" --receipt "$RUNNER_TEMP/mutation.json"
+      - name: Require intended failures and retained positive controls
+        timeout-minutes: 1
+        run: python3 -I -B tests/nested-validation-probe.py judge "$MUTATION" "$RUNNER_TEMP/baseline.json" "$RUNNER_TEMP/mutant.json"
+      - name: Emit complete bounded synthetic receipts
+        if: always()
+        run: |
+          git rev-parse HEAD
+          for name in mutation baseline mutant baseline.captures mutant.captures; do
+            file="$RUNNER_TEMP/$name.json"
+            if [ -f "$file" ]; then
+              test "$(wc -c < "$file")" -le 1048576
+              sha256sum "$file"
+              printf '%s\n' "NESTED_${name}_JSON_BEGIN"
+              cat "$file"
+              printf '\n%s\n' "NESTED_${name}_JSON_END"
+            else
+              printf 'No %s receipt was produced.\n' "$name"
+            fi
+          done

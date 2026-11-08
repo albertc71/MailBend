@@ -1,0 +1,26 @@
+{
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic selected-message bytes for the opt-in #109 contract. No client interoperability is claimed."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "wire": "valid",
+  "expected": {
+    "headers": {
+      "from": "",
+      "to": "",
+      "subject": "",
+      "date": "",
+      "message_id": ""
+    },
+    "text": " Hello world ",
+    "attachments": [],
+    "parse_complete": true,
+    "omissions": []
+  }
+}

@@ -1,0 +1,11 @@
+Content-Type: multipart/mixed; boundary=b
+
+--b
+Content-Type: text/plain
+
+plain
+--b
+Content-Type: text/html
+
+<b>other</b>
+--b--

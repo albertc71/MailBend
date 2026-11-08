@@ -238,4 +238,74 @@ assert not image_contract.is_valid({k: v for k, v in image.items()
 assert not image_contract.is_valid({**image, 'metadata_removed_bytes': -1})
 assert not image_contract.is_valid({**image, 'metadata_removed_bytes': '40'})
 checks += 5
+
+# Literal nested-only contracts never widen the legacy selected variants.
+nested_node = {"headers": {"from": "", "to": "", "subject": "inner", "date": "", "message_id": ""},
+               "text": "hello", "attachments": [], "parse_complete": True, "omissions": []}
+nested = {"folder": "INBOX", "uid": 7, "uidvalidity": 9, "section": "1",
+          "content_type": "message/rfc822", "complete": True, "scope": "selected_part",
+          "message_complete": False, "content": nested_node, "content_encoding": "message"}
+check("mail_get", nested)
+check("mail_get", {**nested, "content_type": 'message/rfc822; name="forward.eml"'})
+check("mail_get", {**nested, "content_type": "message/global; charset=utf-8"})
+check("mail_get", {**nested, "content_type": 'message/rfc822; name="a\r\nb"'})
+check("mail_get", {**nested, "content_type": "message/rfc822\n"}, False)
+for bad in ({"content_type": "text/plain"}, {"uid": 0}, {"uidvalidity": 0},
+            {"section": "01"}, {"section": "1.0"}, {"section": "1\n"}):
+    check("mail_get", {**nested, **bad}, False)
+for encoding in ("text", "base64"):
+    check("mail_get", {**nested, "content_encoding": encoding}, False)
+check("mail_get", {**nested, "content": "hello"}, False)
+for key in ("headers", "text", "attachments", "parse_complete", "omissions"):
+    check("mail_get", {**nested, "content": {k: v for k, v in nested_node.items() if k != key}}, False)
+check("mail_get", {**nested, "content": {**nested_node, "parse_complete": False}}, False)
+check("mail_get", {**nested, "content": {**nested_node, "omissions": ["depth_limit"]}}, False)
+for invalid in ("\n", "\r", "\t", "\x00", "\x7f", "\x85", "\u061c", "\u200e", "\u200f",
+                "\u2028", "\u2029", "\u202a", "\u202e", "\u2066", "\u2069"):
+    for key in nested_node["headers"]:
+        check("mail_get", {**nested, "content": {**nested_node,
+            "headers": {**nested_node["headers"], key: "safe" + invalid}}}, False)
+check("mail_get", {**nested, "content": {**nested_node,
+    "headers": {**nested_node["headers"], "subject": "h" * 999}}}, False)
+
+def attached(inner):
+    return {**nested_node, "attachments": [{"filename": "", "content_type": "message/rfc822",
+                                             "size": 23, "message": inner}]}
+
+check("mail_get", {**nested, "content": attached(attached(nested_node))})
+check("mail_get", {**nested, "content": attached(attached(attached(nested_node)))}, False)
+cut = {**nested_node, "attachments": [{"filename": "", "content_type": "message/rfc822", "size": 23}],
+       "parse_complete": False, "omissions": ["depth_limit"]}
+check("mail_get", {**nested, "content": {**attached({**attached(cut), "parse_complete": False,
+    "omissions": ["depth_limit"]}), "parse_complete": False, "omissions": ["depth_limit"]}})
+check("mail_get", {**nested, "content": attached(attached({**cut, "parse_complete": True, "omissions": []}))}, False)
+check("mail_get", {**nested, "content": attached(attached(cut))}, False)
+wrong_reason = {**cut, "omissions": ["additional_readable_part"]}
+check("mail_get", {**nested, "content": {**attached({**attached(wrong_reason),
+    "parse_complete": False, "omissions": ["additional_readable_part"]}),
+    "parse_complete": False, "omissions": ["additional_readable_part"]}}, False)
+for level in (cut, attached(cut)):
+    check("mail_get", {**nested, "content": level}, False)
+wrong_parent = {**attached({**attached(cut), "parse_complete": False,
+                           "omissions": ["depth_limit"]}),
+                "parse_complete": False, "omissions": ["additional_readable_part"]}
+check("mail_get", {**nested, "content": wrong_parent}, False)
+notice = {"projection": "full", "max_bytes": 1000, "budget_scope": "result_json_utf8",
+          "output_truncated": False, "request_more": "retry", "content_complete": True}
+check("mail_get", {**nested, "response": notice})
+for mode in ("text", "html", "metadata"):
+    check("mail_get", {**nested, "response": {**notice, "projection": mode}}, False)
+check("mail_get", {**nested, "response": {**notice, "output_truncated": True}}, False)
+check("mail_get", {**nested, "response": {**notice, "content_complete": False}}, False)
+for mode, coverage, reason in [("body", "partial", "Nested message text was not included in the Jev request."),
+        ("headers", "headers_only", "Only parent header facts were eligible for checking; nested headers and text were not included.")]:
+    jev = {"status": "unchecked", "model": "fixture", "content": mode,
+           "derived_from_untrusted_content": True, "decision": "proceeded", "signals": {},
+           "reasons": ["transport failure", reason], "coverage": coverage}
+    check("mail_get", {**nested, "jev": jev})
+    check("mail_get", {**nested, "jev": {k: v for k, v in jev.items() if k != "coverage"}}, False)
+    check("mail_get", {**nested, "jev": {**jev, "reasons": ["transport failure"]}}, False)
+    check("mail_get", {**nested, "jev": {**jev, "coverage": "complete"}}, False)
+    check("mail_get", {**nested, "jev": {**jev, "extra": True}}, False)
+
 print(f'output schemas: {checks} checks passed')

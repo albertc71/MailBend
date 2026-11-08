@@ -207,6 +207,63 @@ SELECTED = record({"folder": S, "uid": N, "uidvalidity": N, "section": S,
     "content_encoding": param("string", enum=["text", "base64"])}, ANNOTATION)
 
 
+NESTED_HEADER = param("string", maxLength=998, **{
+    "not": {"pattern": r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]"}})
+NESTED_HEADERS = record({k: NESTED_HEADER for k in ("from", "to", "subject", "date", "message_id")})
+NESTED_REASON = param("string", enum=["depth_limit", "multipart_depth_limit", "additional_readable_part"])
+NESTED_BODY_REASON = "Nested message text was not included in the Jev request."
+NESTED_HEADER_REASON = "Only parent header facts were eligible for checking; nested headers and text were not included."
+NESTED_JEV = union(*[record({**JEV["properties"], "content": {"const": content},
+    "coverage": {"const": coverage},
+    "reasons": param("array", items=S, minItems=1, contains={"const": why})})
+    for content, coverage, why in [("body", "partial", NESTED_BODY_REASON),
+                                   ("headers", "headers_only", NESTED_HEADER_REASON)]])
+
+
+def nested_node(level, complete):
+    opaque = record({**ATTACHMENT["properties"], "content_type": {
+        "type": "string", "not": {"enum": ["message/rfc822", "message/global"]}}})
+    attachment = opaque if complete or level < 3 else ATTACHMENT
+    if level < 3:
+        target = f"nested_{level + 1}_complete" if complete else f"nested_{level + 1}"
+        opened = record({**ATTACHMENT["properties"],
+            "content_type": param("string", enum=["message/rfc822", "message/global"]),
+            "message": {"$ref": f"#/$defs/{target}"}})
+        attachment = union(opaque, opened)
+    shape = record({"headers": NESTED_HEADERS, "text": S, "attachments": array(attachment),
+        "parse_complete": YES if complete else NO,
+        "omissions": param("array", items=NESTED_REASON, **(
+            {"maxItems": 0} if complete else {"minItems": 1}))})
+    if level < 3:
+        shape["allOf"] = [{"if": {"properties": {"attachments": {"contains": {
+            "properties": {"message": {"properties": {"omissions": {"contains": {"const": why}}},
+                                       "required": ["omissions"]}}, "required": ["message"]}}}},
+            "then": {"properties": {"omissions": {"contains": {"const": why}}}}}
+            for why in ("depth_limit", "multipart_depth_limit", "additional_readable_part")]
+    if level == 3 and not complete:
+        shape["allOf"] = [{"if": {"properties": {"attachments": {"contains": {
+            "properties": {"content_type": {"enum": ["message/rfc822", "message/global"]}},
+            "required": ["content_type"]}}}},
+            "then": {"properties": {"omissions": {"contains": {"const": "depth_limit"}}}}}]
+    return shape
+
+
+NESTED_DEFS = {f"nested_{level}_complete": nested_node(level, True) for level in (1, 2, 3)}
+NESTED_DEFS.update({f"nested_{level}": union(
+    {"$ref": f"#/$defs/nested_{level}_complete"}, nested_node(level, False))
+    for level in (1, 2, 3)})
+NESTED_SELECTED = record({**{k: v for k, v in SELECTED["properties"].items()
+    if k not in ("content", "content_encoding", "jev")},
+    "content_type": param("string", anyOf=[
+        {"enum": ["message/rfc822", "message/global"]},
+        {"pattern": r"^message/(?:rfc822|global);"}]),
+    "uid": param("integer", minimum=1), "uidvalidity": param("integer", minimum=1),
+    "section": param("string", pattern=r"^[1-9][0-9]*(?:\.[1-9][0-9]*)*$",
+                     **{"not": {"pattern": r"[^0-9.]"}}),
+    "content": {"$ref": "#/$defs/nested_1"}, "content_encoding": {"const": "message"}},
+    {"jev": NESTED_JEV})
+
+
 def projected(shape, mode):
     """Only the declared body fields can be absent in a projected result."""
     omit = {"full": (), "text": ("html",), "html": ("text",),
@@ -381,6 +438,12 @@ def output_schema(name):
                      "required": [*v["required"], *(fields if
                          v["properties"].get("ok") == YES or "dry_run" in v["properties"] else {})]}
                     for v in variants]
+    if name == "mail_get":
+        nested_full = projected(NESTED_SELECTED, "full")
+        nested_full["properties"]["response"]["properties"].update({
+            "output_truncated": NO, "content_complete": YES})
+        return {"type": "object", "anyOf": variants + [NESTED_SELECTED, nested_full],
+                "$defs": NESTED_DEFS}
     return {"type": "object", "anyOf": variants}
 
 
@@ -620,6 +683,11 @@ TOOLS = [
                            "Omit for the compatible whole-message prefix. Selected reads "
                            "return content with selected_part scope. Jev annotations respect the "
                            "configured mode and cover only selected text, never unrelated bodies."),
+          "nested_message": param("boolean", "Opt in to a bounded readable attached-message view. "
+              "Requires a numeric section, uidvalidity and absent/full projection. Only message/rfc822 "
+              "and message/global are supported. Three opened message levels, 128 entities, 16 MiB aggregate "
+              "parse admission and 16 MiB conservative UTF-8 view admission. The view is atomic. "
+              "Nested text and headers are not added to Jev requests. False/absent preserves legacy output."),
           "max_bytes": param(
               "integer",
               "Whole-message prefix or selected encoded-part window. Default 262144; "

@@ -145,3 +145,29 @@ An affected runtime fails with a specific diagnostic; no parser outputs are norm
 to conceal that disagreement. The Bend oracle is compiled to a temporary executable
 once per test process, matching the product's compiled execution path; the interpreter
 cannot handle the >64 KiB stream control with its default machine stack.
+
+
+## Opt-in nested-message fixtures
+
+The separate `nested/` directory contains raw selected-message bytes and literal
+expected nested JSON or strict errors. `tests/nested_reads.py` wraps those bytes
+in synthetic selected-section server responses and checks both CLI and MCP.
+The existing corpus runner invokes these controls with ordinary reads. The fake
+server's `section_payloads` map preserves fixture octets instead of serializing
+Python message objects. It is a test-only wire boundary.
+
+The nested expectations distinguish intentional depth omissions from malformed
+framing and transfer errors. They also retain literal legacy selected responses
+for absent and false opt-in values. The Apple-style fixture describes a
+synthetic forward-as-attachment layout, not a live Apple Mail observation.
+
+After a separately authorized build, run:
+
+```sh
+python3 tests/test-mime-corpus.py --nested-resources
+```
+
+This adds at-limit and over-limit controls for global entity,
+aggregate parse-byte, and conservative UTF-8 view admission. These are admission
+contracts, not memory measurements. Resource-sensitive mutation validation and
+peak-memory observations require their own reviewed hosted run.
