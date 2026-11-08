@@ -604,17 +604,18 @@ PY
             [ "$GLOBAL_LEAK" -eq "$expected" ]
         ) >"$diagnostic" 2>&1
         result=$?
-        if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$expected" <<'PY'
-import base64
+        if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$expected" "$protocol" <<'PY'
 import pathlib
 import sys
 
 output = pathlib.Path(sys.argv[1]).read_bytes()
-password = b'case18-synthetic-password'
-secrets = [password, base64.b64encode(password),
-           base64.b64encode(b'\0case18@example.com\0' + password)]
-prefix = b'FAIL 18 ' if sys.argv[2] == '1' else b'PASS 18 '
-sys.exit(0 if output.startswith(prefix) and not any(s in output for s in secrets) else 1)
+expected = b'PASS 18 echoed credentials never reach the transcript\n'
+if sys.argv[2] == '1':
+    expected = {
+        'imap': b'FAIL 18 echoed credentials never reach the transcript -- imap exit=0 leak_check=1\n',
+        'smtp': b'FAIL 18 echoed credentials never reach the transcript --  smtp exit=0 leak_check=1\n',
+    }[sys.argv[3]]
+sys.exit(0 if output == expected else 1)
 PY
         then
           pass "18 attribution $protocol $form $stream"
