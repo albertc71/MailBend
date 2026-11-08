@@ -1,0 +1,108 @@
+name: Validate compiled-install refusal
+on:
+  push:
+    branches:
+      - validation/install-refusal-155
+permissions:
+  contents: read
+jobs:
+  refusal-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify source identity and installer red-green controls
+        env:
+          CANDIDATE_SHA: d60aa767387747aa4c7a938975837809f6c3b713
+        run: |
+          python3 -I - <<'PY'
+          import hashlib
+          import os
+          import pathlib
+          import signal
+          import subprocess
+          import sys
+          import tempfile
+
+          root = pathlib.Path.cwd()
+          candidate = os.environ['CANDIDATE_SHA']
+          base = '1970639fcfcc7589bc62e95adf8d49341b378136'
+          def git(*args):
+              return subprocess.check_output(['git', *args], timeout=30)
+          assert git('rev-parse', 'HEAD^').decode().strip() == candidate
+          assert not git('status', '--porcelain', '--untracked-files=no').strip()
+          assert git('diff', '--name-only', candidate, 'HEAD').decode().splitlines() == [
+              '.github/workflows/validate-install-refusal.yml']
+          source = git('show', candidate + ':scripts/install.sh')
+          old = git('show', base + ':scripts/install.sh')
+          test = git('show', candidate + ':tests/test-install.py')
+          assert source == (root / 'scripts/install.sh').read_bytes()
+          assert test == (root / 'tests/test-install.py').read_bytes()
+          assert hashlib.sha256(source).hexdigest() == 'ae7a0f7ef0c8606488cbd5414c5a3914a027fce6773b9cae2bdf865b9d564f9b'
+          assert hashlib.sha256(old).hexdigest() == '3ce03a15892834a812be57385c4b70638f75cebd98c4d05dfe63f8170646b344'
+          guard = b'''if [ "$has_clang" = 0 ] && [ -x bin/mailbend-core ]; then
+            fail "clang not found; refusing to update an existing compiled installation. Install clang and rerun scripts/install.sh."
+          fi
+          '''
+          assert source.count(guard) == 1
+          mutant = source.replace(guard, b'', 1)
+          selected = 'InstallTests.test_missing_clang_refuses_existing_core_without_changing_any_binary'
+          for label, installer, negative in (
+              ('old-installer', old, True),
+              ('candidate', source, False),
+              ('guard-reverted', mutant, True),
+              ('candidate-restored', source, False),
+          ):
+              with tempfile.TemporaryDirectory(prefix='install-refusal-') as temporary:
+                  fixture = pathlib.Path(temporary)
+                  (fixture / 'scripts').mkdir()
+                  (fixture / 'tests').mkdir()
+                  (fixture / 'home').mkdir()
+                  (fixture / 'scripts/install.sh').write_bytes(installer)
+                  test_path = fixture / 'tests/test-install.py'
+                  test_path.write_bytes(test)
+                  command = [sys.executable, '-I', str(test_path)]
+                  if negative:
+                      command.append(selected)
+                  environment = {'PATH': '/usr/bin:/bin', 'HOME': str(fixture / 'home'), 'LANG': 'C'}
+                  process = subprocess.Popen(command, env=environment, cwd=fixture,
+                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                             start_new_session=True)
+                  try:
+                      output, _ = process.communicate(timeout=150)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(process.pid, signal.SIGKILL)
+                      process.communicate(timeout=10)
+                      raise RuntimeError('synthetic installer controls timed out') from None
+                  if len(output) > 131072:
+                      raise RuntimeError('synthetic installer output exceeded limit')
+                  if negative:
+                      assert process.returncode == 1
+                      assert b'FAILED (failures=9)' in output
+                      assert b'Ran 1 test in ' in output
+                      prefix = b'FAIL: test_missing_clang_refuses_existing_core_without_changing_any_binary (__main__.InstallTests.test_missing_clang_refuses_existing_core_without_changing_any_binary) '
+                      failures = [line for line in output.splitlines() if line.startswith(b'FAIL: ')]
+                      expected = {prefix + b"(observation='refusal')"}
+                      for name in (b'mailbend-tls', b'mailbend-attach', b'mailbend-typesafe', b'mailbend-stdio'):
+                          for observation in (b'bytes', b'behavior'):
+                              expected.add(prefix + b"(binary='" + name + b"', observation='" + observation + b"')")
+                      assert len(failures) == 9 and set(failures) == expected
+                      for failure in failures:
+                          block = output.split(failure + b'\n', 1)[1].split(b'\n======================================================================', 1)[0]
+                          marker = (b'existing compiled installation must be refused' if b"observation='refusal'" in failure else
+                                    b'previous executable bytes must remain unchanged' if b"observation='bytes'" in failure else
+                                    b'previous behavior must remain unchanged')
+                          assert marker in block
+                      assert b'ERROR:' not in output and b'UNEXPECTED SUCCESS' not in output
+                      print(label + ': expected 9 failures; nonzero refusal and four helper byte/behavior mismatches', flush=True)
+                  else:
+                      assert process.returncode == 0
+                      assert b'\nOK\n' in output
+                      assert b'Ran 17 tests in ' in output
+                      assert b'skipped=' not in output
+                      print(label + ': all public installer controls passed without skips', flush=True)
+          print('Synthetic installer controls complete. No real build or scale result is implied.', flush=True)
+          PY
