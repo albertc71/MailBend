@@ -432,14 +432,14 @@ support changes.
 
 An endpoint list or a successful TCP connection cannot promote a provider's
 tier. A community report needs the MailBend commit, date, public provider
-profile, and redacted `mailbend diagnose --imap --smtp` output with all
-IMAP and SMTP stages successful. Read-only operation results should be
+profile, and redacted `mailbend diagnose --imap --smtp --report` output with every
+applicable IMAP and SMTP stage `ok`. Read-only operation results should be
 reported without mail, addresses, or folder names.
 
-The extended report and issue form are tracked in
-[#172](https://github.com/albertc71/MailBend/issues/172). No `--report` option
-is claimed here. A maintainer must review and link the evidence before changing
-this guide. A read-only report does not establish Sent filing, label behavior,
+Use the [provider-report form](../.github/ISSUE_TEMPLATE/provider-report.yml)
+and follow [report interpretation](PROVIDER-REPORTS.md). A maintainer must review
+and link the evidence before changing this guide.
+A read-only report does not establish Sent filing, label behavior,
 drafts, or deletion semantics. Test those only with separately authorized
 disposable accounts, messages, and recipients. The
 [live checklist](CLOUD_AGENT.md#live-icloud-checklist) identifies those boundaries.
