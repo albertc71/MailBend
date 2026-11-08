@@ -129,21 +129,21 @@ def att_fields(a: M.Att) -> List<&2, J.Json>:
   [J.kv("filename", J.str(name)), J.kv("content_type", J.str(ct)),
     J.kv("size", J.num(size))]
 
-def header_fields.after(key: String, raw: String, rest: List<&2, J.Json> & Budget)
-  -> Result<&2, &2, String, List<&2, J.Json> & Budget>:
+def header_fields.after(key: String, raw: String, rest: Sigma<&2, &2, List<&2, J.Json>, _ => Budget>)
+  -> Result<&2, &2, String, Sigma<&2, &2, List<&2, J.Json>, _ => Budget>>:
   (fields, left) = rest
   Done{(J.kv(key, J.str(M.header_line(raw))) <> fields, left)}
 
 def header_fields(keys: List<&2, String>, +hs: List<&2, M.Hdr>, b: Budget)
-  -> Result<&2, &2, String, List<&2, J.Json> & Budget>:
+  -> Result<&2, &2, String, Sigma<&2, &2, List<&2, J.Json>, _ => Budget>>:
   match keys:
     case Nil{}:
       Done{([], b)}
     case +key <> t:
       +raw = M.header(hs, Bool.pick(String, String.eq(key, "message_id"), "message-id", key))
-      do Result<&2, &2, String, List<&2, J.Json> & Budget>:
+      do Result<&2, &2, String, Sigma<&2, &2, List<&2, J.Json>, _ => Budget>>:
         next : Budget <- reserve_view(raw, b)
-        rest : List<&2, J.Json> & Budget <- header_fields(t, hs, next)
+        rest : Sigma<&2, &2, List<&2, J.Json>, _ => Budget> <- header_fields(t, hs, next)
         header_fields.after(key, raw, rest)
 
 def compact.go(raw: String, +out: String) -> String:
@@ -197,29 +197,29 @@ def base64_groups(raw: String, +count: U32) -> Bool:
         ((count + 1 : U32) .&. 3 : U32)))
 
 def decode.base64.after(+raw: String, final: Budget)
-  -> Result<&2, &2, String, String & Budget>:
+  -> Result<&2, &2, String, Sigma<&2, &2, String, _ => Budget>>:
   +decoded = C.b64_decode(raw)
-  do Result<&2, &2, String, String & Budget>:
+  do Result<&2, &2, String, Sigma<&2, &2, String, _ => Budget>>:
     check(same(C.b64_encode(decoded, False{}), compact.go(raw, "")), "malformed inner base64")
     return (decoded, final)
 
 def decode(encoding: String, +raw: String, b: Budget)
-  -> Result<&2, &2, String, String & Budget>:
+  -> Result<&2, &2, String, Sigma<&2, &2, String, _ => Budget>>:
   match encoding:
     case "base64":
-      do Result<&2, &2, String, String & Budget>:
+      do Result<&2, &2, String, Sigma<&2, &2, String, _ => Budget>>:
         check(base64_groups(raw, 0), "malformed inner base64")
         copy : Budget <- parse_bytes(raw, b)
         compact : Budget <- parse_bytes(raw, copy)
         final : Budget <- parse_bytes(raw, compact)
         decode.base64.after(raw, final)
     case "quoted-printable":
-      do Result<&2, &2, String, String & Budget>:
+      do Result<&2, &2, String, Sigma<&2, &2, String, _ => Budget>>:
         copy : Budget <- parse_bytes(raw, b)
         check(qp_valid(raw), "malformed inner quoted-printable")
         return (C.qp_decode(raw, False{}), copy)
     case _:
-      do Result<&2, &2, String, String & Budget>:
+      do Result<&2, &2, String, Sigma<&2, &2, String, _ => Budget>>:
         check(C.is_in(encoding, ["", "7bit", "8bit", "binary"]),
           "unsupported inner Content-Transfer-Encoding")
         return (raw, b)
@@ -409,7 +409,7 @@ def leaf(k: M.PartKind, bytes: String, level: U32, todo: List<&2, Task>,
   M.PartKind{ct, typ, name, attached} = k
   leaf.if(attached, ct, typ, name, bytes, level, todo, current, alt, b)
 
-def entity.multi.after(depth: Nat, hs: List<&2, M.Hdr>, decoded: String & Budget,
+def entity.multi.after(depth: Nat, hs: List<&2, M.Hdr>, decoded: Sigma<&2, &2, String, _ => Budget>,
   level: U32, todo: List<&2, Task>, current: Fragment, alt: Bool)
   -> Result<&2, &2, String, Walk>:
   (bytes, next) = decoded
@@ -424,11 +424,11 @@ def entity.multi(depth: Nat, +hs: List<&2, M.Hdr>, +body: String, level: U32,
     case _:
       do Result<&2, &2, String, Walk>:
         admitted : Budget <- parse_bytes(body, b)
-        decoded : String & Budget <- decode(
+        decoded : Sigma<&2, &2, String, _ => Budget> <- decode(
           String.to_lower(String.trim(M.header(hs, "content-transfer-encoding"))), body, admitted)
         entity.multi.after(depth, hs, decoded, level, todo, current, alt)
 
-def entity.leaf.after(+hs: List<&2, M.Hdr>, decoded: String & Budget, level: U32,
+def entity.leaf.after(+hs: List<&2, M.Hdr>, decoded: Sigma<&2, &2, String, _ => Budget>, level: U32,
   todo: List<&2, Task>, current: Fragment, alt: Bool) -> Result<&2, &2, String, Walk>:
   (bytes, next) = decoded
   +ct = M.header(hs, "content-type")
@@ -447,7 +447,7 @@ def entity.if(multi: Bool, +hs: List<&2, M.Hdr>, +body: String, level: U32, dept
     case False{}:
       do Result<&2, &2, String, Walk>:
         admitted : Budget <- parse_bytes(body, b)
-        decoded : String & Budget <- decode(
+        decoded : Sigma<&2, &2, String, _ => Budget> <- decode(
           String.to_lower(String.trim(M.header(hs, "content-transfer-encoding"))), body, admitted)
         entity.leaf.after(hs, decoded, level, todo, current, alt)
 
@@ -474,7 +474,7 @@ def finish_message(headers: J.Json, current: Fragment, parent: Fragment,
 
 def message.after_headers(hs: List<&2, M.Hdr>, body: String, level: U32,
   attachment: Maybe<&2, M.Att>, todo: List<&2, Task>, current: Fragment, alt: Bool,
-  displayed: List<&2, J.Json> & Budget) -> Result<&2, &2, String, Walk>:
+  displayed: Sigma<&2, &2, List<&2, J.Json>, _ => Budget>) -> Result<&2, &2, String, Walk>:
   (fields, next) = displayed
   entity(hs, body, level, Nat.sub(M.multipart_limit(), 1n),
     EndMessage{J.obj(fields), current, alt, attachment} <> todo, empty(), False{}, next)
@@ -485,7 +485,7 @@ def step.message(split: M.Split, level: U32, attachment: Maybe<&2, M.Att>,
   M.Split{head, body} = split
   +hs = M.headers(head)
   do Result<&2, &2, String, Walk>:
-    displayed : List<&2, J.Json> & Budget <-
+    displayed : Sigma<&2, &2, List<&2, J.Json>, _ => Budget> <-
       header_fields(["from", "to", "subject", "date", "message_id"], hs, b)
     message.after_headers(hs, body, level, attachment, todo, current, alt, displayed)
 

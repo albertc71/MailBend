@@ -2,8 +2,8 @@
   "kind": "Selected nested-message source composed with current main",
   "base_commit": "047add09caf8c5f58cc4a106ff5dc4fc0e5114e8",
   "base_tree": "08e097e7e4452e06b37af1ba8435ad2eb51f6ced",
-  "previous_proposal_head": "01cddcef6024c637601b6bb32936806a28081192",
-  "candidate_tree": "53b67e6460f364956d901ceb556d904a830b0228",
+  "previous_proposal_head": "b6ddb78d9a24920b244603a7847b9dacbb9e38b7",
+  "candidate_tree": "bf1f4da83e27638ee83e2c7803f2d6e80fb59434",
   "files": {
     ".agents/skills/policy-proofs/SKILL.md": {
       "mode": "100644",
@@ -1189,9 +1189,9 @@
     },
     "src/nested.bend": {
       "mode": "100644",
-      "blob": "34570c4c7112997783af0f14d442e5968771003a",
-      "sha256": "80da9cb81a51c5c41d01570f183c7e02281f9939b0c774741de0fd3a2f00b4ed",
-      "bytes": 21094
+      "blob": "a6a5ee0394229d0acfc0965c0639bcc36df4de71",
+      "sha256": "e8cd9c5bad376119464192e1c84906f3a84dfc417433c466405a9e071c28c9e7",
+      "bytes": 21417
     },
     "src/ops.bend": {
       "mode": "100644",
