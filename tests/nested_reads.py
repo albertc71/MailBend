@@ -274,8 +274,11 @@ def annotations(test, work):
                     literal["jev"] = {"status": "checked", "model": "jev-1.14.0", "content": mode,
                         "derived_from_untrusted_content": True, "decision": "proceeded", "reasons": [reason],
                         "signals": {"reply_needed": "low", "action_required": "mid", "priority": "mid",
-                                    "category": None, "suggested_action": "read_later"},
+                                    "category": None, "needs_new_category": True,
+                                    "suggested_action": "read_later"},
                         "coverage": "headers_only" if mode == "headers" else "partial"}
+                    test.check("nested complete unbudgeted Jev literal " + mode,
+                               code == 0 and actual == literal, actual)
                     sized = with_budget(literal)
                     size = sized["response"]["max_bytes"]
                     code, budgeted = test.tool(server, "mail_get", args(max_response_bytes=size), **env)

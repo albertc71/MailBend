@@ -1,9 +1,9 @@
 {
   "kind": "Selected nested-message source composed with current main",
-  "base_commit": "047add09caf8c5f58cc4a106ff5dc4fc0e5114e8",
-  "base_tree": "08e097e7e4452e06b37af1ba8435ad2eb51f6ced",
-  "previous_proposal_head": "b6ddb78d9a24920b244603a7847b9dacbb9e38b7",
-  "candidate_tree": "bf1f4da83e27638ee83e2c7803f2d6e80fb59434",
+  "base_commit": "94a10f939e995046a5137652e6f6d4b53cd0a936",
+  "base_tree": "97023fa2d1528aa38bf626421c61fbba33855e4d",
+  "previous_proposal_head": "04dfa0ae65c7154ba9d76c9ecb4a07475ddf0a3f",
+  "candidate_tree": "91905bf2fa7df78cdf2b9e47f3aba6d8162061b8",
   "files": {
     ".agents/skills/policy-proofs/SKILL.md": {
       "mode": "100644",
@@ -247,9 +247,9 @@
     },
     "docs/OPERATIONS.md": {
       "mode": "100644",
-      "blob": "21c9c006a0fbd2c56b88d28f184128ada8c651e1",
-      "sha256": "1fbd33276e6270c74ddb4978d114cfcdd0d8baf45434d3639b5755023cacc2f1",
-      "bytes": 15507
+      "blob": "98eb0b2904d376358b8c319c6745047b04201264",
+      "sha256": "4b6eaa8aef3e1a2bb0dca80c10f8542663e584e7e9cd3f0087c2e6e2c6618353",
+      "bytes": 16589
     },
     "docs/PRIVACY.md": {
       "mode": "100644",
@@ -259,9 +259,9 @@
     },
     "docs/PROOF-COVERAGE.md": {
       "mode": "100644",
-      "blob": "12f299e874fe32ed72e67cae99e99713c23fa1b9",
-      "sha256": "52c00294284508aa57a88c2a2fe7774ab122a50f59752601e2ac09fb4fdaafd3",
-      "bytes": 35636
+      "blob": "d20b7bcc585faec28efae3ec90d5e4d061e03985",
+      "sha256": "849e5c4752fd6dc056561f9935e47ebc164e14315d441f55b30708fff262561d",
+      "bytes": 35637
     },
     "docs/PROVIDER-REPORTS.md": {
       "mode": "100644",
@@ -577,9 +577,9 @@
     },
     "native/README.md": {
       "mode": "100644",
-      "blob": "641d6abe213186b3ab659b1b15c5b6bad947c3ba",
-      "sha256": "84d02d214627bd486caeb3150c2cf27093b99761970965507867d3788583219c",
-      "bytes": 25441
+      "blob": "a44b37093b83f5d6b79ae1f98bbcb24e529c4ed6",
+      "sha256": "6a700c85e95d4cb4e3bb3d1fda60f5574297d2cd7c26d7ab82242eddbf5cb006",
+      "bytes": 25705
     },
     "native/clippy.toml": {
       "mode": "100644",
@@ -871,9 +871,9 @@
     },
     "native/mailbend-tls/src/exit.rs": {
       "mode": "100644",
-      "blob": "bf67968abb3fe49c111646922c5298ac479e38d9",
-      "sha256": "43f19763cb986284e1c19de816e4c9511d3ebcf0329358a3065a85c5ab98e248",
-      "bytes": 3141
+      "blob": "0b923358dcc282bd688b69e14aa2e8324a197548",
+      "sha256": "24c0fab739c313662e505b8c8979f47dffadfa34ffdd02accfe642ffea0bd26d",
+      "bytes": 3175
     },
     "native/mailbend-tls/src/imap.rs": {
       "mode": "100644",
@@ -1279,9 +1279,9 @@
     },
     "tests/auth_refusal_cases.py": {
       "mode": "100644",
-      "blob": "a5d23ed26f6741752b4e1ed04dae8eda10219d66",
-      "sha256": "20362b1cbe72cddf9558ac36e0505bf09781a86d8f92d0be71a8ee1088e4bf99",
-      "bytes": 3390
+      "blob": "2b6c97b1a71f6ec3eefd22f895a7b011b478587f",
+      "sha256": "0da2d2769eab6897234a9e66d28c436410caa2b893f683eb6541ced1fce48a29",
+      "bytes": 4425
     },
     "tests/auth_sequence_controls.py": {
       "mode": "100644",
@@ -2557,9 +2557,9 @@
     },
     "tests/nested_reads.py": {
       "mode": "100644",
-      "blob": "26c3cb8fc7b6001fc5c084fd00183c256710f731",
-      "sha256": "670b82f0194eb63c65dba9299faa78b178bd6dcfc628dd8f9c97c2589998c9eb",
-      "bytes": 21115
+      "blob": "375d17e352408a9527ff4ebea507e1747d31f06f",
+      "sha256": "f626ce9aefb908691e74774e3170127eacefb8106e14fedb66a6866457e1050b",
+      "bytes": 21332
     },
     "tests/perf/README.md": {
       "mode": "100644",
@@ -2617,8 +2617,8 @@
     },
     "tests/posture-egress-inventory.json": {
       "mode": "100644",
-      "blob": "3e25c9716dc5afd4c03f4f8ea59dbfbb9314f9b9",
-      "sha256": "c60b3b06cab4d8029779611d6deee9008e302586d7f4973d9fb34f8292170634",
+      "blob": "2f56b3eec5390524174fafe58a6e74306172ad99",
+      "sha256": "51b5c0e46405628b87a00e2bf1b2e1ce76e7ff537c38544cf0bcc246dbe40d9b",
       "bytes": 12106
     },
     "tests/posture-guard.c": {
@@ -2749,9 +2749,9 @@
     },
     "tests/test-e2e.py": {
       "mode": "100644",
-      "blob": "8e22cedab01bcac14a317bf93281ba976d733691",
-      "sha256": "4211eded293805cd0f840bfdf0f834c8ad64a1d18bc8a92bf9698a5786fab1ea",
-      "bytes": 445510
+      "blob": "47026c4e27557a9c3eda4c634901035724c5dc22",
+      "sha256": "7f828929e014059493f0d5b0c345b7841ef583316a51e63512415a3f59892c1c",
+      "bytes": 445964
     },
     "tests/test-facts-extraction.py": {
       "mode": "100644",

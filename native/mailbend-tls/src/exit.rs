@@ -64,6 +64,7 @@ impl AuthReason {
 
     pub(crate) fn smtp(code: u16) -> Self {
         match code {
+            432 => Self::Unknown,
             400..=499 => Self::Temporary,
             535 => Self::Credentials,
             _ => Self::Unknown,

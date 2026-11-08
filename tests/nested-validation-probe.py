@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_SHA = "c16c1ba1579bc62dbb4a3363519a3fa6da9acf4754f92c0bb5268c582edf7c33"
+SOURCE_SHA = "3ecd4dd2721146d657de1a4c21bef16632feda677a24a0b6dc10a379b9b33ab4"
 MUTATIONS_SHA = "f8aafbb9ba8b26a7e6ca39d449eab3944408f3a8cac2fe6017f8bb3572f0c8ce"
 CASES = {
     "message-depth": ("public", "nested forward-depth literal view", "nested apple-style-attached literal view"),

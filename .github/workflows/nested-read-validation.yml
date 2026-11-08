@@ -73,7 +73,7 @@ jobs:
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Build the actual pinned candidate
-        timeout-minutes: 6
+        timeout-minutes: 8
         run: |
           env -i PATH="$PATH" HOME="$HOME" BEND_NO_TELEMETRY=1 sh scripts/install.sh
           sha256sum "$HOME/.bend/bin/bend" bin/mailbend-core bin/mailbend-tls bin/mailbend-typesafe bin/mailbend-stdio bin/mailbend-attach
