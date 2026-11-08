@@ -240,6 +240,19 @@ def Laws.get_new_now_examines_only(mbox):
 def Laws.refresh_plan(mbox, uids, uidv):
   ({==}, {==})
 
+def Laws.thread_start_writes_nothing(mbox, uid, uidv):
+  match uidv:
+    case None{}:
+      {==}
+    case Some{v}:
+      {==}
+
+def Laws.thread_start_checked_exact(mbox, uid, uidv):
+  {==}
+
+def Laws.thread_start_unchecked_exact(mbox, uid):
+  {==}
+
 # The thread plans are lists over folders and keys, so their law rests on
 # lemmas by induction over those lists: the searches add no write to what
 # follows them, so neither plan writes anything.
