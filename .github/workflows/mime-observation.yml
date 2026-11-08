@@ -1,0 +1,72 @@
+name: MIME observation emission proposal
+on:
+  push:
+    branches: [validation/mime-observation-124-emission-1970639]
+    paths:
+      - .github/workflows/mime-observation.yml
+      - tests/mime-observation-hosted.py
+      - tests/mime-observation-controls.py
+      - tests/test-mime-observation.py
+      - tests/mime-observation.bend
+
+permissions:
+  contents: read
+
+jobs:
+  emit-pristine-oracle:
+    if: >-
+      github.repository == 'albertc71/MailBend' &&
+      github.event.created == true && github.event.deleted == false &&
+      github.event.after == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out immutable candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.after }}
+          path: candidate
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Check out immutable stock
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 1970639fcfcc7589bc62e95adf8d49341b378136
+          path: stock
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Select the reviewed Python series
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Check sources, run benign controls, and emit only stock oracle C
+        id: emission
+        shell: bash
+        run: |
+          set -eu
+          printf '%s  %s\n' 'e2e6e436a73d572ef4638809a1a62e65f2467de59aaf4be1257890dec012480d' 'candidate/tests/mime-observation-hosted.py' | sha256sum -c - >/dev/null
+          python -I -B candidate/tests/mime-observation-hosted.py
+      - name: Retain only sanitized receipts
+        if: ${{ always() && steps.emission.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mime-124-receipts-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/mime-observation-124/receipts/source.json
+            ${{ runner.temp }}/mime-observation-124/receipts/controls.json
+            ${{ runner.temp }}/mime-observation-124/receipts/resources.json
+            ${{ runner.temp }}/mime-observation-124/receipts/inputs.json
+            ${{ runner.temp }}/mime-observation-124/receipts/emission.json
+            ${{ runner.temp }}/mime-observation-124/receipts/status.json
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 6
+      - name: Retain generated public-source C for independent review
+        if: ${{ success() && steps.emission.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mime-124-stock-oracle-C-${{ github.sha }}
+          path: ${{ runner.temp }}/mime-observation-124/publish/mime-oracle.c
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 6
