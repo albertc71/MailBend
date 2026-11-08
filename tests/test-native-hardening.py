@@ -57,6 +57,45 @@ int main(void) {
         self.assertFalse((self.root / 'executed-helper').exists())
         self.assertTrue(all(os.access(self.bin / name, os.X_OK) for name in HELPERS))
 
+    def test_rejects_leaf_symlinks_to_hardened_executables(self):
+        for name in ('mailbend-tls', 'mailbend-attach', 'mailbend-typesafe', 'mailbend-stdio'):
+            with self.subTest(name=name):
+                result = self.check()
+                self.assertEqual(0, result.returncode, result.stderr)
+                path = self.bin / name
+                path.unlink()
+                path.symlink_to(self.good)
+                try:
+                    result = self.check()
+                    self.assertEqual(1, result.returncode, 'leaf symlink must be refused')
+                    self.assertEqual(f'{path}: expected a regular ELF file\n', result.stderr)
+                finally:
+                    path.unlink()
+                    shutil.copy2(self.good, path)
+                    result = self.check()
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertFalse((self.root / 'executed-helper').exists())
+
+    def test_accepts_parent_symlink_but_rejects_leaf_symlink(self):
+        alias = self.root / 'bin-alias'
+        alias.symlink_to(self.bin, target_is_directory=True)
+        self.bin = alias
+        result = self.check()
+        self.assertEqual(0, result.returncode, result.stderr)
+        path = alias / 'mailbend-tls'
+        path.unlink()
+        path.symlink_to(self.good)
+        try:
+            result = self.check()
+            self.assertEqual(1, result.returncode, 'leaf symlink must be refused')
+            self.assertEqual(f'{alias}/mailbend-tls: expected a regular ELF file\n', result.stderr)
+        finally:
+            path.unlink()
+            shutil.copy2(self.good, path)
+            result = self.check()
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse((self.root / 'executed-helper').exists())
+
     def test_rejects_missing_or_non_elf_helpers(self):
         for name in HELPERS:
             with self.subTest(name=name):
