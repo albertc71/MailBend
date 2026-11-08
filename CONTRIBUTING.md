@@ -107,6 +107,8 @@ python3 tests/formal/check-install-swap.py
 python3 scripts/check-native-hardening.py         # installed native ELF metadata, after install.sh
 python3 tests/test-native-hardening.py             # real C-linked positive and negative controls
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
+python3 scripts/check-fuzz-lock.py               # shared native dependency identities and edges
+python3 tests/test-fuzz-lock.py                   # offline lock comparison fixtures
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
@@ -124,6 +126,17 @@ MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools thr
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 ```
+
+The offline fuzz-lock guard compares dependencies reachable from the local
+`mailbend-net` and `mailbend-tls` packages in `native/Cargo.lock` with
+`native/fuzz/Cargo.lock`. Shared package names, versions, sources, checksums and
+resolved dependency edges must match. Extra fuzz-only packages and edges are
+allowed, including extra dependencies on shared packages. The guard validates
+package records in both locks and resolves references on shared parents, including
+their extra fuzz edges. It does not resolve references on entirely fuzz-only
+parents; Cargo remains the full-lock validator. Lock data cannot establish equal
+features, build targets, local source paths or runtime behavior. Review the guard's
+fixed roots if the fuzz workspace's path dependencies change.
 
 The unit runner stays serial by default. To opt into bounded parallel execution,
 run `sh tests/run-unit.sh --jobs 2`. The decimal job count must be between 1 and 8.

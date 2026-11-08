@@ -51,7 +51,7 @@
     },
     {
       "path": "native/fuzz/Cargo.lock",
-      "sha256": "197fc7212b408bfec4bbb9074fa03d3a633db4d700cdfa7d37fa48661b6577c9"
+      "sha256": "cafbfe3d97b56475d5b3302228fdd99b5e9edcf5406521b266e8a1263b0d734c"
     },
     {
       "path": "native/fuzz/Cargo.toml",
