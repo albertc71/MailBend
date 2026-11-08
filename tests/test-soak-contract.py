@@ -3,6 +3,7 @@
 import ast
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -148,10 +149,35 @@ class SoakContract(unittest.TestCase):
             proc.wait.assert_called_once_with(timeout=10)
 
     def test_comparison_windows_have_identical_mix(self):
+        expected = [
+            {"jsonrpc": "2.0", "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_probe", "arguments": {}}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_search", "arguments": {"limit": 2}}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_get", "arguments": {"uid": 1}}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_flag", "arguments": {"uids": [1], "uidvalidity": 1700000001}}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_unflag", "arguments": {"uids": [1], "uidvalidity": 1700000001}}},
+            {"jsonrpc": "2.0", "method": "soak/unknown", "params": {}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_get", "arguments": {"uid": 0}}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_search", "arguments": {"limit": 2}}},
+            {"jsonrpc": "2.0", "method": "tools/call",
+             "params": {"name": "mail_get", "arguments": {"uid": 1}}},
+        ]
         for count in (500, 5000):
-            first = [soak.request(i, i)["method"] for i in range(count // 10)]
-            last = [soak.request(i, i)["method"] for i in range(count - count // 10, count)]
-            self.assertEqual(first, last)
+            for start in (50, 50 + count - count // 10):
+                for index in range(start, start + count // 10):
+                    with self.subTest(count=count, index=index):
+                        payload = {key: value for key, value in soak.request(index + 1, index).items()
+                                   if key != "id"}
+                        self.assertEqual(json.dumps(payload, sort_keys=True),
+                                         json.dumps(expected[index % 10], sort_keys=True),
+                                         "comparison-window payload")
 
 
 if __name__ == "__main__":
