@@ -1,0 +1,23 @@
+name: Fuzz identity mutation validation
+on:
+  push:
+    branches: [validation/fuzz-identity-369]
+permissions:
+  contents: read
+jobs:
+  mutations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: validation-source
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: b9c9fa9aeee12eb048165b5f1f9eab790f28462d
+          path: candidate
+          persist-credentials: false
+      - name: Immutable candidate and six isolated semantic controls
+        run: python3 -B validation-source/validation/fuzz_identity_mutations.py "$GITHUB_WORKSPACE/candidate"
