@@ -46,9 +46,10 @@ def integration_cases(srv):
                           if key not in ("facts", "facts_scan")} == ordinary, enabled
     assert srv.log_lines()[start:] == baseline_commands, srv.log_lines()[start:]
     print("PASS omitted/false parity and unchanged read commands")
-    for mode in ("full", "text"):
+    for mode, nested in (("full", {}), ("text", {}),
+                         ("full", {"nested_message": False}), ("text", {"nested_message": False})):
         code, result = e2e.tool(srv, "mail_get", {"uid": 1, "facts": True, "projection": mode,
-                                                "max_response_bytes": 4096})
+                                                "max_response_bytes": 4096, **nested})
         assert code == 0 and result["facts"] == [EXPECTED] and result["text"] == TEXT, result
         assert ("html" in result) == (mode == "full"), result
         assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()) <= 4096, result
@@ -103,6 +104,10 @@ def jev_cases(srv, work):
         assert asked and [q["body"] for q in asked] == [q["body"] for q in sent], (asked, sent)
         assert any(email.get("text") == TEXT for q in asked for email in q["body"]["state"]["emails"])
         assert commands == observed and srv.st()["mailboxes"] == before, (commands, observed)
+        code3, disabled, kept_commands, kept_requests = e2e.gate_call(
+            srv, ts, "mail_get", {**args, "facts": True, "nested_message": False}, **env)
+        assert code3 == 0 and disabled == enabled, disabled
+        assert kept_commands == observed and [q["body"] for q in kept_requests] == [q["body"] for q in sent]
         assert not any(e2e.TYPESAFE_KEY in output for output in e2e.outputs), "synthetic key leaked"
         print("PASS facts preserve body-mode Jev input, annotation and read commands")
     finally:
