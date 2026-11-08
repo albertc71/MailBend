@@ -1,0 +1,36 @@
+name: Soak payload sensitivity
+on:
+  push:
+    branches:
+      - validation/soak-payload-161-20261108
+permissions:
+  contents: read
+jobs:
+  payload-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          path: candidate
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: 1970639fcfcc7589bc62e95adf8d49341b378136
+          path: original
+      - name: Check exact inputs and synthetic payload controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C candidate rev-parse HEAD HEAD^{tree}
+          git -C original rev-parse HEAD HEAD^{tree}
+          test "$(git -C original rev-parse HEAD)" = 1970639fcfcc7589bc62e95adf8d49341b378136
+          test "$(git -C original rev-parse HEAD:tests/test-soak.py)" = 03ce59a84442ec696367eaab3ec5f377a922ba0d
+          test "$(git -C candidate rev-parse HEAD:tests/test-soak.py)" = 03ce59a84442ec696367eaab3ec5f377a922ba0d
+          test "$(git -C original rev-parse HEAD:tests/test-soak-contract.py)" = c7690f0978fda5aeded1073857024192123540e7
+          echo '888962ab13cf78cf3dc8c44ad11c33bbdc690001534b84ba4798e8cb1198f8a3  candidate/tests/test-soak-contract.py' | sha256sum -c -
+          python3 --version
+          python3 -I -B candidate/.github/validation/soak-payload-161.py original candidate
+          git -C candidate diff --exit-code
+          git -C original diff --exit-code
