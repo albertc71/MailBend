@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -52,8 +53,28 @@ int main(void) {
                               capture_output=True, text=True, timeout=60, cwd=self.root, env=env)
 
     def test_accepts_four_hardened_executables(self):
+        # shortcut: one literal helpers= line, update this reader if that contract changes.
+        source = (ROOT / 'scripts/install.sh').read_text()
+        declarations = [line for line in source.splitlines()
+                        if re.search(r'\bhelpers\s*\+?=', line.split('#', 1)[0])]
+        self.assertEqual(1, len(declarations),
+                         'installer inventory needs exactly one helpers= declaration')
+        declaration = re.fullmatch(r'[ \t]*helpers="([a-z0-9 \t-]*)"[ \t]*(?:#.*)?',
+                                   declarations[0])
+        self.assertIsNotNone(declaration, 'unsupported installer inventory declaration')
+        installed = declaration[1].split()
+        self.assertTrue(installed, 'installer inventory must not be empty')
+        self.assertTrue(all(re.fullmatch(r'mailbend-[a-z0-9]+(?:-[a-z0-9]+)*', name)
+                            for name in installed), 'unsupported installer helper name')
+        self.assertEqual(len(installed), len(set(installed)),
+                         'duplicate installer helper name')
         result = self.check()
         self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual('', result.stderr)
+        self.assertCountEqual([f'{self.bin / name}: OK' for name in installed],
+                              result.stdout.splitlines(),
+                              'checker output must cover each installed helper exactly once')
+        self.assertCountEqual(installed, HELPERS, 'fixtures must cover every installed helper')
         self.assertFalse((self.root / 'executed-helper').exists())
         self.assertTrue(all(os.access(self.bin / name, os.X_OK) for name in HELPERS))
 
