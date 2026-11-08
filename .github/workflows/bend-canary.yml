@@ -186,12 +186,62 @@ jobs:
           sh "$RUNNER_TEMP/bend-canary/install-lean.sh"
           lean --version
 
-      - name: Check main and its imports
+      - name: Check C emission rejects imported errors on both compiler versions
+        id: emission_controls
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BEND_HOME BENDTT
+          HOME="$RUNNER_TEMP/bend-emission-pinned-home" sh scripts/install-bend.sh
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-emission-controls'
+          work.mkdir()
+          homes = [
+              ('2.0.35', pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-emission-pinned-home'),
+              ('2.0.39', pathlib.Path(os.environ['HOME'])),
+          ]
+          cases = [
+              ('valid', '0', 0, ()),
+              ('type-error', 'True{}', 1, ('- expected : U32', '- observed : Bool', 'canary_value')),
+              ('hole', '?TODO', 1, ('1 TODO found.',)),
+          ]
+          failed = []
+          for version, home in homes:
+              compiler = home / '.bend/bin/bend'
+              env = dict(os.environ, HOME=str(home))
+              actual = subprocess.check_output([str(compiler), 'version'], env=env, text=True, timeout=30).strip()
+              print(f'Emission control compiler: {compiler} | {actual}', flush=True)
+              if actual != 'bend ' + version:
+                  raise SystemExit('Unexpected control compiler version')
+              for name, body, expected, diagnostic in cases:
+                  case = work / version / name
+                  case.mkdir(parents=True)
+                  (case / 'value.bend').write_text('import Base\n\ndef canary_value() -> U32:\n  ' + body + '\n')
+                  source = case / 'main.bend'
+                  source.write_text('import Base\nimport ./value.bend as Control\n\n@unsafe\ndef canary_loop(n: U32) -> U32:\n  canary_loop(n)\n\ndef main() -> U32:\n  canary_loop(Control.canary_value())\n')
+                  output = case / 'main.c'
+                  result = subprocess.run([str(compiler), str(source), '-o', str(output)], env=env,
+                                          text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+                  print(f'--- Bend {version} imported {name}: exit {result.returncode} ---', flush=True)
+                  print(result.stdout, end='', flush=True)
+                  emitted = output.is_file() and output.stat().st_size > 0
+                  ok = (result.returncode == expected and
+                        (emitted if expected == 0 else not output.exists()) and
+                        all(text in result.stdout for text in diagnostic))
+                  if not ok:
+                      failed.append(f'{version}/{name}')
+          print('Emission control failures:', failed, flush=True)
+          raise SystemExit(bool(failed))
+          PY
+
+      - name: Emit C for main and its imports
         id: check
         timeout-minutes: 3
         if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
         continue-on-error: true
-        run: bend main.bend --check-only
+        run: bend main.bend -o "$RUNNER_TEMP/mailbend-main.c"
 
       - name: Recheck every proof with the proven kernel
         id: verdict
@@ -255,7 +305,7 @@ jobs:
           steps = json.loads(os.environ['STEP_RESULTS'])
           candidate = steps.get('bend', {}).get('outputs', {})
           lean = steps.get('requirement', {}).get('outputs', {})
-          ids = ['checkout', 'identity', 'isolate', 'dependencies', 'bend', 'requirement', 'lean', 'check', 'verdict', 'unit', 'build', 'smoke']
+          ids = ['checkout', 'identity', 'isolate', 'dependencies', 'bend', 'requirement', 'lean', 'emission_controls', 'check', 'verdict', 'unit', 'build', 'smoke']
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('## Bend upgrade observation\n\n')
               summary.write('This workflow does not run on pull requests. Do not make it a required check.\n\n')
