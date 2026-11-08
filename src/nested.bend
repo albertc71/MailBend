@@ -268,6 +268,13 @@ def framing.next(close: Bool, open: Bool, rest: String, b: Budget, opened: Bool)
     case False{} False{}:
       Done{Scanning{rest, b, opened}}
 
+def framing.line(next: Line, +bound: String, b: Budget, opened: Bool)
+  -> Result<&2, &2, String, Framing>:
+  Line{l, rest} = next
+  +mark = delimiter(l)
+  framing.next(String.eq(mark, "--" ++ bound ++ "--"),
+    String.eq(mark, "--" ++ bound), rest, b, opened)
+
 def framing.go(state: Result<&2, &2, String, Framing>, +bound: String)
   -> Result<&2, &2, String, Budget>:
   match state:
@@ -278,29 +285,33 @@ def framing.go(state: Result<&2, &2, String, Framing>, +bound: String)
     case Done{Scanning{SNil{}, b, opened}}:
       Fail{problem("malformed multipart framing")}
     case Done{Scanning{raw, b, opened}}:
-      Line{l, rest} = line(raw, "")
-      +mark = delimiter(l)
-      framing.go(framing.next(String.eq(mark, "--" ++ bound ++ "--"),
-        String.eq(mark, "--" ++ bound), rest, b, opened), bound)
+      framing.go(framing.line(line(raw, ""), bound, b, opened), bound)
 
 def framing(raw: String, bound: String, b: Budget) -> Result<&2, &2, String, Budget>:
   framing.go(Done{Scanning{raw, b, False{}}}, bound)
 
-def cut.go(raw: String, +bound: String, state: M.Cut, done: Bool) -> List<&2, String>:
+type CutStep is Data:
+  CutStep{raw: String, state: M.Cut, done: Bool}
+
+def cut.line(next: Line, +bound: String, state: M.Cut) -> CutStep:
+  Line{+l, rest} = next
+  +mark = delimiter(l)
+  +close = String.eq(mark, "--" ++ bound ++ "--")
+  CutStep{rest, M.subparts.line.if(l, state, close,
+    String.eq(mark, "--" ++ bound)), close}
+
+def cut.go(step: CutStep, +bound: String) -> List<&2, String>:
+  CutStep{raw, state, done} = step
   match done raw:
     case True{} _:
       M.subparts.fin(state)
     case False{} SNil{}:
       M.subparts.fin(state)
     case False{} _:
-      Line{+l, rest} = line(raw, "")
-      +mark = delimiter(l)
-      +close = String.eq(mark, "--" ++ bound ++ "--")
-      cut.go(rest, bound, M.subparts.line.if(l, state, close,
-        String.eq(mark, "--" ++ bound)), close)
+      cut.go(cut.line(line(raw, ""), bound, state), bound)
 
 def cut(raw: String, bound: String) -> List<&2, String>:
-  cut.go(raw, bound, M.Cut{[], [], False{}, False{}}, False{})
+  cut.go(CutStep{raw, M.Cut{[], [], False{}, False{}}, False{}}, bound)
 
 def children(parts: List<&2, String>, +context: M.PartContext, +level: U32,
   +depth: Nat, tail: List<&2, Task>) -> List<&2, Task>:
@@ -451,20 +462,30 @@ def message.after_headers(hs: List<&2, M.Hdr>, body: String, level: U32,
   entity(hs, body, level, Nat.sub(M.multipart_limit(), 1n),
     EndMessage{J.obj(fields), current, alt, attachment} <> todo, empty(), False{}, next)
 
+def step.message(split: M.Split, level: U32, attachment: Maybe<&2, M.Att>,
+  todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
+  -> Result<&2, &2, String, Walk>:
+  M.Split{head, body} = split
+  +hs = M.headers(head)
+  do Result<&2, &2, String, Walk>:
+    displayed : List<&2, J.Json> & Budget <-
+      header_fields(["from", "to", "subject", "date", "message_id"], hs, b)
+    message.after_headers(hs, body, level, attachment, todo, current, alt, displayed)
+
+def step.entity(split: M.Split, context: M.PartContext, level: U32, depth: Nat,
+  todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
+  -> Result<&2, &2, String, Walk>:
+  M.Split{head, body} = split
+  entity(M.part_context.headers(context, M.headers(head)), body,
+    level, depth, todo, current, alt, b)
+
 def step(task: Task, todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
   -> Result<&2, &2, String, Walk>:
   match task:
     case Message{raw, level, attachment}:
-      M.Split{head, body} = M.split(raw)
-      +hs = M.headers(head)
-      do Result<&2, &2, String, Walk>:
-        displayed : List<&2, J.Json> & Budget <-
-          header_fields(["from", "to", "subject", "date", "message_id"], hs, b)
-        message.after_headers(hs, body, level, attachment, todo, current, alt, displayed)
+      step.message(M.split(raw), level, attachment, todo, current, alt, b)
     case Entity{raw, context, level, depth}:
-      M.Split{head, body} = M.split(raw)
-      entity(M.part_context.headers(context, M.headers(head)), body,
-        level, depth, todo, current, alt, b)
+      step.entity(M.split(raw), context, level, depth, todo, current, alt, b)
     case EndMessage{headers, parent, parent_alt, attachment}:
       Done{finish_message(headers, current, parent, parent_alt, attachment, todo, b)}
     case EndMultipart{parent, parent_alt}:
