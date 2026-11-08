@@ -78,6 +78,7 @@ bend src/tools.bend --verdict                     # retain tool-layer kernel cov
 bend tests/formal/tool-laws.bend --verdict        # tool-layer laws kept out of PROOF.bend
 python3 tests/formal/check-policy.py              # pure policy boundary and rejected mutations
 python3 tests/formal/check-smtp-tls.py             # bounded model plus rejected mutations
+python3 tests/formal/check-facts.py                # literal source/span proofs reject three mutations
 python3 tests/formal/check-role-folders.py         # role-folder proofs reject broken resolution
 python3 tests/formal/check-response-image-budgets.py # budget proofs reject broken admission/cuts
 python3 tests/test-writing-laws.py                # malformed guide fences fail closed
@@ -87,6 +88,7 @@ python3 tests/formal/check-plan-coverage.py        # public plan references and 
 python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
 python3 tests/test-unit-runner.py                 # offline unit scheduling and cleanup contracts
 sh tests/run-unit.sh
+python3 tests/test-facts-extraction.py            # deterministic hostile inputs and exact spans
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
 python3 tests/test-mcp-schema-comparison.py        # bounded comparison startup and descendant cleanup
@@ -115,6 +117,8 @@ python3 tests/test-plugin.py --runtime             # real plugin-resolved hook a
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/formal/check-reply-marking.py        # post-acceptance marking transition laws
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
+python3 tests/test-facts.py                       # literal facts, fake loopback mail, CLI
+MAILBEND_TEST_MCP=1 python3 tests/test-facts.py   # the same facts through structured MCP
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed

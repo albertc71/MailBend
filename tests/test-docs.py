@@ -304,7 +304,7 @@ class DriftChecks(unittest.TestCase):
 
     def test_skill_index_signature_requires_every_argument(self):
         self.replace("skills/mailbend/references/tools.md",
-                     "mail_get(folder, uid, uidvalidity, section, max_bytes, projection, max_response_bytes)",
+                     "mail_get(folder, uid, uidvalidity, facts, section, max_bytes, projection, max_response_bytes)",
                      "mail_get(folder, uid)")
         self.check("missing argument mail_get.uidvalidity")
 

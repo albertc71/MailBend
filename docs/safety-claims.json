@@ -884,6 +884,36 @@
         "src/tools.bend#brief_output",
         "src/response.bend#bounded"
       ]
+    },
+    {
+      "id": "meeting-facts-source",
+      "claim": "For every supplied text and completeness marker, actual extracted spans are nonempty, exactly 36 scalars wide and within the text. Production facts fields render exact source substrings and matching coordinates, source and untrusted markers. Two concrete positive witnesses exclude always-empty extraction. Recognition, line counting, limits, completeness and IO wiring are tested, not universally proved.",
+      "anchor": "what-the-proofs-cover",
+      "status": "proven",
+      "laws": [
+        "meeting_facts_spans_within_text",
+        "meeting_facts_emitted_values",
+        "meeting_facts_complete_source_witness",
+        "meeting_facts_unicode_source_witness"
+      ],
+      "tests": [
+        "tests/formal/check-facts.py#main",
+        "tests/test-facts-extraction.py#main",
+        "tests/test-facts.py#main"
+      ],
+      "code": [
+        "src/facts.bend#extract",
+        "src/facts.bend#fields"
+      ],
+      "mutation": {
+        "id": "meeting-facts-rendered-value",
+        "path": "src/facts.bend",
+        "before": "J.kv(\"value\", J.str(String.take(String.drop(source, start), Nat.sub(end, start))))",
+        "after": "J.kv(\"value\", J.str(\"changed\"))",
+        "proof": "tests/formal/facts-proofs.bend#rendered_all",
+        "law": "meeting_facts_emitted_values",
+        "observer_reason": "The production fields law calls extracted_rendered and rendered_result, whose rendered_all helper relates every actual emitted JSON value and coordinate to its extracted span and supplied text. Replacing that value breaks this relationship."
+      }
     }
   ],
   "unclaimed": {

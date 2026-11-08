@@ -238,4 +238,23 @@ assert not image_contract.is_valid({k: v for k, v in image.items()
 assert not image_contract.is_valid({**image, 'metadata_removed_bytes': -1})
 assert not image_contract.is_valid({**image, 'metadata_removed_bytes': '40'})
 checks += 5
+literal_link = "https://meet.google.com/abc-defg-hij"
+meeting_fact = dict(kind="meeting_link", value=literal_link, source="text",
+                    start=0, end=36, line=1, untrusted=True)
+whole = dict(folder="INBOX", uid=1, uidvalidity=7, internal_date="", **{"from": ""},
+             to="", cc="", reply_to="", subject="", date="", message_id="",
+             in_reply_to="", references="", text=literal_link, html="", flags=[],
+             seen=False, size=36, truncated=False, html_available=False, attachments=[], **metadata)
+with_facts = {**whole, "facts": [meeting_fact],
+              "facts_scan": {"scope": "returned_text", "limited": False}}
+check("mail_get", whole)
+check("mail_get", with_facts)
+check("mail_get", {**whole, "facts": []}, False)
+check("mail_get", {**with_facts, "facts": [meeting_fact] * 17}, False)
+for change in ({"value": literal_link + "\n"}, {"value": literal_link + "?x"},
+               {"source": "html"}, {"untrusted": False}, {"start": -1}, {"end": 65537},
+               {"line": 0}, {"kind": "instruction"}):
+    check("mail_get", {**with_facts, "facts": [{**meeting_fact, **change}]}, False)
+check("mail_get", {**selected, "facts": [meeting_fact],
+                   "facts_scan": {"scope": "returned_text", "limited": False}}, False)
 print(f'output schemas: {checks} checks passed')
