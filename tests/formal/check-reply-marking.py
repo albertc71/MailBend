@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require production transition mutants to fail the named reply-marking law."""
+"""Require production transition and evidence mutants to fail their named laws."""
 import os
 from pathlib import Path
 import re
@@ -21,6 +21,29 @@ MUTATIONS = (
      'True{} &&', 'original_mark_unaccepted_skips'),
     ("accepted replies never mark", 'String.eq(Policy.str_arg(j, "smtp_outcome", ""), "accepted") &&',
      'False{} &&', 'original_mark_accepted_runs'),
+    ('accepted evidence bypasses sent false', 'Policy.bool_arg(j, "sent", False{}), Policy.Ok{j}, original)',
+     'True{}, Policy.Ok{j}, original)', 'original_mark_sent_false_skips'),
+    ('absent Answered reported marked', 'OriginalNotMarked{"answered_absent"})',
+     'OriginalMarked{})', 'original_mark_flag_examples'),
+    ('present Answered never reported marked', 'Bool.pick(OriginalMark, I.has_attr(fs, "\\\\Answered"), OriginalMarked{},',
+     'Bool.pick(OriginalMark, I.has_attr(fs, "\\\\Answered"), OriginalUnverified{"mark_unverified"},', 'original_mark_flag_examples'),
+    ('changed UIDVALIDITY ignored', 'Bool.pick(String, U32.is_eq(n, want), "", "identity_changed")',
+     'Bool.pick(String, U32.is_eq(n, want), "", "")', 'original_mark_flag_examples'),
+    ('incomplete readback treated complete', 'case False{}:\n      OriginalUnverified{"mark_unverified"}\n\ndef original_mark.identity',
+     'case False{}:\n      original_mark.flags(last_flags(refresh_flags(I.replies(lines, 4)), uid, None{}))\n\ndef original_mark.identity', 'original_mark_incomplete_readback_unverified'),
+    ('transcript completeness guard bypassed', 'original_mark.readback(ok_at(lines, 1) && ok_at(lines, 2) && ok_at(lines, 3) &&\n        ok_at(lines, 4) && uidv_is(I.ok_code(I.replies(lines, 1), "UIDVALIDITY"), uidv), lines, uid)',
+     'original_mark.readback(True{}, lines, uid)', 'original_mark_incomplete_transcript_unverified'),
+    ('missing flags reported definitively absent', 'case None{}:\n      OriginalUnverified{"original_not_observed"}',
+     'case None{}:\n      OriginalNotMarked{"answered_absent"}', 'original_mark_missing_flags_unverified'),
+    ('transcript refusal reported marked', 'case SCon{h, t}:\n      OriginalNotMarked{SCon{h, t}}',
+     'case SCon{h, t}:\n      OriginalMarked{}', 'original_mark_refused_transcript_not_marked'),
+    ('result wrapper always unverified', 'original_mark.transcript(original_mark.refusal(lines, uidv), lines, uid, uidv)', 'OriginalUnverified{"mark_unverified"}', 'original_mark_result_fields_examples'),
+    ('result wrapper always marked', 'original_mark.transcript(original_mark.refusal(lines, uidv), lines, uid, uidv)', 'OriginalMarked{}', 'original_mark_result_fields_examples'),
+    ('marked result serialized false', '[J.kv("original_marked", J.bool(True{})),\n       J.kv("original_mark_reason", J.str("answered_observed"))]', '[J.kv("original_marked", J.bool(False{})),\n       J.kv("original_mark_reason", J.str("answered_observed"))]', 'original_mark_result_fields_examples'),
+    ('not-marked result serialized true', '[J.kv("original_marked", J.bool(False{})), J.kv("original_mark_reason", J.str(reason))]', '[J.kv("original_marked", J.bool(True{})), J.kv("original_mark_reason", J.str(reason))]', 'original_mark_result_fields_examples'),
+    ('unverified result serialized false', '[J.kv("original_marked", J.str("unverified")), J.kv("original_mark_reason", J.str(reason))]', '[J.kv("original_marked", J.bool(False{})), J.kv("original_mark_reason", J.str(reason))]', 'original_mark_result_fields_examples'),
+    ('refusal omits identity check', 'original_mark.identity(positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY")), uidv), "")', '"", "")', 'original_mark_refusal_identity_examples'),
+    ('result ignores refusal', 'original_mark.transcript(original_mark.refusal(lines, uidv), lines, uid, uidv)', 'original_mark.transcript("", lines, uid, uidv)', 'original_mark_result_fields_examples'),
 )
 
 
