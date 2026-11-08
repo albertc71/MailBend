@@ -251,8 +251,10 @@ Other operating systems and architectures are refused.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
-Without clang, an existing compiled core is kept and remains preferred. The
-installer warns that it may be out of date; install clang and rerun to rebuild it.
+Without clang, the installer refuses to update an executable compiled core
+before building or publishing helpers, leaving all five installed binaries
+unchanged. Install clang and rerun `scripts/install.sh` to rebuild them.
+When no executable core exists, the interpreter installation remains supported.
 
 On a Grok Bot or Cursor cloud computer, follow
 [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md) instead.

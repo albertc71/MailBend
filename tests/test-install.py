@@ -141,6 +141,21 @@ class InstallTests(unittest.TestCase):
         self.assertIsNone(after)
         self.assertIn(b"will run main.bend through bend", proc.stdout)
 
+    def test_missing_clang_with_nonexecutable_core_uses_source_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.prepare(root)
+            core = root / "bin/mailbend-core"
+            core.write_bytes(b"nonexecutable core")
+            core.chmod(0o644)
+            proc = self.run_install(root)
+            self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+            self.assertEqual(core.read_bytes(), b"nonexecutable core")
+            self.assertFalse(os.access(core, os.X_OK))
+            self.assertIn(b"will run main.bend through bend", proc.stdout)
+            for name in HELPERS:
+                self.assertEqual((root / "bin" / name).read_bytes(), NEW_HELPER)
+
     def test_clang_replaces_existing_core_without_stale_warning(self):
         proc, before, after = self.install(old_core=True, clang=True)
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
@@ -253,6 +268,8 @@ exit 1
             root = pathlib.Path(directory)
             self.prepare(root, clang=clang, cargo=cargo, bend=bend)
             old = self.old_bin(root)
+            if not clang:
+                (root / "bin/mailbend-core").chmod(0o644)
             proc = self.run_install(root)
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn(needle, proc.stdout + proc.stderr)
@@ -274,6 +291,17 @@ exit 1
     def test_a_failed_core_compile_publishes_nothing(self):
         bend = 'if [ "$1" = main.bend ]; then echo "clang failed" >&2; exit 1; fi\n'
         self.check_failure_publishes_nothing(b"clang failed", bend=bend)
+
+    def test_clang_disappearing_during_proofs_does_not_publish_helpers(self):
+        bend = '''if [ "$1" = PROOF.bend ]; then
+  /bin/rm "$HOME/tools/clang"
+fi
+if [ "$1" = main.bend ]; then
+  echo "clang disappeared" >&2
+  exit 1
+fi
+'''
+        self.check_failure_publishes_nothing(b"clang disappeared", bend=bend)
 
     def test_a_signal_during_the_compile_leaves_bin_unchanged(self):
         sleep = shutil.which("sleep")
