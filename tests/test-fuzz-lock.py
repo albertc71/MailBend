@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Exercise the offline lock guard through its command-line interface."""
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+CHECKER = ROOT / 'scripts/check-fuzz-lock.py'
+
+NATIVE = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+'''
+
+STALE = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2222222222222222222222222222222222222222222222222222222222222222"
+'''
+
+
+class FuzzLockTests(unittest.TestCase):
+    def check(self, native, fuzz):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shipped = root / 'native.lock'
+            harness = root / 'fuzz.lock'
+            shipped.write_text(native)
+            harness.write_text(fuzz)
+            return subprocess.run(
+                [sys.executable, '-B', str(CHECKER), '--native', str(shipped),
+                 '--fuzz', str(harness)], cwd=root, capture_output=True,
+                text=True, timeout=5)
+
+    def test_matching_shared_dependencies(self):
+        result = self.check(NATIVE, NATIVE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_opaque_source_with_parentheses(self):
+        lock = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/codec(feature)#0123456789abcdef"
+'''
+        result = self.check(lock, lock)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_qualified_opaque_source_disambiguates_same_name_and_version(self):
+        lock = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec 1.0.1 (git+https://example.invalid/codec(feature)#0123456789abcdef)"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/codec(feature)#0123456789abcdef"
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/other#fedcba9876543210"
+'''
+        result = self.check(lock, lock)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_redirected_source_edge_is_not_masked_by_unused_matching_package(self):
+        native = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec 1.0.1 (git+https://example.invalid/codec(feature)#0123456789abcdef)"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/codec(feature)#0123456789abcdef"
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/other#fedcba9876543210"
+'''
+        fuzz = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec 1.0.1 (git+https://example.invalid/other#fedcba9876543210)"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/codec(feature)#0123456789abcdef"
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "git+https://example.invalid/other#fedcba9876543210"
+'''
+        result = self.check(native, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing shared edge', result.stderr)
+        self.assertIn('codec(feature)#0123456789abcdef', result.stderr)
+
+    def test_registry_checksum_missing_on_both_sides_is_rejected(self):
+        lock = NATIVE.replace(
+            'checksum = "1111111111111111111111111111111111111111111111111111111111111111"\n', '')
+        result = self.check(lock, lock)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing registry checksum', result.stderr)
+        self.assertIn('codec', result.stderr)
+
+    def test_ambiguous_shorthand_reference_is_rejected_on_either_side(self):
+        ambiguous = NATIVE + '''\
+[[package]]
+name = "codec"
+version = "2.0.0"
+source = "git+https://example.invalid/codec#fedcba9876543210"
+'''
+        for native, fuzz in ((ambiguous, NATIVE), (NATIVE, ambiguous)):
+            with self.subTest(native_is_ambiguous=native == ambiguous):
+                result = self.check(native, fuzz)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('ambiguous reference', result.stderr)
+                self.assertIn('codec', result.stderr)
+
+    def test_roots_absent_from_both_locks_cannot_pass_vacuously(self):
+        lock = '''\
+version = 4
+[[package]]
+name = "unrelated"
+version = "0.1.0"
+'''
+        result = self.check(lock, lock)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('local root mailbend-net', result.stderr)
+
+    def test_registry_package_cannot_replace_local_root(self):
+        fuzz = NATIVE.replace('name = "mailbend-net"\nversion = "0.1.0"', '''\
+name = "mailbend-net"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3333333333333333333333333333333333333333333333333333333333333333"''')
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('local root mailbend-net', result.stderr)
+
+    def test_extra_fuzz_edge_can_reach_another_version_of_shared_name(self):
+        fuzz = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec 1.0.1"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+dependencies = ["fuzz-helper"]
+[[package]]
+name = "fuzz-helper"
+version = "0.1.0"
+dependencies = ["codec 2.0.0"]
+[[package]]
+name = "codec"
+version = "2.0.0"
+source = "git+https://example.invalid/codec#fedcba9876543210"
+'''
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unresolved_reference_on_fuzz_only_parent_is_outside_guard_scope(self):
+        fuzz = NATIVE + '''\
+[[package]]
+name = "fuzz-only"
+version = "0.1.0"
+dependencies = ["absent-package"]
+'''
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unresolved_extra_reference_on_shared_parent_is_rejected(self):
+        fuzz = NATIVE.replace('dependencies = ["codec"]',
+                              'dependencies = ["codec", "absent-package"]')
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('unresolved reference', result.stderr)
+        self.assertIn('absent-package', result.stderr)
+
+    def test_changed_checksum_is_rejected(self):
+        fuzz = NATIVE.replace('1111111111111111111111111111111111111111111111111111111111111111',
+                              '4444444444444444444444444444444444444444444444444444444444444444')
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('checksum mismatch', result.stderr)
+        self.assertIn('codec', result.stderr)
+
+    def test_changed_source_identity_is_rejected(self):
+        fuzz = NATIVE.replace('registry+https://github.com/rust-lang/crates.io-index',
+                              'registry+https://example.invalid/other-index')
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing shared edge', result.stderr)
+        self.assertIn('github.com/rust-lang/crates.io-index', result.stderr)
+
+    def test_missing_shared_package_is_rejected(self):
+        fuzz = NATIVE.split('[[package]]\nname = "codec"')[0]
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('unresolved reference', result.stderr)
+        self.assertIn('codec', result.stderr)
+
+    def test_redirected_version_edge_is_not_masked_by_unused_matching_package(self):
+        native = NATIVE.replace('dependencies = ["codec"]', 'dependencies = ["codec 1.0.1"]')
+        native += '''\
+[[package]]
+name = "codec"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2222222222222222222222222222222222222222222222222222222222222222"
+'''
+        fuzz = native.replace('dependencies = ["codec 1.0.1"]',
+                              'dependencies = ["codec 1.0.0"]')
+        result = self.check(native, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing shared edge', result.stderr)
+        self.assertIn('codec 1.0.1', result.stderr)
+
+    def test_duplicate_exact_identity_is_rejected_on_either_side(self):
+        duplicate = NATIVE + '''\
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+'''
+        for native, fuzz in ((duplicate, NATIVE), (NATIVE, duplicate)):
+            with self.subTest(native_is_duplicate=native == duplicate):
+                result = self.check(native, fuzz)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('duplicate package', result.stderr)
+                self.assertIn('codec', result.stderr)
+
+    def test_mismatched_local_root_version_is_rejected(self):
+        fuzz = NATIVE.replace('name = "mailbend-net"\nversion = "0.1.0"',
+                              'name = "mailbend-net"\nversion = "0.2.0"')
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('mismatched local root', result.stderr)
+        self.assertIn('mailbend-net', result.stderr)
+
+    def test_missing_second_root_is_rejected_on_either_or_both_sides(self):
+        missing = NATIVE.replace('''\
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net"]
+''', '')
+        for native, fuzz in ((missing, NATIVE), (NATIVE, missing), (missing, missing)):
+            with self.subTest(native_missing=native == missing, fuzz_missing=fuzz == missing):
+                result = self.check(native, fuzz)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('local root mailbend-tls', result.stderr)
+
+    def test_multiple_local_root_versions_are_rejected_on_either_side(self):
+        multiple = NATIVE + '''\
+[[package]]
+name = "mailbend-net"
+version = "0.2.0"
+'''
+        for native, fuzz in ((multiple, NATIVE), (NATIVE, multiple)):
+            with self.subTest(native_multiple=native == multiple):
+                result = self.check(native, fuzz)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('exactly one local root mailbend-net', result.stderr)
+
+    def test_malformed_extra_reference_is_checked_only_on_shared_parents(self):
+        orphan = NATIVE + '''\
+[[package]]
+name = "fuzz-only"
+version = "0.1.0"
+dependencies = ["codec 1.0.1 (unterminated"]
+'''
+        result = self.check(NATIVE, orphan)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        shared = NATIVE.replace('dependencies = ["codec"]',
+                                'dependencies = ["codec", "codec 1.0.1 (unterminated"]')
+        result = self.check(NATIVE, shared)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('malformed reference', result.stderr)
+        self.assertIn('unterminated', result.stderr)
+
+    def test_equivalent_ordering_and_unambiguous_notation_are_accepted(self):
+        fuzz = '''\
+version = 3
+[[package]]
+name = "codec"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net 0.1.0"]
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["codec 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)"]
+'''
+        result = self.check(NATIVE, fuzz)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unknown_lock_format_is_rejected_on_either_side(self):
+        unknown = NATIVE.replace('version = 4\n', 'version = 99\n', 1)
+        for native, fuzz in ((unknown, NATIVE), (NATIVE, unknown)):
+            with self.subTest(native_unknown=native == unknown):
+                result = self.check(native, fuzz)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('unsupported lock format version', result.stderr)
+
+    def test_shared_cycle_and_shared_descendant_terminate(self):
+        lock = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["mailbend-tls", "leaf"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["mailbend-net", "leaf"]
+[[package]]
+name = "leaf"
+version = "0.1.0"
+'''
+        reordered = lock.replace('["mailbend-tls", "leaf"]', '["leaf", "mailbend-tls"]')
+        reordered = reordered.replace('["mailbend-net", "leaf"]', '["leaf", "mailbend-net"]')
+        result = self.check(lock, reordered)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_malformed_native_diagnostic_names_input(self):
+        result = self.check('version = [\n', NATIVE)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('native.lock', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
+    def test_malformed_fuzz_diagnostic_names_input(self):
+        result = self.check(NATIVE, 'version = [\n')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('fuzz.lock', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
+    def test_reachable_version_drift(self):
+        result = self.check(NATIVE, STALE)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('codec', result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()

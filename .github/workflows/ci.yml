@@ -94,6 +94,10 @@ jobs:
         run: python3 tests/test-scale-baseline.py
       - name: Offline posture native egress inventory
         run: python3 tests/test-posture-inventory.py
+      - name: Shared native and fuzz dependency identities
+        run: |
+          python3 scripts/check-fuzz-lock.py
+          python3 tests/test-fuzz-lock.py
       - name: Generated schema is up to date
         run: |
           python3 tools/gen-unicode-tags.py --check
