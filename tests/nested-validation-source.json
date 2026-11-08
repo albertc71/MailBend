@@ -1,9 +1,9 @@
 {
-  "kind": "generated source only; no compilation or tests",
-  "base_commit": "1970639fcfcc7589bc62e95adf8d49341b378136",
-  "base_tree": "d662d9f9a986cc01a1a16ef0326cdc556a84e68f",
-  "before_tree": "ff33dde902fc18e4adc666657ea8c30df360c994",
-  "candidate_tree": "567dc005e52bb15244f4fea46f94982606e2d036",
+  "kind": "Unexecuted source-only compile and documentation correction",
+  "base_commit": "0ebe9efa2eb06ec418cdcd1a9c9a4abdae4a9d42",
+  "base_tree": "32f4b0f1be1cc17dfc134fa20520cb8d15bffefd",
+  "before_product_tree": "567dc005e52bb15244f4fea46f94982606e2d036",
+  "candidate_tree": "6c4411297a59b4229c07fbc74a25cdd3d1ab956c",
   "files": {
     ".agents/skills/policy-proofs/SKILL.md": {
       "mode": "100644",
@@ -1093,9 +1093,9 @@
     },
     "skills/mailbend/references/tools.md": {
       "mode": "100644",
-      "blob": "fc92eda6507c614eede28813274a6430ffd66541",
-      "sha256": "50c392d53bb8368ab4a7d927073e53e47d6f139ea83802800422f58f50152873",
-      "bytes": 4278
+      "blob": "43a6b6919c3c4912160596319d28fd8bbf92ce2f",
+      "sha256": "eb6aba20f82d410e839981a092c3eaa7da0cae0282487613d79a12590e39aa23",
+      "bytes": 4377
     },
     "src/awaiting.bend": {
       "mode": "100644",
@@ -2875,9 +2875,9 @@
     },
     "src/nested.bend": {
       "mode": "100644",
-      "blob": "b7b0e3bb6ba3945ce6531ce85f972e9f98601a68",
-      "sha256": "e5db06383c105bf039d3930ab8aa5318ba7048060e82f953b1ea0b7feea58dc4",
-      "bytes": 17336
+      "blob": "d56fd972fdc8e7a0d1718ed4c6b14efd58de6899",
+      "sha256": "d21cb62022c573781726450675d055d3f4bb88305975d30604d7f35109f755e3",
+      "bytes": 18299
     },
     "tests/corpus/nested/alternative.eml": {
       "mode": "100644",
@@ -3336,34 +3336,8 @@
       "bytes": 2631
     }
   },
-  "generation_changes": {
-    "src/schema.bend": {
-      "before": {
-        "mode": "100644",
-        "blob": "acd15c4a6af155763b31589998f981f38e7e07c1",
-        "sha256": "8ad47b980c68f7270d3b39d5faa8ac3ae9c26d08cce9cec65fc0e3c8b8adc2fe",
-        "bytes": 341547
-      },
-      "after": {
-        "mode": "100644",
-        "blob": "42772b5d3afecf54a82bc709498c038744fc8058",
-        "sha256": "c0627c67f284a91456959ac92e8c2dd20882395e9ac94e99df9c3c1fc46e0a8b",
-        "bytes": 362011
-      }
-    },
-    "tests/unit/schema.bend": {
-      "before": {
-        "mode": "100644",
-        "blob": "014d4c776e99db9bfa7549db2a4a992feef96522",
-        "sha256": "4f18d423ab81d11d96efae70f4ffd530900aa9b62fda46a96bbebc37e05829bc",
-        "bytes": 8749
-      },
-      "after": {
-        "mode": "100644",
-        "blob": "034a4ab91660656a139484c98cebb711359ac5ad",
-        "sha256": "a1ed92f699d803cfecd10172a1e17851f34b72cb66bffa79b4a3d277e78746c5",
-        "bytes": 8772
-      }
-    }
-  }
+  "source_fix_changes": [
+    "skills/mailbend/references/tools.md",
+    "src/nested.bend"
+  ]
 }

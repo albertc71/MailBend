@@ -129,6 +129,11 @@ def att_fields(a: M.Att) -> List<&2, J.Json>:
   [J.kv("filename", J.str(name)), J.kv("content_type", J.str(ct)),
     J.kv("size", J.num(size))]
 
+def header_fields.after(key: String, raw: String, rest: List<&2, J.Json> & Budget)
+  -> Result<&2, &2, String, List<&2, J.Json> & Budget>:
+  (fields, left) = rest
+  Done{(J.kv(key, J.str(M.header_line(raw))) <> fields, left)}
+
 def header_fields(keys: List<&2, String>, +hs: List<&2, M.Hdr>, b: Budget)
   -> Result<&2, &2, String, List<&2, J.Json> & Budget>:
   match keys:
@@ -139,8 +144,7 @@ def header_fields(keys: List<&2, String>, +hs: List<&2, M.Hdr>, b: Budget)
       do Result<&2, &2, String, List<&2, J.Json> & Budget>:
         next : Budget <- reserve_view(raw, b)
         rest : List<&2, J.Json> & Budget <- header_fields(t, hs, next)
-        (fields, left) = rest
-        return (J.kv(key, J.str(M.header_line(raw))) <> fields, left)
+        header_fields.after(key, raw, rest)
 
 def compact.go(raw: String, +out: String) -> String:
   match raw:
@@ -371,6 +375,12 @@ def leaf(k: M.PartKind, bytes: String, level: U32, todo: List<&2, Task>,
   M.PartKind{ct, typ, name, attached} = k
   leaf.if(attached, ct, typ, name, bytes, level, todo, current, alt, b)
 
+def entity.multi.after(depth: Nat, hs: List<&2, M.Hdr>, decoded: String & Budget,
+  level: U32, todo: List<&2, Task>, current: Fragment, alt: Bool)
+  -> Result<&2, &2, String, Walk>:
+  (bytes, next) = decoded
+  multipart(depth, hs, bytes, level, todo, current, alt, next)
+
 def entity.multi(depth: Nat, +hs: List<&2, M.Hdr>, +body: String, level: U32,
   todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
   -> Result<&2, &2, String, Walk>:
@@ -382,8 +392,17 @@ def entity.multi(depth: Nat, +hs: List<&2, M.Hdr>, +body: String, level: U32,
         admitted : Budget <- parse_bytes(body, b)
         decoded : String & Budget <- decode(
           String.to_lower(String.trim(M.header(hs, "content-transfer-encoding"))), body, admitted)
-        (bytes, next) = decoded
-        multipart(depth, hs, bytes, level, todo, current, alt, next)
+        entity.multi.after(depth, hs, decoded, level, todo, current, alt)
+
+def entity.leaf.after(+hs: List<&2, M.Hdr>, decoded: String & Budget, level: U32,
+  todo: List<&2, Task>, current: Fragment, alt: Bool) -> Result<&2, &2, String, Walk>:
+  (bytes, next) = decoded
+  +ct = M.header(hs, "content-type")
+  do Result<&2, &2, String, Walk>:
+    names : Budget <- reserve_view(ct, next)
+    disposition : Budget <- reserve_view(M.header(hs, "content-disposition"), names)
+    types : Budget <- reserve_view(ct, disposition)
+    leaf(M.part_kind(hs), bytes, level, todo, current, alt, types)
 
 def entity.if(multi: Bool, +hs: List<&2, M.Hdr>, +body: String, level: U32, depth: Nat,
   todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
@@ -396,12 +415,7 @@ def entity.if(multi: Bool, +hs: List<&2, M.Hdr>, +body: String, level: U32, dept
         admitted : Budget <- parse_bytes(body, b)
         decoded : String & Budget <- decode(
           String.to_lower(String.trim(M.header(hs, "content-transfer-encoding"))), body, admitted)
-        (bytes, next) = decoded
-        +ct = M.header(hs, "content-type")
-        names : Budget <- reserve_view(ct, next)
-        disposition : Budget <- reserve_view(M.header(hs, "content-disposition"), names)
-        types : Budget <- reserve_view(ct, disposition)
-        leaf(M.part_kind(hs), bytes, level, todo, current, alt, types)
+        entity.leaf.after(hs, decoded, level, todo, current, alt)
 
 def entity(+hs: List<&2, M.Hdr>, body: String, level: U32, depth: Nat,
   todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
@@ -420,6 +434,13 @@ def finish_message(headers: J.Json, +current: Fragment, parent: Fragment,
         [J.kv("message", node(headers, current))]))
       Walking{todo, merge(parent, Fragment{"", "", [attached], omissions}, alt), alt, b}
 
+def message.after_headers(hs: List<&2, M.Hdr>, body: String, level: U32,
+  attachment: Maybe<&2, M.Att>, todo: List<&2, Task>, current: Fragment, alt: Bool,
+  displayed: List<&2, J.Json> & Budget) -> Result<&2, &2, String, Walk>:
+  (fields, next) = displayed
+  entity(hs, body, level, Nat.sub(M.multipart_limit(), 1n),
+    EndMessage{J.obj(fields), current, alt, attachment} <> todo, empty(), False{}, next)
+
 def step(task: Task, todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budget)
   -> Result<&2, &2, String, Walk>:
   match task:
@@ -429,9 +450,7 @@ def step(task: Task, todo: List<&2, Task>, current: Fragment, alt: Bool, b: Budg
       do Result<&2, &2, String, Walk>:
         displayed : List<&2, J.Json> & Budget <-
           header_fields(["from", "to", "subject", "date", "message_id"], hs, b)
-        (fields, next) = displayed
-        entity(hs, body, level, Nat.sub(M.multipart_limit(), 1n),
-          EndMessage{J.obj(fields), current, alt, attachment} <> todo, empty(), False{}, next)
+        message.after_headers(hs, body, level, attachment, todo, current, alt, displayed)
     case Entity{raw, context, level, depth}:
       M.Split{head, body} = M.split(raw)
       entity(M.part_context.headers(context, M.headers(head)), body,
