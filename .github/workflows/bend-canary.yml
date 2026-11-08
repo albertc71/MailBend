@@ -1,4 +1,4 @@
-name: Issue 207 matched Bend 2.0.39 canary
+name: Issue 207 candidate Bend 2.0.39 canary
 
 on:
   push:
@@ -24,10 +24,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - case: baseline
-            sha: 1970639fcfcc7589bc62e95adf8d49341b378136
           - case: candidate
-            sha: 59826080d8575bccefd3b860b146ca460ed64e4c
+            sha: 66d8c4ecb4d29ef48e059f4c0285ec905aaf6071
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
