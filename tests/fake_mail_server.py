@@ -709,7 +709,8 @@ def render_section(spec: bytes, m: dict):
             if part is None:
                 break
         payload = part.get_payload() if part is not None else ''
-        content = payload if isinstance(payload, str) else ''.join(p.as_string() for p in payload)
+        content = m.get("section_payloads", {}).get(inside,
+            payload if isinstance(payload, str) else ''.join(p.as_string() for p in payload))
     else:
         content = ''
     if m.get("section_truncate") and inside and inside[0].isdigit():

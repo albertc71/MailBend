@@ -1,0 +1,32 @@
+Content-Type: multipart/mixed; boundary=b1
+
+--b1
+Content-Type: multipart/mixed; boundary=b2
+
+--b2
+Content-Type: multipart/mixed; boundary=b3
+
+--b3
+Content-Type: multipart/mixed; boundary=b4
+
+--b4
+Content-Type: multipart/mixed; boundary=b5
+
+--b5
+Content-Type: multipart/mixed; boundary=b6
+
+--b6
+Content-Type: multipart/mixed; boundary=b7
+
+--b7
+Content-Type: multipart/mixed; boundary=ignored
+Content-Transfer-Encoding: x-private
+
+not framed
+--b7--
+--b6--
+--b5--
+--b4--
+--b3--
+--b2--
+--b1--

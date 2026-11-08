@@ -1,0 +1,25 @@
+{
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic #109 regression. LF-only framing preserves the existing tolerated line-ending policy, not wire conformance. No client interoperability is claimed."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2046#section-5.1.1",
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "wire": "recovery",
+  "expected": {
+    "headers": {
+      "from": "",
+      "to": "",
+      "subject": "",
+      "date": "",
+      "message_id": ""
+    },
+    "text": "hello",
+    "attachments": [],
+    "parse_complete": true,
+    "omissions": []
+  }
+}

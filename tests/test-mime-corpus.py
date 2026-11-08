@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 import mime_oracle as oracle
+import nested_reads
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / 'tests/corpus'
@@ -129,6 +130,8 @@ def main():
     group.add_argument('--validate-only', action='store_true', help='metadata and oracle controls only; no Bend or public reads')
     group.add_argument('--reads-only', action='store_true', help='diagnose public corpus reads only; not the full required check')
     group.add_argument('--compositions-only', action='store_true', help='diagnose named unit compositions only')
+    parser.add_argument("--nested-resources", action="store_true",
+                        help="also exercise the nested-view entity and byte admission limits")
     args = parser.parse_args()
     cases = load_cases()
     count = (oracle.self_test() + oracle.input_self_test() + oracle.header_self_test()
@@ -147,6 +150,7 @@ def main():
             subprocess.run(['sh', str(ROOT / 'tests/gen-test-certs.sh'), str(Path(work) / 'certs')],
                            check=True, capture_output=True)
             public_reads(cases, test, work)
+            nested_reads.run(test, work, resources=args.nested_resources)
     if not args.reads_only:
         oracle.check_unit_compositions(test.check)
         oracle.check_captured(test.composed_messages, test.check)
