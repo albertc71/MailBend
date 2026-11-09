@@ -1,0 +1,36 @@
+name: WEB.DE compiler phase measurement
+on:
+  push:
+    branches: [validation/webde-165-measure-fix-20261109]
+permissions:
+  contents: read
+jobs:
+  measurement:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/webde-165-measure-fix-20261109' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+      - name: Verify measured product parent
+        run: |
+          test "$(git -C candidate rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C candidate rev-list --parents -n 1 HEAD)" = "$GITHUB_SHA 124dfcda14d270ff25888f0c507eda2d73adc08b"
+          test "$(git -C candidate rev-parse 'HEAD^1^{tree}')" = "154d31740af308dad019d6a3e2ba4459f70669d0"
+      - name: Scan exact measurement tree and history
+        timeout-minutes: 3
+        working-directory: candidate
+        run: sh scripts/scan-secrets.sh
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Measure compiler phases once
+        env:
+          WEBDE_PRODUCT: 124dfcda14d270ff25888f0c507eda2d73adc08b
+          WEBDE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          BEND_NO_TELEMETRY: '1'
+        run: python3 candidate/tests/validation/webde-measurement/driver.py
