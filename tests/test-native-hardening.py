@@ -305,5 +305,41 @@ os.execv(os.environ['ELF_READELF'], [os.environ['ELF_READELF'], *sys.argv[1:]])
                 self.assertEqual(0, result.returncode, result.stderr)
 
 
+class NativeTerminalTests(unittest.TestCase):
+    def test_rejects_terminal_without_acquiring_it(self):
+        master, slave = os.openpty()
+        try:
+            result = subprocess.run([sys.executable, '-c', '''import errno
+import os
+from pathlib import Path
+import runpy
+import sys
+
+def has_controlling_terminal():
+    try:
+        descriptor = os.open('/dev/tty', os.O_RDONLY | os.O_NOCTTY)
+    except OSError as error:
+        if error.errno != errno.ENXIO:
+            raise
+        return False
+    os.close(descriptor)
+    return True
+
+assert not has_controlling_terminal(), 'child must start without a controlling terminal'
+violations = runpy.run_path(sys.argv[1])['violations']
+assert violations(Path(sys.argv[2])) == ['expected a regular ELF file']
+assert not has_controlling_terminal(), 'checker acquired a controlling terminal'
+print('rejected tty without acquiring a controlling terminal')
+''', str(CHECKER), os.ttyname(slave)], start_new_session=True,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual('rejected tty without acquiring a controlling terminal\n',
+                             result.stdout)
+            self.assertEqual('', result.stderr)
+        finally:
+            os.close(slave)
+            os.close(master)
+
+
 if __name__ == '__main__':
     unittest.main()
