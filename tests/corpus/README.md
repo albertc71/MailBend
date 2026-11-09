@@ -56,10 +56,59 @@ fixture through the CLI and structured MCP against the local fake server. It als
 exports every named unit composition to Python's independent
 [`email` parser](https://docs.python.org/3/library/email.parser.html) with `policy.default`.
 The ordinary CLI and MCP end-to-end suites audit every complete SMTP DATA and APPEND
-message they receive, including rejected messages. A refusal before the server
-receives a complete message produces no wire message to parse. Internally composed
-messages discarded by a dry-run or later gate are not observable in this server capture;
-only the named unit registry checks composition without transmission.
+message they receive, including rejected messages.
+
+Those suites, and the corpus reads, also classify every `mail_save_draft`, `mail_send`,
+`mail_reply` and `mail_forward` call. A call that succeeded transmitted its wire to
+that received-message audit. So did a refusal or failure during which the call's own
+server received a complete wire of the call's kind; an MCP session's received wires
+are attributed only when it made a single composing call. A call that transmitted
+nothing is a dry run, a refusal
+by a gate such as the allowlist, daily limit, secret scan or Jev, a Drafts folder or
+server failure, or an input refusal. The test replays it once, through the same
+launcher with the same arguments and composition settings, but without `dry_run`, gate
+settings, read-only or drafts-only switches, and server faults. A fresh fake server
+receives the replay. It holds a copy of the original mailboxes and a fixed Drafts
+folder. Its single received wire goes to the same MailBend-versus-Python comparison:
+
+- A dry run's reported `<N bytes>` must equal the replayed wire's size. Two differences
+  are allowed: the width of the day of the month in Date, and the CRLF that received
+  SMTP DATA always gives a final line that ended without one. The parsed bytes are
+  therefore the previewed composition, apart from its Date and Message-ID values.
+- A refusal whose replay transmits exactly one wire is checked like a dry run, without
+  a size to compare. Its replay might parse a message the refused call never built,
+  for example after a drafts-only refusal. That adds coverage; it claims no more.
+- A refusal whose replay refuses with the identical error, receiving nothing, came
+  from the input itself, before any message existed. The replay sends the parsed
+  arguments, so a refusal only the raw text causes, such as a duplicate key, replays as
+  a send; this count is therefore a lower bound on input refusals.
+- Any other outcome fails the run. That includes a dry run whose replay does not
+  transmit, a changed refusal, the wrong or an extra wire, or an MCP composing call
+  without exactly one reply. A full CLI or MCP end-to-end run must also replay at
+  least one dry run and one refusal, so the audit cannot pass vacuously.
+
+The replay re-reads attachment files immediately after the original call. Only the
+calls in `tests/test-e2e.py` and `tests/test-mime-corpus.py` are classified; other
+suites that compose messages are outside this contract.
+
+A static completeness check, run by `--validate-only`, keeps this audit in step with
+the product and the tests. Every `M.compose` call site in `src/` needs a reviewed audit
+route. Every `with_atts` caller and every tool dispatched to `t_compose` or `t_respond`
+must be one of the four composing tools above. Each step from `with_atts` to the
+composing defs, through `deliver_stamped`, `deliver`, `deliver_as` and `send_with`, has
+exactly one reviewed caller, so a new tool cannot reach them directly. In those two test
+files, every reference to the launcher, and every string or path expression ending in
+`scripts/mailbend` or `scripts/mailbend-cloud`, must sit in a classifying helper, in the
+audit's own replay, or in the headless probe, which only lists tools read-only; otherwise
+it must name a tool or command that cannot compose. Each classifying helper must call
+`audit_composition` or `audit_mcp_compositions`, and only `audit_composition` may run the
+replay. Thirteen mutated sources verify that a new composition path or launch site that
+bypasses the audit fails, including a direct launcher path and a helper whose audit call
+was removed. Three disagreeing or missing observations verify that the
+replayed-wire comparison fails without Bend. Every full run also checks a live
+control: MailBend's reading of one message must be rejected as a reading of another.
+`tests/test-mime-capture.py` checks that a failed or unclassifiable replay, or a
+preview whose size does not match, fails the run.
 
 Headers, root media type and parameters, MIME leaf types, dispositions, charsets, decoded text, filenames and decoded
 payload bytes must agree. An attached `message/rfc822` remains one attachment;
