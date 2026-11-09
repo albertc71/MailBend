@@ -16,6 +16,8 @@ def check_manifest(path):
     with path.open('rb') as source:
         try:
             data = tomllib.load(source)
+        except UnicodeDecodeError as error:
+            raise ValueError(f'{path}: invalid UTF-8') from error
         except tomllib.TOMLDecodeError as error:
             raise ValueError(f'{path}: {error}') from error
 
@@ -84,6 +86,8 @@ class Lock:
         try:
             with path.open('rb') as source:
                 data = tomllib.load(source)
+        except UnicodeDecodeError as error:
+            raise ValueError(f'{path}: invalid UTF-8') from error
         except tomllib.TOMLDecodeError as error:
             raise ValueError(f'{path}: {error}') from error
         if type(data.get('version')) is not int or data['version'] not in (3, 4):
