@@ -1,0 +1,48 @@
+name: Native ELF descriptor validation
+on:
+  push:
+    branches: [validation/native-fd-374-20261109]
+permissions:
+  contents: read
+concurrency:
+  group: native-fd-374-validation
+  cancel-in-progress: false
+jobs:
+  descriptor-controls:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the exact reviewed product parent
+        env:
+          PRODUCT_SHA: 2b95eb7225e47872fda56130306b0ce99abbd5e7
+        run: |
+          set -eu
+          test "$(git show -s --format=%P HEAD | wc -w)" -eq 1
+          test "$(git show -s --format=%P "$PRODUCT_SHA" | wc -w)" -eq 1
+          test "$(git rev-parse HEAD^)" = "$PRODUCT_SHA"
+          test "$(git rev-parse HEAD^^)" = a281ff1f65bac2b8e413c9f5035a5720ef7e9cae
+          test "$(git rev-parse HEAD^:scripts/check-native-hardening.py)" = b2aa943d9bd1c1a2307180433dae5f6984abc650
+          test "$(git rev-parse HEAD^:tests/test-native-hardening.py)" = b9145989a4d477cf5bb1eb8321550fe0b94106c6
+          test "$(git rev-parse "$PRODUCT_SHA^{tree}")" = 054b6773a8836a1c58c8b8b71178c0a4734d9038
+          test "$(git diff --name-only HEAD^ HEAD)" = "$(printf '%s\n' .github/workflows/native-fd-validation.yml tests/validate-native-fd.py)"
+          git diff --exit-code HEAD^ HEAD -- . ':!.github/workflows/native-fd-validation.yml' ':!tests/validate-native-fd.py'
+          git log -1 --format='%H %T %P'
+          cc --version
+          readelf --version
+      - name: Scan the validation tree and history
+        if: matrix.runner == 'ubuntu-24.04'
+        run: sh scripts/scan-secrets.sh
+      - name: Real ELF public CLI suite
+        timeout-minutes: 5
+        run: python3 tests/test-native-hardening.py -v
+      - name: Semantic mutants and supplemental cleanup controls
+        timeout-minutes: 5
+        run: python3 tests/validate-native-fd.py
