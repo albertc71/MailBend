@@ -208,7 +208,7 @@ def render.settings(s: Settings, p: Preset, +email: String) -> Result<&2, &2, St
     case Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, +policy}:
       do Result<&2, &2, String, String>:
         login : String <- resolve_login(policy, email)
-        +fields = env_fields(Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, policy}, email, login)
+        +fields : List<&2, J.Json> = env_fields(Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, policy}, email, login)
         Done{metadata(p) ++ "\nNothing was applied or checked. " ++
           "Read-only is on; enabling writes is a separate decision. " ++
           "Sent-copy is off unless the profile explicitly recommends it.\n\n" ++
