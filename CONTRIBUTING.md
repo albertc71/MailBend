@@ -135,8 +135,17 @@ allowed, including extra dependencies on shared packages. The guard validates
 package records in both locks and resolves references on shared parents, including
 their extra fuzz edges. It does not resolve references on entirely fuzz-only
 parents; Cargo remains the full-lock validator. Lock data cannot establish equal
-features, build targets, local source paths or runtime behavior. Review the guard's
-fixed roots if the fuzz workspace's path dependencies change.
+features, build targets, local source paths or runtime behavior. The guard also
+reads `native/fuzz/Cargo.toml`, or the fixture supplied with `--manifest`. Its
+supported path inventory is exactly the unaliased normal dependencies
+`mailbend-net = { path = "../mailbend-net" }` and
+`mailbend-tls = { path = "../mailbend-tls" }`. Other path dependencies, including
+build, dev and target-specific ones, package aliases, workspace inheritance and
+workspace dependency or member lists fail with an inventory error. Source
+overrides through `patch` or `replace` and legacy underscore dependency-table
+spellings are unsupported too. Update the
+guard and its fixtures when expanding that scope. Registry-only extras remain
+allowed. This assertion does not replace Cargo's locked manifest validation.
 
 The unit runner stays serial by default. To opt into bounded parallel execution,
 run `sh tests/run-unit.sh --jobs 2`. The decimal job count must be between 1 and 8.

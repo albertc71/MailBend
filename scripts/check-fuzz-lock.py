@@ -12,6 +12,55 @@ SHARED_ROOTS = ('mailbend-net', 'mailbend-tls')
 REFERENCE = re.compile(r'([^\s()]+)(?: ([^\s()]+)(?: \((.+)\))?)?', re.DOTALL)
 
 
+def check_manifest(path):
+    with path.open('rb') as source:
+        try:
+            data = tomllib.load(source)
+        except tomllib.TOMLDecodeError as error:
+            raise ValueError(f'{path}: {error}') from error
+
+    def unsupported(detail):
+        raise ValueError(f'{path}: unsupported fuzz root inventory: {detail}; '
+                         'update the guard before changing shared roots')
+
+    workspace = data.get('workspace', {})
+    if not isinstance(workspace, dict):
+        unsupported('invalid workspace table')
+    if (workspace.get('dependencies', {}) != {} or workspace.get('members', []) != []):
+        unsupported('workspace dependencies or members')
+    if 'patch' in data or 'replace' in data:
+        unsupported('patch or replace source selection')
+    targets = data.get('target', {})
+    if not isinstance(targets, dict):
+        unsupported('invalid target table')
+    sections = [('normal', data), *[(f'target.{name}', table)
+                                  for name, table in targets.items()]]
+    roots = {}
+    for section, tables in sections:
+        if not isinstance(tables, dict):
+            unsupported(f'invalid {section} table')
+        if 'build_dependencies' in tables or 'dev_dependencies' in tables:
+            unsupported(f'legacy dependency table spelling in {section}')
+        for kind in ('dependencies', 'build-dependencies', 'dev-dependencies'):
+            dependencies = tables.get(kind, {})
+            if not isinstance(dependencies, dict):
+                unsupported(f'invalid {section}.{kind} table')
+            for name, dependency in dependencies.items():
+                if isinstance(dependency, str):
+                    continue
+                if not isinstance(dependency, dict):
+                    unsupported(f'invalid dependency {name}')
+                if 'workspace' in dependency or 'package' in dependency:
+                    unsupported(f'workspace inheritance or package alias for {name}')
+                if 'path' in dependency:
+                    if section != 'normal' or kind != 'dependencies':
+                        unsupported(f'path dependency {name} in {section}.{kind}')
+                    roots[name] = dependency['path']
+    expected = {name: f'../{name}' for name in SHARED_ROOTS}
+    if roots != expected:
+        unsupported(f'expected normal path dependencies {expected}, found {roots}')
+
+
 @dataclass(frozen=True)
 class Identity:
     name: str
@@ -121,8 +170,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native', type=Path, default=ROOT / 'native/Cargo.lock')
     parser.add_argument('--fuzz', type=Path, default=ROOT / 'native/fuzz/Cargo.lock')
+    parser.add_argument('--manifest', type=Path, default=ROOT / 'native/fuzz/Cargo.toml')
     args = parser.parse_args()
     try:
+        check_manifest(args.manifest)
         check(Lock(args.native), Lock(args.fuzz))
     except (OSError, ValueError) as error:
         print(f'fuzz lock check failed: {error}', file=sys.stderr)
