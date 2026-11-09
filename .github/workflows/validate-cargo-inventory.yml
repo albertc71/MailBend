@@ -1,0 +1,214 @@
+name: Cargo inventory validation
+on:
+  push:
+    branches: [validation/cargo-inventory-127-20261108]
+permissions:
+  contents: read
+jobs:
+  cargo-inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - name: Verify exact inputs and existing system tools
+        run: |
+          set -eu
+          export PATH=/usr/bin:/bin
+          for tool in python3 dirname sed mkdir cp mv rm sync flock sleep chmod; do
+            command -v "$tool"
+          done
+          test "$(git rev-parse HEAD~2)" = 8a7495efdf29e80a4de11b6f87eacbf3755c709d
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD^)" = tests/test-install.py
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD)" = .github/workflows/validate-cargo-inventory.yml
+          printf '%s\n' \
+            '3ce03a15892834a812be57385c4b70638f75cebd98c4d05dfe63f8170646b344  scripts/install.sh' \
+            'fc36a1230cc564b7f22bd1d020c2c5d65ad0ef5cd7bdc389cdb28507c6d46665  tests/test-install.py' | sha256sum --check
+          git show --no-patch --format=fuller HEAD HEAD^
+      - name: Synthetic installer suites and independent mutation controls
+        timeout-minutes: 8
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import signal
+          import subprocess
+          import sys
+          import tempfile
+          
+          BASE = '8a7495efdf29e80a4de11b6f87eacbf3755c709d'
+          TEST = Path('tests/test-install.py')
+          INSTALLER = Path('scripts/install.sh')
+          SELECTED = 'InstallTests.test_cargo_build_selects_every_helper_even_with_stale_targets'
+          PAIR = b'-p mailbend-tls -p mailbend-attach -p mailbend-typesafe -p mailbend-stdio'
+          BUILD = b'"$cargo" build --release --locked --quiet ' + PAIR
+          EXPECTED = ('mailbend-tls', 'mailbend-attach', 'mailbend-typesafe', 'mailbend-stdio')
+          STALE = b'#!/bin/sh\n# stale artifact\nexit 0\n'
+          root = Path.cwd()
+          original = {p: (root / p).read_bytes() for p in (TEST, INSTALLER)}
+          old = subprocess.run(['git', 'show', f'{BASE}:{TEST}'], check=True,
+                               capture_output=True, timeout=10).stdout
+          records = []
+          
+          
+          def replace(data, before, after):
+              assert data.count(before) == 1, 'mutation target must occur exactly once'
+              return data.replace(before, after, 1)
+          
+          
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+          
+          
+          def selected(data, stale, suppress=False):
+              data = replace(data, b'for stale in (False, True):',
+                             b'for stale in (' + str(stale).encode() + b',):')
+              anchor = b'                proc = self.run_install(root)\n                argv = '
+              observe = (b'                proc = self.run_install(root)\n'
+                         b"                observed = root / 'bin/mailbend-stdio'\n"
+                         b"                print('CARGO_OBSERVATION', stale, proc.returncode, "
+                         b"observed.read_bytes().hex() if observed.exists() else 'absent', flush=True)\n"
+                         b'                argv = ')
+              data = replace(data, anchor, observe)
+              if suppress:
+                  data = replace(data, b'      [ "$#" -ge 2 ] || exit 91\n',
+                                 b'      [ "$#" -ge 2 ] || exit 91\n'
+                                 b'      if [ "$2" = mailbend-stdio ]; then shift 2; continue; fi\n')
+              return data
+          
+          
+          def run(label, installer, test, *, full=False, count=1, reason=None, stale_witness=False):
+              with tempfile.TemporaryDirectory(prefix='cargo-inventory-', dir=os.environ['RUNNER_TEMP']) as temp:
+                  work = Path(temp)
+                  for path, data in ((INSTALLER, installer), (TEST, test)):
+                      target = work / path
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(data)
+                  scratch = work / 'fixtures'
+                  scratch.mkdir()
+                  args = [sys.executable, str(work / TEST), '-v']
+                  if not full:
+                      args.append(SELECTED)
+                  env = {'PATH': '/usr/bin:/bin', 'HOME': str(work), 'LANG': 'C', 'TMPDIR': str(scratch)}
+                  log = work / 'output.log'
+                  print(f'CASE_BEGIN {label}', flush=True)
+                  code = None
+                  failure = None
+                  cleanup = 'not started'
+                  output = ''
+                  try:
+                      with log.open('wb') as stream:
+                          proc = subprocess.Popen(args, cwd=work, env=env, stdout=stream,
+                                                  stderr=subprocess.STDOUT, start_new_session=True)
+                          try:
+                              code = proc.wait(timeout=90)
+                          except BaseException as error:
+                              failure = type(error).__name__
+                          finally:
+                              cleanup_errors = []
+                              try:
+                                  os.killpg(proc.pid, signal.SIGKILL)
+                              except ProcessLookupError:
+                                  pass
+                              except BaseException as error:
+                                  cleanup_errors.append('group kill: ' + type(error).__name__)
+                              try:
+                                  proc.wait(timeout=5)
+                              except BaseException as error:
+                                  cleanup_errors.append('reap: ' + type(error).__name__)
+                              cleanup = '; '.join(cleanup_errors) or 'outer group handled and direct child reaped'
+                              if cleanup_errors:
+                                  failure = failure or 'cleanup failure'
+                  except BaseException as error:
+                      failure = failure or type(error).__name__
+                  finally:
+                      size = 0
+                      captured = bytearray()
+                      checksum = hashlib.sha256()
+                      log_error = None
+                      try:
+                          with log.open('rb') as stream:
+                              for chunk in iter(lambda: stream.read(65536), b''):
+                                  size += len(chunk)
+                                  checksum.update(chunk)
+                                  captured.extend(chunk[:max(0, 2_000_000 - len(captured))])
+                      except BaseException as error:
+                          log_error = type(error).__name__
+                          failure = failure or 'log preservation failure'
+                      if size > 2_000_000:
+                          failure = failure or 'oversized output'
+                      output = captured.decode('utf-8', errors='replace')
+                      print(output, flush=True)
+                      print('CASE_CAPTURE ' + json.dumps({
+                          'case': label, 'outcome': 'BLOCKED' if failure else 'captured; assertions pending',
+                          'failure': failure, 'exit': code, 'cleanup': cleanup,
+                          'separate_session_descendant_cleanup': 'not proven',
+                          'captured_bytes': size, 'emitted_bytes': len(captured),
+                          'truncated': size > len(captured), 'log_read_error': log_error,
+                          'captured_sha256': checksum.hexdigest() if log_error is None else None,
+                      }, sort_keys=True), flush=True)
+                  if failure:
+                      raise RuntimeError(f'BLOCKED {label}: {failure}; descendant cleanup not proven')
+                  print(f'CASE_END {label} exit={code}', flush=True)
+                  assert f'Ran {count} test' in output, label
+                  assert 'skipped' not in output.lower(), label
+                  if reason:
+                      assert code == 1 and output.rstrip().endswith('FAILED (failures=1)'), label
+                      assert output.count('AssertionError:') == 1, label
+                      assert reason in output, (label, reason)
+                      assert 'ERROR:' not in output, label
+                  else:
+                      assert code == 0 and output.rstrip().endswith('OK'), label
+                  if stale_witness:
+                      assert f'CARGO_OBSERVATION True 0 {STALE.hex()}' in output, label
+                  assert not list(scratch.iterdir()), 'fixture cleanup incomplete'
+                  assert (work / TEST).read_bytes() == test
+                  assert (work / INSTALLER).read_bytes() == installer
+                  records.append({'case': label, 'exit': code, 'expected': 'semantic-red' if reason else 'green',
+                                  'tests': count, 'installer_sha256': digest(installer),
+                                  'test_sha256': digest(test), 'output_sha256': digest(output.encode()),
+                                  'reason': reason, 'stale_publication_observed': stale_witness,
+                                  'fixture_cleanup': True, 'sources_unchanged': True})
+          
+          
+          installer = original[INSTALLER]
+          candidate = original[TEST]
+          run('baseline full suite', installer, old, full=True, count=15)
+          run('candidate full suite', installer, candidate, full=True, count=16)
+          omitted = replace(installer, BUILD, BUILD[:-len(b' -p mailbend-stdio')])
+          run('baseline misses omitted package', omitted, old, full=True, count=15)
+          mutants = [
+              ('omitted package', omitted, 'self.assertEqual(argv[4::2]'),
+              ('extra package', replace(installer, BUILD, BUILD + b' -p mailbend-extra'), 'self.assertEqual(argv[4::2]'),
+              ('extra duplicate', replace(installer, BUILD, BUILD + b' -p mailbend-stdio'), 'self.assertEqual(argv[4::2]'),
+              ('replaced package', replace(installer, BUILD, BUILD[:-len(b'mailbend-stdio')] + b'mailbend-extra'),
+               'Cargo must select every installed helper exactly once'),
+              ('same-count duplicate', replace(installer, BUILD, BUILD[:-len(b'mailbend-stdio')] + b'mailbend-tls'),
+               'Cargo must select every installed helper exactly once'),
+              ('missing locked flag', replace(installer, BUILD, BUILD.replace(b' --locked', b'')), 'self.assertEqual(argv[:4]'),
+          ]
+          for label, mutation, reason in mutants:
+              for stale in (False, True):
+                  run(f'{label} stale={stale}', mutation, selected(candidate, stale), reason=reason,
+                      stale_witness=stale and label in ('omitted package', 'replaced package', 'same-count duplicate'))
+          run('correct argv with suppressed output', installer, selected(candidate, True, suppress=True),
+              reason='installed helper must be freshly built, not a stale target', stale_witness=True)
+          reverse = b'-p mailbend-stdio -p mailbend-typesafe -p mailbend-attach -p mailbend-tls'
+          for label, mutation in (
+                  ('package order', replace(installer, BUILD, BUILD.replace(PAIR, reverse))),
+                  ('shell whitespace', replace(installer, BUILD, BUILD.replace(b' -p ', b'  -p\t')))):
+              for stale in (False, True):
+                  run(f'{label} stale={stale}', mutation, selected(candidate, stale))
+          for path, data in original.items():
+              assert (root / path).read_bytes() == data, path
+          run('restored candidate full suite', installer, candidate, full=True, count=16)
+          print('CARGO_INVENTORY_RESULTS_BEGIN', flush=True)
+          print(json.dumps({'schema': 1, 'base': BASE, 'cases': records,
+                            'checkout_restored': True, 'owner375_runtime': False}, sort_keys=True), flush=True)
+          print('CARGO_INVENTORY_RESULTS_END', flush=True)
+          PY
