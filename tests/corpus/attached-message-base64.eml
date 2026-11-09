@@ -1,0 +1,22 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: attached-message-base64
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <attached-message-base64@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=encoded
+
+--encoded
+Content-Type: text/plain
+
+Outer text.
+--encoded
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename=encoded.eml
+Content-Transfer-Encoding: base64
+
+RnJvbTogRW5jb2RlZCBTZW5kZXIgPGVuY29kZWRAZXhhbXBsZS5pbnZhbGlkPg0KVG86IHJlYWRl
+ckBleGFtcGxlLmludmFsaWQNClN1YmplY3Q6IEJhc2U2NCBlbmNsb3N1cmUNCkRhdGU6IFRodSwg
+MjkgT2N0IDIwMjYgMDc6MDA6MDAgKzAwMDANCk1lc3NhZ2UtSUQ6IDxiYXNlNjQtaW5uZXJAY29y
+cHVzLmludmFsaWQ+DQoNCklubmVyIHRleHQu
+--encoded--

@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "tests/corpus/nested"
 HEADER_REASON = "Only parent header facts were eligible for checking; nested headers and text were not included."
 BODY_REASON = "Nested message text was not included in the Jev request."
+SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
 
 
 def cases():
@@ -267,8 +268,12 @@ def attached_summaries(test, work):
                     code, actual = test.tool(server, "mail_get", {"uid": 1, "uidvalidity": 9,
                                              "attached_message_headers": option}, **env)
                     sent.append(json.dumps([x["body"] for x in ts.requests()[before:]], ensure_ascii=False))
-                    test.check("attached_message_headers Jev read " + mode, code == 0 and
-                               actual.get("jev", {}).get("status") == "checked", actual)
+                    annotation = actual.get("jev", {})
+                    coverage = ("headers_only" if mode == "headers" else "partial") if option else None
+                    test.check("attached_message_headers Jev read scope " + mode + " " + str(option),
+                               code == 0 and annotation.get("status") == "checked" and
+                               annotation.get("coverage") == coverage and
+                               (SUMMARY_REASON in annotation.get("reasons", [])) == option, actual)
                 test.check("attached_message_headers adds nothing to Jev requests " + mode,
                            sent[0] == sent[1] and "INNER_HEADER_MARKER" not in sent[1]
                            and "INNER_BODY_MARKER" not in sent[1], sent)

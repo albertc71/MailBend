@@ -1,0 +1,53 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture: an 8bit message/global attachment whose header fields are raw UTF-8, as RFC 6532 permits, including a U+202E in the subject. The summary keeps the UTF-8 text and drops the bidi control."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc6532",
+    "https://www.rfc-editor.org/rfc/rfc5322",
+    "https://www.unicode.org/reports/tr9/"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "attached-message-global-utf8",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<attached-message-global-utf8@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Outer text.",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "forwarded.u8msg",
+        "content_type": "message/global",
+        "size": 235
+      }
+    ]
+  },
+  "attached_message_headers": [
+    {
+      "filename": "forwarded.u8msg",
+      "content_type": "message/global",
+      "size": 235,
+      "message": {
+        "from": "Jürgen Groß <juergen@example.invalid>",
+        "to": "Zoë Ångström <zoe@example.invalid>",
+        "subject": "Grüße aus München gpj.exe",
+        "date": "Fri, 30 Oct 2026 08:00:00 +0000",
+        "message_id": "<global-inner@corpus.invalid>"
+      }
+    }
+  ]
+}

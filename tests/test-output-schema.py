@@ -261,6 +261,24 @@ check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {**sum
 check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {
     k: v for k, v in summary.items() if k != "date"}}]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {**summary, "subject": "h" * 999}}]}, False)
+# Jev never sees the summaries, so an annotated read showing one is scoped.
+summary_reason = "Attached-message summaries were not included in the Jev request."
+summarized = {**whole, "attachments": [{"filename": "a.bin", "content_type": "application/pdf", "size": 2},
+                                       attached_entry]}
+for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
+    plain_jev = {"status": "checked", "model": "fixture", "content": mode,
+                 "derived_from_untrusted_content": True, "decision": "proceeded", "signals": {},
+                 "reasons": []}
+    jev = {**plain_jev, "reasons": [summary_reason], "coverage": coverage}
+    check("mail_get", {**summarized, "jev": jev})
+    check("mail_get", {**with_facts, "attachments": [attached_entry], "jev": jev})
+    check("mail_get", {**summarized, "jev": plain_jev}, False)
+    check("mail_get", {**summarized, "jev": {**plain_jev, "coverage": coverage}}, False)
+    check("mail_get", {**summarized, "jev": {**jev, "coverage": "complete"}}, False)
+    check("mail_get", {**summarized, "jev": {**jev, "reasons": [
+        "Nested message text was not included in the Jev request."]}}, False)
+    check("mail_get", {**whole, "jev": plain_jev})
+    check("mail_get", {**whole, "jev": jev}, False)
 for invalid in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u061c", "\u200e",
                 "\u2028", "\u202e", "\u2066"):
     for key in summary:

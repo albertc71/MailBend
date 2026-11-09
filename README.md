@@ -300,7 +300,9 @@ part without Content-Type counts as `message/rfc822`, as RFC 2046 §5.1.5 says.
 Other entries, every other field and the IMAP commands stay the same, and
 absent or false keeps the legacy list. The values are untrusted mail content,
 not sender identity. In a `truncated` read they may be cut. They are not added
-to Jev requests. A non-boolean value, or `true` with any `section`, fails before
+to Jev requests, so when any entry has one, the `jev` annotation reports
+`coverage: "headers_only"` or `"partial"` with the reason that the summaries
+were not included. A non-boolean value, or `true` with any `section`, fails before
 network access. It works with every projection, `facts` and response budgets,
 which never shorten it.
 

@@ -9184,35 +9184,75 @@ def nested_coverage.fields(xs: List<&2, J.Json>, +why: String) -> List<&2, J.Jso
     case kv <> t:
       kv <> nested_coverage.fields(t, why)
 
-def nested_coverage.jev(j: J.Json, c: Jev.Content) -> J.Json:
+# A scoped annotation: Jev saw less than the result shows, so it gains
+# coverage and a reason naming what the TypeSafe request left out.
+def nested_coverage.jev(j: J.Json, c: Jev.Content, +headers_why: String, +body_why: String)
+  -> J.Json:
   match j c:
     case J.JObj{fields} Jev.Headers{}:
-      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields),
-        "Only parent header facts were eligible for checking; " ++
-          "nested headers and text were not included."),
+      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields), headers_why),
         [J.kv("coverage", J.str("headers_only"))]))
     case J.JObj{fields} Jev.Body{}:
-      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields),
-        "Nested message text was not included in the Jev request."),
+      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields), body_why),
         [J.kv("coverage", J.str("partial"))]))
     case _ _:
       j
 
-def nested_coverage.items(xs: List<&2, J.Json>, +c: Jev.Content) -> List<&2, J.Json>:
+def nested_coverage.items(xs: List<&2, J.Json>, +c: Jev.Content, +headers_why: String,
+  +body_why: String) -> List<&2, J.Json>:
   match xs:
     case Nil{}:
       []
     case J.JKv{"jev", j} <> t:
-      J.kv("jev", nested_coverage.jev(j, c)) <> nested_coverage.items(t, c)
+      J.kv("jev", nested_coverage.jev(j, c, headers_why, body_why)) <>
+        nested_coverage.items(t, c, headers_why, body_why)
     case kv <> t:
-      kv <> nested_coverage.items(t, c)
+      kv <> nested_coverage.items(t, c, headers_why, body_why)
 
-def nested_coverage.if(nested: Bool, j: J.Json, c: Jev.Content) -> J.Json:
-  match nested j:
-    case True{} J.JObj{fields}:
-      J.obj(nested_coverage.items(J.unchain(fields), c))
-    case _ _:
+def nested_coverage.scoped(j: J.Json, +c: Jev.Content, +headers_why: String, +body_why: String)
+  -> J.Json:
+  match j:
+    case J.JObj{fields}:
+      J.obj(nested_coverage.items(J.unchain(fields), c, headers_why, body_why))
+    case _:
       j
+
+# Whether a whole read's attachment list carries an attached-message summary.
+def summarized.any(xs: List<&2, J.Json>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case +x <> t:
+      Maybe.is_some(&2, J.Json, J.get(x, "message")) || summarized.any(t)
+
+def summarized.list(m: Maybe<&2, J.Json>) -> Bool:
+  match m:
+    case Some{J.JArr{items}}:
+      summarized.any(J.unchain(items))
+    case _:
+      False{}
+
+def summarized(j: J.Json) -> Bool:
+  summarized.list(J.get(j, "attachments"))
+
+# attached_message_headers summaries are never sent to TypeSafe either.
+def summarized_coverage.if(summary: Bool, j: J.Json, +c: Jev.Content) -> J.Json:
+  match summary:
+    case True{}:
+      +why : String = "Attached-message summaries were not included in the Jev request."
+      nested_coverage.scoped(j, c, why, why)
+    case False{}:
+      j
+
+def nested_coverage.if(nested: Bool, +j: J.Json, +c: Jev.Content) -> J.Json:
+  match nested:
+    case True{}:
+      nested_coverage.scoped(j, c,
+        "Only parent header facts were eligible for checking; " ++
+          "nested headers and text were not included.",
+        "Nested message text was not included in the Jev request.")
+    case False{}:
+      summarized_coverage.if(summarized(j), j, c)
 
 def nested_coverage(o: Policy.Out, jev: Jev.Switch) -> Policy.Out:
   match o jev:
