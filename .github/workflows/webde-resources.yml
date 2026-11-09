@@ -1,0 +1,32 @@
+name: WEB.DE current-union corpus resource gate
+on:
+  push:
+    branches: [validation/webde-165-resources-20261109]
+permissions:
+  contents: read
+jobs:
+  resources:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/webde-165-resources-20261109' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+      - name: Verify exact product parent
+        run: |
+          test "$(git -C candidate rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C candidate rev-list --parents -n 1 HEAD)" = "$GITHUB_SHA 8a8170db9664a455d97120b4533d44881c2ef549"
+          test "$(git -C candidate rev-parse 'HEAD^1^{tree}')" = "4eebb311772cb2e9c3e473c7fcb3e199dbfd77d9"
+      - name: Scan exact child and history
+        timeout-minutes: 3
+        working-directory: candidate
+        run: sh scripts/scan-secrets.sh
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Run full required corpus mode once
+        run: python3 candidate/tests/validation/webde-resources/driver.py
