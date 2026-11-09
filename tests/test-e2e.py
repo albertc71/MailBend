@@ -530,6 +530,64 @@ def setup_profiles(work):
         check("setup: password instruction syntax is valid Bash with safe defaults",
               syntax.returncode == 0 and "set +x" in commands and "umask 077" in commands
               and "set -o noclobber" in commands and "read -rs" in commands)
+        if provider == "gmail":
+            expected = {"MAILBEND_EMAIL": "reader@example.com", "MAILBEND_LOGIN": "",
+                        "MAILBEND_PASSWORD_FILE": "/absolute/path/to/mailbend-password",
+                        "MAILBEND_IMAP_HOST": "imap.gmail.com", "MAILBEND_IMAP_PORT": "993",
+                        "MAILBEND_SMTP_HOST": "smtp.gmail.com", "MAILBEND_SMTP_PORT": "465",
+                        "MAILBEND_SMTP_TLS_MODE": "implicit", "MAILBEND_READ_ONLY": "1",
+                        "MAILBEND_SAVE_SENT": "0"}
+            check("setup: Gmail retains its literal full-address defaults", config == expected
+                  and {k: v for k, v in values.items() if k.startswith("MAILBEND_")} == expected)
+    for provider, email, login in (
+            ("web.de", "Reader.Name@web.de", "Reader.Name"),
+            ("WEB.DE", "Reader.Name@WEB.DE", "Reader.Name"),
+            ("web.de", "o'hara+$`touch${IFS}shell-injection`@web.de",
+             "o'hara+$`touch${IFS}shell-injection`")):
+        expected = {"MAILBEND_EMAIL": email, "MAILBEND_LOGIN": login,
+                    "MAILBEND_PASSWORD_FILE": "/absolute/path/to/mailbend-password",
+                    "MAILBEND_IMAP_HOST": "imap.web.de", "MAILBEND_IMAP_PORT": "993",
+                    "MAILBEND_SMTP_HOST": "smtp.web.de", "MAILBEND_SMTP_PORT": "465",
+                    "MAILBEND_SMTP_TLS_MODE": "implicit", "MAILBEND_READ_ONLY": "1",
+                    "MAILBEND_SAVE_SENT": "0"}
+        p = subprocess.run([LAUNCHER, "setup", "--provider", provider, "--email", email],
+                           env=env, capture_output=True, text=True, timeout=10, cwd=directory)
+        outputs.extend([p.stdout, p.stderr])
+        block = re.search(r"```json\n(.*?)\n```", p.stdout, re.S)
+        config = json.loads(block.group(1))["env"] if block else {}
+        check("setup: WEB.DE prints literal primary-account defaults", p.returncode == 0
+              and p.stderr == "" and config == expected
+              and not any(s in p.stdout + p.stderr for s in
+                          ("MAILBEND_APP_PASSWORD", "MAILBEND_CA_FILE", "inherited-secret-marker",
+                           "inherited@example.com", "stale-inherited-login",
+                           "inherited-private-trust-path", "inherited-system-trust-path"))
+              and "Aliases and custom domains are unsupported" in p.stdout
+              and "Setup cannot verify" in p.stdout and "not live-tested" in p.stdout
+              and "3a5b95752363cdcdad8928d7d29a993cbdabcad2/ispdb/web.de.xml" in p.stdout)
+        shell = re.search(r"```sh\n(.*?)```", p.stdout, re.S)
+        check("setup: WEB.DE supplies a shell block", shell is not None)
+        if shell:
+            got = subprocess.run(["sh", "-c", shell.group(1) +
+                                  "python3 -c 'import os,json; print(json.dumps(dict(os.environ)))'"],
+                                 env={**clean, "MAILBEND_LOGIN": "stale-inherited-login"},
+                                 capture_output=True, text=True, check=True, cwd=directory, timeout=10)
+            values = json.loads(got.stdout)
+            check("setup: WEB.DE shell independently matches literal settings",
+                  {k: v for k, v in values.items() if k.startswith("MAILBEND_")} == expected
+                  and got.stderr == "" and not (directory / "shell-injection").exists())
+    for email in ("reader@example.com", "reader@sub.web.de", "reader@web.de.example",
+                  "reader@web.de.", "reader@notweb.de", "@web.de", "reader@", "reader@@web.de",
+                  " reader@web.de", "reader@web.de ", "Name <reader@web.de>",
+                  "reader@web.de (comment)", "reader@web.de\n", "reader@web.de\r",
+                  "a\x1b@web.de", "é@web.de", "missing-at", "a" * 248 + "@web.de"):
+        p = subprocess.run([LAUNCHER, "setup", "--provider", "web.de", "--email", email],
+                           env=env, capture_output=True, text=True, timeout=10, cwd=directory)
+        outputs.extend([p.stdout, p.stderr])
+        check("setup: WEB.DE rejects unsupported domains and malformed identities",
+              p.returncode == 2 and not p.stdout and "```" not in p.stderr
+              and not any(s in p.stderr for s in
+                          ("MAILBEND_APP_PASSWORD", "MAILBEND_CA_FILE", "inherited-secret-marker",
+                           "stale-inherited-login", "inherited-private-trust-path")))
     email = "o'hara+$`touch${IFS}shell-injection`@example.com"
     p = subprocess.run([LAUNCHER, "setup", "--email", email, "--provider", "GMAIL"],
                        env=env, capture_output=True, text=True, timeout=10)
@@ -542,7 +600,8 @@ def setup_profiles(work):
         p = subprocess.run([LAUNCHER, "setup", "--provider", provider, "--email", "reader@example.com"],
                            env=env, capture_output=True, text=True, timeout=10)
         check("setup: " + provider + " refuses without guessed configuration", p.returncode == 2
-              and not p.stdout and "MAILBEND_EMAIL=" not in p.stderr and "```json" not in p.stderr)
+              and not p.stdout and "MAILBEND_EMAIL=" not in p.stderr and "```json" not in p.stderr
+              and "MAILBEND_APP_PASSWORD" not in p.stderr and "MAILBEND_CA_FILE" not in p.stderr)
         if provider in ("unknown", "outlook", "hotmail", "office365"):
             check("setup: unsupported provider points to authentication policy", "/issues/28" in p.stderr)
     invalid = ("reader@example.com\nexport BAD=1", "reader@example.com\r", "a\x1b@example.com",
@@ -554,7 +613,9 @@ def setup_profiles(work):
         check("setup: malformed address is refused before output", p.returncode == 2 and not p.stdout)
     for args in ([], ["--provider", "gmail"], ["--check", "--provider", "gmail"],
                  ["--provider", "gmail", "--email", "reader@example.com", "--check"],
-                 ["--provider", "gmail", "--email", "reader@example.com", "--unknown"]):
+                 ["--provider", "gmail", "--email", "reader@example.com", "--unknown"],
+                 ["--provider", "web.de", "--email", "Reader.Name@web.de", "--check"],
+                 ["--provider", "web.de", "--email", "Reader.Name@web.de", "--unknown"]):
         p = subprocess.run([LAUNCHER, "setup", *args], env=env,
                            capture_output=True, text=True, timeout=10)
         check("setup: only exact argument shapes are accepted", p.returncode == 2 and not p.stdout)

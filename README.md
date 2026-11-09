@@ -486,8 +486,10 @@ mailbend setup --provider gmail --email reader@example.com
 
 Replace the example address with your account's primary login address.
 `setup` does not use configured account settings, connect to a server, prompt for
-a password, write a file, or apply settings. Both blocks clear `MAILBEND_LOGIN` so login uses the printed email address,
-and enable `MAILBEND_READ_ONLY=1`. Keep that restriction until you separately decide
+a password, write a file, or apply settings. Both blocks enable
+`MAILBEND_READ_ONLY=1`. WEB.DE sets `MAILBEND_LOGIN` to the case-preserved
+local part of the primary `web.de` address. Other presets clear it so login
+uses the printed email address. Keep read-only on until you separately decide
 which mail changes to allow.
 
 The output uses `MAILBEND_PASSWORD_FILE`. Replace its absolute placeholder
@@ -513,7 +515,7 @@ autodiscovery. Each output identifies its support tier and review date.
 | `gmx` | GMX.com endpoint set. Enable IMAP and use an application-specific password. |
 | `mailbox.org` | Main address. Use an email application password with two-factor authentication. |
 | `posteo` | Endpoints from Thunderbird ISPDB. Provider prerequisites could not be rechecked. Review app-password and additional account-protection requirements locally. |
-| `web.de` | Manual review only. ISPDB specifies a local-part login. The preset does not choose a login name; compatibility still needs review. No configuration is printed. |
+| `web.de` | Primary `web.de` account only. Uses the ISPDB-reviewed local-part login and keeps the full email address. Enable POP3/IMAP and use an app password. Aliases and custom domains are unsupported. Setup cannot verify primary identity; MailBend authentication is not live-tested. |
 | `proton-bridge` | Manual review only. Local ports, connection mode, and trust in Bridge's self-signed certificate need an account-owner decision. No configuration is printed. |
 
 Unknown providers and OAuth-only names such as `outlook`, `hotmail`, and

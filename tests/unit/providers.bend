@@ -8,7 +8,7 @@ def settings(s: P.Settings) -> String:
   match s:
     case P.Manual{reason}:
       "manual"
-    case P.Remote{imap, imap_port, smtp, smtp_port, tls, save_sent}:
+    case P.Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, policy}:
       String.join([imap, imap_port, smtp, smtp_port, tls, save_sent], "|")
 
 def render_text(r: Result<&2, &2, String, String>) -> String:
@@ -29,6 +29,27 @@ def safe(+text: String) -> Bool:
   Bool.not(String.contains(text, "MAILBEND_APP_PASSWORD")) &&
     Bool.not(String.contains(text, "MAILBEND_CA_FILE"))
 
+def rendered(r: Result<&2, &2, String, String>, shell: String, json: String) -> Bool:
+  match r:
+    case Done{+text}:
+      safe(text) && String.contains(text, shell) && String.contains(text, json)
+    case Fail{reason}:
+      False{}
+
+def refused(r: Result<&2, &2, String, String>) -> Bool:
+  match r:
+    case Done{text}:
+      False{}
+    case Fail{+reason}:
+      safe(reason) && Bool.not(String.contains(reason, "```"))
+
+def web_de_refusals(emails: List<&2, String>) -> Bool:
+  match emails:
+    case Nil{}:
+      True{}
+    case email <> rest:
+      refused(P.render("web.de", email)) && web_de_refusals(rest)
+
 def rows(xs: List<&2, P.Preset>) -> IO(Unit):
   match xs:
     case Nil{}:
@@ -37,7 +58,8 @@ def rows(xs: List<&2, P.Preset>) -> IO(Unit):
       do IO<Unit>:
         IO.print(name ++ "|" ++ settings(s) ++ "|" ++ tier)
         IO.print(String.join(sources, " "))
-        IO.print(Bool.show(safe(render_text(P.render(name, "reader@example.com")))))
+        IO.print(Bool.show(safe(render_text(P.render(name,
+          Bool.pick(String, String.eq(name, "web.de"), "Reader.Name@web.de", "reader@example.com"))))))
         rows(t)
 
 def main() -> IO(Unit):
@@ -55,8 +77,26 @@ def main() -> IO(Unit):
     IO.print(Bool.show(succeeds(P.render("gmail", " reader@example.com"))))
     IO.print(Bool.show(succeeds(P.render("gmail", "no-address"))))
     IO.print(J.show(J.obj(P.env_fields(
-      P.Remote{"imap.example.com", "993", "smtp.example.com", "465", "implicit", "0"},
-      "o'hara+$`whoami`@example.com"))))
+      P.Remote{"imap.example.com", "993", "smtp.example.com", "465", "implicit", "0", P.EmailFallback{}},
+      "o'hara+$`whoami`@example.com", ""))))
+    IO.print(Bool.show(rendered(P.render("web.de", "Reader.Name@web.de"),
+      "export MAILBEND_EMAIL='Reader.Name@web.de'\nexport MAILBEND_LOGIN='Reader.Name'\n",
+      "{\"env\":{\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"Reader.Name\",\"MAILBEND_PASSWORD_FILE\":\"/absolute/path/to/mailbend-password\",\"MAILBEND_IMAP_HOST\":\"imap.web.de\",\"MAILBEND_IMAP_PORT\":\"993\",\"MAILBEND_SMTP_HOST\":\"smtp.web.de\",\"MAILBEND_SMTP_PORT\":\"465\",\"MAILBEND_SMTP_TLS_MODE\":\"implicit\",\"MAILBEND_READ_ONLY\":\"1\",\"MAILBEND_SAVE_SENT\":\"0\"}}")))
+    IO.print(Bool.show(rendered(P.render("WEB.DE", "Reader.Name@WEB.DE"),
+      "export MAILBEND_EMAIL='Reader.Name@WEB.DE'\nexport MAILBEND_LOGIN='Reader.Name'\n",
+      "\"MAILBEND_EMAIL\":\"Reader.Name@WEB.DE\",\"MAILBEND_LOGIN\":\"Reader.Name\"")))
+    IO.print(Bool.show(rendered(P.render("web.de", "o'hara+$`whoami`@web.de"),
+      "export MAILBEND_LOGIN='o'\"'\"'hara+$`whoami`'\n",
+      "\"MAILBEND_EMAIL\":\"o'hara+$`whoami`@web.de\",\"MAILBEND_LOGIN\":\"o'hara+$`whoami`\"")))
+    IO.print(Bool.show(web_de_refusals(["reader@example.com", "reader@sub.web.de",
+      "reader@web.de.example", "reader@web.de.", "reader@notweb.de",
+      "@web.de", "reader@", "reader@@web.de", " reader@web.de", "reader@web.de ",
+      "Name <reader@web.de>", "reader@web.de (comment)", "reader@web.de\n",
+      "é@web.de", "missing-at"])))
+    IO.print(Bool.show(rendered(P.render("gmail", "Reader.Name@web.de"),
+      "export MAILBEND_LOGIN=''\n",
+      "\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"\"")))
+    IO.print(Bool.show(refused(P.render("proton-bridge", "Reader.Name@web.de"))))
 
 #|icloud|imap.mail.me.com|993|smtp.mail.me.com|587|starttls|1|documented; existing default profile, not newly live-tested
 #|https://support.apple.com/102525 https://support.apple.com/102654
@@ -79,8 +119,8 @@ def main() -> IO(Unit):
 #|gmx|imap.gmx.com|993|mail.gmx.com|465|implicit|0|documented GMX.com profile; not live-tested
 #|https://support.gmx.com/pop-imap/imap/server.html https://support.gmx.com/pop-imap/toggle.html https://support.gmx.com/security/2fa/application-specific-passwords.html
 #|True
-#|web.de|manual|manual review required
-#|https://hilfe.web.de/pop-imap/imap/imap-serverdaten.html https://github.com/thunderbird/autoconfig/blob/master/ispdb/web.de.xml https://hilfe.web.de/sicherheit/2fa/anwendungsspezifisches-passwort.html
+#|web.de|imap.web.de|993|smtp.web.de|465|implicit|0|endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested
+#|https://hilfe.web.de/pop-imap/imap/imap-serverdaten.html https://github.com/thunderbird/autoconfig/blob/3a5b95752363cdcdad8928d7d29a993cbdabcad2/ispdb/web.de.xml https://hilfe.web.de/sicherheit/2fa/anwendungsspezifisches-passwort.html
 #|True
 #|mailbox.org|imap.mailbox.org|993|smtp.mailbox.org|465|implicit|0|documented; not live-tested
 #|https://kb.mailbox.org/en/private/e-mail/e-mail-configuration/ https://kb.mailbox.org/en/private/security-and-privacy/e-mail-password/
@@ -103,3 +143,9 @@ def main() -> IO(Unit):
 #|False
 #|False
 #|{"MAILBEND_EMAIL":"o'hara+$`whoami`@example.com","MAILBEND_LOGIN":"","MAILBEND_PASSWORD_FILE":"/absolute/path/to/mailbend-password","MAILBEND_IMAP_HOST":"imap.example.com","MAILBEND_IMAP_PORT":"993","MAILBEND_SMTP_HOST":"smtp.example.com","MAILBEND_SMTP_PORT":"465","MAILBEND_SMTP_TLS_MODE":"implicit","MAILBEND_READ_ONLY":"1","MAILBEND_SAVE_SENT":"0"}
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
