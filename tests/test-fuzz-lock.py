@@ -9,6 +9,60 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / 'scripts/check-fuzz-lock.py'
 
+MANIFEST = '''\
+[dependencies]
+libfuzzer-sys = "0.4.13"
+mailbend-net = { path = "../mailbend-net" }
+mailbend-tls = { path = "../mailbend-tls" }
+[workspace]
+'''
+
+DISCONNECTED = '''\
+version = 4
+[[package]]
+name = "mailbend-net"
+version = "0.1.0"
+dependencies = ["net-leaf"]
+[[package]]
+name = "mailbend-tls"
+version = "0.1.0"
+dependencies = ["tls-leaf"]
+[[package]]
+name = "net-leaf"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+[[package]]
+name = "tls-leaf"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2222222222222222222222222222222222222222222222222222222222222222"
+'''
+
+THIRD_ROOT = '''\
+[[package]]
+name = "mailbend-extra"
+version = "0.1.0"
+dependencies = ["extra-leaf"]
+[[package]]
+name = "extra-leaf"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+'''
+
+STALE_THIRD_ROOT = '''\
+[[package]]
+name = "mailbend-extra"
+version = "0.1.0"
+dependencies = ["extra-leaf"]
+[[package]]
+name = "extra-leaf"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2222222222222222222222222222222222222222222222222222222222222222"
+'''
+
 NATIVE = '''\
 version = 4
 [[package]]
@@ -45,21 +99,141 @@ checksum = "2222222222222222222222222222222222222222222222222222222222222222"
 
 
 class FuzzLockTests(unittest.TestCase):
-    def check(self, native, fuzz):
+    def check(self, native, fuzz, manifest=MANIFEST):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             shipped = root / 'native.lock'
             harness = root / 'fuzz.lock'
+            manifest_path = root / 'Cargo.toml'
             shipped.write_text(native)
             harness.write_text(fuzz)
+            manifest_path.write_text(manifest)
             return subprocess.run(
                 [sys.executable, '-B', str(CHECKER), '--native', str(shipped),
-                 '--fuzz', str(harness)], cwd=root, capture_output=True,
+                 '--fuzz', str(harness), '--manifest', str(manifest_path)],
+                cwd=root, capture_output=True,
                 text=True, timeout=5)
 
     def test_matching_shared_dependencies(self):
         result = self.check(NATIVE, NATIVE)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_disconnected_roots_match(self):
+        result = self.check(DISCONNECTED, DISCONNECTED)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_default_repository_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run([sys.executable, '-B', str(CHECKER)], cwd=tmp,
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_manifest_metadata_and_dependency_options_are_benign(self):
+        manifest = MANIFEST.replace('path = "../mailbend-net"',
+                                    'path = "../mailbend-net", default-features = false')
+        manifest += '\n[workspace.metadata]\nnote = "fixture"\n'
+        result = self.check(DISCONNECTED, DISCONNECTED, manifest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_each_disconnected_root_checks_its_own_leaf(self):
+        for checksum, leaf in (('1' * 64, 'net-leaf'), ('2' * 64, 'tls-leaf')):
+            with self.subTest(leaf=leaf):
+                changed = DISCONNECTED.replace(checksum, '3' * 64)
+                result = self.check(DISCONNECTED, changed)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('checksum mismatch', result.stderr)
+                self.assertIn(leaf, result.stderr)
+
+    def test_new_root_rejected_even_when_old_roots_match(self):
+        for section in ('dependencies', 'build-dependencies', 'dev-dependencies',
+                        'target.\'cfg(unix)\'.dependencies',
+                        'target.\'cfg(unix)\'.build-dependencies',
+                        'target.\'cfg(unix)\'.dev-dependencies'):
+            declaration = 'mailbend-extra = { path = "../mailbend-extra" }\n'
+            manifest = (MANIFEST.replace('[dependencies]\n', '[dependencies]\n' + declaration)
+                        if section == 'dependencies' else
+                        MANIFEST + f'\n[{section}]\n' + declaration)
+            for third in (THIRD_ROOT, STALE_THIRD_ROOT):
+                with self.subTest(section=section, drift=third == STALE_THIRD_ROOT):
+                    result = self.check(DISCONNECTED + THIRD_ROOT,
+                                        DISCONNECTED + third, manifest)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('unsupported fuzz root inventory', result.stderr)
+                    self.assertIn('mailbend-extra', result.stderr)
+
+    def test_removed_redirected_and_aliased_roots_are_rejected(self):
+        original = 'mailbend-net = { path = "../mailbend-net" }'
+        for replacement in ('', 'mailbend-net = "0.1.0"',
+                            'mailbend-net = { path = "../other" }',
+                            'net = { package = "mailbend-net", path = "../mailbend-net" }',
+                            'mailbend-net = { package = "other", path = "../mailbend-net" }',
+                            'mailbend-net = { workspace = true }'):
+            with self.subTest(replacement=replacement):
+                result = self.check(DISCONNECTED, DISCONNECTED,
+                                    MANIFEST.replace(original, replacement))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('unsupported fuzz root inventory', result.stderr)
+
+    def test_either_root_removed_or_moved_is_rejected_despite_stale_locks(self):
+        for name in ('mailbend-net', 'mailbend-tls'):
+            declaration = f'{name} = {{ path = "../{name}" }}\n'
+            removed = MANIFEST.replace(declaration, '')
+            for suffix in ('', '\n[build-dependencies]\n' + declaration,
+                           '\n[dev-dependencies]\n' + declaration,
+                           '\n[target.\'cfg(unix)\'.dependencies]\n' + declaration):
+                with self.subTest(name=name, suffix=suffix):
+                    result = self.check(DISCONNECTED, DISCONNECTED, removed + suffix)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('unsupported fuzz root inventory', result.stderr)
+
+    def test_unsupported_manifest_selection_forms_are_rejected(self):
+        for extra in ('[workspace.dependencies]\nextra = { path = "../extra" }',
+                      '[dependencies.extra]\nworkspace = true',
+                      '[dependencies.extra]\npackage = "another"\nversion = "1"',
+                      '[build_dependencies]\nextra = { path = "../extra" }',
+                      '[target.\'cfg(unix)\'.dev_dependencies]\nextra = { path = "../extra" }',
+                      '[patch.crates-io]\nextra = { path = "../extra" }',
+                      '[replace]\n"extra:1.0.0" = { path = "../extra" }'):
+            with self.subTest(extra=extra):
+                result = self.check(DISCONNECTED, DISCONNECTED, MANIFEST + '\n' + extra)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('unsupported fuzz root inventory', result.stderr)
+        result = self.check(DISCONNECTED, DISCONNECTED,
+                            MANIFEST.replace('[workspace]', '[workspace]\nmembers = ["extra"]'))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('unsupported fuzz root inventory', result.stderr)
+
+    def test_registry_extras_and_unrelated_native_helper_are_benign(self):
+        native = DISCONNECTED + '''\
+[[package]]
+name = "unrelated-helper"
+version = "0.1.0"
+'''
+        fuzz = DISCONNECTED + '''\
+[[package]]
+name = "fuzz-only"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3333333333333333333333333333333333333333333333333333333333333333"
+'''
+        for section in ('dependencies', 'build-dependencies', 'dev-dependencies',
+                        'target.\'cfg(unix)\'.dependencies'):
+            extra = 'fuzz-only = { version = "1.0.0", optional = true }\n'
+            manifest = (MANIFEST.replace('[dependencies]\n', '[dependencies]\n' + extra)
+                        if section == 'dependencies' else MANIFEST + f'\n[{section}]\n' + extra)
+            result = self.check(native, fuzz, manifest)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_malformed_manifest_tables_fail_cleanly(self):
+        for manifest in ('dependencies = []', 'target = []', 'workspace = []',
+                         '[target]\nunix = []', '[dependencies]\nextra = 42',
+                         '[workspace]\ndependencies = []', '[workspace]\nmembers = {}',
+                         '[dependencies'):
+            with self.subTest(manifest=manifest):
+                result = self.check(DISCONNECTED, DISCONNECTED, manifest)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('Cargo.toml', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
 
     def test_opaque_source_with_parentheses(self):
         lock = '''\
