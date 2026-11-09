@@ -4,9 +4,13 @@ import Base
 import ./json.bend as J
 import ./mime.bend as M
 
+type LoginPolicy is Data:
+  EmailFallback{}
+  WebDeLocalPart{}
+
 type Settings is Data:
   Remote{imap: String, imap_port: String, smtp: String, smtp_port: String,
-    tls: String, save_sent: String}
+    tls: String, save_sent: String, login: LoginPolicy}
   Manual{reason: String}
 
 type Preset is Data:
@@ -19,13 +23,13 @@ def reviewed_on() -> String:
 def presets() -> List<&2, Preset>:
   [
     Preset{"icloud", Remote{"imap.mail.me.com", "993", "smtp.mail.me.com", "587",
-      "starttls", "1"}, "Full primary iCloud Mail address for both protocols.",
+      "starttls", "1", EmailFallback{}}, "Full primary iCloud Mail address for both protocols.",
       "Create an Apple app-specific password with two-factor authentication enabled. " ++
       "Apple permits the full address for IMAP and requires it for SMTP. " ++
       "The existing iCloud profile recommends saving a Sent copy.",
       ["https://support.apple.com/102525", "https://support.apple.com/102654"],
       "documented; existing default profile, not newly live-tested"},
-    Preset{"gmail", Remote{"imap.gmail.com", "993", "smtp.gmail.com", "465", "implicit", "0"},
+    Preset{"gmail", Remote{"imap.gmail.com", "993", "smtp.gmail.com", "465", "implicit", "0", EmailFallback{}},
       "Full Google account email address.",
       "Use an app password, not the account password. Enable 2-Step Verification first. " ++
       "App passwords may be unavailable with security-key-only verification, organization " ++
@@ -35,11 +39,11 @@ def presets() -> List<&2, Preset>:
         "https://support.google.com/accounts/answer/185833",
         "https://support.google.com/mail/answer/78892"], "documented; not live-tested"},
     Preset{"yahoo", Remote{"imap.mail.yahoo.com", "993", "smtp.mail.yahoo.com", "465",
-      "implicit", "0"}, "Full Yahoo Mail account address.",
+      "implicit", "0", EmailFallback{}}, "Full Yahoo Mail account address.",
       "Generate a third-party app password in Yahoo account security. " ++
       "Review Sent-copy behavior before enabling writes.",
       ["https://help.yahoo.com/kb/SLN4075.html"], "documented; not live-tested"},
-    Preset{"aol", Remote{"imap.aol.com", "993", "smtp.aol.com", "465", "implicit", "0"},
+    Preset{"aol", Remote{"imap.aol.com", "993", "smtp.aol.com", "465", "implicit", "0", EmailFallback{}},
       "Full AOL Mail account address. This is not the Verizon.net SMTP profile.",
       "Generate a third-party app password in AOL account security. " ++
       "Provider help was unreadable during review; endpoints were checked in Thunderbird ISPDB. " ++
@@ -48,12 +52,12 @@ def presets() -> List<&2, Preset>:
         "https://help.aol.com/articles/create-and-manage-app-password"],
       "ISPDB-reviewed; not provider-page-verified or live-tested"},
     Preset{"fastmail", Remote{"imap.fastmail.com", "993", "smtp.fastmail.com", "465",
-      "implicit", "0"}, "Full primary Fastmail username, not an alias.",
+      "implicit", "0", EmailFallback{}}, "Full primary Fastmail username, not an alias.",
       "Create an app password with mail access. The regular password does not work. " ++
       "Basic plans do not include IMAP or SMTP. Review Sent-copy behavior before enabling writes.",
       ["https://www.fastmail.help/hc/en-us/articles/1500000278342-Server-names-and-ports"],
       "documented; not live-tested"},
-    Preset{"zoho", Remote{"imap.zoho.com", "993", "smtp.zoho.com", "465", "implicit", "0"},
+    Preset{"zoho", Remote{"imap.zoho.com", "993", "smtp.zoho.com", "465", "implicit", "0", EmailFallback{}},
       "Full Zoho Mail account address.",
       "Only the .com personal-account server profile is printed. Paid organizations use " ++
       "different hosts, and other datacenters differ. Compare both hosts with your account's " ++
@@ -63,7 +67,7 @@ def presets() -> List<&2, Preset>:
       ["https://www.zoho.com/mail/help/imap-access.html",
         "https://www.zoho.com/mail/help/zoho-smtp.html"],
       "documented .com personal profile only; not live-tested"},
-    Preset{"gmx", Remote{"imap.gmx.com", "993", "mail.gmx.com", "465", "implicit", "0"},
+    Preset{"gmx", Remote{"imap.gmx.com", "993", "mail.gmx.com", "465", "implicit", "0", EmailFallback{}},
       "Full GMX account address for the documented GMX.com profile.",
       "Enable POP3/IMAP access in GMX settings; it is off by default. " ++
       "Use an application-specific password. Review Sent-copy behavior before enabling writes.",
@@ -71,26 +75,26 @@ def presets() -> List<&2, Preset>:
         "https://support.gmx.com/pop-imap/toggle.html",
         "https://support.gmx.com/security/2fa/application-specific-passwords.html"],
       "documented GMX.com profile; not live-tested"},
-    Preset{"web.de", Manual{"Thunderbird ISPDB specifies a local-part username for WEB.DE. " ++
-      "This preset does not choose a login name. MAILBEND_LOGIN supports a separate " ++
-      "login, but that does not establish compatibility with this provider. " ++
-      "No configuration was guessed; this profile needs manual compatibility review."},
-      "ISPDB specifies the part before @; full-address login is unverified.",
+    Preset{"web.de", Remote{"imap.web.de", "993", "smtp.web.de", "465",
+      "implicit", "0", WebDeLocalPart{}},
+      "Primary web.de account only. ISPDB specifies the case-preserved part before @ for both protocols.",
       "Enable POP3/IMAP access in WEB.DE settings and create an app password. " ++
+      "Aliases and custom domains are unsupported by this profile. Setup cannot verify " ++
+      "whether an address is primary. Full-address authentication is unverified. " ++
       "Review Sent-copy behavior before enabling writes.",
       ["https://hilfe.web.de/pop-imap/imap/imap-serverdaten.html",
-        "https://github.com/thunderbird/autoconfig/blob/master/ispdb/web.de.xml",
+        "https://github.com/thunderbird/autoconfig/blob/3a5b95752363cdcdad8928d7d29a993cbdabcad2/ispdb/web.de.xml",
         "https://hilfe.web.de/sicherheit/2fa/anwendungsspezifisches-passwort.html"],
-      "manual review required"},
+      "endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested"},
     Preset{"mailbox.org", Remote{"imap.mailbox.org", "993", "smtp.mailbox.org", "465",
-      "implicit", "0"}, "Full main mailbox.org address, not an alias.",
+      "implicit", "0", EmailFallback{}}, "Full main mailbox.org address, not an alias.",
       "Create an email application password, required when two-factor authentication is on. " ++
       "Enable both IMAP and SMTP for that password. " ++
       "Review Sent-copy behavior before enabling writes.",
       ["https://kb.mailbox.org/en/private/e-mail/e-mail-configuration/",
         "https://kb.mailbox.org/en/private/security-and-privacy/e-mail-password/"],
       "documented; not live-tested"},
-    Preset{"posteo", Remote{"posteo.de", "993", "posteo.de", "465", "implicit", "0"},
+    Preset{"posteo", Remote{"posteo.de", "993", "posteo.de", "465", "implicit", "0", EmailFallback{}},
       "Full primary Posteo email address.",
       "Check Posteo's app-password and additional email account protection requirements. " ++
       "Provider help could not be fetched during review; endpoints were checked in " ++
@@ -128,12 +132,28 @@ def find(xs: List<&2, Preset>, +name: String) -> Maybe<&2, Preset>:
 def password_path() -> String:
   "/absolute/path/to/mailbend-password"
 
-def env_fields(s: Settings, email: String) -> List<&2, J.Json>:
+def web_de_login(parts: List<&2, String>) -> Result<&2, &2, String, String>:
+  match parts:
+    case local <> domain <> Nil{}:
+      Bool.pick(Result<&2, &2, String, String>,
+        String.eq(String.to_lower(domain), "web.de"), Done{local},
+        Fail{"WEB.DE requires the primary web.de account address; no configuration was generated."})
+    case _:
+      Fail{"WEB.DE requires the primary web.de account address; no configuration was generated."}
+
+def resolve_login(policy: LoginPolicy, email: String) -> Result<&2, &2, String, String>:
+  match policy:
+    case EmailFallback{}:
+      Done{""}
+    case WebDeLocalPart{}:
+      web_de_login(String.split(email, '@'))
+
+def env_fields(s: Settings, email: String, login: String) -> List<&2, J.Json>:
   match s:
     case Manual{reason}:
       []
-    case Remote{imap, imap_port, smtp, smtp_port, tls, save_sent}:
-      [J.kv("MAILBEND_EMAIL", J.str(email)), J.kv("MAILBEND_LOGIN", J.str("")),
+    case Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, policy}:
+      [J.kv("MAILBEND_EMAIL", J.str(email)), J.kv("MAILBEND_LOGIN", J.str(login)),
         J.kv("MAILBEND_PASSWORD_FILE", J.str(password_path())),
         J.kv("MAILBEND_IMAP_HOST", J.str(imap)), J.kv("MAILBEND_IMAP_PORT", J.str(imap_port)),
         J.kv("MAILBEND_SMTP_HOST", J.str(smtp)), J.kv("MAILBEND_SMTP_PORT", J.str(smtp_port)),
@@ -175,26 +195,29 @@ def password_instructions() -> String:
   "  mailbend_status=$?\n  unset mailbend_password\n  exit \"$mailbend_status\"\n)\n```\n"
 
 def metadata(p: Preset) -> String:
-  Preset{name, settings, username, prerequisites, sources, tier} = p
-  "Provider: " ++ name ++ "\nTier: " ++ tier ++ "\nReviewed: " ++ reviewed_on() ++
+  Preset{+name, settings, username, prerequisites, sources, tier} = p
+  "Provider: " ++ name ++ "\nTier: " ++ tier ++ "\nReviewed: " ++
+    Bool.pick(String, String.eq(name, "web.de"), "2026-11-08", reviewed_on()) ++
     "\nUsername: " ++ username ++ "\nPrerequisites: " ++ prerequisites ++
     "\nSources:\n" ++ String.join(sources, "\n") ++ "\n"
 
-def render.settings(s: Settings, p: Preset, email: String) -> Result<&2, &2, String, String>:
+def render.settings(s: Settings, p: Preset, +email: String) -> Result<&2, &2, String, String>:
   match s:
     case Manual{reason}:
       Fail{metadata(p) ++ reason}
-    case Remote{imap, imap_port, smtp, smtp_port, tls, save_sent}:
-      +fields = env_fields(Remote{imap, imap_port, smtp, smtp_port, tls, save_sent}, email)
-      Done{metadata(p) ++ "\nNothing was applied or checked. " ++
-        "Read-only is on; enabling writes is a separate decision. " ++
-        "Sent-copy is off unless the profile explicitly recommends it.\n\n" ++
-        "Environment block:\n```sh\n" ++ shell_fields(fields) ++ "```\n\n" ++
-        "MCP env block:\n```json\n" ++ J.show(J.obj([J.kv("env", J.obj(fields))])) ++
-        "\n```\n\n" ++ password_instructions() ++
-        "\nAfter applying settings yourself, run mailbend setup --check. " ++
-        "That command connects to the configured servers and reports local folder names. " ++
-        "For shareable output use mailbend diagnose --imap --smtp instead.\n"}
+    case Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, +policy}:
+      do Result<&2, &2, String, String>:
+        login : String <- resolve_login(policy, email)
+        +fields = env_fields(Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, policy}, email, login)
+        Done{metadata(p) ++ "\nNothing was applied or checked. " ++
+          "Read-only is on; enabling writes is a separate decision. " ++
+          "Sent-copy is off unless the profile explicitly recommends it.\n\n" ++
+          "Environment block:\n```sh\n" ++ shell_fields(fields) ++ "```\n\n" ++
+          "MCP env block:\n```json\n" ++ J.show(J.obj([J.kv("env", J.obj(fields))])) ++
+          "\n```\n\n" ++ password_instructions() ++
+          "\nAfter applying settings yourself, run mailbend setup --check. " ++
+          "That command connects to the configured servers and reports local folder names. " ++
+          "For shareable output use mailbend diagnose --imap --smtp instead.\n"}
 
 def render.found(p: Maybe<&2, Preset>, email: String) -> Result<&2, &2, String, String>:
   match p:
