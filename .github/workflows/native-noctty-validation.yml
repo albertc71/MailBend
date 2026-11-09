@@ -1,0 +1,45 @@
+name: Native terminal refusal validation
+on:
+  push:
+    branches: [validation/native-noctty-388-20261109]
+permissions:
+  contents: read
+concurrency:
+  group: native-noctty-388-validation
+  cancel-in-progress: false
+jobs:
+  terminal-controls:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the exact reviewed product parent
+        run: |
+          set -eu
+          test "$(git show -s --format=%P HEAD | wc -w)" -eq 1
+          test "$(git show -s --format=%P HEAD^ | wc -w)" -eq 1
+          test "$(git rev-parse HEAD^^)" = 58da766e8e68eb6dc52c68342616ba6aef9f57e9
+          test "$(git rev-parse HEAD^:scripts/check-native-hardening.py)" = db53c282a0b6395a56a9b45ce82c22122431553d
+          test "$(git rev-parse HEAD^:tests/test-native-hardening.py)" = 3de2da26e34c20bd1c482962eb16e14be1ad9c64
+          test "$(git rev-parse 'HEAD^^{tree}')" = 4e1af9a22c9a626eaf67cd2d27b1ad836a6a9c14
+          test "$(git diff --name-only HEAD^ HEAD)" = "$(printf '%s\n' .github/workflows/native-noctty-validation.yml tests/validate-native-noctty.py)"
+          git diff --exit-code HEAD^ HEAD -- . ':!.github/workflows/native-noctty-validation.yml' ':!tests/validate-native-noctty.py'
+          git log -2 --format='%H %T %P'
+          cc --version
+          readelf --version
+      - name: Scan the validation tree and history
+        if: matrix.runner == 'ubuntu-24.04'
+        run: sh scripts/scan-secrets.sh
+      - name: Real ELF and terminal regression suite
+        timeout-minutes: 5
+        run: python3 tests/test-native-hardening.py -v
+      - name: Semantic mutants and supplemental cleanup controls
+        timeout-minutes: 5
+        run: python3 tests/validate-native-noctty.py
