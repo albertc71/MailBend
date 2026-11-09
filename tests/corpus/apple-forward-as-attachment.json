@@ -1,0 +1,53 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture in the layout of Apple Mail's Forward as Attachment: folded parameters and a 7bit message/rfc822 part with folded, encoded headers. Not emitted or verified by Apple Mail."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc5322",
+    "https://www.rfc-editor.org/rfc/rfc2047"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "expected": {
+    "from": "Synthetic Forwarder <forwarder@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "Fwd: Quarterly plan",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<apple-forward-as-attachment@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "See the attached original.",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "Quarterly plan.eml",
+        "content_type": "message/rfc822",
+        "size": 536
+      }
+    ]
+  },
+  "attached_message_headers": [
+    {
+      "filename": "Quarterly plan.eml",
+      "content_type": "message/rfc822",
+      "size": 536,
+      "message": {
+        "from": "Renée Origin <origin@example.invalid>",
+        "to": "Team One <one@example.invalid>, Team Two <two@example.invalid>",
+        "subject": "Quarterly plan",
+        "date": "Fri, 30 Oct 2026 08:00:00 +0000",
+        "message_id": "<quarterly-plan@corpus.invalid>"
+      }
+    }
+  ]
+}

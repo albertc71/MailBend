@@ -489,18 +489,18 @@ def check_search() -> IO(Unit):
 
 def check_get() -> IO(Unit):
   do IO<Unit>:
-    IO.print(show_shown(T.get_msg([message(5, raw_message())], "INBOX", 5, Some{7}, 262144)))
-    IO.print(show_shown(T.get_msg([message(6, html_message())], "INBOX", 6, None{}, 100)))
-    IO.print(show_shown(T.get_msg([], "Work", 8, Some{7}, 100)))
+    IO.print(show_shown(T.get_msg([message(5, raw_message())], "INBOX", 5, Some{7}, 262144, False{})))
+    IO.print(show_shown(T.get_msg([message(6, html_message())], "INBOX", 6, None{}, 100, False{})))
+    IO.print(show_shown(T.get_msg([], "Work", 8, Some{7}, 100, False{})))
     IO.print(show_msgs(T.with_uid([message(9, "x"), message(5, ""), message(5, "y")], 5, True{})) ++
       "|" ++ show_msgs(T.with_uid([message(9, "x"), message(5, "")], 5, True{})) ++
       "|" ++ show_msgs(T.with_uid([message(5, "")], 5, False{})))
     IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 4,
-      1000)))
+      1000, False{})))
     IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 8,
-      1000)))
+      1000, False{})))
     IO.print(show_shown(T.get_out(T.imap_code(0, I.frame(headers_transcript(7)), ""), "INBOX", 9,
-      1000)))
+      1000, False{})))
 
 def check_new() -> IO(Unit):
   do IO<Unit>:

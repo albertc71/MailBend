@@ -134,17 +134,35 @@ def header_fields.after(key: String, raw: String, rest: Sigma<&2, &2, List<&2, J
   (fields, left) = rest
   Done{(J.kv(key, J.str(M.header_line(raw))) <> fields, left)}
 
+# The header a displayed key names: message_id reads Message-ID.
+def header_name(+key: String) -> String:
+  Bool.pick(String, String.eq(key, "message_id"), "message-id", key)
+
 def header_fields(keys: List<&2, String>, +hs: List<&2, M.Hdr>, b: Budget)
   -> Result<&2, &2, String, Sigma<&2, &2, List<&2, J.Json>, _ => Budget>>:
   match keys:
     case Nil{}:
       Done{([], b)}
     case +key <> t:
-      +raw = M.header(hs, Bool.pick(String, String.eq(key, "message_id"), "message-id", key))
+      +raw = M.header(hs, header_name(key))
       do Result<&2, &2, String, Sigma<&2, &2, List<&2, J.Json>, _ => Budget>>:
         next : Budget <- reserve_view(raw, b)
         rest : Sigma<&2, &2, List<&2, J.Json>, _ => Budget> <- header_fields(t, hs, next)
         header_fields.after(key, raw, rest)
+
+def summary.fields(keys: List<&2, String>, +hs: List<&2, M.Hdr>) -> List<&2, J.Json>:
+  match keys:
+    case Nil{}:
+      []
+    case +key <> t:
+      J.kv(key, J.str(M.header_line(M.header(hs, header_name(key))))) <> summary.fields(t, hs)
+
+# The key headers of an attached message, read from bytes already fetched,
+# for its entry in a whole-message attachment list. Each value is one line
+# from the same sanitizer as the nested view's headers; absent ones are "".
+def summary(raw: String) -> J.Json:
+  J.obj(summary.fields(["from", "to", "subject", "date", "message_id"],
+    M.headers(M.head_of(M.split(raw)))))
 
 def compact.go(raw: String, +out: String) -> String:
   match raw:

@@ -112,6 +112,10 @@ failures preserve their original reason as well. Jev off makes no request
 and adds no annotation. These fields describe coverage, not authentication or
 approval, and do not change the nested content.
 
+`mail_get(attached_message_headers=true)` leaves the TypeSafe request
+unchanged: the attached-message summaries it adds to the result are not sent,
+and the annotation is the one the same read gets without the option.
+
 ## The `jev` object
 
 Every message or call Jev was asked about carries a `jev` object: `status`

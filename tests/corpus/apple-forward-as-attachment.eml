@@ -1,0 +1,38 @@
+From: Synthetic Forwarder <forwarder@example.invalid>
+Content-Type: multipart/mixed;
+	boundary="Apple-Mail=_5F3C2A1E-0000-4000-8000-000000000001"
+Mime-Version: 1.0 (Mac OS X Mail 16.0 \(3774.600.62\))
+Subject: Fwd: Quarterly plan
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-Id: <apple-forward-as-attachment@corpus.invalid>
+To: reader@example.invalid
+
+
+--Apple-Mail=_5F3C2A1E-0000-4000-8000-000000000001
+Content-Transfer-Encoding: 7bit
+Content-Type: text/plain;
+	charset=us-ascii
+
+See the attached original.
+--Apple-Mail=_5F3C2A1E-0000-4000-8000-000000000001
+Content-Disposition: attachment;
+	filename="Quarterly plan.eml"
+Content-Type: message/rfc822;
+	name="Quarterly plan.eml"
+Content-Transfer-Encoding: 7bit
+
+Return-Path: <origin@example.invalid>
+Received: from mx.example.invalid by mx.example.invalid; Fri, 30 Oct 2026 08:00:00 +0000
+From: =?utf-8?Q?Ren=C3=A9e_Origin?= <origin@example.invalid>
+Content-Type: text/plain;
+	charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Mime-Version: 1.0 (Mac OS X Mail 16.0 \(3774.600.62\))
+Subject: Quarterly plan
+Message-Id: <quarterly-plan@corpus.invalid>
+Date: Fri, 30 Oct 2026 08:00:00 +0000
+To: Team One <one@example.invalid>,
+ Team Two <two@example.invalid>
+
+The plan is attached as text.
+--Apple-Mail=_5F3C2A1E-0000-4000-8000-000000000001--

@@ -250,6 +250,22 @@ with_facts = {**whole, "facts": [meeting_fact],
               "facts_scan": {"scope": "returned_text", "limited": False}}
 check("mail_get", whole)
 check("mail_get", with_facts)
+# attached_message_headers adds a sanitized summary only to attached messages.
+summary = {"from": "a <a@example.invalid>", "to": "", "subject": "inner", "date": "", "message_id": ""}
+attached_entry = {"filename": "", "content_type": "message/rfc822", "size": 9, "message": summary}
+check("mail_get", {**whole, "attachments": [attached_entry]})
+check("mail_get", {**whole, "attachments": [{**attached_entry, "content_type": "message/global"}]})
+check("mail_get", {**with_facts, "attachments": [attached_entry]})
+check("mail_get", {**whole, "attachments": [{**attached_entry, "content_type": "application/pdf"}]}, False)
+check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {**summary, "cc": ""}}]}, False)
+check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {
+    k: v for k, v in summary.items() if k != "date"}}]}, False)
+check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {**summary, "subject": "h" * 999}}]}, False)
+for invalid in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u061c", "\u200e",
+                "\u2028", "\u202e", "\u2066"):
+    for key in summary:
+        check("mail_get", {**whole, "attachments": [{**attached_entry,
+            "message": {**summary, key: "safe" + invalid}}]}, False)
 check("mail_get", {**whole, "facts": []}, False)
 check("mail_get", {**with_facts, "facts": [meeting_fact] * 17}, False)
 for change in ({"value": literal_link + "\n"}, {"value": literal_link + "?x"},

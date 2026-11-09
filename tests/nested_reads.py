@@ -206,6 +206,79 @@ def facts_compatibility(test, work):
         server.stop()
 
 
+def attached_summaries(test, work):
+    """attached_message_headers adds only sanitized key headers to attached-message entries."""
+    inner = ("From: =?utf-8?Q?Inner=0D=0AX=E2=80=AE?= <inner@example.test>\r\n"
+             "Subject: INNER_HEADER_MARKER\r\n\r\nINNER_BODY_MARKER")
+    raw = ("From: parent@example.test\r\nSubject: parent\r\n"
+           "Content-Type: multipart/mixed; boundary=b\r\n\r\n"
+           "--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n"
+           "--b\r\nContent-Type: message/rfc822\r\n\r\n" + inner + "\r\n"
+           "--b\r\nContent-Type: application/octet-stream; name=a.bin\r\n\r\nxx\r\n--b--\r\n")
+    whole = {"uid": 1, "flags": [], "internaldate": "08-Nov-2026 12:00:00 +0000", "raw": raw}
+    plain_entries = ('"attachments":[{"filename":"","content_type":"message/rfc822","size":' +
+                     str(len(inner)) + '},{"filename":"a.bin","content_type":"application/octet-stream","size":2}]')
+    summary = ',"message":{"from":"Inner  X <inner@example.test>","to":"","subject":"INNER_HEADER_MARKER",' \
+              '"date":"","message_id":""}'
+    at = plain_entries.index('},{')
+    summarized = plain_entries[:at] + summary + plain_entries[at:]
+    server = test.Server(work, fixture=fixture(test, [whole, message(inner.encode(), 2)]))
+    try:
+        initial = copy.deepcopy(server.st()["mailboxes"])
+        start = len(server.log_records())
+        status, legacy = wire(test, server, {"uid": 1, "uidvalidity": 9})
+        legacy_commands = commands(server, start)
+        test.check("whole read lists attached messages without summaries", status == 0 and
+                   plain_entries in legacy and '"message"' not in legacy, legacy)
+        status, rendered = wire(test, server, {"uid": 1, "uidvalidity": 9, "attached_message_headers": False})
+        test.check("false attached_message_headers keeps literal whole bytes", status == 0 and rendered == legacy, rendered)
+        start = len(server.log_records())
+        status, rendered = wire(test, server, {"uid": 1, "uidvalidity": 9, "attached_message_headers": True})
+        test.check("attached_message_headers adds only the sanitized summary", status == 0 and
+                   rendered == legacy.replace(plain_entries, summarized), rendered)
+        test.check("attached_message_headers keeps the whole-read commands",
+                   commands(server, start) == legacy_commands, commands(server, start))
+        for extra in ({"projection": "metadata"}, {"projection": "text", "facts": True},
+                      {"max_response_bytes": 100000}):
+            code, actual = test.tool(server, "mail_get", {"uid": 1, "uidvalidity": 9,
+                                     "attached_message_headers": True, **extra})
+            test.check("attached_message_headers composes with " + ",".join(extra), code == 0 and
+                       json.dumps(actual["attachments"], separators=(",", ":"), ensure_ascii=False)
+                       == summarized[len('"attachments":'):], actual)
+        invalid = [{"uid": 1, "uidvalidity": 9, "attached_message_headers": True, "section": section}
+                   for section in ("list", "text", "1", "2")]
+        invalid += [args(uid=2, attached_message_headers=True),
+                    {"uid": 1, "attached_message_headers": "true"},
+                    {"uid": 1, "attached_message_headers": None},
+                    {"uid": 1, "attached_message_headers": 1}]
+        for request in invalid:
+            start = len(server.log_records())
+            code, actual = test.tool(server, "mail_get", request)
+            test.check("invalid attached_message_headers refuses before mail IO",
+                       code != 0 and set(actual) == {"error"} and len(server.log_records()) == start, actual)
+        ts = test.TypeSafe(work)
+        try:
+            for mode in ("headers", "body"):
+                env = test.jev_env(ts, test.typesafe_key_file(work), MAILBEND_TYPESAFE_CONTENT=mode,
+                                   MAILBEND_TYPESAFE_ZERO_RETENTION="1")
+                sent = []
+                for option in (False, True):
+                    before = len(ts.requests())
+                    code, actual = test.tool(server, "mail_get", {"uid": 1, "uidvalidity": 9,
+                                             "attached_message_headers": option}, **env)
+                    sent.append(json.dumps([x["body"] for x in ts.requests()[before:]], ensure_ascii=False))
+                    test.check("attached_message_headers Jev read " + mode, code == 0 and
+                               actual.get("jev", {}).get("status") == "checked", actual)
+                test.check("attached_message_headers adds nothing to Jev requests " + mode,
+                           sent[0] == sent[1] and "INNER_HEADER_MARKER" not in sent[1]
+                           and "INNER_BODY_MARKER" not in sent[1], sent)
+        finally:
+            ts.stop()
+        test.check("attached_message_headers leaves mailbox state unchanged", server.st()["mailboxes"] == initial)
+    finally:
+        server.stop()
+
+
 def resource_reads(test, work, large=False):
     """Entity limits always run; the 16 MiB parse and view shapes only when large."""
     wide = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n"
@@ -328,6 +401,7 @@ def run(test, work, resources=False):
         public_reads(test, work)
         legacy_reads(test, work)
         facts_compatibility(test, work)
+        attached_summaries(test, work)
         annotations(test, work)
         response_budget(test, work)
         resource_reads(test, work, large=resources)

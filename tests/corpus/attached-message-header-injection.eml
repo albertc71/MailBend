@@ -1,0 +1,24 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: attached-message-header-injection
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <attached-message-header-injection@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=attached
+
+--attached
+Content-Type: text/plain
+
+Outer text.
+--attached
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename=hostile.eml
+
+From: =?utf-8?Q?Mallory=0D=0ABcc=3A_victim=40example=2Einvalid?= <mallory@example.invalid>
+To: reader@example.invalid, =?utf-8?Q?=E2=80=A8To=3A_x?= <x@example.invalid>
+Subject: =?utf-8?Q?Invoice_=E2=80=AEfdp=2Eexe=E2=81=A6_=E2=80=8Eok=09tab=00nul=7Fdel?=
+Date: Fri, 30 Oct 2026 08:00:00 +0000 =?utf-8?Q?=1B=5B2J?=
+Message-ID: <inner-injection@corpus.invalid> =?utf-8?Q?=C2=85x?=
+
+Hostile body.
+--attached--

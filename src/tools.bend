@@ -1251,13 +1251,45 @@ def atts_json(xs: List<&2, M.Att>) -> List<&2, J.Json>:
       J.obj([J.kv("filename", J.str(n)), J.kv("content_type", J.str(t)), J.kv("size", J.num(s))]) <>
         atts_json(r)
 
+def att_summary.if(message: Bool, base: List<&2, J.Json>, l: M.Leaf) -> J.Json:
+  match message:
+    case True{}:
+      M.Leaf{hs, body} = l
+      J.obj(List.append(&2, J.Json, base,
+        [J.kv("message", Nested.summary(M.leaf_bytes(hs, body)))]))
+    case False{}:
+      J.obj(base)
+
+# The attachment list with each attached message's key headers. Attachments
+# and the message's file leaves come in the same order (see M.attachment_at).
+def atts_summarized(xs: List<&2, M.Att>, ls: List<&2, M.Leaf>) -> List<&2, J.Json>:
+  match xs ls:
+    case Nil{} _:
+      []
+    case M.Att{n, +t, s} <> r Nil{}:
+      J.obj([J.kv("filename", J.str(n)), J.kv("content_type", J.str(t)), J.kv("size", J.num(s))]) <>
+        atts_summarized(r, [])
+    case M.Att{n, +t, s} <> r l <> lt:
+      att_summary.if(Nested.is_message(t),
+        [J.kv("filename", J.str(n)), J.kv("content_type", J.str(t)), J.kv("size", J.num(s))], l) <>
+        atts_summarized(r, lt)
+
+# Without attached_message_headers, the legacy attachment list.
+def get_atts(summary: Bool, atts: List<&2, M.Att>, body: String) -> List<&2, J.Json>:
+  match summary:
+    case False{}:
+      atts_json(atts)
+    case True{}:
+      atts_summarized(atts, List.filter(~M.Leaf, ~M.is_file, M.message_leaves(body)))
+
 def get_json(
   m: I.Msg,
   folder: String,
   uidv: Maybe<&2, U32>,
   max: U32,
   +hs: List<&2, M.Hdr>,
-  +p: M.Parts
+  +p: M.Parts,
+  summary: Bool
 ) -> Policy.Out:
   I.Msg{uid, +flags, date, +size, headers, body, _} = m
   M.Parts{_, +html, atts} = p
@@ -1282,7 +1314,7 @@ def get_json(
     J.kv("text", J.str(M.readable_text(p))),
     J.kv("html", J.str(html)),
     J.kv("html_available", J.bool(Bool.not(String.is_empty(html)))),
-    J.kv("attachments", J.arr(atts_json(atts)))
+    J.kv("attachments", J.arr(get_atts(summary, atts, body)))
   ], Metadata.fields(M.headers(headers), flags)))
 
 def msg_body(m: I.Msg) -> String:
@@ -1311,22 +1343,23 @@ def get_msg(
   folder: String,
   uid: U32,
   uidv: Maybe<&2, U32>,
-  +max: U32
+  +max: U32,
+  summary: Bool
 ) -> Shown:
   match ms:
     case Nil{}:
       Listed{Policy.Err{no_message(uid, folder)}, []}
     case +m <> t:
       +body = msg_body(m)
-      Whole{get_json(m, folder, uidv, max, body_headers(body), M.parts(body)), m, max}
+      Whole{get_json(m, folder, uidv, max, body_headers(body), M.parts(body), summary), m, max}
 
-def get_out(r: Run(), folder: String, +uid: U32, max: U32) -> Shown:
+def get_out(r: Run(), folder: String, +uid: U32, max: U32, summary: Bool) -> Shown:
   match r:
     case Fail{m}:
       Listed{Policy.Err{m}, []}
     case Done{+lines}:
       get_msg(fetched_msgs(lines, [uid], True{}), folder, uid,
-        I.ok_code(lines, "UIDVALIDITY"), max)
+        I.ok_code(lines, "UIDVALIDITY"), max, summary)
 
 # The one UID a tool that reads a single message is given.
 def single_uid(u: Uids(), tool: String) -> Result<&2, &2, String, U32>:
@@ -1374,12 +1407,12 @@ def read_uidv(m: Maybe<&2, J.Json>) -> Result<&2, &2, String, Maybe<&2, U32>>:
       read_uidv.value(positive(J.as_u32(Some{v})))
 
 def get_uid(u: Result<&2, &2, String, U32>, +folder: String, +max: U32,
-  v: Result<&2, &2, String, Maybe<&2, U32>>) -> IO(Shown):
+  v: Result<&2, &2, String, Maybe<&2, U32>>, summary: Bool) -> IO(Shown):
   match u v:
     case Done{+uid} Done{+uidv}:
       do IO<Shown>:
         r : Run() <- imap_run(Ops.plan_get_checked(folder, uid, max, uidv))
-        return get_out(checked_read(r, uidv), folder, uid, max)
+        return get_out(checked_read(r, uidv), folder, uid, max, summary)
     case Fail{m} _:
       pure_shown(Policy.Err{m})
     case _ Fail{m}:
@@ -1612,19 +1645,19 @@ def part_get(u: Result<&2, &2, String, U32>, folder: String, uidv: U32,
     case Done{uid} _:
       part_get.run(String.eq(wanted, "list"), folder, uid, uidv, wanted, max)
 
-def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String) -> IO(Shown):
+def t_get.if(whole: Bool, +args: J.Json, max: U32, wanted: String, summary: Bool) -> IO(Shown):
   match whole:
     case True{}:
       get_uid(single_uid(uids_arg(args), "mail_get"), folder_arg(args), max,
-        read_uidv(J.get(args, "uidvalidity")))
+        read_uidv(J.get(args, "uidvalidity")), summary)
     case False{}:
       part_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
         wanted, max)
 
-def t_get.legacy(+args: J.Json) -> IO(Shown):
+def t_get.legacy(+args: J.Json, summary: Bool) -> IO(Shown):
   +wanted = Policy.str_arg(args, "section", "")
   t_get.if(String.is_empty(wanted), args,
-    clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216), wanted)
+    clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216), wanted, summary)
 
 def nested_content(r: Result<&2, &2, String, J.Json>, p: Part.Part,
   folder: String, uid: U32, uidv: U32) -> Policy.Out:
@@ -1737,19 +1770,43 @@ def nested_request.option(option: Maybe<&2, J.Json>, +args: J.Json)
 def nested_request(+args: J.Json) -> Result<&2, &2, String, Bool>:
   nested_request.option(J.get(args, "nested_message"), args)
 
-def t_get.nested(mode: Result<&2, &2, String, Bool>, +args: J.Json) -> IO(Shown):
+def t_get.nested(mode: Result<&2, &2, String, Bool>, +args: J.Json, summary: Bool) -> IO(Shown):
   match mode:
     case Fail{why}:
       pure_shown(Policy.Err{why})
     case Done{False{}}:
-      t_get.legacy(args)
+      t_get.legacy(args, summary)
     case Done{True{}}:
       nested_get(single_uid(uids_arg(args), "mail_get"), folder_arg(args), uidv_arg(args),
         Policy.str_arg(args, "section", ""),
         clamp(u32_arg(args, "max_bytes", 262144), 1024, 16777216))
 
+# attached_message_headers adds key headers to attached-message entries of
+# a whole-message read. Absent or false keeps the legacy attachment list.
+def summary_request.option(option: Maybe<&2, J.Json>, +args: J.Json)
+  -> Result<&2, &2, String, Bool>:
+  match option:
+    case None{}:
+      Done{False{}}
+    case Some{J.JBool{False{}}}:
+      Done{False{}}
+    case Some{J.JBool{True{}}}:
+      do Result<&2, &2, String, Bool>:
+        Part.check(String.is_empty(Policy.str_arg(args, "section", "")),
+          "attached_message_headers requires a whole-message read without section")
+        return True{}
+    case _:
+      Fail{"attached_message_headers must be a boolean"}
+
+def t_get.summary(r: Result<&2, &2, String, Bool>, +args: J.Json) -> IO(Shown):
+  match r:
+    case Fail{why}:
+      pure_shown(Policy.Err{why})
+    case Done{summary}:
+      t_get.nested(nested_request(args), args, summary)
+
 def t_get(+args: J.Json) -> IO(Shown):
-  t_get.nested(nested_request(args), args)
+  t_get.summary(summary_request.option(J.get(args, "attached_message_headers"), args), args)
 
 # mail_get_new
 # ------------
