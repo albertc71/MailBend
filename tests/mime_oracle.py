@@ -301,6 +301,8 @@ NONCOMPOSING_LAUNCHES = {
                     'initialize and tools/list',
 }
 LAUNCH_COMMANDS = {'call', 'mcp', 'setup', 'diagnose', 'tools', 'version', 'hook'}
+# Test files that run the launcher; each launch site must be audited.
+TEST_LAUNCH_FILES = ('test-e2e.py', 'test-mime-corpus.py', 'nested_reads.py')
 LAUNCHER_PATH = re.compile(r'(?:^|/)scripts/mailbend(?:-cloud)?/*$')
 
 
@@ -445,7 +447,7 @@ def check_composition_sites(sources=None):
     """Every product composition path and every test launch site is audited."""
     sources = sources if sources is not None else {
         str(path.relative_to(ROOT)): path.read_text()
-        for path in sorted((ROOT / 'src').glob('*.bend')) + [ROOT / 'tests/test-e2e.py', ROOT / 'tests/test-mime-corpus.py']}
+        for path in sorted((ROOT / 'src').glob('*.bend')) + [ROOT / 'tests' / name for name in TEST_LAUNCH_FILES]}
     sites = []
     for path, text in sources.items():
         if not path.endswith('.bend'):
@@ -486,8 +488,9 @@ def composition_sites_self_test():
     """A new composition path that skips the audit fails the static check."""
     check_composition_sites()
     sources = {str(path.relative_to(ROOT)): path.read_text()
-               for path in sorted((ROOT / 'src').glob('*.bend')) + [ROOT / 'tests/test-e2e.py']}
+               for path in sorted((ROOT / 'src').glob('*.bend')) + [ROOT / 'tests' / name for name in TEST_LAUNCH_FILES]}
     tools, ops, e2e = sources['src/tools.bend'], sources['src/ops.bend'], sources['tests/test-e2e.py']
+    nested = sources['tests/nested_reads.py']
     mutations = [
         ('src/tools.bend', tools + '\ndef preview_copy(d: M.Draft) -> String:\n  M.compose(d, "b")\n'),
         ('src/tools.bend', tools + '\ndef t_note(args: J.Json) -> IO(Policy.Out):\n  with_atts(a, [], [], [], "", "", "", "", '
@@ -499,6 +502,7 @@ def composition_sites_self_test():
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([LAUNCHER, "call", "mail_send", "{}"])\n'),
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv, name):\n    subprocess.run([LAUNCHER, "call", name, "{}"])\n'),
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.Popen([LAUNCHER, "mcp"])\n'),
+        ('tests/nested_reads.py', nested + '\n\ndef bypass(test):\n    subprocess.run([test.LAUNCHER, "call", "mail_send", "{}"])\n'),
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([str(ROOT / "scripts" / "mailbend"), '
                                     '"call", "mail_send", "{}"], capture_output=True)\n'),
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([str(ROOT / "scripts/mailbend-cloud"), '

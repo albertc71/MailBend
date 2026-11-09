@@ -1,0 +1,76 @@
+{
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic selected-message bytes for the opt-in #109 contract. No client interoperability is claimed."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "wire": "valid",
+  "expected": {
+    "headers": {
+      "from": "",
+      "to": "",
+      "subject": "one",
+      "date": "",
+      "message_id": ""
+    },
+    "text": "",
+    "attachments": [
+      {
+        "filename": "",
+        "content_type": "message/rfc822",
+        "size": 117,
+        "message": {
+          "headers": {
+            "from": "",
+            "to": "",
+            "subject": "two",
+            "date": "",
+            "message_id": ""
+          },
+          "text": "",
+          "attachments": [
+            {
+              "filename": "",
+              "content_type": "message/rfc822",
+              "size": 71,
+              "message": {
+                "headers": {
+                  "from": "",
+                  "to": "",
+                  "subject": "three",
+                  "date": "",
+                  "message_id": ""
+                },
+                "text": "",
+                "attachments": [
+                  {
+                    "filename": "",
+                    "content_type": "message/rfc822",
+                    "size": 23
+                  }
+                ],
+                "parse_complete": false,
+                "omissions": [
+                  "depth_limit"
+                ]
+              }
+            }
+          ],
+          "parse_complete": false,
+          "omissions": [
+            "depth_limit"
+          ]
+        }
+      }
+    ],
+    "parse_complete": false,
+    "omissions": [
+      "depth_limit"
+    ]
+  }
+}

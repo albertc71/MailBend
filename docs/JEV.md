@@ -102,6 +102,16 @@ parts an opted-in `mail_classify` sends. The read result's
 `complete: true` from implying the whole message was checked. Unrelated MIME
 bodies are not fetched. A metadata-only section list does not ask Jev.
 
+
+With `mail_get(nested_message=true)`, the readable nested content is not added
+to a TypeSafe request. Headers mode keeps only parent facts and returns
+`coverage: "headers_only"`. Body mode keeps the existing selected non-text
+placeholder and returns `coverage: "partial"`. Both add an explicit scope
+reason to the final annotation. Option, folder, request-size, and transport
+failures preserve their original reason as well. Jev off makes no request
+and adds no annotation. These fields describe coverage, not authentication or
+approval, and do not change the nested content.
+
 ## The `jev` object
 
 Every message or call Jev was asked about carries a `jev` object: `status`
