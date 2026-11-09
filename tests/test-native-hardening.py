@@ -145,6 +145,62 @@ int main(void) {
         self.assertNotEqual(0, result.returncode)
         self.assertIn('GNU_RELRO', result.stderr)
 
+    def test_inspects_opened_elf_when_path_is_replaced(self):
+        real_readelf = shutil.which('readelf')
+        self.assertIsNotNone(real_readelf)
+        real_readelf = str(Path(real_readelf).resolve())
+        version = subprocess.run([real_readelf, '--version'], check=True,
+                                 capture_output=True, text=True, timeout=10)
+        self.assertIn('GNU readelf', version.stdout)
+        bad = self.compile('no-relro', '-Wl,-z,norelro')
+        wrappers = self.root / 'tools'
+        wrappers.mkdir()
+        wrapper = wrappers / 'readelf'
+        wrapper.write_text(f'#!{sys.executable}\n' + '''import os
+import sys
+from pathlib import Path
+replacement = Path(os.environ['ELF_REPLACEMENT'])
+if replacement.exists():
+    os.replace(replacement, os.environ['ELF_ORIGINAL'])
+    Path(os.environ['ELF_SWAPPED']).write_text('replaced')
+os.execv(os.environ['ELF_READELF'], [os.environ['ELF_READELF'], *sys.argv[1:]])
+''')
+        wrapper.chmod(0o755)
+        path = self.bin / HELPERS[0]
+        replacement = self.root / 'replacement'
+        swapped = self.root / 'swapped'
+        env = {**os.environ, 'PATH': str(wrappers), 'ELF_READELF': real_readelf,
+               'ELF_ORIGINAL': str(path), 'ELF_REPLACEMENT': str(replacement),
+               'ELF_SWAPPED': str(swapped)}
+        for original, later, rejected in ((bad, self.good, True),
+                                          (self.good, bad, False),
+                                          (self.good, self.good, False)):
+            with self.subTest(original=original.name, replacement=later.name):
+                shutil.copyfile(original, path)
+                shutil.copyfile(later, replacement)
+                swapped.unlink(missing_ok=True)
+                result = self.check(env=env)
+                self.assertEqual('replaced', swapped.read_text())
+                self.assertEqual(later.read_bytes(), path.read_bytes())
+                self.assertEqual(int(rejected), result.returncode, result.stderr)
+                if rejected:
+                    self.assertEqual(f'{path}: missing nonempty GNU_RELRO segment\n',
+                                     result.stderr)
+                else:
+                    self.assertEqual('', result.stderr)
+                    self.assertIn(f'{path}: OK', result.stdout.splitlines())
+                self.assertFalse((self.root / 'executed-helper').exists())
+
+    def test_accepts_hard_linked_regular_helpers(self):
+        for name in HELPERS:
+            path = self.bin / name
+            path.unlink()
+            os.link(self.good, path)
+        result = self.check()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual('', result.stderr)
+        self.assertFalse((self.root / 'executed-helper').exists())
+
     def test_rejects_lazy_binding(self):
         bad = self.compile('lazy', '-Wl,-z,lazy')
         shutil.copyfile(bad, self.bin / HELPERS[0])
@@ -200,7 +256,7 @@ int main(void) {
         self.assertNotEqual(0, result.returncode)
         self.assertIn('ELF', result.stderr)
 
-    def test_rejects_fifo_without_opening_it(self):
+    def test_rejects_fifo_without_waiting_for_a_writer(self):
         path = self.bin / HELPERS[0]
         path.unlink()
         os.mkfifo(path)
