@@ -1,4 +1,5 @@
 """Independent checks of complete, synthetic MailBend composition bytes."""
+import ast
 import atexit
 import base64
 from email import policy
@@ -265,6 +266,197 @@ def check_captured(records, check):
             check(label, False, str(error))
         else:
             check(label, True)
+
+
+# Tools whose calls compose a message, from the reviewed product dispatch.
+COMPOSING_TOOLS = ('mail_save_draft', 'mail_send', 'mail_reply', 'mail_forward')
+# Every product def that calls M.compose, and the audit route of its wire.
+COMPOSE_SITES = {
+    'send_allowed.copy': 'Sent copy, composed only after SMTP acceptance and received as an APPEND',
+    'send_with': 'SMTP message: received DATA, or a replay after a dry run, gate or server failure',
+    'deliver_as': 'draft: received APPEND, or a replay after a dry run or Drafts folder failure',
+}
+# Every product def that hands a composing tool's Want to with_atts.
+WITH_ATTS_CALLERS = {'t_compose.run', 'reply_want', 'fwd_want'}
+# Test functions that run the launcher and classify each composing call, and
+# the replay itself, whose fresh server receives the replayed wire.
+AUDITED_LAUNCHES = {'tool_text', 'mcp_bytes', 'cli', 'cli_stdin.run', 'replay_twin'}
+# Launches that cannot compose: the headless MCP check sends only tools/list.
+NONCOMPOSING_LAUNCHES = {'mcp_headless'}
+LAUNCH_COMMANDS = {'call', 'mcp', 'setup', 'diagnose', 'tools', 'version', 'hook'}
+
+
+def def_spans(text):
+    """Yields (qualified def name, line) for each line, nested defs joined by '.'."""
+    outer = inner = None
+    for line in text.splitlines():
+        top = re.match(r'def ([\w.]+)\(', line)
+        nested = re.match(r'\s+def (\w+)\(', line)
+        if top:
+            outer, inner = top.group(1), None
+        elif nested and outer:
+            inner = nested.group(1)
+        elif line and not line[0].isspace() and line[0] not in ')]}#':
+            outer = inner = None
+        yield (outer + '.' + inner if outer and inner else outer), line
+
+
+def python_lines(text):
+    """Yields (qualified function name, line) for each line of Python source."""
+    owners = {}
+
+    def visit(node, prefix):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = prefix + child.name
+                for number in range(child.lineno, child.end_lineno + 1):
+                    owners[number] = name
+                visit(child, name + '.')
+            else:
+                visit(child, prefix)
+    visit(ast.parse(text), '')
+    for number, line in enumerate(text.splitlines(), 1):
+        yield owners.get(number), line
+
+
+def callers(text, name):
+    pattern = re.compile(r'(?<![\w.])' + re.escape(name) + r'\(')
+    return [owner for owner, line in def_spans(text)
+            if pattern.search(line) and not line.lstrip().startswith(('def ', '#'))]
+
+
+def check_composition_sites(sources=None):
+    """Every product composition path and every test launch site is audited."""
+    sources = sources if sources is not None else {
+        str(path.relative_to(ROOT)): path.read_text()
+        for path in sorted((ROOT / 'src').glob('*.bend')) + [ROOT / 'tests/test-e2e.py', ROOT / 'tests/test-mime-corpus.py']}
+    sites = []
+    for path, text in sources.items():
+        if not path.endswith('.bend'):
+            continue
+        aliases = re.findall(r'import\s+\S*mime\.bend\s+as\s+(\w+)', text)
+        for alias in aliases:
+            sites += [(path, owner) for owner in callers(text, alias + '.compose')]
+        if path.endswith('/mime.bend'):
+            sites += [(path, owner) for owner in callers(text, 'compose')]
+    require(sorted(owner for _, owner in sites) == sorted(COMPOSE_SITES),
+            f'every M.compose call site needs a reviewed audit route: {sites!r}')
+    tools = sources['src/tools.bend']
+    require(sorted(callers(tools, 'with_atts')) == sorted(WITH_ATTS_CALLERS),
+            'every with_atts caller needs a composing tool in the audit')
+    names = dict(re.findall(r'case (O\w+)\{\}:\n\s+"(mail_\w+)"', sources['src/ops.bend']))
+    dispatched = re.findall(r'case Ops\.(O\w+)\{\}:\n\s+t_(?:compose|respond)\(', tools)
+    require(len(callers(tools, 't_compose')) + len(callers(tools, 't_respond')) == len(dispatched),
+            't_compose and t_respond are reached only from the tool dispatch')
+    require(sorted(names.get(op, op) for op in dispatched) == sorted(COMPOSING_TOOLS),
+            f'composing tools differ from the audited set: {dispatched!r}')
+    for path, text in sources.items():
+        if not path.endswith('.py'):
+            continue
+        for owner, line in python_lines(text):
+            if 'LAUNCHER' not in line or re.match(r'LAUNCHER\s*=', line):
+                continue
+            literal = re.search(r'LAUNCHER,\s*"(\w+)"(?:,\s*"(\w+)")?', line)
+            harmless = literal and literal.group(1) in LAUNCH_COMMANDS - {'call', 'mcp'}
+            harmless = harmless or (literal and literal.group(1) == 'call' and literal.group(2)
+                                    and literal.group(2) not in COMPOSING_TOOLS)
+            require(harmless or owner in AUDITED_LAUNCHES | NONCOMPOSING_LAUNCHES,
+                    f'{path}: launcher use in {owner} bypasses the composition audit: {line.strip()}')
+    return sites
+
+
+def composition_sites_self_test():
+    """A new composition path that skips the audit fails the static check."""
+    check_composition_sites()
+    sources = {str(path.relative_to(ROOT)): path.read_text()
+               for path in sorted((ROOT / 'src').glob('*.bend')) + [ROOT / 'tests/test-e2e.py']}
+    tools, ops, e2e = sources['src/tools.bend'], sources['src/ops.bend'], sources['tests/test-e2e.py']
+    mutations = [
+        ('src/tools.bend', tools + '\ndef preview_copy(d: M.Draft) -> String:\n  M.compose(d, "b")\n'),
+        ('src/tools.bend', tools + '\ndef t_note(args: J.Json) -> IO(Policy.Out):\n  with_atts(a, [], [], [], "", "", "", "", '
+                                   'True{}, True{}, Jev.Fresh{}, jev)\n'),
+        ('src/tools.bend', tools.replace('    case Ops.OSaveDraft{}:\n      t_compose(args, True{}, jev)',
+                                         '    case Ops.OSaveDraft{}:\n      t_compose(args, True{}, jev)\n'
+                                         '    case Ops.OCreateFolder{}:\n      t_compose(args, True{}, jev)', 1)),
+        ('src/ops.bend', ops.replace('"mail_forward"', '"mail_resend"', 1)),
+        ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([LAUNCHER, "call", "mail_send", "{}"])\n'),
+        ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv, name):\n    subprocess.run([LAUNCHER, "call", name, "{}"])\n'),
+        ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.Popen([LAUNCHER, "mcp"])\n'),
+    ]
+    for path, text in mutations:
+        require(text != sources[path], 'composition-site mutation did not apply: ' + path)
+        try:
+            check_composition_sites(dict(sources, **{path: text}))
+        except AssertionError:
+            continue
+        raise AssertionError('composition-site negative control was accepted: ' + path)
+    return len(mutations)
+
+
+# A replayed-wire control: Python must reject MailBend's reading of a
+# different message as a disagreement.
+UNTRANSMITTED_CONTROLS = (
+    b'From: Sender <sender@example.invalid>\r\nTo: reader@example.invalid\r\nSubject: control\r\n'
+    b'Content-Type: text/plain; charset=utf-8\r\n\r\nreplayed control\r\n',
+    b'From: Sender <sender@example.invalid>\r\nTo: reader@example.invalid\r\nSubject: other\r\n'
+    b'Content-Type: text/plain; charset=utf-8\r\n\r\nreplayed other\r\n')
+
+
+def check_untransmitted(records, check, observe=None):
+    """Compares MailBend's and Python's readings of every replayed untransmitted wire."""
+    observe = observe or bend_records
+    raws = [record['raw'].encode('latin-1') for record in records]
+    control, other = UNTRANSMITTED_CONTROLS
+    parsed = observe([control, other] + raws)
+    check('untransmitted composition audit has one result per replayed wire', len(parsed) == len(raws) + 2)
+    try:
+        compare(control, parsed[0])
+        compare(other, parsed[1])
+    except (AssertionError, ValueError, IndexError) as error:
+        check('untransmitted composition positive controls agree', False, str(error))
+    else:
+        check('untransmitted composition positive controls agree', True)
+    try:
+        compare(control, parsed[1])
+    except (AssertionError, ValueError, IndexError):
+        check('untransmitted composition audit rejects a parser disagreement', True)
+    else:
+        check('untransmitted composition audit rejects a parser disagreement', False, 'mismatch accepted')
+    for index, (record, raw, observed) in enumerate(zip(records, raws, parsed[2:])):
+        label = f'independent untransmitted composition {index}: {record["tool"]} {record["protocol"]}'
+        try:
+            compare(raw, observed)
+        except (AssertionError, ValueError) as error:
+            check(label, False, str(error))
+        else:
+            check(label, True)
+
+
+def untransmitted_self_test():
+    """Without Bend, a disagreeing or missing observation fails the audit."""
+    good = {'content_type': 'text/plain', 'disposition': '', 'charset': 'utf-8', 'boundary': '', 'parts': []}
+
+    def observation(raw):
+        message = parse(raw)
+        leaf = {'content_type': 'text/plain', 'filename': '', 'disposition': '', 'charset': 'utf-8',
+                'text': message.get_content().replace('\r\n', '\n'),
+                'data': base64.b64encode(message.get_payload(decode=True)).decode()}
+        return dict(good, headers=[{'name': n.lower(), 'value': str(v)} for n, v in message.items()], parts=[leaf])
+
+    record = {'tool': 'mail_send', 'protocol': 'smtp', 'raw': UNTRANSMITTED_CONTROLS[1].decode('latin-1')}
+    outcomes = []
+    observers = [
+        (True, lambda raws: [observation(raw) for raw in raws]),
+        (False, lambda raws: [observation(raw) for raw in raws[:2]] + [observation(raws[0])]),
+        (False, lambda raws: [observation(raw) for raw in raws[:2]]),
+        (False, lambda raws: [observation(raws[0])] * len(raws)),
+    ]
+    for passes, observe in observers:
+        results = []
+        check_untransmitted([record], lambda name, ok, detail='': results.append(bool(ok)), observe)
+        outcomes.append(all(results) == passes)
+    require(all(outcomes), f'untransmitted audit negative controls: {outcomes!r}')
+    return len(observers) - 1
 
 
 def self_test():

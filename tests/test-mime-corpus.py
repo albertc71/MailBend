@@ -132,8 +132,10 @@ def main():
     args = parser.parse_args()
     cases = load_cases()
     count = (oracle.self_test() + oracle.input_self_test() + oracle.header_self_test()
-             + oracle.attached_self_test() + oracle.filename_self_test())
+             + oracle.attached_self_test() + oracle.filename_self_test()
+             + oracle.composition_sites_self_test() + oracle.untransmitted_self_test())
     oracle.check_registry()
+    oracle.check_composition_sites()
     subprocess.run([sys.executable, str(ROOT / 'tests/test-mime-capture.py')], check=True)
     print(f'corpus metadata: {len(cases)} synthetic MIT fixtures; oracle rejected {count} negative controls')
     if args.validate_only:
@@ -150,6 +152,9 @@ def main():
     if not args.reads_only:
         oracle.check_unit_compositions(test.check)
         oracle.check_captured(test.composed_messages, test.check)
+        oracle.check_untransmitted(test.untransmitted_messages, test.check)
+        test.check('corpus composing calls were transmitted, replayed or refused before composing',
+                   'unaudited' not in test.composition_outcomes, test.composition_outcomes)
     failed = [name for name, ok in test.results if not ok]
     print(f'MIME checks: {len(failed)} failed; known-unsupported fixture diagnostics are not conformance passes')
     return int(bool(failed))

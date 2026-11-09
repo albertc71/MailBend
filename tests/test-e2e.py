@@ -80,6 +80,10 @@ def validate_output(name, value):
 
 results = []
 composed_messages = []
+# Replayed wires of composing calls that transmitted nothing, and how each
+# composing call ended; see audit_composition.
+untransmitted_messages = []
+composition_outcomes = {}
 outputs = []  # every stdout/stderr captured, scanned for the password at the end
 
 
@@ -89,8 +93,9 @@ def check(name, cond, detail=""):
 
 
 class Server:
-    def __init__(self, work, caps=None, extra=(), fixture=None):
+    def __init__(self, work, caps=None, extra=(), fixture=None, capture=True):
         self.work = work
+        self.capture = capture
         self.smtp_mode = "implicit" if "--smtp-implicit" in extra else "starttls"
         self.state = os.path.join(work, "state.json")
         self.log = os.path.join(work, "log.jsonl")
@@ -160,7 +165,184 @@ class Server:
             self.proc.kill()
             self.proc.wait()
         self.proc.stdout.close()
-        composed_messages.extend(json.loads(line) for line in pathlib.Path(self.composed).read_text().splitlines())
+        if self.capture:
+            composed_messages.extend(json.loads(line) for line in pathlib.Path(self.composed).read_text().splitlines())
+
+
+# Untransmitted compositions
+# --------------------------
+#
+# A dry run, a send gate or a server failure can discard a message MailBend
+# composed, so no wire reaches the fake server's received-message audit.
+# Every composing call is therefore classified here. A call that transmitted
+# nothing is replayed once, with the same arguments and composition settings
+# but without dry_run, gate settings or server faults, against a fresh fake
+# server holding a copy of the original mailboxes. Its received wire goes to
+# the independent parser. A dry run's reported size must match the replayed
+# wire, so the parsed bytes are the previewed composition apart from its Date
+# and Message-ID values. A refusal whose replay refuses identically, sending
+# nothing, came from the input itself, before any message existed. Anything
+# else fails the run.
+TWIN_DRAFTS = "Twin Drafts"
+TWIN_SKIPPED_ENV = frozenset(SEND_SETTINGS + TYPESAFE_SETTINGS + (
+    "MAILBEND_READ_ONLY", "MAILBEND_DRAFTS_ONLY", "MAILBEND_TLS_HELPER", "MAILBEND_CA_FILE",
+    "MAILBEND_TIMEOUT_MS", "MAILBEND_PASSWORD_FILE", "MAILBEND_APP_PASSWORD", "MAILBEND_LOGIN"))
+twin_runs = []
+
+
+def note_composition(kind):
+    composition_outcomes[kind] = composition_outcomes.get(kind, 0) + 1
+
+
+def composition_protocol(name, args):
+    """The wire a composing call transmits: an APPEND for a draft, else SMTP DATA."""
+    draft = name == "mail_save_draft" or (name in ("mail_reply", "mail_forward") and args.get("as_draft") is True)
+    return "append" if draft else "smtp"
+
+
+def preview_size(out):
+    """The message size a composing dry run reports, or None without exactly one."""
+    smtp = out.get("smtp")
+    texts = [smtp.get("data")] if isinstance(smtp, dict) else []
+    imap = out.get("imap")
+    texts += [line for line in imap if isinstance(line, str) and " APPEND " in line] if isinstance(imap, list) else []
+    sizes = [int(m.group(1)) for m in (re.search(r"<(\d+) bytes>$", t) for t in texts if isinstance(t, str)) if m]
+    return sizes[0] if len(sizes) == 1 else None
+
+
+def twin_fixture(state):
+    boxes = {name: {"uidvalidity": box["uidvalidity"], "special": box.get("special", []),
+                    "messages": box.get("messages", [])} for name, box in state["mailboxes"].items()}
+    boxes[TWIN_DRAFTS] = {"uidvalidity": max(box["uidvalidity"] for box in boxes.values()) + 1,
+                          "special": [], "messages": []}
+    return {"user": state["user"], "password": state["password"],
+            "subscribed": state.get("subscribed", []), "mailboxes": boxes}
+
+
+def twin_env(env, state):
+    kept = {k: v for k, v in env.items() if k not in TWIN_SKIPPED_ENV
+            and not k.startswith(("MAILBEND_IMAP_", "MAILBEND_SMTP_"))
+            and not (k.startswith("MAILBEND_") and k.endswith("_FOLDER"))}
+    kept.update(MAILBEND_LOGIN=state["user"], MAILBEND_APP_PASSWORD=state["password"],
+                MAILBEND_DRAFTS_FOLDER=TWIN_DRAFTS)
+    return kept
+
+
+def replay_twin(srv, name, args, env):
+    """Runs a composing call once more without dry_run, gates or faults; returns
+    its exit code, result and every wire the fresh fake server received."""
+    state = srv.st()
+    twin_runs.append(name)
+    work = os.path.join(srv.work, f"twin-{len(twin_runs)}")
+    os.makedirs(work)
+    os.symlink(os.path.realpath(os.path.join(srv.work, "certs")), os.path.join(work, "certs"))
+    twin = Server(work, fixture=twin_fixture(state), capture=False)
+    try:
+        replay = {k: v for k, v in args.items() if k != "dry_run"}
+        # Standard input carries arguments longer than an argv entry, such as a 1 MiB body.
+        p = subprocess.run([LAUNCHER, "call", name, "-"], input=json.dumps(replay), capture_output=True,
+                           text=True, env=twin.env(**twin_env(env, state)), timeout=120)
+        outputs.extend([p.stdout, p.stderr])
+        records = [json.loads(line) for line in pathlib.Path(twin.composed).read_text().splitlines()]
+    finally:
+        twin.stop()
+        shutil.rmtree(work, ignore_errors=True)
+    try:
+        out = json.loads(p.stdout.strip().split("\n")[-1]) if p.stdout.strip() else {}
+    except (json.JSONDecodeError, IndexError):
+        out = {"unparsed": p.stdout, "stderr": p.stderr}
+    return p.returncode, out, records
+
+
+def received(srv):
+    """The complete wires the call's own fake server has received so far."""
+    path = pathlib.Path(getattr(srv, "composed", "") or "/nonexistent")
+    return path.read_text().splitlines() if path.is_file() else []
+
+
+def day_digits(raw):
+    date = re.search(rb"^Date: \w{3}, (\d{1,2}) ", raw, re.M)
+    return len(date.group(1)) if date else None
+
+
+def audit_composition(srv, name, args, code, out, env, started, before=None):
+    """Classifies one composing call; one that transmitted nothing is replayed
+    so the independent parser reads what it composed. `before` is how many
+    wires the call's server had received before it, when only this call ran."""
+    if name not in mime_oracle.COMPOSING_TOOLS or not isinstance(args, dict):
+        return
+    out = out if isinstance(out, dict) else {}
+    dry = out.get("dry_run") is True
+    if not dry and code == 0 and "error" not in out:
+        note_composition("transmitted, received-wire audit")
+        return
+    protocol = composition_protocol(name, args)
+    if not dry and before is not None and protocol in [
+            json.loads(line)["protocol"] for line in received(srv)[before:]]:
+        # The server received the whole wire, then refused it or failed.
+        note_composition("refused after transmission, received-wire audit")
+        return
+    label = f"untransmitted composition: {name} {'dry run' if dry else 'refusal'}"
+    twin_code, twin_out, records = replay_twin(srv, name, args, env)
+    if twin_code == 0 and [r["protocol"] for r in records] == [protocol]:
+        raw = records[0]["raw"].encode("latin-1")
+        if dry:
+            # Only the day of the month in Date varies in width between the
+            # preview and its replay; the token and boundary are fixed-width.
+            # Received SMTP DATA always ends its last line with CRLF, which a
+            # message without a final line break lacked when it was composed.
+            digits = {len(str(time.gmtime(t).tm_mday)) for t in (started, time.time())}
+            ends = {0, 2} if protocol == "smtp" and raw.endswith(b"\r\n") else {0}
+            sizes = {len(raw) - (day_digits(raw) or 0) + d - end for d in digits for end in ends}
+            check(label + " reports the size of its replayed wire",
+                  day_digits(raw) is not None and preview_size(out) in sizes,
+                  {"preview": preview_size(out), "replayed": sorted(sizes), "result": out})
+        untransmitted_messages.append({"tool": name, "protocol": protocol, "raw": records[0]["raw"]})
+        note_composition("dry run, replayed" if dry else "refusal, replayed")
+    elif not dry and twin_code != 0 and not records and twin_out.get("error") == out.get("error") is not None:
+        note_composition("refused before composing")
+    else:
+        note_composition("unaudited")
+        check(label + " reaches the independent parser", False,
+              {"result": out, "replay_exit": twin_code, "replay": twin_out,
+               "replayed_protocols": [r["protocol"] for r in records]})
+
+
+def audit_mcp_compositions(srv, data, replies, env, started, before):
+    """Pairs each composing tools/call in an MCP session with its reply."""
+    calls = {}
+    for line in data.split(b"\n"):
+        try:
+            request = json.loads(line)
+        except ValueError:
+            continue
+        params = request.get("params") if isinstance(request, dict) else None
+        if (isinstance(params, dict) and request.get("method") == "tools/call"
+                and params.get("name") in mime_oracle.COMPOSING_TOOLS):
+            calls.setdefault(json.dumps(request.get("id")), []).append(params)
+    answered = {}
+    for reply in replies:
+        if isinstance(reply, dict) and "id" in reply:
+            answered.setdefault(json.dumps(reply["id"]), []).append(reply)
+    for key, params in calls.items():
+        found = answered.get(key, [])
+        if len(params) != 1 or len(found) != 1:
+            note_composition("unaudited")
+            check("untransmitted composition: MCP call has exactly one reply to classify", False,
+                  {"id": key, "calls": len(params), "replies": len(found)})
+            continue
+        result = found[0].get("result")
+        if isinstance(result, dict) and isinstance(result.get("content"), list) and result["content"]:
+            try:
+                out = json.loads(result["content"][0].get("text", ""))
+            except (ValueError, AttributeError):
+                out = {"error": "unparsed MCP result"}
+            code = 1 if result.get("isError") else 0
+        else:
+            out, code = {"error": json.dumps(found[0].get("error"))}, 1
+        # Received wires belong to one call only when the session made one.
+        audit_composition(srv, params[0]["name"], params[0].get("arguments"), code, out, env, started,
+                          before if len(calls) == 1 else None)
 
 
 def tool(srv, name, args=None, **env):
@@ -169,6 +351,7 @@ def tool(srv, name, args=None, **env):
 
 def tool_text(srv, name, text, **env):
     """Calls a tool with its arguments as raw JSON text."""
+    started, before = time.time(), len(received(srv))
     if os.environ.get("MAILBEND_TEST_MCP") == "1":
         try:
             args = json.loads(text)
@@ -199,6 +382,11 @@ def tool_text(srv, name, text, **env):
         out = {"unparsed": p.stdout, "stderr": p.stderr}
     if p.stdout.strip():
         validate_output(name, out)
+    try:
+        args = json.loads(text)
+    except json.JSONDecodeError:
+        args = None
+    audit_composition(srv, name, args, p.returncode, out, env, started, before)
     return p.returncode, out
 
 
@@ -767,6 +955,15 @@ def main():
                 mime_oracle.check_captured(composed_messages, check)
             except Exception as error:
                 check("received composition audit completed", False, repr(error))
+            try:
+                mime_oracle.check_untransmitted(untransmitted_messages, check)
+            except Exception as error:
+                check("untransmitted composition audit completed", False, repr(error))
+            print("composition outcomes: " + json.dumps(composition_outcomes, sort_keys=True))
+            check("every composing call was transmitted, replayed to the independent parser, or refused "
+                  "before composing", "unaudited" not in composition_outcomes
+                  and composition_outcomes.get("dry run, replayed", 0) > 0
+                  and composition_outcomes.get("refusal, replayed", 0) > 0, composition_outcomes)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
@@ -1590,7 +1787,7 @@ def compose(srv):
     c, r = tool(srv, "mail_reply", {"uid": 2, "uidvalidity": 1700000001})
     check("a reply missing its required body is refused (nothing sent)", c != 0 and "\"body\" is required" in r.get("error", "")
           and len(srv.st().get("sent", [])) == n_sent, r)
-    p = subprocess.run([LAUNCHER, "call", "mail_save_draft", "null"], capture_output=True, text=True, env=srv.env(), timeout=120)
+    p = cli(srv, "call", "mail_save_draft", "null")
     check("CLI arguments must be a JSON object", p.returncode != 0 and "JSON object" in p.stdout, p.stdout)
     c, r = tool(srv, "mail_reply", {"uid": 2, "body": "Sounds good"})
     check("reply requires the folder's UIDVALIDITY", c != 0 and "uidvalidity" in r.get("error", ""), r)
@@ -1908,6 +2105,7 @@ def mcp_bytes(srv, data, *, legacy=True, **env):
         init = {"jsonrpc": "2.0", "id": "test-initialize", "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18"}}
         data = json.dumps(init).encode() + b"\n" + data
+    started, before = time.time(), len(received(srv))
     p = subprocess.Popen([LAUNCHER, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          env=srv.env(**env))
     out, err = p.communicate(data, timeout=180)
@@ -1915,6 +2113,7 @@ def mcp_bytes(srv, data, *, legacy=True, **env):
     outputs.extend([out, err])
     # MCP framing is LF, not every character Python treats as a line break.
     replies = [json.loads(l) for l in out.split("\n") if l.strip()]
+    audit_mcp_compositions(srv, data, replies, env, started, before)
     if legacy:
         initialized = bool(replies) and replies[0].get("result", {}).get("protocolVersion") == "2025-06-18"
         check("MCP fixture initializes legacy protocol", initialized, replies[:1])
@@ -2292,8 +2491,15 @@ def mcp_framing(srv):
 
 
 def cli(srv, *args):
+    started, before = time.time(), len(received(srv))
     p = subprocess.run([LAUNCHER, *args], capture_output=True, text=True, env=srv.env(), timeout=120)
     outputs.extend([p.stdout, p.stderr])
+    if len(args) == 3 and args[0] == "call":
+        try:
+            call, out = json.loads(args[2]), json.loads(p.stdout.strip().split("\n")[-1])
+        except (json.JSONDecodeError, IndexError):
+            call, out = None, {}
+        audit_composition(srv, args[1], call, p.returncode, out, {}, started, before)
     return p
 
 
@@ -2328,6 +2534,7 @@ def cli_front_end(srv):
 
 def cli_stdin(srv):
     def run(data, name="nope", source="pipe"):
+        started, before = time.time(), len(received(srv))
         command = [LAUNCHER, "call", name, "-"]
         if source == "file":
             with tempfile.TemporaryFile() as handle:
@@ -2339,6 +2546,11 @@ def cli_stdin(srv):
             result = subprocess.run(command, input=data, capture_output=True,
                                     env=srv.env(), timeout=120)
         outputs.extend([result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")])
+        try:
+            call, out = json.loads(data), json.loads(result.stdout.strip().split(b"\n")[-1])
+        except (ValueError, IndexError):
+            call, out = None, {}
+        audit_composition(srv, name, call, result.returncode, out, {}, started, before)
         return result
 
     for source in ("pipe", "file"):
