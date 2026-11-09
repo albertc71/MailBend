@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check installed native helpers without executing them."""
 import argparse
+import errno
 import os
 from pathlib import Path
 import re
@@ -15,15 +16,25 @@ LOADERS = {'Advanced Micro Devices X86-64': '/lib64/ld-linux-x86-64.so.2',
 
 def violations(path):
     try:
-        if not stat.S_ISREG(path.lstat().st_mode):
-            return ['expected a regular ELF file']
-        with path.open('rb') as binary:
-            identity = binary.read(16)
-        if len(identity) != 16 or identity[:7] != b'\x7fELF\x02\x01\x01':
-            return ['expected a direct little-endian ELF64 file']
-        result = subprocess.run(['readelf', '-W', '-h', '-l', '-d', str(path.resolve())],
-                                env={**os.environ, 'LC_ALL': 'C'},
-                                capture_output=True, text=True, timeout=10)
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                return ['expected a regular ELF file']
+            raise
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return ['expected a regular ELF file']
+            identity = os.read(descriptor, 16)
+            if len(identity) != 16 or identity[:7] != b'\x7fELF\x02\x01\x01':
+                return ['expected a direct little-endian ELF64 file']
+            # Pin the opened inode, not its contents or a future execution.
+            result = subprocess.run(['readelf', '-W', '-h', '-l', '-d',
+                                     f'/proc/self/fd/{descriptor}'],
+                                    pass_fds=(descriptor,), env={**os.environ, 'LC_ALL': 'C'},
+                                    capture_output=True, text=True, timeout=10)
+        finally:
+            os.close(descriptor)
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as error:
         return [f'cannot inspect ELF: {error}']
     if result.returncode or result.stderr.strip():
