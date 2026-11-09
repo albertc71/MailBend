@@ -146,8 +146,9 @@ build, dev and target-specific ones, package aliases, workspace inheritance and
 workspace dependency or member lists fail with an inventory error. Source
 overrides through `patch` or `replace` and legacy underscore dependency-table
 spellings are unsupported too. Update the
-guard and its fixtures when expanding that scope. Registry-only extras remain
-allowed. This assertion does not replace Cargo's locked manifest validation.
+guard and its fixtures when expanding that scope. Fuzz-only extras from registry
+or git sources remain allowed within these constraints. This assertion does not
+replace Cargo's locked manifest validation.
 
 The unit runner stays serial by default. To opt into bounded parallel execution,
 run `sh tests/run-unit.sh --jobs 2`. The decimal job count must be between 1 and 8.
