@@ -1,0 +1,115 @@
+{
+  "candidate_tree": "5a01e29104cf97057dbb9bbc0aa39acbe708a31f",
+  "mutations": [
+    {
+      "id": "empty-login",
+      "path": "src/providers.bend",
+      "before": "Done{local}",
+      "after": "Done{\"\"}",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "Exact WEB.DE MAILBEND_LOGIN must be Reader.Name in JSON and shell.",
+      "execution": "not run"
+    },
+    {
+      "id": "full-address-login",
+      "path": "src/providers.bend",
+      "before": "Done{local}",
+      "after": "Done{local ++ \"@web.de\"}",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "Exact WEB.DE MAILBEND_LOGIN must be Reader.Name, not Reader.Name@web.de.",
+      "execution": "not run"
+    },
+    {
+      "id": "lowercase-local",
+      "path": "src/providers.bend",
+      "before": "Done{local}",
+      "after": "Done{String.to_lower(local)}",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "Reader.Name case must survive in MAILBEND_LOGIN.",
+      "execution": "not run"
+    },
+    {
+      "id": "missing-domain-guard",
+      "path": "src/providers.bend",
+      "before": "String.eq(String.to_lower(domain), \"web.de\")",
+      "after": "True{}",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "reader@example.com must refuse without configuration.",
+      "execution": "not run"
+    },
+    {
+      "id": "suffix-domain-guard",
+      "path": "src/providers.bend",
+      "before": "String.eq(String.to_lower(domain), \"web.de\")",
+      "after": "String.ends_with(String.to_lower(domain), \"web.de\")",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "reader@notweb.de and reader@sub.web.de must refuse.",
+      "execution": "not run"
+    },
+    {
+      "id": "substring-domain-guard",
+      "path": "src/providers.bend",
+      "before": "String.eq(String.to_lower(domain), \"web.de\")",
+      "after": "String.contains(String.to_lower(domain), \"web.de\")",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "reader@web.de.example must refuse.",
+      "execution": "not run"
+    },
+    {
+      "id": "case-sensitive-domain",
+      "path": "src/providers.bend",
+      "before": "String.eq(String.to_lower(domain), \"web.de\")",
+      "after": "String.eq(domain, \"web.de\")",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "Reader.Name@WEB.DE must succeed with original email and Reader.Name login.",
+      "execution": "not run"
+    },
+    {
+      "id": "wrong-smtp-port",
+      "path": "src/providers.bend",
+      "before": "Remote{\"imap.web.de\", \"993\", \"smtp.web.de\", \"465\",",
+      "after": "Remote{\"imap.web.de\", \"993\", \"smtp.web.de\", \"587\",",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "The WEB.DE literal SMTP port must be 465 with implicit mode.",
+      "execution": "not run"
+    },
+    {
+      "id": "wrong-imap-host",
+      "path": "src/providers.bend",
+      "before": "Remote{\"imap.web.de\", \"993\", \"smtp.web.de\", \"465\",",
+      "after": "Remote{\"imap.example.com\", \"993\", \"smtp.web.de\", \"465\",",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "The WEB.DE literal IMAP host must be imap.web.de.",
+      "execution": "not run"
+    },
+    {
+      "id": "unquoted-shell-values",
+      "path": "src/providers.bend",
+      "before": "shell_quote(value)",
+      "after": "value",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "The metacharacter address/login must round-trip inertly; no shell-injection file may appear.",
+      "execution": "not run"
+    },
+    {
+      "id": "global-local-part",
+      "path": "src/providers.bend",
+      "before": "case EmailFallback{}:\n      Done{\"\"}",
+      "after": "case EmailFallback{}:\n      Done{Maybe.default(&2, String, List.head(&2, String, String.split(email, '@')), \"\")}",
+      "expected_occurrences": 1,
+      "observed_source_occurrences": 1,
+      "oracle": "All original nine providers and Gmail with a web.de email must retain empty login.",
+      "execution": "not run"
+    }
+  ]
+}
