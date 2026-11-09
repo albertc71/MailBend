@@ -79,7 +79,9 @@ folder. Its single received wire goes to the same MailBend-versus-Python compari
   a size to compare. Its replay might parse a message the refused call never built,
   for example after a drafts-only refusal. That adds coverage; it claims no more.
 - A refusal whose replay refuses with the identical error, receiving nothing, came
-  from the input itself, before any message existed.
+  from the input itself, before any message existed. The replay sends the parsed
+  arguments, so a refusal only the raw text causes, such as a duplicate key, replays as
+  a send; this count is therefore a lower bound on input refusals.
 - Any other outcome fails the run. That includes a dry run whose replay does not
   transmit, a changed refusal, the wrong or an extra wire, or an MCP composing call
   without exactly one reply. A full CLI or MCP end-to-end run must also replay at
@@ -92,10 +94,17 @@ suites that compose messages are outside this contract.
 A static completeness check, run by `--validate-only`, keeps this audit in step with
 the product and the tests. Every `M.compose` call site in `src/` needs a reviewed audit
 route. Every `with_atts` caller and every tool dispatched to `t_compose` or `t_respond`
-must be one of the four composing tools above. Every launcher use in those two test
-files must go through a classifying helper, or name a tool or command that cannot
-compose. Seven mutated sources verify that a new composition path or launch site that
-bypasses the audit fails. Three disagreeing or missing observations verify that the
+must be one of the four composing tools above. Each step from `with_atts` to the
+composing defs, through `deliver_stamped`, `deliver`, `deliver_as` and `send_with`, has
+exactly one reviewed caller, so a new tool cannot reach them directly. In those two test
+files, every reference to the launcher, and every string or path expression ending in
+`scripts/mailbend` or `scripts/mailbend-cloud`, must sit in a classifying helper, in the
+audit's own replay, or in the headless probe, which only lists tools read-only; otherwise
+it must name a tool or command that cannot compose. Each classifying helper must call
+`audit_composition` or `audit_mcp_compositions`, and only `audit_composition` may run the
+replay. Thirteen mutated sources verify that a new composition path or launch site that
+bypasses the audit fails, including a direct launcher path and a helper whose audit call
+was removed. Three disagreeing or missing observations verify that the
 replayed-wire comparison fails without Bend. Every full run also checks a live
 control: MailBend's reading of one message must be rejected as a reading of another.
 `tests/test-mime-capture.py` checks that a failed or unclassifiable replay, or a

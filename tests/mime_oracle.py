@@ -278,12 +278,30 @@ COMPOSE_SITES = {
 }
 # Every product def that hands a composing tool's Want to with_atts.
 WITH_ATTS_CALLERS = {'t_compose.run', 'reply_want', 'fwd_want'}
-# Test functions that run the launcher and classify each composing call, and
-# the replay itself, whose fresh server receives the replayed wire.
-AUDITED_LAUNCHES = {'tool_text', 'mcp_bytes', 'cli', 'cli_stdin.run', 'replay_twin'}
-# Launches that cannot compose: the headless MCP check sends only tools/list.
-NONCOMPOSING_LAUNCHES = {'mcp_headless'}
+# The only caller of each step from with_atts to the composing defs, so a new
+# tool cannot reach a composition without passing through with_atts.
+DELIVERY_CALLERS = {
+    'with_atts.want': {'with_atts'},
+    'with_atts.if': {'with_atts.want'},
+    'deliver_stamped': {'with_atts.if'},
+    'deliver': {'deliver_stamped'},
+    'deliver_as': {'deliver'},
+    'send_with': {'deliver_as'},
+}
+# Test functions that run the launcher and must classify each composing call
+# through one of the audit entry points.
+AUDITED_LAUNCHES = {'tool_text', 'mcp_bytes', 'cli', 'cli_stdin.run'}
+AUDIT_ENTRY_POINTS = {'audit_composition', 'audit_mcp_compositions'}
+# The replay, run only by audit_composition, whose fresh server receives the replayed wire.
+REPLAY_LAUNCHES = {'replay_twin': 'audit_composition'}
+# Launches that cannot compose, each with the reason; the check also requires
+# that their source names no tools/call and no composing tool.
+NONCOMPOSING_LAUNCHES = {
+    'mcp_headless': 'runs scripts/mailbend and scripts/mailbend-cloud read-only, sending only '
+                    'initialize and tools/list',
+}
 LAUNCH_COMMANDS = {'call', 'mcp', 'setup', 'diagnose', 'tools', 'version', 'hook'}
+LAUNCHER_PATH = re.compile(r'(?:^|/)scripts/mailbend(?:-cloud)?/*$')
 
 
 def def_spans(text):
@@ -301,22 +319,120 @@ def def_spans(text):
         yield (outer + '.' + inner if outer and inner else outer), line
 
 
-def python_lines(text):
-    """Yields (qualified function name, line) for each line of Python source."""
-    owners = {}
+def path_text(node):
+    """The constant text of a string, f-string, '/' or '+' join, or join() call, or None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return ''.join(part.value if isinstance(part, ast.Constant) else '\0' for part in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.Add)):
+        left, right = path_text(node.left), path_text(node.right)
+        if right is None:
+            return None
+        separator = '/' if isinstance(node.op, ast.Div) else ''
+        return (left if left is not None else '\0') + separator + right
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr in {'join', 'joinpath'} and node.args:
+        parts = [path_text(arg) for arg in node.args]
+        return '/'.join(part if part is not None else '\0' for part in parts)
+    return None
+
+
+def python_functions(tree):
+    """Maps each qualified function name to its definitions, nested defs joined by '.'."""
+    functions = {}
 
     def visit(node, prefix):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                name = prefix + child.name
-                for number in range(child.lineno, child.end_lineno + 1):
-                    owners[number] = name
-                visit(child, name + '.')
+                functions.setdefault(prefix + child.name, []).append(child)
+                visit(child, prefix + child.name + '.')
             else:
                 visit(child, prefix)
-    visit(ast.parse(text), '')
-    for number, line in enumerate(text.splitlines(), 1):
-        yield owners.get(number), line
+    visit(tree, '')
+    return functions
+
+
+def own_calls(function):
+    """Names called directly in a function's own body, not in its nested defs."""
+    names, pending = set(), list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+        pending.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def launch_uses(tree):
+    """Yields (qualified owner, node, parent) for each launcher reference or launcher path."""
+    def visit(node, owner, parent):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = owner + '.' + node.name if owner else node.name
+        launcher = (isinstance(node, ast.Name) and node.id == 'LAUNCHER'
+                    or isinstance(node, ast.Attribute) and node.attr == 'LAUNCHER')
+        text = None if launcher else path_text(node)
+        if launcher or (text is not None and LAUNCHER_PATH.search(text)):
+            yield owner, node, parent
+            if not launcher:
+                return
+        for child in ast.iter_child_nodes(node):
+            yield from visit(child, owner, node)
+    yield from visit(tree, None, None)
+
+
+def harmless_launch(node, parent):
+    """A launcher list literal whose command or tool cannot compose."""
+    if not isinstance(node, ast.Name) or not isinstance(parent, (ast.List, ast.Tuple)):
+        return False
+    start = next(index for index, element in enumerate(parent.elts) if element is node) + 1
+    words = []
+    for element in parent.elts[start:start + 2]:
+        if not (isinstance(element, ast.Constant) and isinstance(element.value, str)):
+            break
+        words.append(element.value)
+    if words and words[0] in LAUNCH_COMMANDS - {'call', 'mcp'}:
+        return True
+    return len(words) == 2 and words[0] == 'call' and words[1] not in COMPOSING_TOOLS
+
+
+def launcher_definition(tree):
+    """The single module-level LAUNCHER assignment."""
+    values = [node for node in tree.body if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == 'LAUNCHER' for target in node.targets)]
+    require(len(values) <= 1, 'LAUNCHER is assigned more than once')
+    return values[0] if values else None
+
+
+def check_launch_sites(path, text):
+    """Every launch in a test file is classified, replayed by the audit, or cannot compose."""
+    tree = ast.parse(text)
+    functions = python_functions(tree)
+    for name in AUDITED_LAUNCHES:
+        for function in functions.get(name, []):
+            require(own_calls(function) & AUDIT_ENTRY_POINTS,
+                    f'{path}: audited launch {name} does not call audit_composition or audit_mcp_compositions')
+    for name, caller in REPLAY_LAUNCHES.items():
+        for function in functions.get(name, []):
+            runners = sorted(owner for owner, defs in functions.items()
+                             for definition in defs if name in own_calls(definition))
+            require(runners == [caller], f'{path}: {name} must run only from {caller}: {runners!r}')
+    for name in NONCOMPOSING_LAUNCHES:
+        for function in functions.get(name, []):
+            body = ast.get_source_segment(text, function)
+            require('tools/call' not in body and not any(tool in body for tool in COMPOSING_TOOLS),
+                    f'{path}: non-composing launch {name} names a composing call')
+    definition = launcher_definition(tree)
+    allowed = AUDITED_LAUNCHES | set(REPLAY_LAUNCHES) | set(NONCOMPOSING_LAUNCHES)
+    for owner, node, parent in launch_uses(tree):
+        if owner is None and definition is not None and any(node is inner for inner in ast.walk(definition)):
+            continue
+        require(owner in allowed or harmless_launch(node, parent),
+                f'{path}: launcher use in {owner} bypasses the composition audit: '
+                f'{ast.get_source_segment(text, parent or node) or ast.dump(node)}')
+    return functions
 
 
 def callers(text, name):
@@ -344,24 +460,25 @@ def check_composition_sites(sources=None):
     tools = sources['src/tools.bend']
     require(sorted(callers(tools, 'with_atts')) == sorted(WITH_ATTS_CALLERS),
             'every with_atts caller needs a composing tool in the audit')
+    for name, expected in DELIVERY_CALLERS.items():
+        found = callers(tools, name)
+        for path, text in sources.items():
+            for alias in re.findall(r'import\s+\S*tools\.bend\s+as\s+(\w+)', text):
+                found += [f'{path}:{owner}' for owner in callers(text, alias + '.' + name)]
+        require(sorted(found) == sorted(expected),
+                f'every {name} caller must be reviewed for the composition audit: {found!r}')
     names = dict(re.findall(r'case (O\w+)\{\}:\n\s+"(mail_\w+)"', sources['src/ops.bend']))
     dispatched = re.findall(r'case Ops\.(O\w+)\{\}:\n\s+t_(?:compose|respond)\(', tools)
     require(len(callers(tools, 't_compose')) + len(callers(tools, 't_respond')) == len(dispatched),
             't_compose and t_respond are reached only from the tool dispatch')
     require(sorted(names.get(op, op) for op in dispatched) == sorted(COMPOSING_TOOLS),
             f'composing tools differ from the audited set: {dispatched!r}')
+    defined = set()
     for path, text in sources.items():
-        if not path.endswith('.py'):
-            continue
-        for owner, line in python_lines(text):
-            if 'LAUNCHER' not in line or re.match(r'LAUNCHER\s*=', line):
-                continue
-            literal = re.search(r'LAUNCHER,\s*"(\w+)"(?:,\s*"(\w+)")?', line)
-            harmless = literal and literal.group(1) in LAUNCH_COMMANDS - {'call', 'mcp'}
-            harmless = harmless or (literal and literal.group(1) == 'call' and literal.group(2)
-                                    and literal.group(2) not in COMPOSING_TOOLS)
-            require(harmless or owner in AUDITED_LAUNCHES | NONCOMPOSING_LAUNCHES,
-                    f'{path}: launcher use in {owner} bypasses the composition audit: {line.strip()}')
+        if path.endswith('.py'):
+            defined |= set(check_launch_sites(path, text))
+    named = AUDITED_LAUNCHES | set(REPLAY_LAUNCHES) | set(NONCOMPOSING_LAUNCHES) | AUDIT_ENTRY_POINTS
+    require(named <= defined, f'reviewed launch helpers are missing: {sorted(named - defined)!r}')
     return sites
 
 
@@ -382,6 +499,20 @@ def composition_sites_self_test():
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([LAUNCHER, "call", "mail_send", "{}"])\n'),
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv, name):\n    subprocess.run([LAUNCHER, "call", name, "{}"])\n'),
         ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.Popen([LAUNCHER, "mcp"])\n'),
+        ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([str(ROOT / "scripts" / "mailbend"), '
+                                    '"call", "mail_send", "{}"], capture_output=True)\n'),
+        ('tests/test-e2e.py', e2e + '\n\ndef bypass(srv):\n    subprocess.run([str(ROOT / "scripts/mailbend-cloud"), '
+                                    '"call", "mail_send", "{}"], capture_output=True)\n'),
+        ('tests/test-e2e.py', e2e.replace(
+            '        audit_composition(srv, name, call, result.returncode, out, {}, started, before)\n', '', 1)),
+        ('tests/test-e2e.py', e2e.replace(
+            '        audit_composition(srv, args[1], call, p.returncode, out, {}, started, before)\n', '', 1)),
+        ('src/tools.bend', tools.replace('    case Ops.OSaveDraft{}:\n      t_compose(args, True{}, jev)',
+                                         '    case Ops.OSaveDraft{}:\n      t_compose(args, True{}, jev)\n'
+                                         '    case Ops.OCreateFolder{}:\n      t_resend(args, jev)', 1)
+         + '\ndef t_resend(args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):\n  deliver(want_of(args), "", stamp_of(args))\n'),
+        ('src/diagnostics.bend', sources['src/diagnostics.bend']
+         + '\ndef preview_send(w: T.Want) -> IO(Policy.Out):\n  T.send_with(cfg, w, "", st)\n'),
     ]
     for path, text in mutations:
         require(text != sources[path], 'composition-site mutation did not apply: ' + path)
