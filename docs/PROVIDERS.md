@@ -277,8 +277,9 @@ Inspect roles before choosing overrides; do not assume translated folder names.
 
 ## WEB.DE
 
-Tier: **unverified**, with manual login review required. Sources checked
-2026-11-05.
+Tier: **unverified**. Endpoints are provider-documented; the username form is
+ISPDB-reviewed. Sources checked 2026-11-08. MailBend authentication was not
+live-tested.
 
 | Setting | Value |
 | --- | --- |
@@ -293,12 +294,17 @@ also lists SMTP `587` with `starttls`. Enable eligible
 [application-specific password](https://hilfe.web.de/sicherheit/2fa/anwendungsspezifisches-passwort.html).
 
 The login form comes from
-[Thunderbird's configuration source](https://github.com/thunderbird/autoconfig/blob/master/ispdb/web.de.xml),
+[Thunderbird's pinned configuration source](https://github.com/thunderbird/autoconfig/blob/3a5b95752363cdcdad8928d7d29a993cbdabcad2/ispdb/web.de.xml),
 not a verified MailBend login. The reviewed provider pages did not settle
-full-address authentication. `MAILBEND_LOGIN` can represent the local part
-while `MAILBEND_EMAIL` remains the full address. Confirm the account's required
-login before setting it. The print-only setup preset deliberately remains
-manual; this guide does not change it.
+full-address authentication. The print-only setup preset requires the primary
+`web.de` account address. It compares the complete domain without regard to
+case, preserves the full address as `MAILBEND_EMAIL`, and sets
+`MAILBEND_LOGIN` to the unchanged local part before `@`.
+
+Aliases and custom domains are unsupported by this profile. Setup cannot
+distinguish a same-domain alias from a primary address or verify account
+ownership. Use only your primary account address. The conservative Sent-copy
+default is not evidence of automatic Sent filing.
 
 Actual role names and special-use attributes remain unverified. Discover
 them before setting Drafts, Junk, or other overrides.
