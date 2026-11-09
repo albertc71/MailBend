@@ -131,7 +131,7 @@ def main():
     group.add_argument('--reads-only', action='store_true', help='diagnose public corpus reads only; not the full required check')
     group.add_argument('--compositions-only', action='store_true', help='diagnose named unit compositions only')
     parser.add_argument("--nested-resources", action="store_true",
-                        help="also exercise the nested-view entity and byte admission limits")
+                        help="also exercise the 16 MiB nested-view parse and view admission limits")
     args = parser.parse_args()
     cases = load_cases()
     count = (oracle.self_test() + oracle.input_self_test() + oracle.header_self_test()
@@ -140,6 +140,13 @@ def main():
     oracle.check_registry()
     oracle.check_composition_sites()
     subprocess.run([sys.executable, str(ROOT / 'tests/test-mime-capture.py')], check=True)
+    # Its negative controls print the harness's own FAIL lines; show them only on failure.
+    harness = subprocess.run([sys.executable, str(ROOT / 'tests/test-harness-output.py')],
+                             capture_output=True, text=True)
+    if harness.returncode:
+        sys.stdout.write(harness.stdout + harness.stderr)
+        raise SystemExit('test-harness-output.py failed')
+    print('harness output controls: ' + harness.stderr.strip().splitlines()[-1])
     print(f'corpus metadata: {len(cases)} synthetic MIT fixtures; oracle rejected {count} negative controls')
     if args.validate_only:
         return 0

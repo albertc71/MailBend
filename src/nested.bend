@@ -126,7 +126,7 @@ def node(hs: J.Json, f: Fragment) -> J.Json:
 
 def att_fields(a: M.Att) -> List<&2, J.Json>:
   M.Att{name, ct, size} = a
-  [J.kv("filename", J.str(name)), J.kv("content_type", J.str(ct)),
+  [J.kv("filename", J.str(M.header_line.clean(name))), J.kv("content_type", J.str(ct)),
     J.kv("size", J.num(size))]
 
 def header_fields.after(key: String, raw: String, rest: Sigma<&2, &2, List<&2, J.Json>, _ => Budget>)

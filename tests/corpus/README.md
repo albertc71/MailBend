@@ -210,14 +210,15 @@ framing and transfer errors. They also retain literal legacy selected responses
 for absent and false opt-in values. The Apple-style fixture describes a
 synthetic forward-as-attachment layout, not a live Apple Mail observation.
 
-After a build, run:
+Every run also checks the global 128-entity limit at and one over the limit,
+with empty children and with attached-message siblings. After a build, run:
 
 ```sh
 python3 tests/test-mime-corpus.py --nested-resources
 ```
 
-This adds at-limit and over-limit controls for global entity,
-aggregate parse-byte, and conservative UTF-8 view admission. These are admission
+This adds at-limit and over-limit controls for the 16 MiB aggregate parse-byte
+and conservative UTF-8 view admission. These are admission
 contracts, not memory measurements. Resource-sensitive mutation validation and
 peak-memory observations require their own reviewed hosted run.
 

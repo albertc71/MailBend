@@ -206,27 +206,29 @@ def facts_compatibility(test, work):
         server.stop()
 
 
-def resource_reads(test, work):
-    header = b"Content-Type: application/octet-stream\r\n\r\n"
-    assert len(header) % 2 == 0
-    body_size = (16777216 - len(header)) // 2
-    binary = header + b"x" * body_size
+def resource_reads(test, work, large=False):
+    """Entity limits always run; the 16 MiB parse and view shapes only when large."""
     wide = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n"
-    shapes = [("entities-at", wide + b"--b\r\n\r\n\r\n" * 127 + b"--b--", node(), None),
-              ("entities-over", wide + b"--b\r\n\r\n\r\n" * 128 + b"--b--", None, "128 MIME entity"),
-              ("parse-at", binary, node(attachments=[{"filename": "", "content_type": "application/octet-stream", "size": body_size}]), None),
-              ("parse-over", header[:-4] + b" " + header[-4:] + b"x" * body_size,
-               None, "aggregate parse-byte"),
-              ("view-at", b"\r\n" + b"x" * 4194304, node(text="x" * 4194304), None),
-              ("view-over", b"\r\n" + b"x" * 4194305, None, "UTF-8 view")]
     attached = b"--b\r\nContent-Type: message/rfc822\r\n\r\nSubject: inner\r\n\r\nhello\r\n"
     entries = [{"filename": "", "content_type": "message/rfc822", "size": 23,
                 "message": node("inner", "hello")} for _ in range(63)]
-    shapes += [("message-siblings-at", wide + attached * 63 + b"--b\r\n\r\n\r\n--b--",
-                node(attachments=entries), None),
-               ("message-siblings-over", wide + attached * 64 + b"--b--", None, "128 MIME entity"),
-               ("huge-header-at", b"Subject: " + b"h" * 4194304 + b"\r\n\r\n", node("h" * 998), None),
-               ("huge-header-over", b"Subject: " + b"h" * 4194305 + b"\r\n\r\n", None, "UTF-8 view")]
+    shapes = [("entities-at", wide + b"--b\r\n\r\n\r\n" * 127 + b"--b--", node(), None),
+              ("entities-over", wide + b"--b\r\n\r\n\r\n" * 128 + b"--b--", None, "128 MIME entity"),
+              ("message-siblings-at", wide + attached * 63 + b"--b\r\n\r\n\r\n--b--",
+               node(attachments=entries), None),
+              ("message-siblings-over", wide + attached * 64 + b"--b--", None, "128 MIME entity")]
+    if large:
+        header = b"Content-Type: application/octet-stream\r\n\r\n"
+        assert len(header) % 2 == 0
+        body_size = (16777216 - len(header)) // 2
+        binary = header + b"x" * body_size
+        shapes += [("parse-at", binary, node(attachments=[{"filename": "", "content_type": "application/octet-stream", "size": body_size}]), None),
+                   ("parse-over", header[:-4] + b" " + header[-4:] + b"x" * body_size,
+                    None, "aggregate parse-byte"),
+                   ("view-at", b"\r\n" + b"x" * 4194304, node(text="x" * 4194304), None),
+                   ("view-over", b"\r\n" + b"x" * 4194305, None, "UTF-8 view"),
+                   ("huge-header-at", b"Subject: " + b"h" * 4194304 + b"\r\n\r\n", node("h" * 998), None),
+                   ("huge-header-over", b"Subject: " + b"h" * 4194305 + b"\r\n\r\n", None, "UTF-8 view")]
     for name, raw, expected, error in shapes:
         server = test.Server(work, fixture=fixture(test, [message(raw)]))
         try:
@@ -328,5 +330,4 @@ def run(test, work, resources=False):
         facts_compatibility(test, work)
         annotations(test, work)
         response_budget(test, work)
-        if resources:
-            resource_reads(test, work)
+        resource_reads(test, work, large=resources)

@@ -293,6 +293,19 @@ def attached(inner):
                                              "size": 23, "message": inner}]}
 
 check("mail_get", {**nested, "content": attached(attached(nested_node))})
+
+def named(name, inner=None, node=nested_node):
+    entry = {"filename": name, "content_type": "application/octet-stream", "size": 2}
+    if inner is not None:
+        entry = {**entry, "content_type": "message/rfc822", "message": inner}
+    return {**node, "attachments": [entry]}
+
+check("mail_get", {**nested, "content": named("a  From: x")})
+check("mail_get", {**nested, "content": named("a  b", nested_node)})
+for invalid in ("\n", "\r", "\t", "\x00", "\x85", "\u202e", "\u2066"):
+    for content in (named("a" + invalid), named("a" + invalid, nested_node),
+                    attached(named("a" + invalid)), attached(attached(named("a" + invalid)))):
+        check("mail_get", {**nested, "content": content}, False)
 check("mail_get", {**nested, "content": attached(attached(attached(nested_node)))}, False)
 cut = {**nested_node, "attachments": [{"filename": "", "content_type": "message/rfc822", "size": 23}],
        "parse_complete": False, "omissions": ["depth_limit"]}

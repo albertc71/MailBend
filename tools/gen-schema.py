@@ -219,6 +219,8 @@ SELECTED = record({"folder": S, "uid": N, "uidvalidity": N, "section": S,
 
 NESTED_HEADER = param("string", maxLength=998, **{
     "not": {"pattern": r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]"}})
+NESTED_ATTACHMENT = record({**ATTACHMENT["properties"],
+    "filename": param("string", **{"not": NESTED_HEADER["not"]})})
 NESTED_HEADERS = record({k: NESTED_HEADER for k in ("from", "to", "subject", "date", "message_id")})
 NESTED_REASON = param("string", enum=["depth_limit", "multipart_depth_limit", "additional_readable_part"])
 NESTED_BODY_REASON = "Nested message text was not included in the Jev request."
@@ -231,12 +233,12 @@ NESTED_JEV = union(*[record({**JEV["properties"], "content": {"const": content},
 
 
 def nested_node(level, complete):
-    opaque = record({**ATTACHMENT["properties"], "content_type": {
+    opaque = record({**NESTED_ATTACHMENT["properties"], "content_type": {
         "type": "string", "not": {"enum": ["message/rfc822", "message/global"]}}})
-    attachment = opaque if complete or level < 3 else ATTACHMENT
+    attachment = opaque if complete or level < 3 else NESTED_ATTACHMENT
     if level < 3:
         target = f"nested_{level + 1}_complete" if complete else f"nested_{level + 1}"
-        opened = record({**ATTACHMENT["properties"],
+        opened = record({**NESTED_ATTACHMENT["properties"],
             "content_type": param("string", enum=["message/rfc822", "message/global"]),
             "message": {"$ref": f"#/$defs/{target}"}})
         attachment = union(opaque, opened)

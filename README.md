@@ -290,7 +290,8 @@ numeric `section`, and positive `uidvalidity`. This returns
 `message/rfc822` and `message/global`. Absent or false keeps the legacy result.
 The ordinary whole-message attachment list stays unchanged.
 
-Every displayed nested header goes through the one-line header sanitizer.
+Every displayed nested header and nested attachment filename goes through the
+one-line header sanitizer: controls become spaces and bidi controls are dropped.
 The text is the first plain part, otherwise inert text extracted from HTML.
 No raw HTML, descendant IMAP section, download index, or trusted sender claim
 is added. An alternative representation may be omitted without making the

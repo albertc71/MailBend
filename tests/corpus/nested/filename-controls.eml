@@ -1,0 +1,13 @@
+Subject: names
+Content-Type: multipart/mixed; boundary=b
+
+--b
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename*=utf-8''a%0D%0AFrom%3A%20x%E2%80%AE
+
+hi
+--b
+Content-Type: application/octet-stream; name="=?utf-8?Q?a=0D=0Ab?="
+
+hi
+--b--

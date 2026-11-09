@@ -1,0 +1,37 @@
+{
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic selected-message bytes: attachment filenames whose decoded values contain CR, LF and a bidi override are shown on one line."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2047",
+    "https://www.rfc-editor.org/rfc/rfc2231",
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "wire": "valid",
+  "expected": {
+    "headers": {
+      "from": "",
+      "to": "",
+      "subject": "names",
+      "date": "",
+      "message_id": ""
+    },
+    "text": "",
+    "attachments": [
+      {
+        "filename": "a  From: x",
+        "content_type": "application/octet-stream",
+        "size": 2
+      },
+      {
+        "filename": "a  b",
+        "content_type": "application/octet-stream",
+        "size": 2
+      }
+    ],
+    "parse_complete": true,
+    "omissions": []
+  }
+}
