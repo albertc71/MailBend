@@ -1,0 +1,25 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: attached-message-global-utf8
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <attached-message-global-utf8@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=global
+
+--global
+Content-Type: text/plain
+
+Outer text.
+--global
+Content-Type: message/global
+Content-Disposition: attachment; filename=forwarded.u8msg
+Content-Transfer-Encoding: 8bit
+
+From: Jürgen Groß <juergen@example.invalid>
+To: Zoë Ångström <zoe@example.invalid>
+Subject: Grüße aus München ‮gpj.exe
+Date: Fri, 30 Oct 2026 08:00:00 +0000
+Message-ID: <global-inner@corpus.invalid>
+
+Hallo aus München.
+--global--

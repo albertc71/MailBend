@@ -1,0 +1,52 @@
+{
+  "status": "recovery",
+  "wire": "malformed",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture: a message/rfc822 attachment sent with Content-Transfer-Encoding base64, which RFC 2046 section 5.2.1 forbids for that type. MailBend decodes the body before summarizing it, so the summary shows the inner headers, and the size is the decoded length."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc5322"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "attached-message-base64",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<attached-message-base64@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Outer text.",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "encoded.eml",
+        "content_type": "message/rfc822",
+        "size": 198
+      }
+    ]
+  },
+  "attached_message_headers": [
+    {
+      "filename": "encoded.eml",
+      "content_type": "message/rfc822",
+      "size": 198,
+      "message": {
+        "from": "Encoded Sender <encoded@example.invalid>",
+        "to": "reader@example.invalid",
+        "subject": "Base64 enclosure",
+        "date": "Thu, 29 Oct 2026 07:00:00 +0000",
+        "message_id": "<base64-inner@corpus.invalid>"
+      }
+    }
+  ]
+}

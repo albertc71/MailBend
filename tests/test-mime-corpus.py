@@ -17,6 +17,31 @@ ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / 'tests/corpus'
 FIELDS = {'from', 'to', 'cc', 'reply_to', 'subject', 'date', 'message_id', 'in_reply_to',
           'references', 'text', 'html', 'html_available', 'attachments'}
+MESSAGE_TYPES = {'message/rfc822', 'message/global'}
+SUMMARY_KEYS = {'from', 'to', 'subject', 'date', 'message_id'}
+
+
+def check_summaries(data, label):
+    """attached_message_headers lists the default attachments, adding key headers to attached messages."""
+    current = data['known_wrong' if data['status'] == 'known_unsupported' else 'expected']['attachments']
+    attached = any(a['content_type'] in MESSAGE_TYPES for a in current)
+    oracle.require(attached == ('attached_message_headers' in data),
+                   label + 'attached messages need, and only they allow, attached_message_headers expectations')
+    summaries = data.get('attached_message_headers', current)
+    oracle.require(isinstance(summaries, list) and len(summaries) == len(current), label + 'summary count differs')
+    for plain, entry in zip(current, summaries):
+        oracle.require({k: v for k, v in entry.items() if k != 'message'} == plain,
+                       label + 'summary changes a legacy attachment field')
+        oracle.require(('message' in entry) == (plain['content_type'] in MESSAGE_TYPES),
+                       label + 'only attached messages carry a summary')
+        if 'message' in entry:
+            message = entry['message']
+            oracle.require(set(message) == SUMMARY_KEYS and all(
+                isinstance(v, str) and v == v.strip() and len(v) <= 998
+                and not any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\u061c\u200e\u200f\u2028\u2029'
+                            '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069' for c in v)
+                for v in message.values()), label + 'invalid attached-message summary expectation')
+    return summaries
 
 
 def load_cases():
@@ -55,6 +80,7 @@ def load_cases():
                                isinstance(attachment['filename'], str) and isinstance(attachment['content_type'], str)
                                and type(attachment['size']) is int and attachment['size'] >= 0,
                                label + 'invalid attachment expectation')
+        data['summaries'] = check_summaries(data, label)
         cases.append((path.stem, path.read_bytes(), data))
     return cases
 
@@ -91,6 +117,13 @@ def public_reads(cases, test, work):
                     test.check(label + (' conformance' if data['status'] == 'conformant' else ' malformed-input recovery'),
                                ok, {'exit': code, 'expected': data['expected'], 'actual': actual})
                     counts[data['status']] += int(ok)
+                code, opted = test.tool(server, 'mail_get', {'uid': uid, 'uidvalidity': inbox['uidvalidity'],
+                                        'attached_message_headers': True}, MAILBEND_READ_ONLY='1')
+                test.check(label + ' attached_message_headers changes only attached-message entries',
+                           code == 0 and {k: v for k, v in opted.items() if k != 'attachments'}
+                           == {k: v for k, v in result.items() if k != 'attachments'}
+                           and opted.get('attachments') == data['summaries'],
+                           {'exit': code, 'expected': data['summaries'], 'actual': opted.get('attachments')})
                 for selected in data.get('selected', []):
                     code, result = test.tool(server, 'mail_get', {'uid': uid, 'uidvalidity': inbox['uidvalidity'],
                                              'section': selected['section']}, MAILBEND_READ_ONLY='1')

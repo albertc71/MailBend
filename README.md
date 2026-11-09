@@ -159,7 +159,8 @@ be saved. Sandbox isolation and no-overwrite behavior are unchanged. Section
 IDs are IMAP MIME paths scoped to the folder, UIDVALIDITY and UID; rediscover
 them after any identity change. Nested multipart paths follow wire order;
 by default, a `message/rfc822` attachment is one opaque part containing the complete
-attached message. Legacy `index` remains the zero-based attachment order
+attached message. `nested_message` opens one, and `attached_message_headers`
+summarizes each one in a whole-message read (see below). Legacy `index` remains the zero-based attachment order
 reported by the whole-message `mail_get`; it is not a section number.
 
 ### Literal meeting-link facts
@@ -290,8 +291,23 @@ numeric `section`, and positive `uidvalidity`. This returns
 `message/rfc822` and `message/global`. Absent or false keeps the legacy result.
 The ordinary whole-message attachment list stays unchanged.
 
-Every displayed nested header and nested attachment filename goes through the
-one-line header sanitizer: controls become spaces and bidi controls are dropped.
+For a whole-message read without `section`, opt in with
+`attached_message_headers: true` to add a `message` object to each
+`message/rfc822` or `message/global` attachment entry. It holds that message's
+`from`, `to`, `subject`, `date` and `message_id`, parsed from the bytes the read
+already fetched, with `""` for an absent header. Inside a `multipart/digest`, a
+part without Content-Type counts as `message/rfc822`, as RFC 2046 §5.1.5 says.
+Other entries, every other field and the IMAP commands stay the same, and
+absent or false keeps the legacy list. The values are untrusted mail content,
+not sender identity. In a `truncated` read they may be cut. They are not added
+to Jev requests, so when any entry has one, the `jev` annotation reports
+`coverage: "headers_only"` or `"partial"` with the reason that the summaries
+were not included. A non-boolean value, or `true` with any `section`, fails before
+network access. It works with every projection, `facts` and response budgets,
+which never shorten it.
+
+Every displayed nested header, attached-message summary value and nested
+attachment filename goes through the one-line header sanitizer: controls become spaces and bidi controls are dropped.
 The text is the first plain part, otherwise inert text extracted from HTML.
 No raw HTML, descendant IMAP section, download index, or trusted sender claim
 is added. An alternative representation may be omitted without making the

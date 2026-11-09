@@ -1,0 +1,70 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Original synthetic fixture: a multipart/digest whose children have no Content-Type, so each defaults to message/rfc822 (RFC 2046 section 5.1.5)."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://www.rfc-editor.org/rfc/rfc5322",
+    "https://www.rfc-editor.org/rfc/rfc2047"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/109"
+  ],
+  "expected": {
+    "from": "Synthetic Digest <digest@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "digest-implicit-types",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<digest-implicit-types@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Digest follows.",
+    "html": "",
+    "html_available": false,
+    "attachments": [
+      {
+        "filename": "",
+        "content_type": "message/rfc822",
+        "size": 184
+      },
+      {
+        "filename": "",
+        "content_type": "message/rfc822",
+        "size": 192
+      }
+    ]
+  },
+  "attached_message_headers": [
+    {
+      "filename": "",
+      "content_type": "message/rfc822",
+      "size": 184,
+      "message": {
+        "from": "First Sender <first@example.invalid>",
+        "to": "list@example.invalid",
+        "subject": "First item",
+        "date": "Fri, 30 Oct 2026 09:00:00 +0000",
+        "message_id": "<first-item@corpus.invalid>"
+      }
+    },
+    {
+      "filename": "",
+      "content_type": "message/rfc822",
+      "size": 192,
+      "message": {
+        "from": "second@example.invalid",
+        "to": "list@example.invalid",
+        "subject": "Second item é",
+        "date": "Fri, 30 Oct 2026 10:00:00 +0000",
+        "message_id": "<second-item@corpus.invalid>"
+      }
+    }
+  ]
+}

@@ -32,5 +32,19 @@
         "size": 109
       }
     ]
-  }
+  },
+  "attached_message_headers": [
+    {
+      "filename": "original.eml",
+      "content_type": "message/rfc822",
+      "size": 109,
+      "message": {
+        "from": "sender@example.invalid",
+        "to": "",
+        "subject": "Enclosed synthetic message",
+        "date": "",
+        "message_id": ""
+      }
+    }
+  ]
 }
