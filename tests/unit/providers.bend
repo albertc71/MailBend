@@ -81,13 +81,13 @@ def main() -> IO(Unit):
       "o'hara+$`whoami`@example.com", ""))))
     IO.print(Bool.show(rendered(P.render("web.de", "Reader.Name@web.de"),
       "export MAILBEND_EMAIL='Reader.Name@web.de'\nexport MAILBEND_LOGIN='Reader.Name'\n",
-      "{\"env\":{\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"Reader.Name\",\"MAILBEND_PASSWORD_FILE\":\"/absolute/path/to/mailbend-password\",\"MAILBEND_IMAP_HOST\":\"imap.web.de\",\"MAILBEND_IMAP_PORT\":\"993\",\"MAILBEND_SMTP_HOST\":\"smtp.web.de\",\"MAILBEND_SMTP_PORT\":\"465\",\"MAILBEND_SMTP_TLS_MODE\":\"implicit\",\"MAILBEND_READ_ONLY\":\"1\",\"MAILBEND_SAVE_SENT\":\"0\"}}"))))
+      "{\"env\":{\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"Reader.Name\",\"MAILBEND_PASSWORD_FILE\":\"/absolute/path/to/mailbend-password\",\"MAILBEND_IMAP_HOST\":\"imap.web.de\",\"MAILBEND_IMAP_PORT\":\"993\",\"MAILBEND_SMTP_HOST\":\"smtp.web.de\",\"MAILBEND_SMTP_PORT\":\"465\",\"MAILBEND_SMTP_TLS_MODE\":\"implicit\",\"MAILBEND_READ_ONLY\":\"1\",\"MAILBEND_SAVE_SENT\":\"0\"}}")))
     IO.print(Bool.show(rendered(P.render("WEB.DE", "Reader.Name@WEB.DE"),
       "export MAILBEND_EMAIL='Reader.Name@WEB.DE'\nexport MAILBEND_LOGIN='Reader.Name'\n",
-      "\"MAILBEND_EMAIL\":\"Reader.Name@WEB.DE\",\"MAILBEND_LOGIN\":\"Reader.Name\""))))
+      "\"MAILBEND_EMAIL\":\"Reader.Name@WEB.DE\",\"MAILBEND_LOGIN\":\"Reader.Name\"")))
     IO.print(Bool.show(rendered(P.render("web.de", "o'hara+$`whoami`@web.de"),
       "export MAILBEND_LOGIN='o'\"'\"'hara+$`whoami`'\n",
-      "\"MAILBEND_EMAIL\":\"o'hara+$`whoami`@web.de\",\"MAILBEND_LOGIN\":\"o'hara+$`whoami`\""))))
+      "\"MAILBEND_EMAIL\":\"o'hara+$`whoami`@web.de\",\"MAILBEND_LOGIN\":\"o'hara+$`whoami`\"")))
     IO.print(Bool.show(web_de_refusals(["reader@example.com", "reader@sub.web.de",
       "reader@web.de.example", "reader@web.de.", "reader@notweb.de",
       "@web.de", "reader@", "reader@@web.de", " reader@web.de", "reader@web.de ",
@@ -95,7 +95,7 @@ def main() -> IO(Unit):
       "é@web.de", "missing-at"])))
     IO.print(Bool.show(rendered(P.render("gmail", "Reader.Name@web.de"),
       "export MAILBEND_LOGIN=''\n",
-      "\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"\""))))
+      "\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"\"")))
     IO.print(Bool.show(refused(P.render("proton-bridge", "Reader.Name@web.de"))))
 
 #|icloud|imap.mail.me.com|993|smtp.mail.me.com|587|starttls|1|documented; existing default profile, not newly live-tested

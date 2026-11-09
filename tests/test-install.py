@@ -137,6 +137,48 @@ class InstallTests(unittest.TestCase):
                 self.assertFalse((root / "native/target").exists())
                 self.assert_unchanged(root, old)
 
+    def test_cargo_build_selects_every_helper_even_with_stale_targets(self):
+        expected = ('mailbend-tls', 'mailbend-attach', 'mailbend-typesafe', 'mailbend-stdio')
+        cargo = r'''if [ "$1" = --version ]; then
+  echo 'cargo 1.99.0'
+  exit 0
+fi
+printf '%s\0' "$@" > "$HOME/cargo-argv"
+/bin/mkdir -p target/release
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    build|--release|--locked|--quiet) shift ;;
+    -p)
+      [ "$#" -ge 2 ] || exit 91
+      printf '#!/bin/sh\nexit 0\n' > "target/release/$2"
+      /bin/chmod +x "target/release/$2"
+      shift 2 ;;
+    *) exit 92 ;;
+  esac
+done
+'''
+        for stale in (False, True):
+            with self.subTest(stale=stale), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                self.prepare(root, clang=True, cargo=cargo)
+                if stale:
+                    target = root / 'native/target/release'
+                    target.mkdir(parents=True)
+                    for name in expected:
+                        executable(target / name, '# stale artifact\nexit 0\n')
+                proc = self.run_install(root)
+                argv = (root / 'cargo-argv').read_bytes().split(b'\0')
+                self.assertEqual(argv.pop(), b'')
+                self.assertEqual(argv[:4], [b'build', b'--release', b'--locked', b'--quiet'])
+                self.assertEqual(argv[4::2], [b'-p'] * len(expected))
+                self.assertCountEqual(argv[5::2], [name.encode() for name in expected],
+                                      'Cargo must select every installed helper exactly once')
+                self.assertEqual((proc.returncode, proc.stderr), (0, b''))
+                for name in expected:
+                    self.assertEqual((root / 'bin' / name).read_bytes(), NEW_HELPER,
+                                     'installed helper must be freshly built, not a stale target')
+
+
     def test_supported_glibc_builds_and_getconf_receives_its_exact_argument(self):
         for version in ("2.34", "2.35", "3.0"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
