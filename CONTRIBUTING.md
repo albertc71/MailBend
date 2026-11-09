@@ -119,6 +119,8 @@ python3 tests/test-plugin.py --runtime             # real plugin-resolved hook a
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/formal/check-reply-marking.py        # post-acceptance marking transition laws
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
+python3 tests/test-mime-corpus.py --nested-resources  # also the 16 MiB nested parse and view limits
+python3 tests/test-harness-output.py               # test-harness transport diagnostics and redaction
 python3 tests/test-facts.py                       # literal facts, fake loopback mail, CLI
 MAILBEND_TEST_MCP=1 python3 tests/test-facts.py   # the same facts through structured MCP
 python3 tests/test-e2e.py

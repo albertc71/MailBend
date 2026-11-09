@@ -158,7 +158,7 @@ than the existing 25 MB fetch window, and only a complete decoded file can
 be saved. Sandbox isolation and no-overwrite behavior are unchanged. Section
 IDs are IMAP MIME paths scoped to the folder, UIDVALIDITY and UID; rediscover
 them after any identity change. Nested multipart paths follow wire order;
-a `message/rfc822` attachment is one opaque part containing the complete
+by default, a `message/rfc822` attachment is one opaque part containing the complete
 attached message. Legacy `index` remains the zero-based attachment order
 reported by the whole-message `mail_get`; it is not a section number.
 
@@ -204,7 +204,8 @@ lookalikes. These conservative boundaries intentionally miss some links.
 
 `facts: true` requires the default or explicit `full` projection, or `text`.
 It rejects `html`, `metadata`, and every nonempty `section` before network
-access. Facts always refer to visible returned text.
+access. Facts always refer to visible returned text. `facts: true` and
+`nested_message: true` cannot be combined; the call fails before network access.
 
 With `max_response_bytes`, the existing projection runs first. The finalizer
 then adds facts and checks the complete shared JSON result against the same
@@ -280,6 +281,52 @@ stale UIDVALIDITY is caught only by the real run; a send checks the
 allowlist but not the daily limit; and with Jev on, a send or delete still
 passes Jev's checks and shows their verdict. Read-only mode refuses a dry
 run as it refuses the tool.
+
+
+For an attached-message section, opt in with `nested_message: true`, a canonical
+numeric `section`, and positive `uidvalidity`. This returns
+`content_encoding: "message"` and a `content` object with `headers`, `text`,
+`attachments`, `parse_complete`, and `omissions`. It accepts only
+`message/rfc822` and `message/global`. Absent or false keeps the legacy result.
+The ordinary whole-message attachment list stays unchanged.
+
+Every displayed nested header and nested attachment filename goes through the
+one-line header sanitizer: controls become spaces and bidi controls are dropped.
+The text is the first plain part, otherwise inert text extracted from HTML.
+No raw HTML, descendant IMAP section, download index, or trusted sender claim
+is added. An alternative representation may be omitted without making the
+readable view partial. Additional independent readable parts are reported as
+`additional_readable_part`. Referenced links and files are never opened.
+
+The selected root counts as the first of three opened message levels.
+`depth_limit` and `multipart_depth_limit` propagate to ancestor omissions.
+The existing eight MIME levels apply separately inside each opened message.
+A request admits at most 128 MIME entities, including containers and message
+roots. Framing validation reserves every immediate child before materializing
+siblings. One decreasing 16 MiB parse-byte allowance covers root admission,
+entity bodies, copied multipart bodies, and conservative transfer-decoding
+copies across all siblings and messages. A separate 16 MiB UTF-8 view allowance
+reserves four bytes per input byte before displaying text or headers, and
+conservatively reserves filename and media-type output. Unused credit is not
+recycled. These admission rules can reject content smaller than the selected
+fetch limit. They are not measured memory or latency guarantees.
+
+Malformed multipart framing and required malformed or unsupported inner
+transfer encodings fail the new view atomically. Inner quoted-printable
+rejects a terminal `=`. Existing selected decoding and ordinary malformed-mail
+recovery are unchanged. Resource errors offer legacy base64 retrieval without
+`nested_message`; increasing `max_bytes` cannot bypass the parser limits.
+
+This view supports only absent or `full` projection. Response budgets apply
+after annotations and response metadata and keep the object indivisible.
+Insufficient budgets return an error. `complete: true` describes fetched bytes,
+`content.parse_complete` describes parsed content, and
+`response.content_complete` describes the fully returned representation.
+A depth-cut representation can therefore be returned completely while its
+`parse_complete` is false. Jev requests keep their existing parent facts and
+non-text placeholder. Nested headers and text are not added to those requests.
+The new annotation reports `coverage: "headers_only"` or `"partial"` with an
+explicit reason, including when Jev is unchecked.
 
 ## Install (Linux)
 
