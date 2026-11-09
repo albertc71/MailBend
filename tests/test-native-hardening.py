@@ -306,6 +306,29 @@ os.execv(os.environ['ELF_READELF'], [os.environ['ELF_READELF'], *sys.argv[1:]])
 
 
 class NativeTerminalTests(unittest.TestCase):
+    def test_optimized_probe_detects_terminal_acquisition(self):
+        source = CHECKER.read_text()
+        self.assertEqual(1, source.count(' | os.O_NOCTTY'))
+        with tempfile.TemporaryDirectory(prefix='terminal-mutation-') as temporary:
+            root = Path(temporary)
+            (root / 'scripts').mkdir()
+            (root / 'tests').mkdir()
+            (root / 'scripts/check-native-hardening.py').write_text(
+                source.replace(' | os.O_NOCTTY', ''))
+            test = root / 'tests/test-native-hardening.py'
+            shutil.copy2(__file__, test)
+            result = subprocess.run(
+                [sys.executable, str(test),
+                 'NativeTerminalTests.test_rejects_terminal_without_acquiring_it'],
+                env={**os.environ, 'PYTHONOPTIMIZE': '2'},
+                capture_output=True, text=True, timeout=20)
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertEqual('', result.stdout)
+        self.assertIn('Ran 1 test in ', result.stderr)
+        self.assertIn('FAILED (failures=1)', result.stderr)
+        self.assertNotIn('ERROR:', result.stderr)
+        self.assertIn('checker acquired a controlling terminal\n', result.stderr)
+
     def test_rejects_terminal_without_acquiring_it(self):
         master, slave = os.openpty()
         try:
@@ -325,10 +348,14 @@ def has_controlling_terminal():
     os.close(descriptor)
     return True
 
-assert not has_controlling_terminal(), 'child must start without a controlling terminal'
+if has_controlling_terminal():
+    sys.exit('child must start without a controlling terminal')
 violations = runpy.run_path(sys.argv[1])['violations']
-assert violations(Path(sys.argv[2])) == ['expected a regular ELF file']
-assert not has_controlling_terminal(), 'checker acquired a controlling terminal'
+errors = violations(Path(sys.argv[2]))
+if errors != ['expected a regular ELF file']:
+    sys.exit(f'unexpected terminal refusal: {errors!r}')
+if has_controlling_terminal():
+    sys.exit('checker acquired a controlling terminal')
 print('rejected tty without acquiring a controlling terminal')
 ''', str(CHECKER), os.ttyname(slave)], start_new_session=True,
                                     capture_output=True, text=True, timeout=10)
