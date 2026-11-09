@@ -105,14 +105,35 @@ class FuzzLockTests(unittest.TestCase):
             shipped = root / 'native.lock'
             harness = root / 'fuzz.lock'
             manifest_path = root / 'Cargo.toml'
-            shipped.write_text(native)
-            harness.write_text(fuzz)
-            manifest_path.write_text(manifest)
+            for path, content in ((shipped, native), (harness, fuzz),
+                                  (manifest_path, manifest)):
+                path.write_bytes(content.encode('utf-8') if isinstance(content, str) else content)
             return subprocess.run(
                 [sys.executable, '-B', str(CHECKER), '--native', str(shipped),
                  '--fuzz', str(harness), '--manifest', str(manifest_path)],
                 cwd=root, capture_output=True,
                 text=True, timeout=5)
+
+    def test_invalid_utf8_diagnostic_names_each_input(self):
+        for name in ('manifest', 'native', 'fuzz'):
+            for malformed in (b'\xff', b'\xed\xa0\x80', b'\xe2\x82'):
+                with self.subTest(input=name, malformed=malformed):
+                    inputs = {'native': NATIVE, 'fuzz': NATIVE, 'manifest': MANIFEST}
+                    inputs[name] = inputs[name].encode('utf-8') + b'\n# fixture-only ' + malformed
+                    result = self.check(**inputs)
+                    path = result.args[result.args.index('--' + name) + 1]
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(result.stderr,
+                                     f'fuzz lock check failed: {path}: invalid UTF-8\n')
+
+    def test_valid_utf8_comments_are_accepted_in_all_inputs(self):
+        comment = '\n# café € 🙂\n'
+        result = self.check(NATIVE + comment, NATIVE + comment, MANIFEST + comment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         'Shared native dependency identities and edges match the fuzz lock.\n')
+        self.assertEqual(result.stderr, '')
 
     def test_matching_shared_dependencies(self):
         result = self.check(NATIVE, NATIVE)
