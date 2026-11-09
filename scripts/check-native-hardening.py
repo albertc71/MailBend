@@ -17,7 +17,8 @@ LOADERS = {'Advanced Micro Devices X86-64': '/lib64/ld-linux-x86-64.so.2',
 def violations(path):
     try:
         try:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                                 | os.O_NOCTTY | os.O_CLOEXEC)
         except OSError as error:
             if error.errno == errno.ELOOP:
                 return ['expected a regular ELF file']
