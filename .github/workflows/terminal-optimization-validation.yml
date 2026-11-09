@@ -1,0 +1,46 @@
+name: Terminal optimization validation
+on:
+  push:
+    branches: [validation/terminal-optimization-389-20261109]
+permissions:
+  contents: read
+concurrency:
+  group: terminal-optimization-389-validation
+  cancel-in-progress: false
+jobs:
+  terminal-controls:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the exact reviewed product parent
+        run: |
+          set -eu
+          test "$(git show -s --format=%P HEAD | wc -w)" -eq 1
+          test "$(git show -s --format=%P HEAD^ | wc -w)" -eq 1
+          test "$(git rev-parse HEAD^^)" = 34570d036487d7e66ead897509fdf4dd3579f1c0
+          test "$(git rev-parse HEAD^:scripts/check-native-hardening.py)" = db53c282a0b6395a56a9b45ce82c22122431553d
+          printf '%s  %s\n' 16e244ebbfd86e53f72ec41568ebda527fb9462d2faff0455258dea0042cab42 tests/test-native-hardening.py | sha256sum -c -
+          test "$(git diff --name-only HEAD^^ HEAD^)" = tests/test-native-hardening.py
+          test "$(git diff --name-only HEAD^ HEAD)" = "$(printf '%s\n' .github/workflows/terminal-optimization-validation.yml tests/validate-terminal-optimization.py)"
+          git diff --exit-code HEAD^ HEAD -- . ':!.github/workflows/terminal-optimization-validation.yml' ':!tests/validate-terminal-optimization.py'
+          git log -3 --format='%H %T %P'
+          python3 --version
+          cc --version
+          readelf --version
+      - name: Scan the validation tree and history
+        if: matrix.runner == 'ubuntu-24.04'
+        run: sh scripts/scan-secrets.sh
+      - name: Real ELF and terminal regression suite
+        timeout-minutes: 5
+        run: python3 tests/test-native-hardening.py -v
+      - name: Optimization levels and behavioral negative controls
+        timeout-minutes: 5
+        run: python3 tests/validate-terminal-optimization.py
