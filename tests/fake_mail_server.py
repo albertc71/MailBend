@@ -761,6 +761,9 @@ class IMAPSession:
     def send(self, text: str):
         if not self.muted:
             self.conn.write(text.encode('latin-1'))
+            # Observe the actual synthetic reply, independently of UID generation.
+            if self.state.search_response == 'duplicate-uids' and text.startswith('* SEARCH'):
+                self.logger.log('imap-search-response', text)
             if self.state.measure_responses:
                 self.logger.log('imap-bytes', str(len(text)))
 
