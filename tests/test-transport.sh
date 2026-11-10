@@ -145,19 +145,25 @@ call_smtp() {
 
 check_leak() {
   local password="$1" login="$2" encoded_password encoded_plain
-  # Status 1 means a matched secret; status 2 means encoding failed.
+  # Status 1 means a matched secret; status 2 means the check failed.
   # An empty password has no secret bytes. Match literal bytes, including
   # SMTP's LOGIN password and PLAIN NUL-user-NUL-password encodings.
   [ -n "$password" ] || return 0
-  if grep -aFq -e "$password" -- "$OUT" "$ERR"; then
+  if grep -aFq -e "$password" -- "$OUT" "$ERR" >/dev/null 2>&1; then
     GLOBAL_LEAK=1
     return 1
+  elif [ "$?" -ne 1 ]; then
+    GLOBAL_LEAK_CHECK_ERROR=1
+    return 2
   fi
   encoded_password=$({ set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n'; } 2>/dev/null) || { GLOBAL_LEAK_CHECK_ERROR=1; return 2; }
   encoded_plain=$({ set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n'; } 2>/dev/null) || { GLOBAL_LEAK_CHECK_ERROR=1; return 2; }
-  if grep -aFq -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
+  if grep -aFq -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR" >/dev/null 2>&1; then
     GLOBAL_LEAK=1
     return 1
+  elif [ "$?" -ne 1 ]; then
+    GLOBAL_LEAK_CHECK_ERROR=1
+    return 2
   fi
   return 0
 }
@@ -881,7 +887,6 @@ clean|0|0|0|0|2
 CASES
 }
 
-# Grep errors must survive clean calls and reach the final aggregate.
 case_leak_grep_controls() {
   local HELPER="$WORK/grep-clean-helper" PASSWORD="canary" FIXTURE_USER="reader"
   local CASE1_LOG="$WORK/grep-redaction.jsonl" CASE12_LOG="$WORK/grep-redaction.jsonl"
