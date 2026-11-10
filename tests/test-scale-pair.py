@@ -302,7 +302,7 @@ class PairTests(unittest.TestCase):
                             "launcher-reference": "fixed launcher/installer changed",
                             "launcher-candidate": "candidate launcher is not a reviewed revision",
                             "install-reference": "fixed launcher/installer changed",
-                            "install-candidate": "fixed launcher/installer changed",
+                            "install-candidate": "candidate installer is not a reviewed revision",
                             "apparatus-reference": "apparatus changed",
                             "apparatus-candidate": "apparatus changed",
                             "symlink": "symlink forbidden",
@@ -413,7 +413,7 @@ class PairTests(unittest.TestCase):
                         self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
                         if case == "post-run-drift":
                             for root in roots:
-                                for name in pair.EXECUTABLES:
+                                for name in (*pair.EXECUTABLES, "scripts/install.sh"):
                                     path = root / name
                                     path.parent.mkdir(parents=True, exist_ok=True)
                                     if not path.exists():
@@ -433,6 +433,83 @@ class PairTests(unittest.TestCase):
                     else:
                         expected = {
                             "tampered": "candidate launcher is not a reviewed revision",
+                            "reference-approved": "fixed launcher/installer changed",
+                            "symlink": "symlink forbidden",
+                            "hardlink": "not an unaliased regular file",
+                            "dirty": "tracked source is dirty",
+                        }[case]
+                        with self.assertRaisesRegex(ValueError, expected):
+                            pair.preflight(*roots, "a" * 40)
+
+    def test_actual_installer_migration_through_real_preflight(self):
+        names = ("scripts/mailbend", *pair.INSTALLERS)
+        original = {name: (ROOT / name).read_bytes() for name in names}
+        original["scripts/install.sh"] = b"#!/bin/sh\n# historical installer fixture\n"
+        revised = (ROOT / "scripts/install.sh").read_bytes()
+        self.assertEqual(pair.CANDIDATE_INSTALLER_SHA256,
+                         "ae7a0f7ef0c8606488cbd5414c5a3914a027fce6773b9cae2bdf865b9d564f9b")
+        for case in ("original", "approved", "unknown", "reference-approved",
+                     "symlink", "hardlink", "missing", "dirty", "post-run-drift"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                roots = tuple(pathlib.Path(tmp) / side for side in pair.SIDES)
+                for root in roots:
+                    for name in (*pair.PINNED, *names):
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(original[name] if name in original else
+                                         (ROOT / name).read_bytes())
+                installer = roots[1] / "scripts/install.sh"
+                if case != "original":
+                    installer.write_bytes(revised)
+                if case == "unknown":
+                    installer.write_bytes(revised + b"\n# unreviewed installer\n")
+                elif case == "reference-approved":
+                    (roots[0] / "scripts/install.sh").write_bytes(revised)
+                elif case in ("symlink", "hardlink", "missing"):
+                    installer.unlink()
+                    target = pathlib.Path(tmp) / "approved-installer"
+                    target.write_bytes(revised)
+                    if case == "symlink":
+                        installer.symlink_to(target)
+                    elif case == "hardlink":
+                        installer.hardlink_to(target)
+
+                def git(root, *args):
+                    if args == ("rev-parse", "HEAD"):
+                        return (pair.REFERENCE_SHA if root == roots[0] else "a" * 40).encode()
+                    if args[0] == "status":
+                        return b" M scripts/install.sh" if case == "dirty" else b""
+                    if args[0] == "rev-parse":
+                        return pair.REFERENCE_SHA.encode()
+                    self.assertEqual(args[0], "show")
+                    return original[args[1].split(":", 1)[1]]
+
+                with mock.patch.object(pair, "git", side_effect=git):
+                    if case in ("original", "approved", "post-run-drift"):
+                        self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                        if case == "post-run-drift":
+                            for root in roots:
+                                for name in (*pair.EXECUTABLES, "scripts/install.sh"):
+                                    path = root / name
+                                    path.parent.mkdir(parents=True, exist_ok=True)
+                                    if not path.exists():
+                                        path.write_bytes(name.encode())
+                                    path.chmod(0o755)
+                            output = pathlib.Path(tmp) / "reports"
+                            output.mkdir()
+                            pair.write_json(output / "paired-identities.json",
+                                            pair.identities(roots, "a" * 40))
+                            pair.unchanged(roots, "a" * 40, output)
+                            installer.write_bytes(original["scripts/install.sh"])
+                            self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                            with self.assertRaisesRegex(ValueError, "identities changed"):
+                                pair.unchanged(roots, "a" * 40, output)
+                    elif case == "missing":
+                        with self.assertRaises(FileNotFoundError):
+                            pair.preflight(*roots, "a" * 40)
+                    else:
+                        expected = {
+                            "unknown": "candidate installer is not a reviewed revision",
                             "reference-approved": "fixed launcher/installer changed",
                             "symlink": "symlink forbidden",
                             "hardlink": "not an unaliased regular file",
