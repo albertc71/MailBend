@@ -1,0 +1,26 @@
+name: Transport grep error reproduction
+on:
+  push:
+    branches:
+      - validation/transport-grep-repro-20261110
+permissions:
+  contents: read
+concurrency:
+  group: transport-grep-repro-20261110
+  cancel-in-progress: false
+jobs:
+  reproduce:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Observe exact source checker failures
+        run: |
+          umask 077
+          ulimit -c 0
+          python3 -I validation/transport_grep_repro.py
