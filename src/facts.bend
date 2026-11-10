@@ -84,7 +84,7 @@ def zoom_query(s: String) -> Bool:
     case SCon{+c, rest}:
       (ascii_alnum(c) || String.contains("-._~=&+", SCon{c, ""})) && zoom_query(rest)
 
-def zoom_id(s: String, +digits: Nat, valid: Bool) -> Bool:
+def zoom_id(valid: Bool, s: String, +digits: Nat) -> Bool:
   match valid s:
     case False{} _:
       False{}
@@ -93,9 +93,9 @@ def zoom_id(s: String, +digits: Nat, valid: Bool) -> Bool:
     case True{} SCon{'?', SCon{c, rest}}:
       Nat.is_le(9n, digits) && Nat.is_le(digits, 11n) && zoom_query(SCon{c, rest})
     case True{} SCon{c, rest}:
-      zoom_id(rest, 1n+digits, digit(c) && Nat.is_lt(digits, 11n))
+      zoom_id(digit(c) && Nat.is_lt(digits, 11n), rest, 1n+digits)
 
-def zoom_label(s: String, +width: Nat, last_alnum: Bool, valid: Bool) -> Bool:
+def zoom_label(valid: Bool, s: String, +width: Nat, last_alnum: Bool) -> Bool:
   match valid s:
     case False{} _:
       False{}
@@ -103,22 +103,22 @@ def zoom_label(s: String, +width: Nat, last_alnum: Bool, valid: Bool) -> Bool:
       False{}
     case True{} SCon{'.', +rest}:
       last_alnum && String.starts_with(rest, "zoom.us/j/") &&
-        zoom_id(String.drop(rest, 10n), 0n, True{})
+        zoom_id(True{}, String.drop(rest, 10n), 0n)
     case True{} SCon{+c, rest}:
-      zoom_label(rest, 1n+width, label_alnum(c),
-        Nat.is_lt(width, 63n) && (label_alnum(c) || Char.is_eq(c, '-')))
+      zoom_label(Nat.is_lt(width, 63n) && (label_alnum(c) || Char.is_eq(c, '-')),
+        rest, 1n+width, label_alnum(c))
 
 def zoom_host.label(s: String) -> Bool:
   match s:
     case SNil{}:
       False{}
     case SCon{+c, rest}:
-      zoom_label(rest, 1n, label_alnum(c), label_alnum(c))
+      zoom_label(label_alnum(c), rest, 1n, label_alnum(c))
 
 def zoom_host.select(s: String, apex: Bool) -> Bool:
   match apex:
     case True{}:
-      zoom_id(String.drop(s, 10n), 0n, True{})
+      zoom_id(True{}, String.drop(s, 10n), 0n)
     case False{}:
       zoom_host.label(s)
 
@@ -128,8 +128,8 @@ def zoom_host(+s: String) -> Bool:
 def zoom_url(+s: String) -> Bool:
   String.starts_with(s, "https://") && zoom_host(String.drop(s, 8n))
 
-def zoom_token.go(s: String, fuel: Nat, room: Nat, ending: SourceEnd,
-  finished: Bool, +rev: String) -> Maybe<&2, String>:
+def zoom_token.go(finished: Bool, fuel: Nat, s: String, room: Nat,
+  ending: SourceEnd, +rev: String) -> Maybe<&2, String>:
   match finished fuel s room:
     case True{} _ _ _:
       Some{String.reverse(rev)}
@@ -142,11 +142,11 @@ def zoom_token.go(s: String, fuel: Nat, room: Nat, ending: SourceEnd,
         Some{String.reverse(rev)}, None{})
     case False{} 1n+rest SCon{+c, tail} 1n+more:
       +boundary = right_boundary(SCon{c, ""}, Prefix{})
-      zoom_token.go(tail, rest, more, ending, boundary,
+      zoom_token.go(boundary, rest, tail, more, ending,
         Bool.pick(String, boundary, rev, SCon{c, rev}))
 
 def zoom_token(s: String, fuel: Nat, room: Nat, ending: SourceEnd) -> Maybe<&2, String>:
-  zoom_token.go(s, fuel, room, ending, False{}, "")
+  zoom_token.go(False{}, fuel, s, room, ending, "")
 
 def zoom_admit(+width: Nat, +bound: Nat, accepted: Bool) -> Nat:
   Bool.pick(Nat, accepted && Nat.is_lt(0n, width) && Nat.is_le(width, 512n) &&
