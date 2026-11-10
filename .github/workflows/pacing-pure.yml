@@ -1,0 +1,57 @@
+name: Pacing kernel-child observation
+on:
+  push:
+    branches: [validation/pacing-159-release-helper-v1-20261110]
+permissions:
+  contents: read
+jobs:
+  pure:
+    if: ${{ github.run_attempt == 1 && github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Isolate fresh pinned kernel and toolchains
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          home=$(mktemp -d "$RUNNER_TEMP/pacing-home.XXXXXX")
+          test ! -e "$home/.bend/bendtt"
+          printf "HOME=%s\nELAN_HOME=%s/.elan\nBENDTT=\n" "$home" "$home" >> "$GITHUB_ENV"
+      - name: Bind exact source and inherited executable inputs
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git show -s --format=%P HEAD)" = '58da766e8e68eb6dc52c68342616ba6aef9f57e9'
+          git rev-parse HEAD HEAD^{tree}
+          printf '%s\n' '.github/workflows/pacing-pure.yml' 'src/pacing.bend' 'tests/formal/pacing-laws.bend' 'tests/unit/pacing.bend' 'validation/kernel-observe.py' 'validation/pacing-pure.sh' > /tmp/pacing-expected-paths
+          git diff --name-only HEAD^ HEAD | LC_ALL=C sort > /tmp/pacing-actual-paths
+          cmp /tmp/pacing-expected-paths /tmp/pacing-actual-paths
+          test "$(git hash-object scripts/install-bend.sh)" = 007205e91c9a034d24c7dafadfbbd70e2ffe17e0
+          test "$(git hash-object scripts/install-lean.sh)" = 6afb088e92b87e708a6ba70b31dcaa93a5730b22
+          test "$(git hash-object scripts/scan-secrets.sh)" = 6d6648ae0d07d16b40d471f3de6e3f71dbef7879
+          test "$(git hash-object .gitleaks.toml)" = 740df730ca9f003b2198f5a01623bb7d2baefa7e
+          printf '%s\n' '912c7979f68310ad6d83471ccff9ffb826211ef2c5d11abaca5a562bc604111d  src/pacing.bend' 'b374729158c455630dd80babb0da08e4db756f11275da216f0aa49f185d6d0de  tests/formal/pacing-laws.bend' 'e8c03ec813b0aa96fe98e0d8d2aa2d404ed8c464cc55849cdfd5bc49cd361743  tests/unit/pacing.bend' '78c5bd74fd247ff49b5f3bd97af85e11e7a11d5d2fcab7841c66c432b8a15b5d  validation/pacing-pure.sh' 'b877f936efd1443ed65f49b3b00d395710cf674eaeba2b92806a7add0e09cfbf  validation/kernel-observe.py' | sha256sum -c -
+      - name: Exact checkout and available-history redacted scans
+        timeout-minutes: 3
+        run: timeout --signal=TERM --kill-after=10s 165s sh scripts/scan-secrets.sh
+      - name: Pinned toolchains, one bounded bootstrap
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 340s bash -c 'sh scripts/install-bend.sh && sh scripts/install-lean.sh'
+          "$HOME/.bend/bin/bend" version
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.34.0 ELAN_AUTO_INSTALL=0 "$HOME/.elan/bin/lean" --version
+      - name: Observe one exact kernel child after bounded fresh build
+        timeout-minutes: 8
+        run: timeout --signal=TERM --kill-after=10s 450s bash validation/pacing-pure.sh
