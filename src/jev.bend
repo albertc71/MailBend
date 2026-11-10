@@ -97,7 +97,7 @@ type Facts is Data:
 
 # The text Jev may see of a message, and whether it is all of it.
 type Text is Data:
-  Text{text: String, whole: Completeness}
+  MessageText{text: String, whole: Completeness}
 
 # A message to ask about: its facts and its text.
 # `reserve` is room kept in the token estimate for refs this message may
@@ -201,7 +201,7 @@ def text_of.put(+plain: String, cut: Bool) -> Text:
   +capped = M.utf8_prefix(plain, max_text())
   undecodable = String.contains(plain, SCon{C.repl(), SNil{}})
   partial = cut || undecodable || U32.is_lt(C.utf8_len(capped), C.utf8_len(plain))
-  Text{capped, Bool.pick(Completeness, partial, Partial{}, Complete{})}
+  MessageText{capped, Bool.pick(Completeness, partial, Partial{}, Complete{})}
 
 def text_of.fin(kept: M.Parts & Bool, cut: Bool) -> Text:
   (p, left_out) = kept
@@ -702,7 +702,7 @@ def requests.if(
 # with it alone. `reserve` is counted in the state size before the refs exist.
 def requests.step(+c: Content, f: Facts, t: Text, +opts: Options, +p: Packing, +reserve: U32) ->
   Packing:
-  Text{+text, whole} = t
+  MessageText{+text, whole} = t
   +g = with_body(f, whole)
   +e = entry_at(c, g, text, opts, reserve)
   requests.if(fits_in(p, e), p, c, e, g, text, opts, reserve)
@@ -1760,14 +1760,14 @@ def original_context(reply: Bool, all: Bool, f: Facts) -> Context:
 
 def outgoing_text.put(text: String, +cut: String) -> Text:
   whole = Nat.is_eq(String.length(cut), String.length(text))
-  Text{cut, Bool.pick(Completeness, whole, Complete{}, Partial{})}
+  MessageText{cut, Bool.pick(Completeness, whole, Complete{}, Partial{})}
 
 # The outgoing text Jev may see, and whether that is all of it: in body
 # mode the text cut to what one request may hold, in headers mode none.
 def outgoing_text(c: Content, +text: String) -> Text:
   match c:
     case Headers{}:
-      Text{"", Complete{}}
+      MessageText{"", Complete{}}
     case Body{}:
       outgoing_text.put(text, escaped_prefix(text, max_text()))
 

@@ -13,7 +13,7 @@ def facts() -> Jev.Facts:
 def annotation(c: Jev.Content) -> T.Annotation:
   T.Annotation{J.chain([J.kv("content_encoding", J.str("message")),
     J.kv("content", J.str("retained"))]), False{}, c,
-    [Jev.Fetched{facts(), Jev.Text{"placeholder", Jev.Partial{}}, 0}]}
+    [Jev.Fetched{facts(), Jev.MessageText{"placeholder", Jev.Partial{}}, 0}]}
 
 def attached(summary: Bool) -> J.Json:
   +base : List<&2, J.Json> = [J.kv("filename", J.str("")), J.kv("content_type", J.str("message/rfc822")),
@@ -25,7 +25,7 @@ def attached(summary: Bool) -> J.Json:
 def whole(+summary: Bool, c: Jev.Content) -> T.Annotation:
   T.Annotation{J.chain([J.kv("content", J.str(Bool.pick(String, summary, "summarized", "plain"))),
     J.kv("attachments", J.arr([J.obj([J.kv("filename", J.str("a.bin"))]), attached(summary)]))]),
-    False{}, c, [Jev.Fetched{facts(), Jev.Text{"placeholder", Jev.Partial{}}, 0}]}
+    False{}, c, [Jev.Fetched{facts(), Jev.MessageText{"placeholder", Jev.Partial{}}, 0}]}
 
 def show(o: P.Out) -> String:
   match o:

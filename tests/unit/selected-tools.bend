@@ -28,7 +28,7 @@ def read(raw: String) -> String:
 
 def annotation(t: Jev.Text) -> String:
   match t:
-    case Jev.Text{+text, Jev.Partial{}}:
+    case Jev.MessageText{+text, Jev.Partial{}}:
       "partial " ++ Bool.show(String.contains(text, "hello")) ++ " " ++
         Bool.show(String.contains(text, "message incomplete"))
     case _:
