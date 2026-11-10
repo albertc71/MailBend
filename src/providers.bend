@@ -15,8 +15,9 @@ type Settings is Data:
 
 type Preset is Data:
   Preset{name: String, settings: Settings, username: String, prerequisites: String,
-    sources: List<&2, String>, tier: String}
+    sources: List<&2, String>, tier: String, reviewed: String}
 
+# Legacy catalogue date for callers; metadata uses the date stored in each preset.
 def reviewed_on() -> String:
   "2026-10-31"
 
@@ -28,7 +29,7 @@ def presets() -> List<&2, Preset>:
       "Apple permits the full address for IMAP and requires it for SMTP. " ++
       "The existing iCloud profile recommends saving a Sent copy.",
       ["https://support.apple.com/102525", "https://support.apple.com/102654"],
-      "documented; existing default profile, not newly live-tested"},
+      "documented; existing default profile, not newly live-tested", "2026-10-31"},
     Preset{"gmail", Remote{"imap.gmail.com", "993", "smtp.gmail.com", "465", "implicit", "0", EmailFallback{}},
       "Full Google account email address.",
       "Use an app password, not the account password. Enable 2-Step Verification first. " ++
@@ -37,12 +38,13 @@ def presets() -> List<&2, Preset>:
       "Gmail saves SMTP-sent mail automatically. Review label visibility in IMAP settings.",
       ["https://developers.google.com/workspace/gmail/imap/imap-smtp",
         "https://support.google.com/accounts/answer/185833",
-        "https://support.google.com/mail/answer/78892"], "documented; not live-tested"},
+        "https://support.google.com/mail/answer/78892"],
+      "documented; not live-tested", "2026-10-31"},
     Preset{"yahoo", Remote{"imap.mail.yahoo.com", "993", "smtp.mail.yahoo.com", "465",
       "implicit", "0", EmailFallback{}}, "Full Yahoo Mail account address.",
       "Generate a third-party app password in Yahoo account security. " ++
       "Review Sent-copy behavior before enabling writes.",
-      ["https://help.yahoo.com/kb/SLN4075.html"], "documented; not live-tested"},
+      ["https://help.yahoo.com/kb/SLN4075.html"], "documented; not live-tested", "2026-10-31"},
     Preset{"aol", Remote{"imap.aol.com", "993", "smtp.aol.com", "465", "implicit", "0", EmailFallback{}},
       "Full AOL Mail account address. This is not the Verizon.net SMTP profile.",
       "Generate a third-party app password in AOL account security. " ++
@@ -50,13 +52,13 @@ def presets() -> List<&2, Preset>:
       "Review Sent-copy behavior before enabling writes.",
       ["https://github.com/thunderbird/autoconfig/blob/master/ispdb/aol.com.xml",
         "https://help.aol.com/articles/create-and-manage-app-password"],
-      "ISPDB-reviewed; not provider-page-verified or live-tested"},
+      "ISPDB-reviewed; not provider-page-verified or live-tested", "2026-10-31"},
     Preset{"fastmail", Remote{"imap.fastmail.com", "993", "smtp.fastmail.com", "465",
       "implicit", "0", EmailFallback{}}, "Full primary Fastmail username, not an alias.",
       "Create an app password with mail access. The regular password does not work. " ++
       "Basic plans do not include IMAP or SMTP. Review Sent-copy behavior before enabling writes.",
       ["https://www.fastmail.help/hc/en-us/articles/1500000278342-Server-names-and-ports"],
-      "documented; not live-tested"},
+      "documented; not live-tested", "2026-10-31"},
     Preset{"zoho", Remote{"imap.zoho.com", "993", "smtp.zoho.com", "465", "implicit", "0", EmailFallback{}},
       "Full Zoho Mail account address.",
       "Only the .com personal-account server profile is printed. Paid organizations use " ++
@@ -66,7 +68,7 @@ def presets() -> List<&2, Preset>:
       "Zoho normally saves SMTP-sent mail; review that account setting.",
       ["https://www.zoho.com/mail/help/imap-access.html",
         "https://www.zoho.com/mail/help/zoho-smtp.html"],
-      "documented .com personal profile only; not live-tested"},
+      "documented .com personal profile only; not live-tested", "2026-10-31"},
     Preset{"gmx", Remote{"imap.gmx.com", "993", "mail.gmx.com", "465", "implicit", "0", EmailFallback{}},
       "Full GMX account address for the documented GMX.com profile.",
       "Enable POP3/IMAP access in GMX settings; it is off by default. " ++
@@ -74,7 +76,7 @@ def presets() -> List<&2, Preset>:
       ["https://support.gmx.com/pop-imap/imap/server.html",
         "https://support.gmx.com/pop-imap/toggle.html",
         "https://support.gmx.com/security/2fa/application-specific-passwords.html"],
-      "documented GMX.com profile; not live-tested"},
+      "documented GMX.com profile; not live-tested", "2026-10-31"},
     Preset{"web.de", Remote{"imap.web.de", "993", "smtp.web.de", "465",
       "implicit", "0", WebDeLocalPart{}},
       "Primary web.de account only. ISPDB specifies the case-preserved part before @ for both protocols.",
@@ -85,7 +87,7 @@ def presets() -> List<&2, Preset>:
       ["https://hilfe.web.de/pop-imap/imap/imap-serverdaten.html",
         "https://github.com/thunderbird/autoconfig/blob/3a5b95752363cdcdad8928d7d29a993cbdabcad2/ispdb/web.de.xml",
         "https://hilfe.web.de/sicherheit/2fa/anwendungsspezifisches-passwort.html"],
-      "endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested"},
+      "endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested", "2026-11-08"},
     Preset{"mailbox.org", Remote{"imap.mailbox.org", "993", "smtp.mailbox.org", "465",
       "implicit", "0", EmailFallback{}}, "Full main mailbox.org address, not an alias.",
       "Create an email application password, required when two-factor authentication is on. " ++
@@ -93,7 +95,7 @@ def presets() -> List<&2, Preset>:
       "Review Sent-copy behavior before enabling writes.",
       ["https://kb.mailbox.org/en/private/e-mail/e-mail-configuration/",
         "https://kb.mailbox.org/en/private/security-and-privacy/e-mail-password/"],
-      "documented; not live-tested"},
+      "documented; not live-tested", "2026-10-31"},
     Preset{"posteo", Remote{"posteo.de", "993", "posteo.de", "465", "implicit", "0", EmailFallback{}},
       "Full primary Posteo email address.",
       "Check Posteo's app-password and additional email account protection requirements. " ++
@@ -102,7 +104,7 @@ def presets() -> List<&2, Preset>:
       "Review Sent-copy behavior before enabling writes.",
       ["https://github.com/thunderbird/autoconfig/blob/master/ispdb/posteo.de.xml",
         "https://posteo.de/en/blog/how-to-use-app-passwords-with-posteo"],
-      "ISPDB-reviewed; prerequisites need local review; not live-tested"},
+      "ISPDB-reviewed; prerequisites need local review; not live-tested", "2026-10-31"},
     Preset{"proton-bridge", Manual{"Proton Mail Bridge needs account-specific local ports, " ++
       "connection modes, and an explicit decision to trust its self-signed certificate. " ++
       "MailBend requires verified TLS and IMAP implicit TLS. No safe copyable preset is " ++
@@ -111,14 +113,15 @@ def presets() -> List<&2, Preset>:
       "Bridge must run locally. Review its settings and certificate with the account owner. " ++
       "Setup does not install Bridge, change trust, or bypass TLS verification.",
       ["https://proton.me/support/comprehensive-guide-to-bridge-settings",
-        "https://proton.me/support/bridge-ssl-connection-issue"], "manual review required"}
+        "https://proton.me/support/bridge-ssl-connection-issue"],
+      "manual review required", "2026-10-31"}
   ]
 
 def names(xs: List<&2, Preset>) -> List<&2, String>:
   match xs:
     case Nil{}:
       []
-    case Preset{name, settings, username, prerequisites, sources, tier} <> t:
+    case Preset{name, settings, username, prerequisites, sources, tier, reviewed} <> t:
       name <> names(t)
 
 def find(xs: List<&2, Preset>, +name: String) -> Maybe<&2, Preset>:
@@ -126,7 +129,7 @@ def find(xs: List<&2, Preset>, +name: String) -> Maybe<&2, Preset>:
     case Nil{}:
       None{}
     case +p <> t:
-      Preset{id, settings, username, prerequisites, sources, tier} = p
+      Preset{id, settings, username, prerequisites, sources, tier, reviewed} = p
       Bool.pick(Maybe<&2, Preset>, String.eq(id, name), Some{p}, find(t, name))
 
 def password_path() -> String:
@@ -195,9 +198,8 @@ def password_instructions() -> String:
   "  mailbend_status=$?\n  unset mailbend_password\n  exit \"$mailbend_status\"\n)\n```\n"
 
 def metadata(p: Preset) -> String:
-  Preset{+name, settings, username, prerequisites, sources, tier} = p
-  "Provider: " ++ name ++ "\nTier: " ++ tier ++ "\nReviewed: " ++
-    Bool.pick(String, String.eq(name, "web.de"), "2026-11-08", reviewed_on()) ++
+  Preset{name, settings, username, prerequisites, sources, tier, reviewed} = p
+  "Provider: " ++ name ++ "\nTier: " ++ tier ++ "\nReviewed: " ++ reviewed ++
     "\nUsername: " ++ username ++ "\nPrerequisites: " ++ prerequisites ++
     "\nSources:\n" ++ String.join(sources, "\n") ++ "\n"
 
@@ -226,7 +228,7 @@ def render.found(p: Maybe<&2, Preset>, email: String) -> Result<&2, &2, String, 
         String.join(names(presets()), ", ") ++ ". OAuth is unsupported; see " ++
         "https://github.com/albertc71/MailBend/issues/28"}
     case Some{+preset}:
-      Preset{name, settings, username, prerequisites, sources, tier} = preset
+      Preset{name, settings, username, prerequisites, sources, tier, reviewed} = preset
       render.settings(settings, preset, email)
 
 def render(+provider: String, +email: String) -> Result<&2, &2, String, String>:

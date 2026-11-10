@@ -61,13 +61,18 @@ def rows(xs: List<&2, P.Preset>) -> IO(Unit):
   match xs:
     case Nil{}:
       IO.pure(Unit, Unit{})
-    case P.Preset{+name, s, username, prerequisites, sources, tier} <> t:
+    case P.Preset{+name, s, username, prerequisites, sources, tier, reviewed} <> t:
       do IO<Unit>:
         IO.print(name ++ "|" ++ settings(s) ++ "|" ++ tier)
         IO.print(String.join(sources, " "))
         IO.print(Bool.show(safe(render_text(P.render(name,
           Bool.pick(String, String.eq(name, "web.de"), "Reader.Name@web.de", "reader@example.com"))))))
         rows(t)
+
+# Fixed review dates are observations of the emitted metadata, not the record under test.
+def reviewed(provider: String, email: String, date: String) -> Bool:
+  String.contains(render_text(P.render(provider, email)),
+    "\nReviewed: " ++ date ++ "\nUsername: ")
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -104,6 +109,23 @@ def main() -> IO(Unit):
       "export MAILBEND_LOGIN=''\n",
       "\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"\"")))
     IO.print(Bool.show(refused(P.render("proton-bridge", "Reader.Name@web.de"))))
+
+    IO.print(Bool.show(reviewed("icloud", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("gmail", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("yahoo", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("aol", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("fastmail", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("zoho", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("gmx", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("web.de", "Reader.Name@web.de", "2026-11-08")))
+    IO.print(Bool.show(reviewed("mailbox.org", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("posteo", "reader@example.com", "2026-10-31")))
+    IO.print(Bool.show(reviewed("proton-bridge", "reader@example.com", "2026-10-31")))
+    IO.print(P.reviewed_on())
+    IO.print(P.metadata(P.Preset{"web.de", P.Manual{"synthetic"}, "test username",
+      "test prerequisites", ["https://example.com/review"], "test tier", "2001-02-03"}))
+    IO.print(P.metadata(P.Preset{"renamed", P.Manual{"synthetic"}, "test username",
+      "test prerequisites", ["https://example.com/review"], "test tier", "2004-05-06"}))
 
 #|icloud|imap.mail.me.com|993|smtp.mail.me.com|587|starttls|1|EmailFallback|documented; existing default profile, not newly live-tested
 #|https://support.apple.com/102525 https://support.apple.com/102654
@@ -156,3 +178,31 @@ def main() -> IO(Unit):
 #|True
 #|True
 #|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|True
+#|2026-10-31
+#|Provider: web.de
+#|Tier: test tier
+#|Reviewed: 2001-02-03
+#|Username: test username
+#|Prerequisites: test prerequisites
+#|Sources:
+#|https://example.com/review
+#|
+#|Provider: renamed
+#|Tier: test tier
+#|Reviewed: 2004-05-06
+#|Username: test username
+#|Prerequisites: test prerequisites
+#|Sources:
+#|https://example.com/review
+#|
