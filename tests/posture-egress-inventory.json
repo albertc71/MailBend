@@ -231,7 +231,7 @@
     },
     {
       "path": "native/mailbend-tls/src/exit.rs",
-      "sha256": "24c0fab739c313662e505b8c8979f47dffadfa34ffdd02accfe642ffea0bd26d"
+      "sha256": "949da1b398c1a0d8031e004162bca956a1cd37c044c9a69950013a23e372b85a"
     },
     {
       "path": "native/mailbend-tls/src/imap/response.rs",
