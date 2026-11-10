@@ -148,6 +148,21 @@ class SoakContract(unittest.TestCase):
             kill.assert_called_once_with(1234, soak.signal.SIGKILL)
             proc.wait.assert_called_once_with(timeout=10)
 
+    def test_profile_workloads_match_comparison_windows(self):
+        tree = ast.parse(Path(soak.__file__).read_text())
+        run = next(node for node in tree.body
+                   if isinstance(node, ast.FunctionDef) and node.name == "run")
+        expected = ast.parse(
+            'count, budget = (500, 180) if profile == "short" else (5000, 1800)'
+        ).body[0]
+        assignments = [node for node in run.body
+                       if isinstance(node, ast.Assign)
+                       and any(ast.dump(target) == ast.dump(expected.targets[0])
+                               for target in node.targets)]
+        self.assertEqual(len(assignments), 1, "expected one soak profile workload selector")
+        self.assertEqual(ast.dump(assignments[0]), ast.dump(expected),
+                         "soak profile counts or budgets changed; revisit comparison windows")
+
     def test_comparison_windows_have_identical_mix(self):
         expected = [
             {"jsonrpc": "2.0", "method": "tools/list", "params": {}},
