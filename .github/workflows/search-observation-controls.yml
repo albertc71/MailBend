@@ -1,0 +1,60 @@
+name: SEARCH observation controls (one-shot)
+
+on:
+  push:
+    branches: [aegis/validate-search-observation-20261110]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: search-observation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  controls:
+    if: github.repository == 'albertc71/MailBend'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout validation child with complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: validation
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable candidate with complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f9e762f6fdc77e3e1ff6a7ec76ae04107e723576
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify candidate and validation-only direct child
+        run: |
+          set -eu
+          test "$(git -C candidate rev-parse HEAD)" = f9e762f6fdc77e3e1ff6a7ec76ae04107e723576
+          test "$(git -C candidate rev-parse HEAD^{tree})" = fc1d6e11305388d6546fcc46960e1aae6c55d880
+          test "$(git -C validation show -s --format=%P HEAD)" = f9e762f6fdc77e3e1ff6a7ec76ae04107e723576
+          git -C validation diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/search-validation-paths"
+          printf '%s\n' '.github/workflows/search-observation-controls.yml' 'validation/search_observation_controls.py' > "$RUNNER_TEMP/search-expected-paths"
+          diff -u "$RUNNER_TEMP/search-expected-paths" "$RUNNER_TEMP/search-validation-paths"
+          git -C candidate show ccae99e4becf02fff883a42b56c85e3d97bf60d8:tests/fake_mail_server.py > "$RUNNER_TEMP/old-search-fixture.py"
+          git -C candidate rev-parse HEAD HEAD^{tree}
+          git -C validation rev-parse HEAD
+      - name: Redacted tree and history scans
+        timeout-minutes: 5
+        run: |
+          sh validation/scripts/scan-secrets.sh
+          sh candidate/scripts/scan-secrets.sh
+      - name: Install pinned Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Original, candidate, mutation and restoration controls
+        timeout-minutes: 2
+        run: python3 -I -B validation/validation/search_observation_controls.py --root candidate --baseline "$RUNNER_TEMP/old-search-fixture.py"
+      - name: Verify tracked candidate restored
+        if: always()
+        run: git -C candidate diff --exit-code
