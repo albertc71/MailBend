@@ -1,0 +1,54 @@
+name: Transport leak aggregate validation
+on:
+  push:
+    branches:
+      - validation/transport-aggregate-20261110
+permissions:
+  contents: read
+concurrency:
+  group: transport-aggregate-20261110
+  cancel-in-progress: false
+jobs:
+  sensitivity:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify immutable source admission
+        run: python3 -I validation/transport_aggregate.py --admit-only
+      - name: Scan exact validation tree and history
+        timeout-minutes: 5
+        run: sh scripts/scan-secrets.sh
+      - name: Install existing transport prerequisites
+        timeout-minutes: 5
+        run: |
+          home="$RUNNER_TEMP/transport-aggregate-home"
+          mkdir -p "$home"
+          printf 'HOME=%s\nCARGO_HOME=%s/.cargo\nRUSTUP_HOME=%s/.rustup\n' "$home" "$home" "$home" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential openssl
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install repository-pinned Rust
+        timeout-minutes: 5
+        run: |
+          sh scripts/install-rust.sh
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Observe whole-runner red and green controls
+        timeout-minutes: 32
+        run: |
+          umask 077
+          ulimit -c 0
+          python3 -I validation/transport_aggregate.py
+      - name: Supplemental MCP comparison lifecycle controls
+        timeout-minutes: 3
+        run: python3 tests/test-mcp-schema-comparison.py
