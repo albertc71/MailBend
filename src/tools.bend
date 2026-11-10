@@ -2536,7 +2536,7 @@ def first_threading(+start: T.Node, mbox: String, uidv: Maybe<&2, U32>) -> Threa
   Threading{T.next_ids([start], []), [], [start], [Found{mbox, uidv, [], []}]}
 
 def thread_start.put(
-  ms: List<&2, I.Msg>, lines: List<&2, I.RLine>, +uidv: Maybe<&2, U32>,
+  ms: List<&2, I.Msg>, +lines: List<&2, I.RLine>, +uidv: Maybe<&2, U32>,
   +mbox: String, uid: U32, Policy.checked: Bool
 ) -> IO(Shown):
   match ms:
@@ -2544,7 +2544,8 @@ def thread_start.put(
       pure_shown(Policy.Err{no_message(uid, mbox)})
     case m <> t:
       do IO<Shown>:
-        f : Fs() <- folders_io(lines)
+        f : Fs() <- folders_io.if(I.has_cap(I.caps(I.replies(lines, 3)), "SPECIAL-USE"),
+          merge_folders(I.folders(I.replies(lines, 4)), []))
         thread_rounds(f, first_threading(T.node(mbox, uidv, m), mbox, uidv), mbox, uid,
           Policy.checked)
 
