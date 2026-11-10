@@ -163,11 +163,11 @@ def check_escape_count() -> IO(Unit):
       U32.is_eq(J.esc_bytes("\u{0}\u{8}\u{C}\u{1F}"), 24) &&
       U32.is_eq(J.esc_bytes("é😀"), 6)))
     IO.print("all byte chars counted: " ++ Bool.show(escape_count.range(256n, 0, True{})))
-    IO.print("Unicode and non-scalar counts: " ++ Bool.show(escape_count.edges([
-      127, 128, 2047, 2048, 55295, 55296, 56319, 56320, 57343, 57344,
-      65535, 65536, 1114111, 1114112, 4294967295,
-      265, 266, 269, 290, 348, 2147483657, 2147483658, 2147483661,
-      2147483682, 2147483740])))
+    # The IO runtime rejects non-scalars; the unchanged universal theorem in
+    # json-size-escape-atoms.bend covers every 32-bit Char, without a validity premise.
+    IO.print("Unicode scalar edge counts: " ++ Bool.show(escape_count.edges([
+      127, 128, 2047, 2048, 55295, 57344, 65535, 65536, 1114111,
+      265, 266, 269, 290, 348, 65545, 65546, 65549, 65570, 65628])))
     IO.print("escape count wraps as U32: " ++ Bool.show(
       U32.is_eq(J.esc_bytes.go("abcdef", 4294967293), 3) &&
       U32.is_eq(J.esc_bytes.go("\u{0}", 4294967293), 3) &&
@@ -280,7 +280,7 @@ def main() -> IO(Unit):
 #|image escape byte count: True
 #|escape count goldens: True
 #|all byte chars counted: True
-#|Unicode and non-scalar counts: True
+#|Unicode scalar edge counts: True
 #|escape count wraps as U32: True
 #|1 -0 0.0e0 1E+2 0e1 12345678901234567890 "s" true false null
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
