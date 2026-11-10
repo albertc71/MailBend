@@ -122,3 +122,28 @@ impl From<NetError> for Exit {
         Exit::connect(error.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AuthReason;
+
+    #[test]
+    fn smtp_refusal_reasons_preserve_exceptions_and_range_boundaries() {
+        for (code, expected) in [
+            (399, AuthReason::Unknown),
+            (400, AuthReason::Temporary),
+            (421, AuthReason::Temporary),
+            (431, AuthReason::Temporary),
+            (432, AuthReason::Unknown),
+            (433, AuthReason::Temporary),
+            (454, AuthReason::Temporary),
+            (499, AuthReason::Temporary),
+            (500, AuthReason::Unknown),
+            (534, AuthReason::Unknown),
+            (535, AuthReason::Credentials),
+            (536, AuthReason::Unknown),
+        ] {
+            assert_eq!(AuthReason::smtp(code), expected, "SMTP reply {code}");
+        }
+    }
+}
