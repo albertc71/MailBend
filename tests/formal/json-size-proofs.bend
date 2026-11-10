@@ -4,6 +4,7 @@ import Base
 import ./json-size-reference.bend as Reference
 import ./json-size-builder-proofs.bend as Show
 import ./json-size-arithmetic.bend as Arithmetic
+import ./json-size-escape-atoms.bend as EscapeAtoms
 import ../../src/codec.bend as C
 import ../../src/json.bend as J
 import ../../src/response.bend as Response
@@ -98,6 +99,75 @@ def quote(+s: String)
   -> {C.utf8_len(Reference.quote(s)) == U32.add(2, C.utf8_len(J.esc(s))) : U32}:
   frame("\"", J.esc(s), "\"", {==}, {==})
 
+def utf8_step_commute(+s: String, +acc: U32, +width: U32)
+  -> {C.utf8_len.go(s, U32.add(acc, width)) ==
+      U32.add(C.utf8_len.go(s, acc), width) : U32}:
+  Equal.trans(U32, C.utf8_len.go(s, U32.add(acc, width)),
+    C.utf8_len.go(s, U32.add(width, acc)), U32.add(C.utf8_len.go(s, acc), width),
+    Equal.cong(U32, U32, n => C.utf8_len.go(s, n),
+      U32.add(acc, width), U32.add(width, acc), U32.add_comm(acc, width)),
+    Equal.trans(U32, C.utf8_len.go(s, U32.add(width, acc)),
+      U32.add(width, C.utf8_len.go(s, acc)), U32.add(C.utf8_len.go(s, acc), width),
+      utf8_shift(s, width, acc), U32.add_comm(width, C.utf8_len.go(s, acc))))
+
+def utf8_onto_acc(s: String, +out: String, +acc: U32)
+  -> {C.utf8_len.go(J.esc.onto(s, out), acc) ==
+      C.utf8_len.go(out, C.utf8_len.go(s, acc)) : U32}:
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{+c, +t}:
+      +w = C.utf8_width(Char.to_u32(c))
+      Equal.trans(U32, C.utf8_len.go(J.esc.onto(t, SCon{c, out}), acc),
+        C.utf8_len.go(out, U32.add(C.utf8_len.go(t, acc), w)),
+        C.utf8_len.go(out, C.utf8_len.go(t, U32.add(acc, w))),
+        utf8_onto_acc(t, SCon{c, out}, acc),
+        Equal.cong(U32, U32, n => C.utf8_len.go(out, n),
+          U32.add(C.utf8_len.go(t, acc), w), C.utf8_len.go(t, U32.add(acc, w)),
+          Equal.sym(U32, C.utf8_len.go(t, U32.add(acc, w)),
+            U32.add(C.utf8_len.go(t, acc), w), utf8_step_commute(t, acc, w))))
+
+def utf8_reverse(+s: String)
+  -> {C.utf8_len(String.reverse(s)) == C.utf8_len(s) : U32}:
+  Equal.trans(U32, C.utf8_len(String.reverse(s)), C.utf8_len(J.esc.onto(s, "")),
+    C.utf8_len(s),
+    Equal.cong(String, U32, t => C.utf8_len(t), String.reverse(s), J.esc.onto(s, ""),
+      Show.reverse_onto(s, "")), utf8_onto_acc(s, "", 0))
+
+def escape_go_count(s: String, +out: String)
+  -> {C.utf8_len(J.esc.go(s, out)) == J.esc_bytes.go(s, C.utf8_len(out)) : U32}:
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{+c, +t}:
+      Equal.trans(U32, C.utf8_len(J.esc.go(t, J.esc.onto(J.esc_char(c), out))),
+        J.esc_bytes.go(t, C.utf8_len(J.esc.onto(J.esc_char(c), out))),
+        J.esc_bytes.go(t, U32.add(C.utf8_len(out), J.esc_bytes.char(c))),
+        escape_go_count(t, J.esc.onto(J.esc_char(c), out)),
+        Equal.cong(U32, U32, n => J.esc_bytes.go(t, n),
+          C.utf8_len(J.esc.onto(J.esc_char(c), out)),
+          U32.add(C.utf8_len(out), J.esc_bytes.char(c)),
+          Equal.trans(U32, C.utf8_len(J.esc.onto(J.esc_char(c), out)),
+            C.utf8_len.go(out, C.utf8_len(J.esc_char(c))),
+            U32.add(C.utf8_len(out), J.esc_bytes.char(c)),
+            utf8_onto_acc(J.esc_char(c), out, 0),
+            Equal.trans(U32, C.utf8_len.go(out, C.utf8_len(J.esc_char(c))),
+              U32.add(C.utf8_len(J.esc_char(c)), C.utf8_len(out)),
+              U32.add(C.utf8_len(out), J.esc_bytes.char(c)),
+              utf8_acc(out, C.utf8_len(J.esc_char(c))),
+              Equal.trans(U32, U32.add(C.utf8_len(J.esc_char(c)), C.utf8_len(out)),
+                U32.add(C.utf8_len(out), C.utf8_len(J.esc_char(c))),
+                U32.add(C.utf8_len(out), J.esc_bytes.char(c)),
+                U32.add_comm(C.utf8_len(J.esc_char(c)), C.utf8_len(out)),
+                Equal.cong(U32, U32, n => U32.add(C.utf8_len(out), n),
+                  C.utf8_len(J.esc_char(c)), J.esc_bytes.char(c),
+                  EscapeAtoms.atom_exact(c)))))))
+
+def escape_count(+s: String)
+  -> {C.utf8_len(J.esc(s)) == J.esc_bytes(s) : U32}:
+  Equal.trans(U32, C.utf8_len(J.esc(s)), C.utf8_len(J.esc.go(s, "")), J.esc_bytes(s),
+    utf8_reverse(J.esc.go(s, "")), escape_go_count(s, ""))
+
 def separator(t: J.Json)
   -> {C.utf8_len(Reference.sep(t)) == Response.bytes.separator(t) : U32}:
   match t:
@@ -143,8 +213,11 @@ def reference_bytes(j: J.Json) -> {C.utf8_len(Reference.show(j)) == Response.byt
           {==}
     case J.JNum{raw}:
       {==}
-    case J.JStr{s}:
-      quote(s)
+    case J.JStr{+s}:
+      Equal.trans(U32, C.utf8_len(Reference.quote(s)),
+        U32.add(2, C.utf8_len(J.esc(s))), U32.add(2, J.esc_bytes(s)), quote(s),
+        Equal.cong(U32, U32, n => U32.add(2, n), C.utf8_len(J.esc(s)),
+          J.esc_bytes(s), escape_count(s)))
     case J.JArr{+items}:
       Equal.trans(U32, C.utf8_len("[" ++ Reference.show(items) ++ "]"),
         U32.add(2, C.utf8_len(Reference.show(items))), U32.add(2, Response.bytes(items)),
@@ -163,6 +236,8 @@ def reference_bytes(j: J.Json) -> {C.utf8_len(Reference.show(j)) == Response.byt
     case J.JEnd{}:
       {==}
     case J.JKv{+k, +v}:
+      %escape_count(k) : {C.utf8_len(Reference.show(J.JKv{k, v})) ==
+        U32.add(U32.add(3, _), Response.bytes(v)) : U32}
       Equal.trans(U32, C.utf8_len(Reference.quote(k) ++ ":" ++ Reference.show(v)),
         U32.add(U32.add(U32.add(2, C.utf8_len(J.esc(k))), 1), Response.bytes(v)),
         U32.add(U32.add(3, C.utf8_len(J.esc(k))), Response.bytes(v)),

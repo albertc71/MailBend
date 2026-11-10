@@ -104,6 +104,41 @@ def esc.go(s: String, acc: String) -> String:
 def esc(s: String) -> String:
   String.reverse(esc.go(s, ""))
 
+def esc_bytes.if(ctrl: Bool, +u: U32, c: Char) -> U32:
+  match ctrl:
+    case True{}:
+      ((4 + C.utf8_width(Char.to_u32(C.hex_low((u >> 4n : U32)))) : U32) +
+        C.utf8_width(Char.to_u32(C.hex_low((u .&. 15 : U32)))) : U32)
+    case False{}:
+      C.utf8_width(Char.to_u32(c))
+
+def esc_bytes.char(+c: Char) -> U32:
+  match c:
+    case '"':
+      2
+    case '\\':
+      2
+    case '\n':
+      2
+    case '\r':
+      2
+    case '\t':
+      2
+    case _:
+      +u = Char.to_u32(c)
+      esc_bytes.if(U32.is_lt(u, 32), u, c)
+
+def esc_bytes.go(s: String, acc: U32) -> U32:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{c, t}:
+      esc_bytes.go(t, (acc + esc_bytes.char(c) : U32))
+
+# Match utf8_len(esc(s)), including U32 wrap, without building the escape.
+def esc_bytes(s: String) -> U32:
+  esc_bytes.go(s, 0)
+
 # The separator before the rest t of a chain.
 def sep(t: Json) -> String:
   match t:

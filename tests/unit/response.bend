@@ -102,6 +102,24 @@ def binary_budgets(n: Nat, +j: J.Json, +max: U32) -> Bool:
     case 1n+k:
       binary_budget(j, max) && binary_budgets(k, j, (max + 1 : U32))
 
+def size_agrees(+j: J.Json) -> Bool:
+  U32.is_eq(R.bytes(j), C.utf8_len(J.show(j)))
+
+def nested_size(n: Nat, j: J.Json) -> J.Json:
+  match n:
+    case 0n:
+      j
+    case 1n+p:
+      nested_size(p, J.obj([J.kv("\"\\\n\u{0}😀", J.arr([j, J.JNull{}]))]))
+
+def internal_sizes() -> Bool:
+  size_agrees(J.JCons{J.JEnd{}, J.JEnd{}}) &&
+    size_agrees(J.JCons{J.JEnd{}, J.JNull{}}) &&
+    size_agrees(J.JCons{J.JNull{}, J.JStr{"tail"}}) &&
+    size_agrees(J.JArr{J.JNum{"raw\"\n😀"}}) &&
+    size_agrees(J.JObj{J.JCons{J.JStr{"x"}, J.JEnd{}}}) &&
+    size_agrees(J.JKv{"\"\n", J.JCons{J.JBool{False{}}, J.JNum{"raw"}}})
+
 def main() -> IO(Unit):
   +j = fixture()
   +mixed = J.arr([j, J.JNull{}, J.bool(False{}), J.num(12), J.obj([]), J.arr([])])
@@ -114,6 +132,8 @@ def main() -> IO(Unit):
   +metadata = result(R.apply(part, "metadata", 0))
   do IO<Unit>:
     say("exact escaped UTF-8 size", U32.is_eq(R.bytes(mixed), C.utf8_len(J.show(mixed))))
+    say("nested escaped key sizes", size_agrees(nested_size(12n, mixed)))
+    say("internal JSON constructor sizes", internal_sizes())
     say("default untouched", default_out(T.projected.if(False{}, Policy.Ok{j}, J.obj([])), j))
     say("text projection", Maybe.is_none(&2, J.Json, J.get(R.select(j, "text"), "html")))
     say("HTML projection", Maybe.is_none(&2, J.Json, J.get(R.select(j, "html"), "text")))
@@ -159,6 +179,8 @@ def main() -> IO(Unit):
         Policy.str_arg(binary, "content", "")))
 
 #|exact escaped UTF-8 size: true
+#|nested escaped key sizes: true
+#|internal JSON constructor sizes: true
 #|default untouched: true
 #|text projection: true
 #|HTML projection: true

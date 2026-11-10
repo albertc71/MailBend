@@ -132,6 +132,46 @@ def check_nested_and_image_compatibility() -> IO(Unit):
       J.kv("n", J.JNum{"-0.00E+007"}),
       J.kv("b", J.JBool{False{}})])))))
     IO.print(U32.show(C.utf8_len(data)) ++ " " ++ Bool.show(agrees(J.str(data))))
+    IO.print("image escape byte count: " ++ Bool.show(U32.is_eq(J.esc_bytes(data), 2796204)))
+
+def escape_count.agrees(+s: String, +acc: U32) -> Bool:
+  U32.is_eq(J.esc_bytes.go(s, acc), C.utf8_len.go(J.esc(s), acc))
+
+def escape_count.range(n: Nat, +code: U32, ok: Bool) -> Bool:
+  match n:
+    case 0n:
+      ok
+    case 1n+p:
+      +s = C.bytes_str([code])
+      escape_count.range(p, (code + 1 : U32), ok &&
+        escape_count.agrees(s, 0) && escape_count.agrees(s, 4294967293))
+
+def escape_count.edges(xs: List<&2, U32>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case code <> tail:
+      +s = C.bytes_str([code])
+      escape_count.agrees(s, 0) && escape_count.agrees(s, 4294967295) &&
+        escape_count.edges(tail)
+
+def check_escape_count() -> IO(Unit):
+  do IO<Unit>:
+    IO.print("escape count goldens: " ++ Bool.show(
+      U32.is_eq(J.esc_bytes(""), 0) && U32.is_eq(J.esc_bytes("a/ ~"), 4) &&
+      U32.is_eq(J.esc_bytes("\"\\\n\r\t"), 10) &&
+      U32.is_eq(J.esc_bytes("\u{0}\u{8}\u{C}\u{1F}"), 24) &&
+      U32.is_eq(J.esc_bytes("é😀"), 6)))
+    IO.print("all byte chars counted: " ++ Bool.show(escape_count.range(256n, 0, True{})))
+    # The IO runtime rejects non-scalars; the unchanged universal theorem in
+    # json-size-escape-atoms.bend covers every 32-bit Char, without a validity premise.
+    IO.print("Unicode scalar edge counts: " ++ Bool.show(escape_count.edges([
+      127, 128, 2047, 2048, 55295, 57344, 65535, 65536, 1114111,
+      265, 266, 269, 290, 348, 65545, 65546, 65549, 65570, 65628])))
+    IO.print("escape count wraps as U32: " ++ Bool.show(
+      U32.is_eq(J.esc_bytes.go("abcdef", 4294967293), 3) &&
+      U32.is_eq(J.esc_bytes.go("\u{0}", 4294967293), 3) &&
+      escape_count.agrees("é😀\"\\\n\r\t\u{0}abc", 4294967280)))
 
 # Numbers, words and container structure.
 def check_parse() -> IO(Unit):
@@ -202,6 +242,7 @@ def main() -> IO(Unit):
     check_show()
     check_chain_shapes()
     check_nested_and_image_compatibility()
+    check_escape_count()
     check_parse()
     check_strings()
     check_access()
@@ -236,6 +277,11 @@ def main() -> IO(Unit):
 #|😀
 #|True
 #|2796204 True
+#|image escape byte count: True
+#|escape count goldens: True
+#|all byte chars counted: True
+#|Unicode scalar edge counts: True
+#|escape count wraps as U32: True
 #|1 -0 0.0e0 1E+2 0e1 12345678901234567890 "s" true false null
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
 #|PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR PARSE-ERROR
