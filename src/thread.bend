@@ -235,13 +235,13 @@ def reaches.go(
   fuel: Nat, state: Map<&2, String> & String & Bool, +target: String
 ) -> Map<&2, String> & Bool:
   match fuel state:
-    case _ (parents, SNil{}, _):
+    case _ Tuple{parents, Tuple{SNil{}, _}}:
       (parents, False{})
-    case _ (parents, SCon{h, t}, True{}):
+    case _ Tuple{parents, Tuple{SCon{h, t}, True{}}}:
       (parents, True{})
-    case 0n (parents, SCon{h, t}, False{}):
+    case 0n Tuple{parents, Tuple{SCon{h, t}, False{}}}:
       (parents, False{})
-    case 1n+f (parents, SCon{h, t}, False{}):
+    case 1n+f Tuple{parents, Tuple{SCon{h, t}, False{}}}:
       reaches.go(f, reaches.next(target, Map.get(String, "", parents, SCon{h, t})), target)
 
 def reaches(
@@ -260,11 +260,11 @@ def parent_in.go(
   cands: List<&2, String>, state: Map<&2, Bool> & Bool & String, +self: String
 ) -> Map<&2, Bool> & String:
   match cands state:
-    case _ (present, True{}, c):
+    case _ Tuple{present, Tuple{True{}, c}}:
       (present, c)
-    case Nil{} (present, False{}, c):
+    case Nil{} Tuple{present, Tuple{False{}, c}}:
       (present, "")
-    case +d <> t (present, False{}, c):
+    case +d <> t Tuple{present, Tuple{False{}, c}}:
       parent_in.go(t, parent_in.next(d, self, Map.has(&2, Bool, present, d)), self)
 
 def parent_in(
@@ -313,9 +313,9 @@ def thread_order.go(
   state: Map<&2, Bool> & Map<&2, String> & List<&2, Placed>, +fuel: Nat
 ) -> List<&2, Placed>:
   match ns state:
-    case Nil{} (present, parents, ps):
+    case Nil{} Tuple{present, Tuple{parents, ps}}:
       List.reverse(&2, Placed, ps)
-    case n <> t (present, parents, ps):
+    case n <> t Tuple{present, Tuple{parents, ps}}:
       thread_order.go(t,
         thread_order.go.next(ps, thread_order.step(n, present, fuel, parents)), fuel)
 
