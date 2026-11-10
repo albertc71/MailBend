@@ -1,0 +1,65 @@
+name: Clang decision regression controls
+on:
+  push:
+    branches: [validation/clang-decision-20261110]
+permissions:
+  contents: read
+jobs:
+  controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: 597697ffcd534c0d457c690565628c335c27b22a
+      PYTHONOPTIMIZE: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: validation
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify and scan validation overlay
+        timeout-minutes: 3
+        working-directory: validation
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          sha256sum .github/workflows/clang-decision-controls.yml validation/check-clang-controls.py
+          timeout --kill-after=5s 150s sh scripts/scan-secrets.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 597697ffcd534c0d457c690565628c335c27b22a
+          path: source
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify and scan exact candidate
+        timeout-minutes: 3
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          sha256sum tests/test-install.py scripts/install.sh docs/OPERATIONS.md
+          timeout --kill-after=5s 150s sh scripts/scan-secrets.sh
+      - name: Confirm installed runner shell identities
+        run: |
+          test -x /bin/bash
+          test "$(readlink -f /bin/sh)" = /usr/bin/dash
+          readlink -f /bin/sh /bin/bash
+          dpkg-query -W dash bash coreutils util-linux
+          /bin/bash --version
+          python3 --version
+      - name: Baseline survivor and candidate semantic controls
+        timeout-minutes: 12
+        run: timeout --kill-after=5s 690s python3 -I validation/validation/check-clang-controls.py
+      - name: Contributor comparison lifecycle controls
+        timeout-minutes: 2
+        working-directory: source
+        run: timeout --kill-after=5s 90s python3 -B tests/test-mcp-schema-comparison.py
+      - name: Confirm clean checkouts
+        run: |
+          test -z "$(git -C validation status --porcelain)"
+          test -z "$(git -C source status --porcelain)"
+          test "$(git -C source rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo 'PASS both checkouts unchanged'
