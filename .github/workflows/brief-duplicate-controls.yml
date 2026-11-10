@@ -1,0 +1,80 @@
+name: Brief duplicate UID controls (one-shot)
+
+on:
+  push:
+    branches: [aegis/validate-294-duplicate-controls-20261110]
+
+permissions:
+  contents: read
+
+env:
+  BEND_NO_TELEMETRY: '1'
+
+concurrency:
+  group: brief-duplicate-controls-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  duplicate-emission:
+    if: github.repository == 'albertc71/MailBend'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout validation driver and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: validation
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable candidate and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 448a25a1c6a8fddcb6993014b986d0fe82722947
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify source identity and validation-only child
+        run: |
+          set -eu
+          test "$(git -C candidate rev-parse HEAD)" = 448a25a1c6a8fddcb6993014b986d0fe82722947
+          test "$(git -C validation rev-parse HEAD^)" = 448a25a1c6a8fddcb6993014b986d0fe82722947
+          git -C validation diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/brief-validation-paths"
+          printf '%s\n' '.github/workflows/brief-duplicate-controls.yml' 'validation/brief_duplicate_controls.py' > "$RUNNER_TEMP/brief-expected-paths"
+          diff -u "$RUNNER_TEMP/brief-expected-paths" "$RUNNER_TEMP/brief-validation-paths"
+          git -C candidate rev-parse HEAD
+          git -C validation rev-parse HEAD
+      - name: Redacted tree and history scans
+        timeout-minutes: 5
+        run: |
+          sh validation/scripts/scan-secrets.sh
+          sh candidate/scripts/scan-secrets.sh
+      - name: Install standard build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install pinned Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install schema dependency and pinned toolchains
+        working-directory: candidate
+        run: |
+          python3 -m pip install jsonschema==4.26.0
+          sh scripts/install-rust.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Build immutable candidate
+        working-directory: candidate
+        timeout-minutes: 15
+        run: scripts/install.sh
+      - name: Check generated evidence and duplicate-emission negative control
+        timeout-minutes: 10
+        run: |
+          set -eu
+          python3 candidate/tools/check-claims.py --check
+          python3 -B validation/validation/brief_duplicate_controls.py --root candidate
+      - name: Verify tracked candidate restored
+        if: always()
+        run: git -C candidate diff --exit-code
