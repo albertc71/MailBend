@@ -99,8 +99,8 @@ MUTATIONS = (
     (
         "json-object-counter-omits-colon",
         "src/response.bend",
-        "((3 + C.utf8_len(J.esc(k)) : U32) + bytes(v) : U32)",
-        "((2 + C.utf8_len(J.esc(k)) : U32) + bytes(v) : U32)",
+        "((3 + J.esc_bytes(k) : U32) + bytes(v) : U32)",
+        "((2 + J.esc_bytes(k) : U32) + bytes(v) : U32)",
         "reference_bytes",
     ),
     (

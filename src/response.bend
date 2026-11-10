@@ -22,7 +22,7 @@ def bytes(j: J.Json) -> U32:
     case J.JNum{s}:
       C.utf8_len(s)
     case J.JStr{s}:
-      (2 + C.utf8_len(J.esc(s)) : U32)
+      (2 + J.esc_bytes(s) : U32)
     case J.JArr{xs}:
       (2 + bytes(xs) : U32)
     case J.JObj{xs}:
@@ -32,7 +32,7 @@ def bytes(j: J.Json) -> U32:
     case J.JEnd{}:
       0
     case J.JKv{k, v}:
-      ((3 + C.utf8_len(J.esc(k)) : U32) + bytes(v) : U32)
+      ((3 + J.esc_bytes(k) : U32) + bytes(v) : U32)
 
 # Projection only selects body text, HTML or selected-part content. Everything else, including
 # every selected summary and every Jev answer, remains untouched.
