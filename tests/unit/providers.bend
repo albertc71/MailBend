@@ -1,15 +1,22 @@
-# Provider endpoint contracts and print-only safety defaults.
+# Provider endpoint and login-policy contracts and print-only safety defaults.
 
 import Base
 import ../../src/providers.bend as P
 import ../../src/json.bend as J
+
+def login_policy(policy: P.LoginPolicy) -> String:
+  match policy:
+    case P.EmailFallback{}:
+      "EmailFallback"
+    case P.WebDeLocalPart{}:
+      "WebDeLocalPart"
 
 def settings(s: P.Settings) -> String:
   match s:
     case P.Manual{reason}:
       "manual"
     case P.Remote{imap, imap_port, smtp, smtp_port, tls, save_sent, policy}:
-      String.join([imap, imap_port, smtp, smtp_port, tls, save_sent], "|")
+      String.join([imap, imap_port, smtp, smtp_port, tls, save_sent, login_policy(policy)], "|")
 
 def render_text(r: Result<&2, &2, String, String>) -> String:
   match r:
@@ -98,34 +105,34 @@ def main() -> IO(Unit):
       "\"MAILBEND_EMAIL\":\"Reader.Name@web.de\",\"MAILBEND_LOGIN\":\"\"")))
     IO.print(Bool.show(refused(P.render("proton-bridge", "Reader.Name@web.de"))))
 
-#|icloud|imap.mail.me.com|993|smtp.mail.me.com|587|starttls|1|documented; existing default profile, not newly live-tested
+#|icloud|imap.mail.me.com|993|smtp.mail.me.com|587|starttls|1|EmailFallback|documented; existing default profile, not newly live-tested
 #|https://support.apple.com/102525 https://support.apple.com/102654
 #|True
-#|gmail|imap.gmail.com|993|smtp.gmail.com|465|implicit|0|documented; not live-tested
+#|gmail|imap.gmail.com|993|smtp.gmail.com|465|implicit|0|EmailFallback|documented; not live-tested
 #|https://developers.google.com/workspace/gmail/imap/imap-smtp https://support.google.com/accounts/answer/185833 https://support.google.com/mail/answer/78892
 #|True
-#|yahoo|imap.mail.yahoo.com|993|smtp.mail.yahoo.com|465|implicit|0|documented; not live-tested
+#|yahoo|imap.mail.yahoo.com|993|smtp.mail.yahoo.com|465|implicit|0|EmailFallback|documented; not live-tested
 #|https://help.yahoo.com/kb/SLN4075.html
 #|True
-#|aol|imap.aol.com|993|smtp.aol.com|465|implicit|0|ISPDB-reviewed; not provider-page-verified or live-tested
+#|aol|imap.aol.com|993|smtp.aol.com|465|implicit|0|EmailFallback|ISPDB-reviewed; not provider-page-verified or live-tested
 #|https://github.com/thunderbird/autoconfig/blob/master/ispdb/aol.com.xml https://help.aol.com/articles/create-and-manage-app-password
 #|True
-#|fastmail|imap.fastmail.com|993|smtp.fastmail.com|465|implicit|0|documented; not live-tested
+#|fastmail|imap.fastmail.com|993|smtp.fastmail.com|465|implicit|0|EmailFallback|documented; not live-tested
 #|https://www.fastmail.help/hc/en-us/articles/1500000278342-Server-names-and-ports
 #|True
-#|zoho|imap.zoho.com|993|smtp.zoho.com|465|implicit|0|documented .com personal profile only; not live-tested
+#|zoho|imap.zoho.com|993|smtp.zoho.com|465|implicit|0|EmailFallback|documented .com personal profile only; not live-tested
 #|https://www.zoho.com/mail/help/imap-access.html https://www.zoho.com/mail/help/zoho-smtp.html
 #|True
-#|gmx|imap.gmx.com|993|mail.gmx.com|465|implicit|0|documented GMX.com profile; not live-tested
+#|gmx|imap.gmx.com|993|mail.gmx.com|465|implicit|0|EmailFallback|documented GMX.com profile; not live-tested
 #|https://support.gmx.com/pop-imap/imap/server.html https://support.gmx.com/pop-imap/toggle.html https://support.gmx.com/security/2fa/application-specific-passwords.html
 #|True
-#|web.de|imap.web.de|993|smtp.web.de|465|implicit|0|endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested
+#|web.de|imap.web.de|993|smtp.web.de|465|implicit|0|WebDeLocalPart|endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested
 #|https://hilfe.web.de/pop-imap/imap/imap-serverdaten.html https://github.com/thunderbird/autoconfig/blob/3a5b95752363cdcdad8928d7d29a993cbdabcad2/ispdb/web.de.xml https://hilfe.web.de/sicherheit/2fa/anwendungsspezifisches-passwort.html
 #|True
-#|mailbox.org|imap.mailbox.org|993|smtp.mailbox.org|465|implicit|0|documented; not live-tested
+#|mailbox.org|imap.mailbox.org|993|smtp.mailbox.org|465|implicit|0|EmailFallback|documented; not live-tested
 #|https://kb.mailbox.org/en/private/e-mail/e-mail-configuration/ https://kb.mailbox.org/en/private/security-and-privacy/e-mail-password/
 #|True
-#|posteo|posteo.de|993|posteo.de|465|implicit|0|ISPDB-reviewed; prerequisites need local review; not live-tested
+#|posteo|posteo.de|993|posteo.de|465|implicit|0|EmailFallback|ISPDB-reviewed; prerequisites need local review; not live-tested
 #|https://github.com/thunderbird/autoconfig/blob/master/ispdb/posteo.de.xml https://posteo.de/en/blog/how-to-use-app-passwords-with-posteo
 #|True
 #|proton-bridge|manual|manual review required
