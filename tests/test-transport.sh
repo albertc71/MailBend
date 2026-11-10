@@ -145,19 +145,25 @@ call_smtp() {
 
 check_leak() {
   local password="$1" login="$2" encoded_password encoded_plain
-  # Status 1 means a matched secret; status 2 means encoding failed.
+  # Status 1 means a matched secret; status 2 means the check failed.
   # An empty password has no secret bytes. Match literal bytes, including
   # SMTP's LOGIN password and PLAIN NUL-user-NUL-password encodings.
   [ -n "$password" ] || return 0
-  if grep -aFq -e "$password" -- "$OUT" "$ERR"; then
+  if grep -aFq -e "$password" -- "$OUT" "$ERR" >/dev/null 2>&1; then
     GLOBAL_LEAK=1
     return 1
+  elif [ "$?" -ne 1 ]; then
+    GLOBAL_LEAK_CHECK_ERROR=1
+    return 2
   fi
   encoded_password=$({ set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n'; } 2>/dev/null) || { GLOBAL_LEAK_CHECK_ERROR=1; return 2; }
   encoded_plain=$({ set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n'; } 2>/dev/null) || { GLOBAL_LEAK_CHECK_ERROR=1; return 2; }
-  if grep -aFq -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
+  if grep -aFq -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR" >/dev/null 2>&1; then
     GLOBAL_LEAK=1
     return 1
+  elif [ "$?" -ne 1 ]; then
+    GLOBAL_LEAK_CHECK_ERROR=1
+    return 2
   fi
   return 0
 }
@@ -881,6 +887,75 @@ clean|0|0|0|0|2
 CASES
 }
 
+case_leak_grep_controls() {
+  local HELPER="$WORK/grep-clean-helper" PASSWORD="canary" FIXTURE_USER="reader"
+  local CASE1_LOG="$WORK/grep-redaction.jsonl" CASE12_LOG="$WORK/grep-redaction.jsonl"
+  local diagnostic="$WORK/grep-diagnostic" phase failure expected result
+  printf '#!/bin/sh\nprintf "ordinary reply\\n"\n' >"$HELPER"
+  chmod +x "$HELPER"
+  printf '%s\n' '{"line": "L LOGIN <redacted>"}' '{"line": "AUTH <redacted>"}' >"$CASE1_LOG"
+  while IFS='|' read -r phase failure expected; do
+    (
+      local calls=0 faults=0 status initial_error recovered empty_status
+      grep() {
+        if [ "$1" = -aFq ]; then
+          calls=$((calls + 1))
+          if [ "$calls" -eq "$phase" ]; then
+            faults=$((faults + 1))
+            if [ "$failure" = missing ]; then
+              rm "$ERR"
+            else
+              printf '%s\n' "$PASSWORD"
+              printf '%s\n' "$PASSWORD" >&2
+              return "$failure"
+            fi
+          fi
+        fi
+        command grep "$@"
+      }
+      PASS_COUNT=0; FAIL_COUNT=0; GLOBAL_LEAK=0; GLOBAL_LEAK_CHECK_ERROR=0
+      call_helper smtp ''
+      status=$?; initial_error=$GLOBAL_LEAK_CHECK_ERROR
+      [ "$CODE" -eq 0 ] || exit 1
+      call_helper smtp ''
+      recovered=$?
+      [ "$CODE" -eq 0 ] && [ "$GLOBAL_LEAK_CHECK_ERROR" -eq "$expected" ] || exit 1
+      call_helper smtp '' MAILBEND_APP_PASSWORD=
+      empty_status=$?
+      case2
+      [ "$CODE" -eq 0 ] && [ "$status" -eq "$((2 * expected))" ] &&
+        [ "$recovered" -eq 0 ] && [ "$empty_status" -eq 0 ] &&
+        [ "$GLOBAL_LEAK" -eq 0 ] && [ "$initial_error" -eq "$expected" ] &&
+        [ "$GLOBAL_LEAK_CHECK_ERROR" -eq "$expected" ] && [ "$faults" -eq "$expected" ] &&
+        [ "$FAIL_COUNT" -eq "$expected" ] && [ "$PASS_COUNT" -eq "$((1 - expected))" ]
+    ) >"$diagnostic" 2>&1
+    result=$?
+    if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$expected" <<'PY'
+import pathlib
+import sys
+
+expected = {
+    '0': b'PASS 2 password never leaks; LOGIN/AUTH redacted in the log\n',
+    '1': b'FAIL 2 password never leaks; LOGIN/AUTH redacted in the log -- leak=0 check_error=1 login_redacted=True auth_redacted=True\n',
+}[sys.argv[2]]
+sys.exit(0 if pathlib.Path(sys.argv[1]).read_bytes() == expected else 1)
+PY
+    then
+      pass "leak grep phase $phase failure $failure"
+    else
+      fail "leak grep phase $phase failure $failure" "wrong status, sticky evidence, or unsafe diagnostic"
+    fi
+  done <<'CASES'
+0|0|0
+1|2|1
+1|7|1
+2|2|1
+2|7|1
+1|missing|1
+2|missing|1
+CASES
+}
+
 # Numeric section partials retain literal framing and the UIDVALIDITY guard.
 case_selected_section() {
   start_server case_selected_section || { fail selected-section "server did not start"; return; }
@@ -1112,6 +1187,7 @@ CASES
 
 # --- run every case -------------------------------------------------------
 case_leak_aggregate_controls
+case_leak_grep_controls
 case_password_leak_check
 case1
 case3
