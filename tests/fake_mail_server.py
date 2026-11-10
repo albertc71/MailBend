@@ -761,9 +761,6 @@ class IMAPSession:
     def send(self, text: str):
         if not self.muted:
             self.conn.write(text.encode('latin-1'))
-            # Observe the actual synthetic reply, independently of UID generation.
-            if self.state.search_response == 'duplicate-uids' and text.startswith('* SEARCH'):
-                self.logger.log('imap-search-response', text)
             if self.state.measure_responses:
                 self.logger.log('imap-bytes', str(len(text)))
 
@@ -1094,6 +1091,8 @@ class IMAPSession:
             self.send('* SEARCH invalid\r\n')
         elif mode != 'missing':
             self.send(response)
+            if mode == 'duplicate-uids' and not self.muted:
+                self.logger.log('imap-search-response', response)
             if mode == 'duplicate':
                 self.send(response)
         self.send(f'{tag} OK SEARCH completed\r\n')

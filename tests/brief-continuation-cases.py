@@ -75,6 +75,26 @@ def run(t, work):
     finally:
         srv.stop()
 
+    for global_mode, mailbox_mode, expected_replies in (
+            ('normal', 'duplicate-uids', ['* SEARCH 1 1 3 3 5 5\r\n']),
+            ('duplicate-uids', 'normal', [])):
+        override = copy.deepcopy(fixture)
+        override['search_responses'] = {'INBOX': mailbox_mode}
+        srv = t.Server(work, fixture=override, extra=('--search-response', global_mode))
+        try:
+            code, page = t.tool(srv, 'mail_brief', {'limit': 2})
+            t.check(f'brief continuation: {mailbox_mode} mailbox override retains page selection',
+                    code == 0 and [m['uid'] for m in page.get('messages', [])] == [1, 3]
+                    and page.get('next_continuation') == dict(token, after_uid=3)
+                    and page.get('groups') == [
+                        {'group': 'unknown_people', 'group_key': None, 'count': 2}], page)
+            replies = [entry['line'] for entry in srv.log_records()
+                       if entry['proto'] == 'imap-search-response']
+            t.check(f'brief continuation: {mailbox_mode} mailbox override controls observation',
+                    replies == expected_replies, replies)
+        finally:
+            srv.stop()
+
     srv = t.Server(work, fixture=fixture, extra=('--search-response', 'duplicate'))
     try:
         code, result = t.tool(srv, 'mail_brief', {'limit': 2})
