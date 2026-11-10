@@ -1,0 +1,222 @@
+name: Provider login inventory validation 20261110
+on:
+  push:
+    branches:
+      - validate/provider-login-policy-20261110
+permissions:
+  contents: read
+concurrency:
+  group: provider-login-policy-20261110
+  cancel-in-progress: false
+env:
+  BEND_NO_TELEMETRY: '1'
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout validation apparatus
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: apparatus
+      - name: Verify direct child and product identity
+        working-directory: apparatus
+        run: |
+          set -eu
+          test "$GITHUB_REF" = refs/heads/validate/provider-login-policy-20261110
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git show -s --format=%P HEAD)" = dd2fcba901bd3b40a92580dd05532952bd6d961f
+          test "$(git rev-parse HEAD^:tests/unit/providers.bend)" = 4357f623efee3e30b7a885732037e29edfe8dd84
+          test "$(git rev-parse HEAD^^)" = ec05628f01120ee313609215b2453fb9eb16c271
+          test "$(git rev-parse HEAD~2^{tree})" = 09812851770441d0f4caa88f721158d1b1816da6
+          test "$(git rev-parse HEAD^:src/providers.bend)" = 389aaea893d66668145eff36ca69ae08c774b5c7
+          test "$(git rev-parse HEAD^{tree}:.github/workflows/ci.yml)" = e79fd8ac6813c4bc03f4051d1716b219a4d61d8b
+          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/provider-login-policy-validation-20261110.yml
+          test "$(git diff --name-only HEAD^^ HEAD^)" = tests/unit/providers.bend
+          git show -s --format='validation %H tree %T parents %P' HEAD
+          git show -s --format='product %H tree %T parents %P' HEAD^
+      - name: Scan validation tree and history
+        working-directory: apparatus
+        run: sh scripts/scan-secrets.sh
+      - name: Checkout exact product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: dd2fcba901bd3b40a92580dd05532952bd6d961f
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify product checkout
+        working-directory: candidate
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = dd2fcba901bd3b40a92580dd05532952bd6d961f
+          test "$(git rev-parse HEAD^{tree})" = 6d6f90785dbd4ea8eb6b9fecf87cb3c8c3e0f5ec
+          test "$(git show -s --format=%P HEAD)" = ec05628f01120ee313609215b2453fb9eb16c271
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang
+      - name: Install pinned Bend
+        working-directory: candidate
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Read pinned Bend guide
+        run: bend guide
+      - name: Provider inventory and focused mutation controls
+        working-directory: candidate
+        timeout-minutes: 12
+        run: |
+          timeout --signal=TERM --kill-after=10s 650s python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import subprocess
+          import tempfile
+
+          base = "ec05628f01120ee313609215b2453fb9eb16c271"
+          unit = Path("tests/unit/providers.bend")
+          source = Path("src/providers.bend")
+          candidate = unit.read_bytes()
+          production = source.read_bytes()
+          baseline = subprocess.check_output(["git", "show", base + ":tests/unit/providers.bend"])
+          names = ("icloud", "gmail", "yahoo", "aol", "fastmail", "zoho",
+                   "gmx", "web.de", "mailbox.org", "posteo")
+          expected_policy = dict.fromkeys(names, "EmailFallback")
+          expected_policy["web.de"] = "WebDeLocalPart"
+
+          def require(condition, detail):
+              if not condition:
+                  raise RuntimeError(detail)
+
+          def expected(data):
+              return b"".join(line[2:] + b"\n" for line in data.splitlines()
+                              if line.startswith(b"#|"))
+
+          def inventory(output):
+              lines = output.decode("utf-8").splitlines()
+              result = {}
+              for name in names:
+                  found = [line for line in lines if line.startswith(name + "|")]
+                  require(len(found) == 1, "inventory row count: " + name)
+                  result[name] = found[0]
+              return result
+
+          def without_policy(output):
+              rows = inventory(output)
+              result = []
+              for line in output.decode("utf-8").splitlines():
+                  if line in rows.values():
+                      fields = line.split("|")
+                      require(len(fields) == 9, "candidate inventory width")
+                      del fields[7]
+                      line = "|".join(fields)
+                  result.append(line)
+              return ("\n".join(result) + "\n").encode()
+
+          def run(label):
+              with tempfile.TemporaryFile() as output:
+                  result = subprocess.run(
+                      ["timeout", "--signal=TERM", "--kill-after=5s", "45s",
+                       "bend", str(unit)], stdout=output, stderr=subprocess.STDOUT,
+                      check=False, timeout=55)
+                  require(result.returncode == 0,
+                          label + ": Bend exit " + str(result.returncode))
+                  require(output.tell() <= 262144, label + ": oversized output")
+                  output.seek(0)
+                  return output.read()
+
+          original_hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                             for path in (unit, source)}
+          old_expected = expected(baseline)
+          new_expected = expected(candidate)
+          old_rows = inventory(old_expected)
+          new_rows = inventory(new_expected)
+          require(without_policy(new_expected) == old_expected,
+                  "candidate expected output differs beyond the policy column")
+          for name in names:
+              require(new_rows[name].split("|")[7] == expected_policy[name],
+                      "independent expected policy: " + name)
+
+          try:
+              unit.write_bytes(baseline)
+              require(run("baseline pristine") == old_expected, "baseline pristine mismatch")
+              unit.write_bytes(candidate)
+              require(run("candidate pristine") == new_expected, "candidate pristine mismatch")
+              print("PASS pristine baseline and candidate exact unit output", flush=True)
+
+              for name in names:
+                  text = production.decode("utf-8")
+                  marker = 'Preset{"' + name + '", Remote{'
+                  require(text.count(marker) == 1, "preset marker count: " + name)
+                  start = text.index(marker)
+                  end = text.find('Preset{"', start + len(marker))
+                  if end == -1:
+                      end = len(text)
+                  block = text[start:end]
+                  before = expected_policy[name]
+                  after = "EmailFallback" if before == "WebDeLocalPart" else "WebDeLocalPart"
+                  require(block.count(before + "{}") == 1, "policy count: " + name)
+                  changed = block.replace(before + "{}", after + "{}")
+                  source.write_text(text[:start] + changed + text[end:], encoding="utf-8")
+                  unit.write_bytes(baseline)
+                  old_actual = run(name + " baseline mutant")
+                  require(inventory(old_actual) == old_rows,
+                          name + ": baseline inventory unexpectedly saw policy")
+                  if name in ("gmail", "web.de"):
+                      require(old_actual != old_expected,
+                              name + ": existing behavior assertion did not detect policy")
+                  else:
+                      require(old_actual == old_expected,
+                              name + ": expected baseline survivor differed")
+
+                  unit.write_bytes(candidate)
+                  actual = run(name + " candidate mutant")
+                  changed_rows = dict(new_rows)
+                  fields = changed_rows[name].split("|")
+                  fields[7] = after
+                  changed_rows[name] = "|".join(fields)
+                  require(inventory(actual) == changed_rows,
+                          name + ": wrong candidate row mismatch")
+                  require(actual != new_expected, name + ": mutant survived candidate")
+                  require(without_policy(actual) == old_actual,
+                          name + ": unexpected differences outside policy column")
+                  print("KILLED " + name + " with Bend exit 0", flush=True)
+                  print("  expected " + new_rows[name], flush=True)
+                  print("  actual   " + changed_rows[name], flush=True)
+                  source.write_bytes(production)
+
+              needle = b", login_policy(policy)"
+              require(candidate.count(needle) == 1, "observer-drop replacement count")
+              unit.write_bytes(candidate.replace(needle, b""))
+              dropped = run("observer-drop")
+              require(dropped == old_expected, "observer-drop did not omit only policy column")
+              require(dropped != new_expected, "observer-drop survived")
+              print("KILLED observer-drop with ten exact missing policy columns and Bend exit 0",
+                    flush=True)
+          finally:
+              source.write_bytes(production)
+              unit.write_bytes(candidate)
+              restored = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in (unit, source)}
+              require(restored == original_hashes, "restoration hash mismatch")
+              subprocess.run(["git", "diff", "--exit-code"], check=True)
+              print("RESTORED " + repr(restored), flush=True)
+
+          require(run("restored candidate") == new_expected, "restored candidate mismatch")
+          print("PASS restored candidate; ten policy mutations and observer-drop rejected",
+                flush=True)
+          PY
+      - name: Check final tracked source restoration
+        if: always()
+        working-directory: candidate
+        run: |
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = dd2fcba901bd3b40a92580dd05532952bd6d961f
+  ordinary:
+    needs: focused
+    uses: ./.github/workflows/ci.yml
+    with:
+      scale: false
+      record_scale: false
