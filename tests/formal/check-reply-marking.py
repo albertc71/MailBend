@@ -44,6 +44,10 @@ MUTATIONS = (
     ('unverified result serialized false', '[J.kv("original_marked", J.str("unverified")), J.kv("original_mark_reason", J.str(reason))]', '[J.kv("original_marked", J.bool(False{})), J.kv("original_mark_reason", J.str(reason))]', 'original_mark_result_fields_examples'),
     ('refusal omits identity check', 'original_mark.identity(positive(I.ok_code(I.replies(lines, 1), "UIDVALIDITY")), uidv), "")', '"", "")', 'original_mark_refusal_identity_examples'),
     ('result ignores refusal', 'original_mark.transcript(original_mark.refusal(lines, uidv), lines, uid, uidv)', 'original_mark.transcript("", lines, uid, uidv)', 'original_mark_result_fields_examples'),
+    ('search refusal reason omitted', 'Bool.pick(String, I.refused(lines, 2), "search_refused", "")',
+     'Bool.pick(String, I.refused(lines, 2), "", "")', 'original_mark_search_refusal_fields_example'),
+    ('store refusal reason omitted', 'Bool.pick(String, I.refused(lines, 3), "store_refused", "")',
+     'Bool.pick(String, I.refused(lines, 3), "", "")', 'original_mark_store_refusal_fields_example'),
 )
 
 

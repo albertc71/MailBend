@@ -324,6 +324,37 @@ law original_mark_result_fields_examples:
 def original_mark_result_fields_examples():
   ({==}, {==}, {==}, {==})
 
+# Fixed stopped transcripts pin refusal output, not arbitrary parsing or
+# refusal precedence. SMTP acceptance and the failed Sent copy remain intact.
+law original_mark_search_refusal_fields_example:
+  {Tools.with_fields(reply_mark_accepted_with_failed_copy(),
+      Tools.original_mark.fields(Tools.original_mark.result(
+        Policy.ProcOk{0, "* OK [UIDVALIDITY 91] stable\r\na1 OK selected\r\na2 NO search refused\r\n", ""},
+        Tools.Original{"Original", 7, 91}))) ==
+    Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+      J.kv("smtp_outcome", J.str("accepted")),
+      J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused")),
+      J.kv("original_marked", J.bool(False{})),
+      J.kv("original_mark_reason", J.str("search_refused"))])} : Policy.Out}
+
+def original_mark_search_refusal_fields_example():
+  {==}
+
+law original_mark_store_refusal_fields_example:
+  {Tools.with_fields(reply_mark_accepted_with_failed_copy(),
+      Tools.original_mark.fields(Tools.original_mark.result(
+        Policy.ProcOk{0, "* OK [UIDVALIDITY 91] stable\r\na1 OK selected\r\n" ++
+          "* SEARCH 7\r\na2 OK searched\r\na3 NO store refused\r\n", ""},
+        Tools.Original{"Original", 7, 91}))) ==
+    Policy.Ok{J.obj([J.kv("sent", J.bool(True{})),
+      J.kv("smtp_outcome", J.str("accepted")),
+      J.kv("sent_copy", J.str("failed or unconfirmed (check Sent before saving again): refused")),
+      J.kv("original_marked", J.bool(False{})),
+      J.kv("original_mark_reason", J.str("store_refused"))])} : Policy.Out}
+
+def original_mark_store_refusal_fields_example():
+  {==}
+
 # Unknown time refuses composition regardless of either random result.
 law unknown_clock_refuses_stamp:
   for a: Result<&1, &1, U32 & String, U32>
