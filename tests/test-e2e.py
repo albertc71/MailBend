@@ -1087,6 +1087,7 @@ def run_all(work, *, tool_scenarios_only=False):
     thread_discovery(work)
     thread_discovery_failures(work)
     thread_discovery_literals(work)
+    thread_discovery_reply_scope(work)
     archive_threads(work)
     awaiting_replies(work)
     live_contacts(work)
@@ -4785,6 +4786,58 @@ def thread_discovery_literals(work):
                       any(command in line for command in MUTATING_COMMANDS) for line in log), log)
         finally:
             srv.stop()
+
+
+def thread_discovery_reply_scope(work):
+    capability = '* CAPABILITY IMAP4rev1 SPECIAL-USE'
+    folders = ['* LIST (\\Sent) "/" {6}\r\nPosted', '* LIST (\\Archive) "/" "Filed"']
+    for checked in (False, True):
+        for command, kind, replies, accepted in [
+                ("EXAMINE#1", "capability", [capability], False),
+                ("FETCH#1", "capability", [capability], False),
+                ("LIST#1", "capability", [capability], False),
+                ("CAPABILITY#1", "capability", [capability], True),
+                ("EXAMINE#1", "folders", folders, False),
+                ("FETCH#1", "folders", folders, False),
+                ("CAPABILITY#1", "folders", folders, False),
+                ("LIST#1", "folders", folders, True)]:
+            fixture = thread_fixture()
+            fixture["untagged_replies"] = {command: replies}
+            if kind == "folders":
+                fixture["mailboxes"]["Posted"] = fixture["mailboxes"].pop("Sent Messages")
+                fixture["mailboxes"]["Filed"] = fixture["mailboxes"].pop("Archive")
+            srv = Server(work, fixture=fixture, caps="MOVE,UIDPLUS,IDLE")
+            try:
+                before = srv.st()
+                args = {"uid": 7, **({"uidvalidity": 1700000001} if checked else {})}
+                code, result = tool(srv, "mail_get_thread", args, MAILBEND_READ_ONLY="1")
+                label = f"thread reply scope: {kind} at {command}, checked={checked}"
+                expected_thread = [("INBOX", 7, None)]
+                searched, identities = ["INBOX"], [1700000001]
+                if kind == "capability" or accepted:
+                    sent, archive = ("Posted", "Filed") if kind == "folders" else ("Sent Messages", "Archive")
+                    expected_thread += [(sent, 1, "<trip1@example.com>"), ("INBOX", 8, "<trip2@example.com>")]
+                    searched += [sent, archive]
+                    identities += [1700000004, 1700000001]
+                check(label + " uses only the corresponding discovery replies",
+                      code == 0 and thread_of(result) == expected_thread
+                      and result.get("searched") == searched
+                      and [m.get("uidvalidity") for m in result.get("messages", [])] == identities, result)
+                log = srv.log_lines()
+                extended = kind == "capability" and accepted
+                sessions = 6 if extended else (5 if kind == "capability" or accepted else 3)
+                check(label + " requests only the advertised role lookup and required thread reads",
+                      sum(line == "L LOGIN <redacted>" for line in log) == sessions
+                      and sum(" RETURN (SPECIAL-USE)" in line for line in log) == int(extended), log)
+                check(label + " keeps the seed and discovery command tags",
+                      log[:2] == ['L LOGIN <redacted>', 'a1 EXAMINE "INBOX"']
+                      and log[2].startswith('a2 UID FETCH 7 ')
+                      and log[3:6] == ['a3 CAPABILITY', 'a4 LIST "" "*"', 'Z LOGOUT'], log[:6])
+                check(label + " changes no mailbox state or flags",
+                      srv.st() == before and not any(" SELECT " in line or "BODY[" in line or
+                          any(command in line for command in MUTATING_COMMANDS) for line in log), log)
+            finally:
+                srv.stop()
 
 
 def archive_threads(work):
