@@ -14,6 +14,7 @@ PASS_COUNT=0
 FAIL_COUNT=0
 SERVER_PIDS=""
 GLOBAL_LEAK=0
+GLOBAL_LEAK_CHECK_ERROR=0
 CASE1_LOG=""
 CASE12_LOG=""
 
@@ -148,9 +149,13 @@ check_leak() {
   # An empty password has no secret bytes. Match literal bytes, including
   # SMTP's LOGIN password and PLAIN NUL-user-NUL-password encodings.
   [ -n "$password" ] || return 0
-  encoded_password=$({ set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n'; } 2>/dev/null) || return 2
-  encoded_plain=$({ set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n'; } 2>/dev/null) || return 2
-  if grep -aFq -e "$password" -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
+  if grep -aFq -e "$password" -- "$OUT" "$ERR"; then
+    GLOBAL_LEAK=1
+    return 1
+  fi
+  encoded_password=$({ set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n'; } 2>/dev/null) || { GLOBAL_LEAK_CHECK_ERROR=1; return 2; }
+  encoded_plain=$({ set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n'; } 2>/dev/null) || { GLOBAL_LEAK_CHECK_ERROR=1; return 2; }
+  if grep -aFq -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
     GLOBAL_LEAK=1
     return 1
   fi
@@ -770,12 +775,110 @@ case2() {
   if [ -n "$CASE12_LOG" ] && grep -aq '"line": "AUTH <redacted>"' "$CASE12_LOG"; then
     auth_redacted="True"
   fi
-  if [ "$GLOBAL_LEAK" -eq 0 ] && [ "$login_redacted" = "True" ] && [ "$auth_redacted" = "True" ]; then
+  if [ "$GLOBAL_LEAK" -eq 0 ] && [ "$GLOBAL_LEAK_CHECK_ERROR" -eq 0 ] && [ "$login_redacted" = "True" ] && [ "$auth_redacted" = "True" ]; then
     pass "2 password never leaks; LOGIN/AUTH redacted in the log"
   else
     fail "2 password never leaks; LOGIN/AUTH redacted in the log" \
-      "leak=$GLOBAL_LEAK login_redacted=$login_redacted auth_redacted=$auth_redacted"
+      "leak=$GLOBAL_LEAK check_error=$GLOBAL_LEAK_CHECK_ERROR login_redacted=$login_redacted auth_redacted=$auth_redacted"
   fi
+}
+
+# A caller may ignore check_leak's status; case2 must still fail closed.
+case_leak_aggregate_controls() {
+  local HELPER="$WORK/aggregate-helper" PASSWORD="canary" FIXTURE_USER="reader"
+  local CASE1_LOG="$WORK/aggregate-redaction.jsonl" CASE12_LOG="$WORK/aggregate-redaction.jsonl"
+  local diagnostic="$WORK/aggregate-diagnostic" counter="$WORK/aggregate-encodes"
+  local form failure expected_status expected_leak expected_error expected_encodes stream result
+  cat >"$HELPER" <<'SH'
+#!/bin/sh
+case "$AGGREGATE_FORM" in
+  raw) output='canary' ;;
+  login) output='Y2FuYXJ5' ;;
+  plain) output='AHJlYWRlcgBjYW5hcnk=' ;;
+  clean) output='ordinary reply' ;;
+  *) exit 9 ;;
+esac
+if [ "$AGGREGATE_STREAM" = stderr ]; then
+  printf 'prefix\000%s\000suffix\n' "$output" >&2
+else
+  printf 'prefix\000%s\000suffix\n' "$output"
+fi
+SH
+  chmod +x "$HELPER"
+  printf '%s\n' '{"line": "L LOGIN <redacted>"}' '{"line": "AUTH <redacted>"}' >"$CASE1_LOG"
+  while IFS='|' read -r form failure expected_status expected_leak expected_error expected_encodes; do
+    for stream in stdout stderr; do
+      printf '0\n' >"$counter"
+      (
+        local status initial_code initial_leak initial_error initial_encodes recovered recovered_code recovered_leak recovered_error empty_status
+        base64() {
+          local invocation
+          invocation=$(cat "$counter")
+          invocation=$((invocation + 1))
+          printf '%s\n' "$invocation" >"$counter"
+          if [ "$invocation" -eq "$failure" ]; then
+            cat >/dev/null
+            printf '%s\n' "$PASSWORD"
+            printf '%s\n' "$PASSWORD" >&2
+            return 7
+          fi
+          command base64
+        }
+        PASS_COUNT=0; FAIL_COUNT=0; GLOBAL_LEAK=0; GLOBAL_LEAK_CHECK_ERROR=0
+        call_helper smtp '' AGGREGATE_FORM="$form" AGGREGATE_STREAM="$stream"
+        status=$?; initial_code=$CODE
+        initial_leak=$GLOBAL_LEAK; initial_error=$GLOBAL_LEAK_CHECK_ERROR
+        initial_encodes=$(cat "$counter")
+        # The failing invocation is transient. Later calls cannot erase its evidence.
+        failure=0
+        call_helper smtp '' AGGREGATE_FORM=clean AGGREGATE_STREAM="$stream"
+        recovered=$?; recovered_code=$CODE
+        recovered_leak=$GLOBAL_LEAK; recovered_error=$GLOBAL_LEAK_CHECK_ERROR
+        call_helper smtp '' MAILBEND_APP_PASSWORD= AGGREGATE_FORM=clean AGGREGATE_STREAM="$stream"
+        empty_status=$?
+        case2
+        [ "$initial_code" -eq 0 ] && [ "$CODE" -eq 0 ] &&
+          [ "$status" -eq "$expected_status" ] &&
+          [ "$initial_leak" -eq "$expected_leak" ] && [ "$GLOBAL_LEAK" -eq "$expected_leak" ] &&
+          [ "$initial_error" -eq "$expected_error" ] && [ "$GLOBAL_LEAK_CHECK_ERROR" -eq "$expected_error" ] &&
+          [ "$recovered_code" -eq 0 ] && [ "$recovered" -eq 0 ] && [ "$empty_status" -eq 0 ] &&
+          [ "$recovered_leak" -eq "$expected_leak" ] && [ "$recovered_error" -eq "$expected_error" ] &&
+          [ "$initial_encodes" -eq "$expected_encodes" ] &&
+          [ "$(cat "$counter")" -eq "$((expected_encodes + 2))" ] &&
+          if [ "$expected_status" -eq 0 ]; then
+            [ "$FAIL_COUNT" -eq 0 ] && [ "$PASS_COUNT" -eq 1 ]
+          else
+            [ "$FAIL_COUNT" -eq 1 ] && [ "$PASS_COUNT" -eq 0 ]
+          fi
+      ) >"$diagnostic" 2>&1
+      result=$?
+      if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$expected_status" <<'PY'
+import pathlib
+import sys
+
+expected = {
+    '0': b'PASS 2 password never leaks; LOGIN/AUTH redacted in the log\n',
+    '1': b'FAIL 2 password never leaks; LOGIN/AUTH redacted in the log -- leak=1 check_error=0 login_redacted=True auth_redacted=True\n',
+    '2': b'FAIL 2 password never leaks; LOGIN/AUTH redacted in the log -- leak=0 check_error=1 login_redacted=True auth_redacted=True\n',
+}[sys.argv[2]]
+sys.exit(0 if pathlib.Path(sys.argv[1]).read_bytes() == expected else 1)
+PY
+      then
+        pass "leak aggregate $form $stream encoder $failure"
+      else
+        fail "leak aggregate $form $stream encoder $failure" "wrong status, sticky evidence, or unsafe diagnostic"
+      fi
+    done
+  done <<'CASES'
+raw|1|1|1|0|0
+clean|1|2|0|1|1
+clean|2|2|0|1|2
+login|1|2|0|1|1
+login|2|2|0|1|2
+plain|1|2|0|1|1
+plain|2|2|0|1|2
+clean|0|0|0|0|2
+CASES
 }
 
 # Numeric section partials retain literal framing and the UIDVALIDITY guard.
@@ -1008,6 +1111,7 @@ CASES
 }
 
 # --- run every case -------------------------------------------------------
+case_leak_aggregate_controls
 case_password_leak_check
 case1
 case3
