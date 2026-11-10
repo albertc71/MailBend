@@ -196,8 +196,7 @@ def controls():
     mutations = (
         ("unique-membership", "Map.has(&2, Bool, present, d)", "Map.get(Bool, False{}, present, d)"),
         ("shared-ids", "Map.set(&2, Bool, present2, id, seen)", "Map.set(&2, Bool, present2, id, False{})"),
-        ("shared-saturation", "(present2, seen) = Map.has(&2, Bool, present, id)\n      thread_order.present(t, Map.set(&2, Bool, present2, id, seen))",
-         "(present2, seen) = Map.get(Bool, True{}, present, id)\n      thread_order.present(t, Map.set(&2, Bool, present2, id, Bool.not(seen)))"),
+        ("shared-saturation", "Map.has(&2, Bool, present, id)", "Map.get(Bool, True{}, present, id)"),
         ("empty-ids", "thread_order.present(ids_of(sorted),", 'thread_order.present("" <> "" <> ids_of(sorted),'),
         ("cycle-cut", 'Bool.pick(String, cycle || shared, "", p)', 'Bool.pick(String, shared, "", p)'),
         ("cycle-fallback", 'Bool.pick(String, cycle || shared, "", p)',
@@ -229,6 +228,11 @@ def controls():
             (copy / unit).parent.mkdir(parents=True)
             shutil.copyfile(ROOT / unit, copy / unit)
             changed = source.replace(old, new)
+            if name == "shared-saturation":
+                target = "Map.set(&2, Bool, present2, id, seen)"
+                if changed.count(target) != 1:
+                    raise RuntimeError("saturation mutation insertion point changed")
+                changed = changed.replace(target, "Map.set(&2, Bool, present2, id, Bool.not(seen))")
             if name == "node-payload":
                 helper = '''def mutation_node(n: Node) -> Node:
   Node{folder, generation, I.Msg{uid, flags, date, size, headers, body, tree},
@@ -237,9 +241,9 @@ def controls():
     time, id, replies, refs}
 
 '''
-                if changed.count("def thread_order.step(") != 1:
+                if changed.count("def thread_order.step.finish(") != 1:
                     raise RuntimeError("payload mutation insertion point changed")
-                changed = changed.replace("def thread_order.step(", helper + "def thread_order.step(")
+                changed = changed.replace("def thread_order.step.finish(", helper + "def thread_order.step.finish(")
             (copy / "src/thread.bend").write_text(changed)
             actual, _ = run(["bend", str(unit)], cwd=copy, seconds=90)
             if actual == wanted or len(actual.splitlines()) != len(wanted.splitlines()):
