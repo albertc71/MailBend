@@ -13,8 +13,8 @@ This is a source snapshot, not a release, tag, or claim about a deployed binary.
 The later commit that adds this pack is separate from the production target.
 Record both commits in any audit report. A change of production target needs a
 new explicit scope and a review of the intervening diff.
-This target predates later MIME, JSON serialization, and ordered UID deduplication
-changes, so recheck findings in those areas against current `main` before disclosure.
+This target predates later source changes. Recheck every finding against current
+`main` before disclosure.
 
 Read all source paths below from the frozen checkout, including its contributor
 checks and claim manifests. Relative links viewed on a later branch may differ.
