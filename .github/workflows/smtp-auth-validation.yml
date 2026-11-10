@@ -1,0 +1,51 @@
+name: SMTP auth classifier validation
+on:
+  push:
+    branches:
+      - validation/smtp-auth-classifier-20261110
+permissions:
+  contents: read
+concurrency:
+  group: smtp-auth-classifier-20261110
+  cancel-in-progress: false
+jobs:
+  sensitivity:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable source admission
+        run: python3 -I validation/smtp_auth.py --admit-only
+      - name: Scan exact validation tree and history
+        timeout-minutes: 5
+        run: sh scripts/scan-secrets.sh
+      - name: Select isolated Rust home
+        run: |
+          home="$RUNNER_TEMP/smtp-auth-home"
+          mkdir -p "$home"
+          printf 'HOME=%s\nCARGO_HOME=%s/.cargo\nRUSTUP_HOME=%s/.rustup\n' "$home" "$home" "$home" >> "$GITHUB_ENV"
+      - name: Install repository-pinned Rust
+        timeout-minutes: 5
+        run: |
+          sh scripts/install-rust.sh
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Observe classifier sensitivity and restoration
+        timeout-minutes: 9
+        run: |
+          umask 077
+          ulimit -c 0
+          timeout --signal=TERM --kill-after=10s 500s python3 -I validation/smtp_auth.py
+      - name: Supplemental MCP comparison lifecycle controls
+        timeout-minutes: 3
+        run: python3 tests/test-mcp-schema-comparison.py
+      - name: Verify tracked source restoration
+        if: always()
+        run: git diff --exit-code HEAD
