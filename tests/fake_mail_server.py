@@ -218,6 +218,7 @@ class State:
         self.search_response = "normal"
         self.candidate_search_faults = fixture.get("candidate_search_faults", {})
         self.search_responses = fixture.get("search_responses", {})
+        self.untagged_replies = fixture.get("untagged_replies", {})
         self.remove_after_fetch = set()
         self.measure_responses = False
         self.flags_first = False
@@ -796,6 +797,8 @@ class IMAPSession:
                       f'{self.state.quota_refusals[verb]}\r\n')
             return
         self.muted = bool(names & self.state.drop_unanswered)
+        for reply in self.state.untagged_replies.get(f'{verb}#{self.state.seen[verb]}', []):
+            self.send(reply + '\r\n')
         self.dispatch(tokens)
         self.muted = False
         if names & (self.state.drop_after | self.state.drop_unanswered):
