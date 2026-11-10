@@ -1,0 +1,421 @@
+name: Bend 2.0.39 bounded observation 207
+
+on:
+  push:
+    branches:
+      - validation/207-bend-2039-5ff799d-20261110
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bend-2039-observation-207-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BEND_NO_TELEMETRY: '1'
+
+jobs:
+  canary:
+    name: Bend 2.0.39 x64 observation (not acceptance)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    defaults:
+      run:
+        shell: bash --noprofile --norc -e -o pipefail {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: checkout
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+          ref: 5ff799d094fd08078391c33218dc2a9ef598494b
+          fetch-depth: 1
+
+      - name: Isolate the candidate toolchain
+        id: isolate
+        timeout-minutes: 1
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=1 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=1 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          home="$RUNNER_TEMP/bend-canary-home"
+          test ! -e "$home"
+          test ! -e "$RUNNER_TEMP/bend-canary"
+          mkdir -p "$home/.bend" "$RUNNER_TEMP/bend-canary"
+          echo "CARGO_HOME=$home/.cargo" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$home/.rustup" >> "$GITHUB_ENV"
+          echo "HOME=$home" >> "$GITHUB_ENV"
+          echo "ELAN_HOME=$home/.elan" >> "$GITHUB_ENV"
+          echo "BENDTT=" >> "$GITHUB_ENV"
+          echo "BEND_HOME=" >> "$GITHUB_ENV"
+          echo "PYTHONUNBUFFERED=1" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = 5ff799d094fd08078391c33218dc2a9ef598494b
+          test "$(git rev-parse HEAD^{tree})" = c3a6396fc3e94836df6b7da2a6aa479fca5fc6b3
+          test -z "$(git status --porcelain)"
+          printf "OBSERVATION source=%s tree=%s overlay=%s run=%s attempt=%s\n" "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          test "$RUNNER_ARCH" = X64
+          test "$RUNNER_OS" = Linux
+          uname -a
+          printf "image=%s version=%s\n" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          nproc
+          free -b
+          df -B1 "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
+          python3 - <<'PY'
+          import json
+          password = json.load(open("tests/fixtures/mailbox.json"))["password"]
+          print("::add-mask::" + password)
+          PY
+          echo "$home/.bend/bin" >> "$GITHUB_PATH"
+          echo "$home/.elan/bin" >> "$GITHUB_PATH"
+          echo "$home/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install build dependencies
+        id: dependencies
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=2 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=2 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl python3-jsonschema
+          sh scripts/install-rust.sh
+
+      - name: Resolve and install the official Bend release
+        id: bend
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          REQUESTED_VERSION: '2.0.39'
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=3 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=3 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, tarfile, urllib.request
+          requested = os.environ['REQUESTED_VERSION']
+          if requested != 'latest' and not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', requested):
+              raise SystemExit('Use latest or an official stable N.N.N version')
+          route = 'latest' if requested == 'latest' else 'tags/v' + requested
+          api = 'https://api.github.com/repos/bendlang/bend/releases/' + route
+          with urllib.request.urlopen(api, timeout=60) as response:
+              release = json.load(response)
+          tag = release['tag_name']
+          if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag) or release['draft'] or release['prerelease']:
+              raise SystemExit('The release is not a stable Bend release')
+          if release['id'] != 422327413:
+              raise SystemExit('Release identity changed')
+          with urllib.request.urlopen('https://api.github.com/repos/bendlang/bend/git/ref/tags/v2.0.39', timeout=60) as response:
+              tag_ref = json.load(response)
+          if tag_ref['object'] != {'sha': 'a3efe8a3801f423827424227172eed9802c5e6cb', 'type': 'commit', 'url': 'https://api.github.com/repos/bendlang/bend/git/commits/a3efe8a3801f423827424227172eed9802c5e6cb'}:
+              raise SystemExit('Target source tag changed')
+          print('Target source a3efe8a3801f423827424227172eed9802c5e6cb; immutable=' + str(release.get('immutable')))
+          version = tag[1:]
+          if requested != 'latest' and version != requested:
+              raise SystemExit('The release does not match the requested version')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          name = f'bend-{version}-linux-x64.tar.gz'
+          url = f'https://github.com/bendlang/bend/releases/download/{tag}/{name}'
+          assets = [a for a in release['assets'] if a['name'] == name]
+          if len(assets) != 1 or assets[0]['browser_download_url'] != url:
+              raise SystemExit('The official linux-x64 asset is missing or ambiguous')
+          if assets[0]['id'] != 670466869 or assets[0]['size'] != 36941148:
+              raise SystemExit('Target archive identity changed')
+          digest = assets[0].get('digest', '')
+          if digest != 'sha256:6cf462fd8f70b094a4950ebb709a9c4ffd8f1d1189d9cedf1fd63cd5d041c7ab':
+              raise SystemExit('Target archive digest changed')
+          if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+              raise SystemExit('The release API has no SHA256 for this asset')
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary'
+          archive = work / name
+          (work / 'version').write_text(version)
+          with urllib.request.urlopen(url, timeout=180) as response, archive.open('wb') as target:
+              while chunk := response.read(1024 * 1024):
+                  target.write(chunk)
+                  if target.tell() > 36941148:
+                      raise SystemExit('Archive exceeded the reviewed size')
+          with archive.open('rb') as source:
+              sha = hashlib.file_digest(source, 'sha256').hexdigest()
+          print(f'Bend {version}\nArchive SHA256 {sha}\nSource {url}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'sha256={sha}\n')
+          if sha != digest.removeprefix('sha256:'):
+              raise SystemExit('Archive SHA256 differs from the official release API')
+          if archive.stat().st_size != 36941148:
+              raise SystemExit('Archive length changed')
+          staging = work / 'unpack'
+          staging.mkdir()
+          with tarfile.open(archive, 'r:gz') as package:
+              if any(not (m.name == 'bend' or m.name.startswith('bend/')) for m in package):
+                  raise SystemExit('Unexpected archive root')
+              package.extractall(staging, filter='data')
+          destination = pathlib.Path(os.environ['HOME']) / '.bend'
+          for child in (staging / 'bend').iterdir():
+              child.rename(destination / child.name)
+          expected = {'base.bend': 'e7e9f18eabfcbccfa5c71ce2d24d51d247321de0', 'bendtt.lean': 'b533fbd209a601443b069f476baf4e388b49dc54', 'safe.ts': 'f7cec7b31b7f312c65999e666ea3377bc32d6a1d'}
+          for name, wanted in expected.items():
+              data = (destination / 'bend2' / name).read_bytes()
+              actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              print('SOURCE', name, actual, hashlib.sha256(data).hexdigest())
+              if actual != wanted:
+                  raise SystemExit('Installed source does not match reviewed target: ' + name)
+          PY
+          unset BEND_HOME BENDTT
+          test -x "$HOME/.bend/bin/bend"
+          test "$(command -v bend)" = "$HOME/.bend/bin/bend"
+          printf "selected_bend=%s\n" "$(command -v bend)"
+          sha256sum "$HOME/.bend/bin/bend"
+          find "$HOME/.bend/bend2" -type f -print0 | sort -z | xargs -0 sha256sum
+          bend version
+          test "$(bend version)" = "bend $(cat "$RUNNER_TEMP/bend-canary/version")"
+
+      - name: Discover the Lean version requested by verdict
+        id: requirement
+        timeout-minutes: 2
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=4 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=4 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          work="$RUNNER_TEMP/bend-canary"
+          mkdir "$work/no-lean"
+          printf '#!/bin/sh\nexit 127\n' > "$work/no-lean/lean"
+          chmod +x "$work/no-lean/lean"
+          printf 'import Base\n\ndef main() -> U32:\n  0\n' > "$work/probe.bend"
+          unset BEND_HOME BENDTT
+          set +e
+          PATH="$work/no-lean:$HOME/.bend/bin:/usr/bin:/bin" \
+            bend "$work/probe.bend" --verdict > "$work/lean-request.log" 2>&1
+          status=$?
+          set -e
+          cat "$work/lean-request.log"
+          printf "EXPECTED_INFRA_PROBE exit=%s\n" "$status"
+          test "$status" -ne 0
+          grep -F "BendTT infrastructure: the kernel did not build" "$work/lean-request.log"
+          ! grep -F "ALL PROOFS CHECK" "$work/lean-request.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          log = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary/lean-request.log').read_text()
+          versions = set(re.findall(r'elan toolchain (leanprover/lean4:v[0-9]+\.[0-9]+\.[0-9]+)', log))
+          if len(versions) != 1:
+              raise SystemExit('Cannot determine the Lean version requested by verdict')
+          toolchain = versions.pop()
+          if toolchain != 'leanprover/lean4:v4.34.0':
+              raise SystemExit('Unexpected target Lean requirement')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'toolchain={toolchain}\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'ELAN_TOOLCHAIN={toolchain}\n')
+          PY
+
+      - name: Install the requested Lean with the pinned elan bootstrap
+        id: lean
+        timeout-minutes: 10
+        if: ${{ !cancelled() && steps.requirement.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          REQUESTED_LEAN: ${{ steps.requirement.outputs.toolchain }}
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=5 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=5 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          python3 - <<'PY'
+          import os, pathlib, re
+          source = pathlib.Path('scripts/install-lean.sh').read_text()
+          value = os.environ['REQUESTED_LEAN']
+          if not re.fullmatch(r'leanprover/lean4:v[0-9]+\.[0-9]+\.[0-9]+', value):
+              raise SystemExit('Invalid Lean toolchain')
+          updated, count = re.subn(r'^LEAN_TOOLCHAIN=.*$', 'LEAN_TOOLCHAIN=' + value, source, flags=re.M)
+          if count != 1:
+              raise SystemExit('The pinned elan installer changed; review the canary')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'bend-canary/install-lean.sh').write_text(updated)
+          PY
+          sh "$RUNNER_TEMP/bend-canary/install-lean.sh"
+          test "$(command -v lean)" = "$HOME/.elan/bin/lean"
+          lean --version
+          "$HOME/.elan/bin/elan" which lean
+          sha256sum "$("$HOME/.elan/bin/elan" which lean)" "$("$HOME/.elan/bin/elan" which leanc)"
+          kernel_key=$(python3 -c 'import hashlib,pathlib,os; print(hashlib.sha256(b"4.34.0" + bytes([0]) + (pathlib.Path(os.environ["HOME"])/".bend/bend2/bendtt.lean").read_bytes()).hexdigest()[:16])')
+          test ! -e "$HOME/.bend/bendtt/$kernel_key/bendtt"
+          echo "OBS_KERNEL=$HOME/.bend/bendtt/$kernel_key/bendtt" >> "$GITHUB_ENV"
+
+      - name: Check main and its imports
+        id: check
+        timeout-minutes: 3
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=6 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=6 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          test "$(command -v bend)" = "$HOME/.bend/bin/bend"
+          bend version
+          bend main.bend --check-only
+
+      - name: Recheck every proof with the proven kernel
+        id: verdict
+        timeout-minutes: 10
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' && steps.lean.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=7 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=7 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          test "$(command -v bend)" = "$HOME/.bend/bin/bend"
+          bend version
+          bend PROOF.bend --verdict | tee "$RUNNER_TEMP/bend-canary/root-verdict.log"
+          grep -Fx 'ALL PROOFS CHECK' "$RUNNER_TEMP/bend-canary/root-verdict.log"
+          test -x "$OBS_KERNEL"
+          printf 'FRESH_KERNEL %s\n' "$OBS_KERNEL"
+          sha256sum "$OBS_KERNEL"
+
+      - name: Run every Bend unit test
+        id: unit
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=8 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=8 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          test "$(command -v bend)" = "$HOME/.bend/bin/bend"
+          bend version
+          sh tests/run-unit.sh
+
+      - name: Build fresh helpers and core with the candidate
+        id: build
+        timeout-minutes: 10
+        if: ${{ !cancelled() && steps.bend.outcome == 'success' && steps.dependencies.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=9 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=9 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          test "$(command -v bend)" = "$HOME/.bend/bin/bend"
+          bend version
+          (cd native && cargo --version && rustc --version --verbose)
+          command -v cargo rustc cc clang
+          clang --version
+          scripts/install.sh
+          for name in mailbend-core mailbend-tls mailbend-attach mailbend-typesafe mailbend-stdio; do
+            test -x "bin/$name"
+            sha256sum "bin/$name"
+          done
+
+      - name: Smoke test CLI and MCP against the fake mail server
+        id: smoke
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=10 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=10 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          python3 - <<'PY'
+          import importlib.util, os, pathlib, subprocess, sys, tempfile
+          sys.path.insert(0, str(pathlib.Path('tests').resolve()))
+          spec = importlib.util.spec_from_file_location('canary_e2e', 'tests/test-e2e.py')
+          suite = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = suite
+          spec.loader.exec_module(suite)
+          with tempfile.TemporaryDirectory(prefix='canary-') as work:
+              subprocess.run(['sh', 'tests/gen-test-certs.sh', str(pathlib.Path(work) / 'certs')], check=True)
+              for mode in ('0', '1'):
+                  os.environ['MAILBEND_TEST_MCP'] = mode
+                  server = suite.Server(work)
+                  try:
+                      suite.reads(server)
+                      suite.cli_front_end(server)
+                      suite.mcp(server)
+                  finally:
+                      server.stop()
+          suite.check('No synthetic password in output', not any(suite.PASSWORD in text for text in suite.outputs))
+          failed = [name for name, ok in suite.results if not ok]
+          print(f'canary smoke: {len(suite.results) - len(failed)} passed, {len(failed)} failed')
+          raise SystemExit(bool(failed))
+          PY
+
+      - name: Retain resulting kernel and runtime identities
+        id: identities
+        timeout-minutes: 2
+        if: ${{ always() && steps.isolate.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=11 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=11 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          printf 'FINAL_IDENTITY_MANIFEST\n'
+          find "$HOME/.bend" -type f -print0 | sort -z | xargs -0 -r sha256sum
+          for name in mailbend-core mailbend-tls mailbend-attach mailbend-typesafe mailbend-stdio; do
+            if test -f "bin/$name"; then sha256sum "bin/$name"; else printf 'MISSING bin/%s\n' "$name"; fi
+          done
+          git diff --exit-code
+          df -B1 "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
+
+      - name: Report every outcome and retain a failing canary signal
+        timeout-minutes: 2
+        if: ${{ always() }}
+        env:
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          unset BENDTT BEND_HOME
+          printf 'OBS_BEGIN stage=12 utc=%s\n' "$(date -u +%FT%TZ)"
+          SECONDS=0
+          trap 'rc=$?; printf "OBS_END stage=12 exit=%s elapsed=%s utc=%s\\n" "$rc" "$SECONDS" "$(date -u +%FT%TZ)"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          python3 - <<'PY'
+          import json, os
+          steps = json.loads(os.environ['STEP_RESULTS'])
+          candidate = steps.get('bend', {}).get('outputs', {})
+          lean = steps.get('requirement', {}).get('outputs', {})
+          ids = ['checkout', 'isolate', 'dependencies', 'bend', 'requirement', 'lean', 'check', 'verdict', 'unit', 'build', 'smoke', 'identities']
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Bend 2.0.39 bounded x64 observation\n\n')
+              summary.write('One push-only observation of source 5ff799d094fd08078391c33218dc2a9ef598494b. Do not make it a required check. It does not establish full contributor, ARM, or runtime acceptance.\n\n')
+              summary.write(f"- Bend version: {candidate.get('version', 'unavailable')}\n")
+              summary.write(f"- Archive SHA256: {candidate.get('sha256', 'unavailable')}\n")
+              summary.write(f"- Requested Lean: {lean.get('toolchain', 'unavailable')}\n\n")
+              summary.write('| Step | Outcome |\n| --- | --- |\n')
+              for name in ids:
+                  summary.write(f"| {name} | {steps.get(name, {}).get('outcome', 'skipped')} |\n")
+              summary.write('\nA skipped or cancelled step is not a pass. The production toolchain pins are unchanged.\n')
+          raise SystemExit(any(steps.get(name, {}).get('outcome') != 'success' for name in ids))
+          PY
+
