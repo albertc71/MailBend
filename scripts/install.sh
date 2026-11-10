@@ -63,7 +63,9 @@ for arg in "$@"; do
   esac
 done
 
+has_clang=0
 if command -v clang >/dev/null 2>&1; then
+  has_clang=1
   libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || libc=
   version=$(printf '%s\n' "$libc" | sed -n 's/^glibc \([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2/p')
   set -- $version
@@ -121,6 +123,9 @@ mkdir -p bin
 # are removed.
 exec 9<bin
 flock -n 9 || fail "another install is running in $root; rerun this script when it ends"
+if [ "$has_clang" = 0 ] && [ -x bin/mailbend-core ]; then
+  fail "clang not found; refusing to update an existing compiled installation. Install clang and rerun scripts/install.sh."
+fi
 rm -f bin/*.new.*
 
 say "building native helpers ($rustc_version)"
@@ -137,7 +142,7 @@ done
 say "checking the safety laws (bend PROOF.bend)"
 bend PROOF.bend
 
-if command -v clang >/dev/null 2>&1; then
+if [ "$has_clang" = 1 ]; then
   say "compiling the Bend core (takes about a minute)"
   core_tmp="bin/mailbend-core.new.$$"
   if bend main.bend -o "$core_tmp" 2>/dev/null || bend main.bend -o "$core_tmp"; then
@@ -147,16 +152,8 @@ if command -v clang >/dev/null 2>&1; then
     exit 1
   fi
 else
-  # Without clang there is no new core, so the new helpers are published
-  # beside the core already there, if any.
   publish_helpers
-  if [ -x bin/mailbend-core ]; then
-    printf '%s\n' \
-      'mailbend: warning: clang not found; keeping existing bin/mailbend-core.' \
-      'mailbend: the launcher will use it, and it may be out of date. Install clang and rerun.' >&2
-  else
-    say "clang not found: scripts/mailbend will run main.bend through bend (slower start)"
-  fi
+  say "clang not found: scripts/mailbend will run main.bend through bend (slower start)"
 fi
 sync -- bin
 

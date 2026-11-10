@@ -484,3 +484,38 @@ the report launcher on the reference side. The literal pin assertions are
 change alarms, not a substitute for reviewing the complete launcher diff.
 This migration requires independent review and a fresh paired comparison on
 the final combined head. A preflight pass alone is not performance evidence.
+
+### Reviewed compiled-install refusal migration (#155)
+
+Candidate preflight accepts the original `scripts/install.sh` or the exact
+compiled-install refusal revision. Its Git blob is
+`641c90008d7b3aa20fbad0779728a37deb5f96eb` and its SHA256 is
+`ae7a0f7ef0c8606488cbd5414c5a3914a027fce6773b9cae2bdf865b9d564f9b`.
+The reference installer must still match the fixed reference exactly.
+No candidate-provided bytes determine the approved digest.
+
+This installer refuses an update without clang when an executable core
+already exists. The refusal runs under the existing install lock, before
+helper builds or publication. It retains interpreter installation when no
+executable core exists. One initial clang decision controls both the refusal
+and compilation, so losing clang during a build cannot select helper-only
+publication. This is a partial #155 fix, not versioned installation or rollback.
+
+The paired identity record now includes both installer files, in addition to
+the existing executables. Rechecking detects an installer change after identity
+capture, including a switch between two admitted revisions. This does not prove
+which bytes an earlier build executed or detect a transient edit restored before
+the next check.
+
+The public preflight controls use this checkout's actual installer and the
+production digest policy. They accept original and reviewed candidate bytes,
+reject unknown candidate bytes, reference substitution, dirty source, missing
+files, symlinks and hardlinks, and reject approved-to-approved identity drift.
+Git metadata uses synthetic fixtures in these controls. The literal digest
+assertion detects a pin change but does not replace independent source review.
+
+All helper-tuple, launcher, frozen-apparatus, toolchain, measurement, timing and
+ratio gates remain unchanged. The checker still comes from the candidate tree
+and requires independent review. The final combined head needs a fresh paired
+comparison and native CI. Fake-toolchain installer tests do not validate the
+real compiler or establish scale performance.

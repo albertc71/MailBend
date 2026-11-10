@@ -97,19 +97,67 @@ class InstallTests(unittest.TestCase):
         for name in TARGETS:
             self.assertEqual((bin_dir / name).read_bytes(), old[name], name)
 
-    def test_missing_clang_warns_when_existing_core_is_kept(self):
-        proc, before, after = self.install(old_core=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(after, before)
-        self.assertIn(b"keeping existing bin/mailbend-core", proc.stderr)
-        self.assertIn(b"may be out of date", proc.stderr)
-        self.assertNotIn(b"will run main.bend through bend", proc.stdout)
+    def test_missing_clang_refuses_existing_core_without_changing_any_binary(self):
+        old = {
+            "mailbend-tls": b"#!/bin/sh\necho OLD_TLS\n",
+            "mailbend-attach": b"#!/bin/sh\necho OLD_ATTACH\n",
+            "mailbend-typesafe": b"#!/bin/sh\necho OLD_TYPESAFE\n",
+            "mailbend-stdio": b"#!/bin/sh\necho OLD_STDIO\n",
+            "mailbend-core": b"#!/bin/sh\necho OLD_CORE\n",
+        }
+        outputs = {
+            "mailbend-tls": b"OLD_TLS\n",
+            "mailbend-attach": b"OLD_ATTACH\n",
+            "mailbend-typesafe": b"OLD_TYPESAFE\n",
+            "mailbend-stdio": b"OLD_STDIO\n",
+            "mailbend-core": b"OLD_CORE\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.prepare(root)
+            for name, data in old.items():
+                path = root / "bin" / name
+                path.write_bytes(data)
+                path.chmod(0o755)
+            proc = self.run_install(root)
+            with self.subTest(observation="refusal"):
+                self.assertNotEqual(proc.returncode, 0, "existing compiled installation must be refused")
+                self.assertIn(b"clang", proc.stderr)
+                self.assertIn(b"Install clang and rerun", proc.stderr)
+            with self.subTest(observation="no build"):
+                self.assertFalse((root / "native/target").exists(),
+                                 "the refusal must precede building any helper")
+            self.assertEqual(sorted(p.name for p in (root / "bin").iterdir()), sorted(TARGETS))
+            for name in TARGETS:
+                with self.subTest(binary=name, observation="bytes"):
+                    self.assertEqual((root / "bin" / name).read_bytes(), old[name],
+                                     "previous executable bytes must remain unchanged")
+                with self.subTest(binary=name, observation="behavior"):
+                    result = subprocess.run([str(root / "bin" / name)], env=self.env(root),
+                                            capture_output=True, timeout=2)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (0, outputs[name], b""), "previous behavior must remain unchanged")
 
     def test_missing_clang_without_core_uses_source_fallback(self):
         proc, _, after = self.install()
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         self.assertIsNone(after)
         self.assertIn(b"will run main.bend through bend", proc.stdout)
+
+    def test_missing_clang_with_nonexecutable_core_uses_source_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.prepare(root)
+            core = root / "bin/mailbend-core"
+            core.write_bytes(b"nonexecutable core")
+            core.chmod(0o644)
+            proc = self.run_install(root)
+            self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+            self.assertEqual(core.read_bytes(), b"nonexecutable core")
+            self.assertFalse(os.access(core, os.X_OK))
+            self.assertIn(b"will run main.bend through bend", proc.stdout)
+            for name in HELPERS:
+                self.assertEqual((root / "bin" / name).read_bytes(), NEW_HELPER)
 
     def test_clang_replaces_existing_core_without_stale_warning(self):
         proc, before, after = self.install(old_core=True, clang=True)
@@ -265,6 +313,8 @@ exit 1
             root = pathlib.Path(directory)
             self.prepare(root, clang=clang, cargo=cargo, bend=bend)
             old = self.old_bin(root)
+            if not clang:
+                (root / "bin/mailbend-core").chmod(0o644)
             proc = self.run_install(root)
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn(needle, proc.stdout + proc.stderr)
@@ -286,6 +336,17 @@ exit 1
     def test_a_failed_core_compile_publishes_nothing(self):
         bend = 'if [ "$1" = main.bend ]; then echo "clang failed" >&2; exit 1; fi\n'
         self.check_failure_publishes_nothing(b"clang failed", bend=bend)
+
+    def test_clang_disappearing_during_proofs_does_not_publish_helpers(self):
+        bend = '''if [ "$1" = PROOF.bend ]; then
+  /bin/rm "$HOME/tools/clang"
+fi
+if [ "$1" = main.bend ]; then
+  echo "clang disappeared" >&2
+  exit 1
+fi
+'''
+        self.check_failure_publishes_nothing(b"clang disappeared", bend=bend)
 
     def test_a_signal_during_the_compile_leaves_bin_unchanged(self):
         sleep = shutil.which("sleep")

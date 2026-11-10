@@ -39,6 +39,8 @@ CANDIDATE_HELPER_TUPLE = (
 CANDIDATE_LAUNCHER_SHA256 = "68cf6c6e6c671585d8752b653d8e76728d00306a1cd76b6f7723257d1546ffd8"
 # The report usage-comment revision in PR #292 at 947fcc06a8c31bde25fa935d10443f7b1690dd28.
 CANDIDATE_REPORT_LAUNCHER_SHA256 = "251f054ca4f223c180602b00c16192f08dc7ff88d77522951efbfd3a021af26e"
+# The compiled-install update refusal; exact bytes documented in tests/SCALE.md.
+CANDIDATE_INSTALLER_SHA256 = "ae7a0f7ef0c8606488cbd5414c5a3914a027fce6773b9cae2bdf865b9d564f9b"
 EXECUTABLES = ("bin/mailbend-core", "bin/mailbend-tls", "bin/mailbend-attach",
                "bin/mailbend-typesafe", "bin/mailbend-stdio", "scripts/mailbend")
 
@@ -117,6 +119,9 @@ def preflight(reference, candidate, candidate_sha):
                 require(actual in (expected, CANDIDATE_LAUNCHER_SHA256,
                                    CANDIDATE_REPORT_LAUNCHER_SHA256),
                         f"candidate launcher is not a reviewed revision: {path}")
+            elif side == 1 and name == "scripts/install.sh":
+                require(actual in (expected, CANDIDATE_INSTALLER_SHA256),
+                        f"candidate installer is not a reviewed revision: {path}")
             elif side == 1 and name in INSTALLERS[1:]:
                 original_helpers.append(expected)
                 candidate_helpers.append(actual)
@@ -157,7 +162,7 @@ def identities(roots, candidate_sha):
     seen = set()
     for side, root, source in zip(("reference", "candidate"), roots, (REFERENCE_SHA, candidate_sha)):
         files = {}
-        for name in EXECUTABLES:
+        for name in (*EXECUTABLES, "scripts/install.sh"):
             path, info = regular(root, name, executable=True)
             identity = (info.st_dev, info.st_ino)
             require(identity not in seen, f"executable alias: {path}")
