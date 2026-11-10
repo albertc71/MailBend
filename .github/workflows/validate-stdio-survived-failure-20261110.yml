@@ -1,0 +1,60 @@
+name: Validate survived-signal output contract
+on:
+  push:
+    branches:
+      - validation/stdio-survived-failure-20261110
+permissions:
+  contents: read
+concurrency:
+  group: validate-stdio-survived-failure-20261110
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: '2'
+  BEND_NO_TELEMETRY: '1'
+jobs:
+  fixed-controls:
+    if: github.repository == 'albertc71/MailBend' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: validation
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify validation commit is a direct child of the fixed product
+        working-directory: validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git show -s --format=%P HEAD)" = "388f936cfd10a4a8d1ac1720b97e1fbac32552ee"
+          printf '%s\n' '.github/validation/stdio-survived-failure-20261110.py' '.github/workflows/validate-stdio-survived-failure-20261110.yml' > "$RUNNER_TEMP/expected-paths"
+          git diff-tree --no-commit-id --name-only -r HEAD | sort > "$RUNNER_TEMP/actual-paths"
+          diff -u "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/actual-paths"
+          git log -1 --format='%H %T %P'
+          sha256sum .github/validation/stdio-survived-failure-20261110.py .github/workflows/validate-stdio-survived-failure-20261110.yml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 388f936cfd10a4a8d1ac1720b97e1fbac32552ee
+          path: product
+          persist-credentials: false
+      - name: Verify fixed product
+        working-directory: product
+        run: |
+          test "$(git rev-parse HEAD)" = "388f936cfd10a4a8d1ac1720b97e1fbac32552ee"
+          test "$(git rev-parse HEAD^{tree})" = "5a45b970b84214b858b13c0e2ba103ff8c6f4dda"
+          git log -1 --format='%H %T'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install the repository-pinned Rust toolchain
+        working-directory: product
+        run: |
+          sh scripts/install-rust.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Run bounded real-adapter controls against only the fake core
+        run: python3 validation/.github/validation/stdio-survived-failure-20261110.py product
+      - name: Run standalone synthetic MCP comparison lifecycle controls
+        working-directory: product
+        run: python3 tests/test-mcp-schema-comparison.py
