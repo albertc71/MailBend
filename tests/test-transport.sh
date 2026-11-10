@@ -144,11 +144,12 @@ call_smtp() {
 
 check_leak() {
   local password="$1" login="$2" encoded_password encoded_plain
+  # Status 1 means a matched secret; status 2 means encoding failed.
   # An empty password has no secret bytes. Match literal bytes, including
   # SMTP's LOGIN password and PLAIN NUL-user-NUL-password encodings.
   [ -n "$password" ] || return 0
-  encoded_password=$(printf '%s' "$password" | base64 | tr -d '\n') || return 1
-  encoded_plain=$(printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n') || return 1
+  encoded_password=$({ set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n'; } 2>/dev/null) || return 2
+  encoded_plain=$({ set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n'; } 2>/dev/null) || return 2
   if grep -aFq -e "$password" -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
     GLOBAL_LEAK=1
     return 1
@@ -627,6 +628,56 @@ PY
   done
 }
 
+# Both encoding steps must distinguish infrastructure failure from a leak.
+case18_encoder_attribution() {
+  local HELPER="$WORK/case18-clean-helper" PASSWORD="case18-encoder-password"
+  local diagnostic="$WORK/case18-encoder-diagnostic.txt" counter="$WORK/encoder-count"
+  local failure result
+  printf '#!/bin/sh\nprintf "ordinary reply\\n"\n' >"$HELPER"
+  chmod +x "$HELPER"
+  for failure in 1 2 3 4; do
+    printf '0\n' >"$counter"
+    (
+      start_server() { IMAP_PORT=1; SMTP_PORT=1; }
+      stop_server() { :; }
+      base64() {
+        local invocation
+        invocation=$(cat "$counter")
+        invocation=$((invocation + 1))
+        printf '%s\n' "$invocation" >"$counter"
+        if [ "$invocation" -eq "$failure" ]; then
+          cat >/dev/null
+          printf '%s\n' "$PASSWORD"
+          printf '%s\n' "$PASSWORD" >&2
+          return 7
+        fi
+        command base64
+      }
+      PASS_COUNT=0; FAIL_COUNT=0; GLOBAL_LEAK=0
+      case18
+      [ "$FAIL_COUNT" -eq 1 ] && [ "$PASS_COUNT" -eq 0 ] && [ "$GLOBAL_LEAK" -eq 0 ]
+    ) >"$diagnostic" 2>&1
+    result=$?
+    if [ "$result" -eq 0 ] && python3 - "$diagnostic" "$failure" <<'PY'
+import pathlib
+import sys
+
+expected = {
+    '1': b'FAIL 18 echoed credentials never reach the transcript -- imap exit=0 leak_check=2\n',
+    '2': b'FAIL 18 echoed credentials never reach the transcript -- imap exit=0 leak_check=2\n',
+    '3': b'FAIL 18 echoed credentials never reach the transcript --  smtp exit=0 leak_check=2\n',
+    '4': b'FAIL 18 echoed credentials never reach the transcript --  smtp exit=0 leak_check=2\n',
+}[sys.argv[2]]
+sys.exit(0 if pathlib.Path(sys.argv[1]).read_bytes() == expected else 1)
+PY
+    then
+      pass "18 encoder failure $failure is distinct and redacted"
+    else
+      fail "18 encoder failure $failure" "wrong verdict, aggregate, or unsafe diagnostic"
+    fi
+  done
+}
+
 # =========================================================================
 # Case 19: =EXPECT compares response keywords in any case (IMAP keywords are
 # case-insensitive) but still needs the exact value.
@@ -976,6 +1027,7 @@ case16
 case17
 case18
 case18_leak_attribution
+case18_encoder_attribution
 case19
 case20
 case21
