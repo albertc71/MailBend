@@ -314,6 +314,13 @@ suite also requires a C compiler available as `cc`; missing prerequisites
 fail rather than skip. Ordinary CI runs both checks after installation in
 the support suite on x86_64 and aarch64.
 
+Each helper path must name a regular file, not a leaf symlink. Symlinks in
+parent directories are accepted. The checker opens the path with `O_NOFOLLOW`,
+`O_NONBLOCK` and `O_NOCTTY`, then checks the descriptor's file type before
+reading. `O_NOCTTY` prevents acquiring a controlling terminal; it does not make
+arbitrary device opens safe. ELF inspection uses that same open descriptor,
+which pins the inode, not its contents or a later execution.
+
 Each helper must be a little-endian ELF64 PIE for a supported architecture,
 with GNU_RELRO, immediate binding, a present non-executable GNU_STACK and
 the matching Linux interpreter. Direct NEEDED entries may contain only
