@@ -17,7 +17,8 @@ type Preset is Data:
   Preset{name: String, settings: Settings, username: String, prerequisites: String,
     sources: List<&2, String>, tier: String, reviewed: String}
 
-# Legacy catalogue date for callers; metadata uses the date stored in each preset.
+# Legacy catalogue date retained for external callers. It does not affect setup output.
+# Setup metadata uses the date stored in each preset.
 def reviewed_on() -> String:
   "2026-10-31"
 
