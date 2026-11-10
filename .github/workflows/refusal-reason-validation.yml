@@ -1,0 +1,49 @@
+name: Refusal reason observation
+on:
+  push:
+    branches: [validation/refusal-reason-observers-20261110]
+permissions:
+  contents: read
+env:
+  BEND_NO_TELEMETRY: '1'
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out reviewed validation controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: control
+      - name: Check out fixed baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: 1633acf1e5eb5e3829ca0b43596d2a8319f83920
+          path: baseline
+      - name: Check out fixed candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: b5a0752872149b8f65e4affe58556e7cba32eb5f
+          path: candidate
+      - name: Verify source identities and install pinned Bend
+        run: |
+          set -eu
+          test "$(git -C control rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C baseline rev-parse HEAD)" = 1633acf1e5eb5e3829ca0b43596d2a8319f83920
+          test "$(git -C candidate rev-parse HEAD)" = b5a0752872149b8f65e4affe58556e7cba32eb5f
+          cmp baseline/scripts/install-bend.sh candidate/scripts/install-bend.sh
+          sh candidate/scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Observe old-law survivors and precise new-law rejections
+        run: |
+          bend version
+          python3 control/validation/refusal_reasons.py baseline candidate
+      - name: Verify checked-out sources remain unchanged
+        if: always()
+        run: |
+          git -C baseline diff --exit-code
+          git -C candidate diff --exit-code
