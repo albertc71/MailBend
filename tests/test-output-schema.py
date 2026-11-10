@@ -250,6 +250,50 @@ with_facts = {**whole, "facts": [meeting_fact],
               "facts_scan": {"scope": "returned_text", "limited": False}}
 check("mail_get", whole)
 check("mail_get", with_facts)
+
+zoom_short = "https://zoom.us/j/123456789"
+zoom_query = "https://us02web.zoom.us/j/12345678901?pwd=Ab%2f&x=Z+"
+
+
+def check_zoom_value(link, valid=True, **changes):
+    fact = dict(kind="meeting_link", value=link, source="text", start=0,
+                end=len(link), line=1, untrusted=True)
+    fact.update(changes)
+    check("mail_get", {**with_facts, "text": link, "size": len(link),
+                       "facts": [fact]}, valid)
+
+
+for link in (zoom_short, zoom_query, "https://a.zoom.us/j/1234567890",
+             "https://" + "a" * 63 + ".zoom.us/j/12345678901",
+             zoom_short + "?pwd=Az09-._~=&+%00%aF%Ff."):
+    check_zoom_value(link)
+for width in (511, 512, 513):
+    prefix = zoom_short + "?q="
+    check_zoom_value(prefix + "a" * (width - len(prefix)), width <= 512)
+for link in ("http://zoom.us/j/123456789", "https://ZOOM.us/j/123456789",
+             "https://zoom.us.evil.invalid/j/123456789", "https://zoom.us@evil.invalid/j/123456789",
+             "https://evil.invalid/https://zoom.us/j/123456789", "x" + zoom_short,
+             "https://a.b.zoom.us/j/123456789", "https://-a.zoom.us/j/123456789",
+             "https://a-.zoom.us/j/123456789", "https://a_b.zoom.us/j/123456789",
+             "https://" + "a" * 64 + ".zoom.us/j/123456789",
+             "https://zoom.us:443/j/123456789", "https://zoom.us/J/123456789",
+             "https://zoom.us/j/12345678", "https://zoom.us/j/123456789012",
+             "https://zoom.us/j/１２３４５６７８９", zoom_short + "/",
+             zoom_short + ".", zoom_short + "#fragment", zoom_short + "?",
+             zoom_short + "?pwd=%", zoom_short + "?pwd=%2", zoom_short + "?pwd=%gg",
+             zoom_short + "?pwd=a;b", zoom_short + "?pwd=a/b", zoom_short + "?pwd=é",
+             zoom_short + "?pwd=a b", zoom_query + "\n", zoom_query + "\r",
+             zoom_query + "\t", zoom_query + "\x00", zoom_query + ")"):
+    check_zoom_value(link, False)
+check_zoom_value(zoom_short, start=65509, end=65536, line=65510)
+for change in ({"start": -1}, {"start": 65510}, {"end": 26}, {"end": 65537},
+               {"line": 0}, {"line": 65511}, {"source": "html"}, {"untrusted": False},
+               {"kind": "instruction"}, {"extra": "not part of the fact"}):
+    check_zoom_value(zoom_short, False, **change)
+check("mail_get", {**with_facts, "facts": [{**meeting_fact, "start": 65500,
+                                         "end": 65536, "line": 65501}]})
+for change in ({"start": 65501}, {"end": 35}, {"line": 65502}):
+    check("mail_get", {**with_facts, "facts": [{**meeting_fact, **change}]}, False)
 # attached_message_headers adds a sanitized summary only to attached messages.
 summary = {"from": "a <a@example.invalid>", "to": "", "subject": "inner", "date": "", "message_id": ""}
 attached_entry = {"filename": "", "content_type": "message/rfc822", "size": 9, "message": summary}

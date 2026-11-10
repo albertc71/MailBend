@@ -153,13 +153,21 @@ GET["allOf"] = [{"if": {"properties": {"attachments": {"contains": {"required": 
                  "then": {"properties": {"jev": {"$ref": "#/$defs/summary_jev"}}},
                  "else": {"properties": {"jev": {"$ref": "#/$defs/jev"}}}}]
 MEETING_FACTS = {
-    "facts": param("array", maxItems=16, items=record({
+    "facts": param("array", maxItems=16, items=union(record({
         "kind": {"const": "meeting_link"},
         "value": param("string", minLength=36, maxLength=36,
                        pattern=r"^https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}$"),
         "source": {"const": "text"}, "start": param("integer", minimum=0, maximum=65500),
         "end": param("integer", minimum=36, maximum=65536),
-        "line": param("integer", minimum=1, maximum=65501), "untrusted": YES})),
+        "line": param("integer", minimum=1, maximum=65501), "untrusted": YES}), record({
+        "kind": {"const": "meeting_link"},
+        "value": param("string", minLength=27, maxLength=512,
+                       pattern=r"^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)?"
+                               r"zoom\.us/j/[0-9]{9,11}(?:\?(?:[A-Za-z0-9._~=&+-]|%[A-Fa-f0-9]{2})+)?"
+                               r"$(?![\s\S])"),
+        "source": {"const": "text"}, "start": param("integer", minimum=0, maximum=65509),
+        "end": param("integer", minimum=27, maximum=65536),
+        "line": param("integer", minimum=1, maximum=65510), "untrusted": YES}))),
     "facts_scan": record({"scope": {"const": "returned_text"}, "limited": B}),
 }
 CLASSIFIED_FIELDS = {"uid": N, "category": NS, "jev": JEV}
