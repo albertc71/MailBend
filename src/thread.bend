@@ -225,57 +225,52 @@ def thread_order.present(
       thread_order.present(t, thread_order.present.put(id, Map.has(&2, Bool, present, id)))
 
 # Empty IDs stop before the hit check; hits succeed even without fuel.
-law reaches:
-  for fuel: Nat
-  for at: String
-  for hit: Bool
-  for parents: Map<&2, String>
-  for +target: String
-  Map<&2, String> & Bool
+def reaches.next(
+  +target: String, r: Map<&2, String> & String
+) -> Map<&2, String> & String & Bool:
+  (parents, +next) = r
+  (parents, next, String.eq(next, target))
 
-def reaches.next(f: Nat, +target: String, r: Map<&2, String> & String) -> Map<&2, String> & Bool:
-  (parents2, +next) = r
-  reaches(f, next, String.eq(next, target), parents2, target)
-
-def reaches(fuel, at, hit, parents, target):
-  match fuel at hit:
-    case _ SNil{} _:
+def reaches.go(
+  fuel: Nat, state: Map<&2, String> & String & Bool, +target: String
+) -> Map<&2, String> & Bool:
+  match fuel state:
+    case _ (parents, SNil{}, _):
       (parents, False{})
-    case _ SCon{h, t} True{}:
+    case _ (parents, SCon{h, t}, True{}):
       (parents, True{})
-    case 0n SCon{h, t} False{}:
+    case 0n (parents, SCon{h, t}, False{}):
       (parents, False{})
-    case 1n+f SCon{h, t} False{}:
-      reaches.next(f, target, Map.get(String, "", parents, SCon{h, t}))
+    case 1n+f (parents, SCon{h, t}, False{}):
+      reaches.go(f, reaches.next(target, Map.get(String, "", parents, SCon{h, t})), target)
+
+def reaches(
+  fuel: Nat, at: String, hit: Bool, parents: Map<&2, String>, target: String
+) -> Map<&2, String> & Bool:
+  reaches.go(fuel, (parents, at, hit), target)
 
 # Unique IDs have false values, so membership must check the key.
-law parent_in.go:
-  for cands: List<&2, String>
-  for hit: Bool
-  for c: String
-  for present: Map<&2, Bool>
-  for +self: String
-  Map<&2, Bool> & String
-
 def parent_in.next(
-  t: List<&2, String>, +d: String, +self: String, r: Map<&2, Bool> & Bool
-) -> Map<&2, Bool> & String:
-  (present2, found) = r
-  parent_in.go(t, found && Bool.not(String.eq(d, self)), d, present2, self)
+  +d: String, self: String, r: Map<&2, Bool> & Bool
+) -> Map<&2, Bool> & Bool & String:
+  (present, found) = r
+  (present, found && Bool.not(String.eq(d, self)), d)
 
-def parent_in.go(cands, hit, c, present, self):
-  match cands hit:
-    case _ True{}:
+def parent_in.go(
+  cands: List<&2, String>, state: Map<&2, Bool> & Bool & String, +self: String
+) -> Map<&2, Bool> & String:
+  match cands state:
+    case _ (present, True{}, c):
       (present, c)
-    case Nil{} False{}:
+    case Nil{} (present, False{}, c):
       (present, "")
-    case +d <> t False{}:
-      parent_in.next(t, d, self, Map.has(&2, Bool, present, d))
+    case +d <> t (present, False{}, c):
+      parent_in.go(t, parent_in.next(d, self, Map.has(&2, Bool, present, d)), self)
 
 def parent_in(
   cands: List<&2, String>, present: Map<&2, Bool>, self: String
 ) -> Map<&2, Bool> & String:
-  parent_in.go(cands, False{}, "", present, self)
+  parent_in.go(cands, (present, False{}, ""), self)
 
 # Cut parents are not retried; duplicate keys retain the newest placement.
 def thread_order.step.finish(
@@ -307,28 +302,22 @@ def thread_order.step(
   thread_order.step.parent(n, id, fuel, parents, parent_in(parent_ids(n), present, id))
 
 # Indexes are consumed and returned by each step, not copied with output.
-law thread_order.go:
-  for ns: List<&2, Node>
-  for present: Map<&2, Bool>
-  for +fuel: Nat
-  for parents: Map<&2, String>
-  for ps: List<&2, Placed>
-  List<&2, Placed>
-
 def thread_order.go.next(
-  t: List<&2, Node>, fuel: Nat, ps: List<&2, Placed>,
-  r: Map<&2, Bool> & Map<&2, String> & Placed
+  ps: List<&2, Placed>, r: Map<&2, Bool> & Map<&2, String> & Placed
+) -> Map<&2, Bool> & Map<&2, String> & List<&2, Placed>:
+  (present, parents, p) = r
+  (present, parents, p <> ps)
+
+def thread_order.go(
+  ns: List<&2, Node>,
+  state: Map<&2, Bool> & Map<&2, String> & List<&2, Placed>, +fuel: Nat
 ) -> List<&2, Placed>:
-  (present2, parents2, p) = r
-  thread_order.go(t, present2, fuel, parents2, p <> ps)
-
-def thread_order.go(ns, present, fuel, parents, ps):
-  match ns:
-    case Nil{}:
+  match ns state:
+    case Nil{} (present, parents, ps):
       List.reverse(&2, Placed, ps)
-    case n <> t:
-      thread_order.go.next(t, fuel, ps, thread_order.step(n, present, fuel, parents))
-
+    case n <> t (present, parents, ps):
+      thread_order.go(t,
+        thread_order.go.next(ps, thread_order.step(n, present, fuel, parents)), fuel)
 
 # The Message-IDs of the messages, leaving out those that have none.
 def ids_of(ns: List<&2, Node>) -> List<&2, String>:
@@ -348,5 +337,5 @@ def thread_order(ns: List<&2, Node>) -> List<&2, Placed>:
   +sorted = List.sort(~Node, ~(a => b => no_later(a, b)), ns)
   fuel = (List.length(&2, Node, sorted) + 1n : Nat)
   present = thread_order.present(ids_of(sorted), Map.new(&2, Bool))
-  thread_order.go(sorted, present, fuel, Map.new(&2, String), [])
+  thread_order.go(sorted, (present, Map.new(&2, String), []), fuel)
 
