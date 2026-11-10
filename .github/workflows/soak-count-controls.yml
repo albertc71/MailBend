@@ -1,0 +1,58 @@
+name: Soak count selector controls
+on:
+  push:
+    branches: [validation/soak-count-selector-20261110]
+permissions:
+  contents: read
+jobs:
+  controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: 4117229e4e665f4c88881bfee2e8cf299c9569d2
+      PYTHONOPTIMIZE: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: validation
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify and scan validation overlay
+        timeout-minutes: 3
+        working-directory: validation
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          sha256sum .github/workflows/soak-count-controls.yml validation/check-count-controls.py
+          timeout 150 sh scripts/scan-secrets.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 4117229e4e665f4c88881bfee2e8cf299c9569d2
+          path: source
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify and scan exact candidate
+        timeout-minutes: 3
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          timeout 150 sh scripts/scan-secrets.sh
+      - name: Baseline survivors and candidate semantic controls
+        timeout-minutes: 12
+        run: |
+          python3 --version
+          timeout 660 python3 -B validation/validation/check-count-controls.py
+      - name: Contributor comparison lifecycle controls
+        timeout-minutes: 2
+        working-directory: source
+        run: timeout 90 python3 -B tests/test-mcp-schema-comparison.py
+      - name: Confirm clean checkouts
+        run: |
+          test -z "$(git -C validation status --porcelain)"
+          test -z "$(git -C source status --porcelain)"
+          test "$(git -C source rev-parse HEAD)" = "$CANDIDATE_SHA"
+          echo 'PASS both checkouts unchanged'
