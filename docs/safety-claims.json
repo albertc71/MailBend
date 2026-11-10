@@ -886,8 +886,10 @@
         "src/brief.bend#checkpoint",
         "src/brief.bend#next_cursor",
         "src/brief.bend#window_uids",
+        "src/brief.bend#window_contains",
         "src/imap.bend#key_str",
         "src/tools.bend#brief_selected",
+        "src/tools.bend#unseen",
         "src/tools.bend#brief_headers.complete",
         "src/tools.bend#brief_output",
         "src/response.bend#bounded"

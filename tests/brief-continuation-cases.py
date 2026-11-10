@@ -63,6 +63,15 @@ def run(t, work):
                 code == 0 and [m['uid'] for m in last.get('messages', [])] == [5]
                 and last.get('next_continuation') is None and last.get('has_more') is False
                 and last.get('next_since_uid') == 9, last)
+        replies = [entry['line'] for entry in srv.log_records()
+                   if entry['proto'] == 'imap-search-response']
+        t.check('brief continuation: duplicate fixture emits duplicate UIDs on both pages',
+                replies == ['* SEARCH 1 1 3 3 5 5\r\n', '* SEARCH 5 5\r\n'], replies)
+        for page, count in ((first, 2), (last, 1)):
+            t.check('brief continuation: duplicate SEARCH group counts match returned messages',
+                    page.get('groups') == [{'group': 'unknown_people', 'group_key': None, 'count': count}]
+                    and sum(group['count'] for group in page.get('groups', []))
+                    == len(page.get('messages', [])), page)
     finally:
         srv.stop()
 
