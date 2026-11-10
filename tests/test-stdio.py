@@ -207,6 +207,17 @@ if mode in (b"hup-ignore", b"hup-handle"):
     sys.stdout.buffer.write(b"0123456789abcdef" * 6250)
     sys.stdout.buffer.flush()
     os._exit(0)
+if mode == b"hup-fail":
+    signal.signal(signal.SIGHUP, lambda *_: (root / "survived-hup").touch())
+    print('"ready"', flush=True)
+    if sys.stdin.buffer.readline() != b"write\n":
+        os._exit(91)
+    sys.stdout.buffer.write(b"0123456789abcdef" * 1024)
+    sys.stdout.buffer.flush()
+    (root / "written").touch()
+    if sys.stdin.buffer.readline() != b"exit\n":
+        os._exit(92)
+    os._exit(3)
 if mode == b"afterexit":
     subprocess.Popen([sys.executable, __file__, "afterexit"], stdin=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL)
@@ -322,6 +333,26 @@ os._exit(23)
                     self.assertEqual(session.proc.stderr.read(), b"")
                     self.assertEqual(len(received), 100000)
                     self.assertEqual(received, self.PATTERN * 6250)
+
+    def test_survived_signal_preserves_later_failure_without_waiting_for_output(self):
+        with self.core() as (root, adapter), Session(
+                adapter, duplex=True, nonblocking=True, send_buffer=4096) as session:
+            session.send(b"hup-fail\n")
+            self.assertEqual(session.line(), "ready")
+            session.proc.send_signal(signal.SIGHUP)
+            wait_until(lambda: (root / "survived-hup").exists())
+            session.send(b"write\n")
+            wait_until(lambda: (root / "written").exists())
+            self.pressure(session)
+            self.assertIsNone(session.proc.poll())
+            # A survived signal still permits a later failure to leave output
+            # undrained. Keep the reader idle until that independent exit.
+            session.send(b"exit\n")
+            self.assertEqual(session.proc.wait(timeout=10), 3)
+            received = self.read_all(session.output)
+            self.assertEqual(session.proc.stderr.read(), b"")
+            self.assertGreater(len(received), 0)
+            self.assertEqual(received, (self.PATTERN * 1024)[:len(received)])
 
     def test_output_disconnect_fails_without_killing_started_helper(self):
         with self.core() as (root, adapter), Session(
