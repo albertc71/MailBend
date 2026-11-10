@@ -1,0 +1,119 @@
+name: JSON count diagnostic 417
+on:
+  push:
+    branches:
+      - codex/json-count-diagnostic-417-20261110
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: 1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Capture one exact JSON unit diagnostic
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          export HOME="$RUNNER_TEMP/json-count-417-home"
+          mkdir -p "$HOME"
+          unset BENDTT
+          python3 -I - <<'PY'
+          import os
+          import selectors
+          import signal
+          import subprocess
+          import time
+
+          CAP = 65536
+
+          def interrupted(signum, _frame):
+              raise SystemExit(128 + signum)
+
+          signal.signal(signal.SIGTERM, interrupted)
+          signal.signal(signal.SIGINT, interrupted)
+
+          def run(label, command, seconds):
+              data = bytearray()
+              timed_out = False
+              oversized = False
+              process = subprocess.Popen(
+                  command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT, start_new_session=True)
+              try:
+                  os.set_blocking(process.stdout.fileno(), False)
+                  with selectors.DefaultSelector() as ready:
+                      ready.register(process.stdout, selectors.EVENT_READ)
+                      end = time.monotonic() + seconds
+                      while True:
+                          if ready.select(0.05):
+                              chunk = os.read(process.stdout.fileno(), CAP + 1 - len(data))
+                              data.extend(chunk)
+                              if not chunk:
+                                  ready.unregister(process.stdout)
+                              if len(data) > CAP:
+                                  oversized = True
+                                  break
+                          if os.waitid(os.P_PID, process.pid,
+                                       os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                              break
+                          if time.monotonic() >= end:
+                              timed_out = True
+                              break
+              finally:
+                  signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                  signal.signal(signal.SIGINT, signal.SIG_IGN)
+                  # Keep the leader unreaped until its process group has been signalled.
+                  for sig, grace in ((signal.SIGTERM, 1), (signal.SIGKILL, 0)):
+                      try:
+                          os.killpg(process.pid, sig)
+                      except ProcessLookupError:
+                          pass
+                      if grace:
+                          time.sleep(grace)
+                  status = process.wait(timeout=4)
+                  signal.signal(signal.SIGTERM, interrupted)
+                  signal.signal(signal.SIGINT, interrupted)
+              eof = False
+              while len(data) <= CAP:
+                  try:
+                      chunk = os.read(process.stdout.fileno(), CAP + 1 - len(data))
+                  except BlockingIOError:
+                      break
+                  if not chunk:
+                      eof = True
+                      break
+                  data.extend(chunk)
+              process.stdout.close()
+              print(label + " exit=" + str(status) + " timeout=" + str(timed_out)
+                    + " bytes=" + str(len(data)), flush=True)
+              if oversized or len(data) > CAP or not eof:
+                  raise SystemExit("Diagnostic output incomplete or above cap; not complete evidence.")
+              print("::stop-commands::json417-output", flush=True)
+              print(data.decode("utf-8", errors="replace"), end="", flush=True)
+              print("\n::json417-output::", flush=True)
+              if timed_out:
+                  raise SystemExit(124)
+              if status != 0:
+                  raise SystemExit(status if status > 0 else 128 - status)
+
+          run("exact evidence child and history scan", ["sh", "scripts/scan-secrets.sh"], 30)
+          run("select exact failed product", ["git", "checkout", "--detach",
+              "22886c1c773cb7305410ee2e2e49a3faa6d0720b"], 10)
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], timeout=5).decode().strip()
+          if head != "22886c1c773cb7305410ee2e2e49a3faa6d0720b":
+              raise SystemExit("Unexpected product checkout.")
+          run("pinned Bend bootstrap", ["sh", "scripts/install-bend.sh"], 45)
+          run("exact JSON unit", [os.path.join(os.environ["HOME"], ".bend/bin/bend"),
+                                 "tests/unit/json.bend"], 120)
+          PY
