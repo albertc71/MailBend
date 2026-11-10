@@ -779,13 +779,13 @@ def triage_moves(mbox: String, ps: List<&2, Placement>) -> List<&2, FolderUids>:
   grouped(List.sort(~FolderUids, ~(a => b => String.is_le(folder_of(a), folder_of(b))),
     moving(mbox, ps)))
 
+# Whether two names are equal in lower case.
+def lower_eq(a: String, b: String) -> Bool:
+  String.eq(String.to_lower(a), String.to_lower(b))
+
 # Whether `name` is one of `names`, compared in lower case.
-def named_in(names: List<&2, String>, +name: String) -> Bool:
-  match names:
-    case Nil{}:
-      False{}
-    case n <> t:
-      String.eq(String.to_lower(n), String.to_lower(name)) || named_in(t, name)
+def named_in(names: List<&2, String>, name: String) -> Bool:
+  List.contains(~String, ~lower_eq, names, name)
 
 # Whether triage may move mail out of `mbox` into `dest`: never into `mbox`
 # itself, nor into INBOX or one of the `reserved` folders (in any case), and
@@ -1118,10 +1118,6 @@ def all_offered(+cats: List<&2, String>, ds: List<&2, String>) -> Bool:
     case +d <> t:
       (String.eq(d, review_folder()) || List.contains(~String, ~String.eq, cats, d)) &&
         all_offered(cats, t)
-
-# Whether two names are equal in lower case.
-def lower_eq(a: String, b: String) -> Bool:
-  String.eq(String.to_lower(a), String.to_lower(b))
 
 # Whether no folder is one of `names`, compared in lower case.
 def none_named(+names: List<&2, String>, ds: List<&2, String>) -> Bool:

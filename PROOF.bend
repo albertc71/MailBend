@@ -1246,13 +1246,7 @@ def dest_offered(
 # The laws compare names on their own; these tie them to the check's.
 def contains_named(names: List<&2, String>, +d: String)
   -> {Ops.named_in(names, d) == List.contains(~String, ~Ops.lower_eq, names, d) : Bool}:
-  match names:
-    case Nil{}:
-      {==}
-    case n <> t:
-      %contains_named(t, d) :
-        {Ops.named_in(n <> t, d) == Bool.or(Ops.lower_eq(n, d), _) : Bool}
-      {==}
+  {==}
 
 def not_same_not_eq(+a: String, +b: String, e: {Bool.not(I.same_name(a, b)) == True{} : Bool})
   -> {Bool.not(String.eq(a, b)) == True{} : Bool}:

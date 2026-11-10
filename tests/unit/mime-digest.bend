@@ -85,7 +85,7 @@ def completeness(c: Jev.Completeness) -> String:
       "partial"
 
 def jev.text(t: Jev.Text) -> String:
-  Jev.Text{text, whole} = t
+  Jev.MessageText{text, whole} = t
   "Jev [" ++ text ++ "] " ++ completeness(whole)
 
 def jev(msg: String) -> String:

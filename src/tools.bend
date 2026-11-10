@@ -1570,7 +1570,7 @@ def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
       Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
         "; message incomplete]\n" ++ Jev.plain_text(M.readable_text(parts)), True{})
     case False{} Part.Part{path, ct, cd, encoding, size}:
-      Jev.Text{"[Selected MIME section " ++ I.section_str(path) ++
+      Jev.MessageText{"[Selected MIME section " ++ I.section_str(path) ++
         "; no text body fetched]", Jev.Partial{}}
 
 def part_get.text(+p: Part.Part, bytes: String) -> Jev.Text:
@@ -6356,7 +6356,7 @@ def send_allowed.run(envelope: String, limit: U32, dir: String, s: Sent) -> IO(P
 # recipients, the message, the allowlist and daily limit it goes under,
 # what its result reports, and its dry run.
 type Ready is Data:
-  Ready{
+  SendReady{
     from: String,
     rcpts: List<&2, String>,
     msg: String,
@@ -6394,10 +6394,10 @@ def send_allowed(
 ) -> IO(Policy.Out):
   match envelope:
     case None{}:
-      Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
+      SendReady{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       pure_out(send_not_attempted(send_refused(blocked, allow, rcpts, report)))
     case Some{e}:
-      Ready{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
+      SendReady{from, rcpts, msg, allow, limit, dir, s, dry, p} = r
       do IO<Policy.Out>:
         o : Policy.Out <- preview_or_run(dry, p, send_allowed.run(e, limit, dir, s))
         return with_fields_first(o, report)
@@ -6411,7 +6411,7 @@ def send_checked(
   report: List<&2, J.Json>,
   +r: Ready
 ) -> IO(Policy.Out):
-  Ready{from, rcpts, msg, allow, l, dr, s, y, p} = r
+  SendReady{from, rcpts, msg, allow, l, dr, s, y, p} = r
   send_allowed(Jev.outbound_checked(scan, allow, g, rcpts, from, msg),
     Jev.blocked_reason(scan, g), report, r)
 
@@ -6447,7 +6447,7 @@ def send_ask(
   +vs: List<&2, Jev.Veto>,
   r: Ready
 ) -> IO(Policy.Out):
-  Jev.Text{shown, whole} = t
+  Jev.MessageText{shown, whole} = t
   do IO<Policy.Out>:
     a : Asked <- ask_jev(Retried{}, Jev.plain_cargo(Jev.outgoing_request(c, o, vs, shown)))
     send_decided(Secrets.Clean{}, outgoing_answered(a, c, vs, whole), r)
@@ -6514,7 +6514,7 @@ def send_jev.put(
 # With Jev on, a send passes the allowlist, then the local secret scan of
 # its content, then Jev's veto questions, before its envelope is built.
 def send_jev(c: Jev.Content, w: Want, from: String, +r: Ready) -> IO(Policy.Out):
-  Ready{f, rcpts, m, allow, l, dr, s, y, p} = r
+  SendReady{f, rcpts, m, allow, l, dr, s, y, p} = r
   send_jev.put(S.refused(allow, rcpts), c, w, from, r)
 
 def send_local(on: Bool, w: Want, from: String, r: Ready) -> IO(Policy.Out):
@@ -6544,7 +6544,7 @@ def send_with(cfg: Sends(), +w: Want, +from: String, +st: Stamp) -> IO(Policy.Ou
       +rcpts = specs(all_rcpts(w))
       +sender = M.addr_spec(from)
       +msg = M.compose(d, boundary_of(st))
-      send_gated(want_jev(w), scan, w, from, Ready{sender, rcpts, msg, allow, limit, dir,
+      send_gated(want_jev(w), scan, w, from, SendReady{sender, rcpts, msg, allow, limit, dir,
         Sent{msgid_of(d), U32.from_nat(List.length(&2, String, rcpts)), save,
           draft_of(w, from, st, True{}), boundary_of(st)},
         is_dry(w), SmtpPreview{sender, rcpts, msg, save}})
@@ -8391,9 +8391,9 @@ def pending_of.text(
   +vetoes: List<&2, String>,
   m: I.Msg
 ) -> Pending:
-  Jev.Text{text, +whole} = t
-  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.Text{text, whole}, 0}, vetoes,
-    m)
+  Jev.MessageText{text, +whole} = t
+  pending_of.if(Jev.may_review(c, whole, vetoes), Jev.Fetched{f, Jev.MessageText{text, whole}, 0},
+    vetoes, m)
 
 # A message with its code vetoes; its sender is looked up only while it
 # can still be found safe to delete.
@@ -8459,7 +8459,7 @@ def settle(t: Triaging, written: Maybe<&2, List<&2, String>>) -> Triaging:
 
 # Whether a message is asked about in a request of its own.
 def asked_alone(c: Jev.Content, p: Pending) -> Bool:
-  Pending{Jev.Fetched{f, Jev.Text{text, whole}, r}, vetoes, sender} = p
+  Pending{Jev.Fetched{f, Jev.MessageText{text, whole}, r}, vetoes, sender} = p
   Jev.may_review(c, whole, vetoes)
 
 # The messages asked about together (`alone` False) or one per request.
@@ -9000,14 +9000,14 @@ def listed_fetched(ms: List<&2, I.Msg>, +n: U32) -> List<&2, Jev.Fetched>:
     case Nil{}:
       []
     case m <> t:
-      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.Text{"", Jev.Complete{}}, 0} <>
+      Jev.Fetched{Jev.numbered(Jev.facts_of(m), n), Jev.MessageText{"", Jev.Complete{}}, 0} <>
         listed_fetched(t, (n + 1 : U32))
 
 # The message mail_get read whole; its text only in body mode.
 def whole_fetched(c: Jev.Content, +m: I.Msg, max: U32) -> Jev.Fetched:
   match c:
     case Jev.Headers{}:
-      Jev.Fetched{Jev.whole_facts(m), Jev.Text{"", Jev.Complete{}}, 0}
+      Jev.Fetched{Jev.whole_facts(m), Jev.MessageText{"", Jev.Complete{}}, 0}
     case Jev.Body{}:
       Jev.Fetched{Jev.whole_facts(m), Jev.text_of(m, max), 0}
 

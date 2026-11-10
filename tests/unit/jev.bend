@@ -76,7 +76,7 @@ def show_whole(c: Jev.Completeness) -> String:
       "partial"
 
 def show_text(t: Jev.Text) -> String:
-  Jev.Text{text, whole} = t
+  Jev.MessageText{text, whole} = t
   "[" ++ text ++ "] " ++ show_whole(whole)
 
 def check_facts() -> IO(Unit):
@@ -111,12 +111,12 @@ def opts(+names: List<&2, String>) -> Jev.Options:
   Jev.Options{Jev.Classifying{}, Jev.category_options(names, none), none}
 
 def fetched(uid: U32, text: String) -> Jev.Fetched:
-  Jev.Fetched{facts(uid), Jev.Text{text, Jev.Complete{}}, 0}
+  Jev.Fetched{facts(uid), Jev.MessageText{text, Jev.Complete{}}, 0}
 
 def long_subject(uid: U32) -> Jev.Fetched:
   subject : M.Hdr = M.Hdr{"subject", String.repeat("\"", 16000n)}
   Jev.Fetched{Jev.Facts{uid, [subject], [], "", 0, Jev.Unknown{}, Jev.Partial{}},
-    Jev.Text{"", Jev.Complete{}}, 0}
+    Jev.MessageText{"", Jev.Complete{}}, 0}
 
 def entry_line(e: Jev.Entry) -> String:
   Jev.Entry{+f, state, qs, n, q, l, u} = e
@@ -492,7 +492,7 @@ def answers_from(model: String, probs: List<&2, String>, names: List<&2, String>
   "{" ++ model ++ "\"answers\":{" ++ String.join(answer_kvs(probs, names), ",") ++ "}}"
 
 def text_whole(t: Jev.Text) -> String:
-  Jev.Text{text, whole} = t
+  Jev.MessageText{text, whole} = t
   show_whole(whole)
 
 def gates() -> List<&2, Jev.Gate>:
