@@ -1,0 +1,131 @@
+name: Thread discovery reply controls
+
+on:
+  push:
+    branches: [aegis/validate-discovery-replies-controls-20261110]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discovery-replies-controls-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BEND_NO_TELEMETRY: '1'
+
+jobs:
+  controls:
+    if: github.repository == 'albertc71/MailBend'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout validation child
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: validation
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable current-main baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 4315ce3c06e4e8141b60c7ad7d8698fc1cfc905f
+          path: baseline
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: be88ac41f9c9ba9db7de0de9c7f64f51bd58160a
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact source and validation identities
+        run: |
+          set -eu
+          test "$(git -C baseline rev-parse HEAD)" = 4315ce3c06e4e8141b60c7ad7d8698fc1cfc905f
+          test "$(git -C baseline rev-parse HEAD^{tree})" = 236cc2ef16f8f6871c054bfd6b7636c4ba363aad
+          test "$(git -C baseline show -s --format=%P HEAD)" = d794e3a394ecb3e4f0fd77667f92709958e55566
+          test "$(git -C candidate rev-parse HEAD)" = be88ac41f9c9ba9db7de0de9c7f64f51bd58160a
+          test "$(git -C candidate rev-parse HEAD^{tree})" = d0fd77e776f39099d621618043ba5b334d2b2312
+          test "$(git -C candidate show -s --format=%P HEAD)" = afd7ccbf0c910d6eb021cbcf6c04c8c81c3ba5ec
+          test "$(git -C candidate show -s --format=%P HEAD^)" = 4315ce3c06e4e8141b60c7ad7d8698fc1cfc905f
+          test "$(git -C candidate rev-parse HEAD^1^{tree})" = 61fcea8c22d7a91cc86b9cbb22bf1e1d142f42d4
+          test "$(git -C validation show -s --format=%P HEAD)" = be88ac41f9c9ba9db7de0de9c7f64f51bd58160a
+          git -C baseline diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/baseline-paths"
+          printf '%s\n' tests/fake_mail_server.py tests/test-e2e.py > "$RUNNER_TEMP/expected-baseline-paths"
+          diff -u "$RUNNER_TEMP/expected-baseline-paths" "$RUNNER_TEMP/baseline-paths"
+          git -C candidate diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/candidate-paths"
+          printf '%s\n' docs/PROOF-COVERAGE.md > "$RUNNER_TEMP/expected-candidate-paths"
+          diff -u "$RUNNER_TEMP/expected-candidate-paths" "$RUNNER_TEMP/candidate-paths"
+          git -C candidate diff --name-only 4315ce3c06e4e8141b60c7ad7d8698fc1cfc905f HEAD > "$RUNNER_TEMP/production-paths"
+          printf '%s\n' docs/PROOF-COVERAGE.md src/tools.bend > "$RUNNER_TEMP/expected-production-paths"
+          diff -u "$RUNNER_TEMP/expected-production-paths" "$RUNNER_TEMP/production-paths"
+          git -C validation diff --name-only HEAD^ HEAD > "$RUNNER_TEMP/validation-paths"
+          printf '%s\n' .github/workflows/discovery-replies-controls.yml validation/discovery_reply_controls.py validation/discovery_reply_mutations.py > "$RUNNER_TEMP/expected-validation-paths"
+          diff -u "$RUNNER_TEMP/expected-validation-paths" "$RUNNER_TEMP/validation-paths"
+          git -C baseline rev-parse HEAD HEAD^{tree}
+          git -C candidate rev-parse HEAD HEAD^{tree}
+          git -C validation rev-parse HEAD HEAD^{tree}
+      - name: Redacted tree and history scans
+        timeout-minutes: 5
+        run: |
+          sh validation/scripts/scan-secrets.sh
+          sh baseline/scripts/scan-secrets.sh
+          sh candidate/scripts/scan-secrets.sh
+      - name: Install standard build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+      - name: Install pinned Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install pinned tools
+        working-directory: candidate
+        run: |
+          python3 -m pip install jsonschema==4.26.0
+          sh scripts/install-rust.sh
+          sh scripts/install-bend.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Build current-main baseline
+        working-directory: baseline
+        timeout-minutes: 12
+        run: |
+          scripts/install.sh
+          sha256sum bin/mailbend-core bin/mailbend-tls bin/mailbend-attach bin/mailbend-stdio bin/mailbend-typesafe
+      - name: Offline MCP comparison lifecycle controls
+        working-directory: candidate
+        timeout-minutes: 3
+        run: python3 -I -B tests/test-mcp-schema-comparison.py
+      - name: Reproduce baseline on current-main inputs
+        timeout-minutes: 5
+        run: |
+          python3 -I -B validation/validation/discovery_reply_controls.py --root baseline --mode baseline --existing
+          MAILBEND_TEST_MCP=1 python3 -I -B validation/validation/discovery_reply_controls.py --root baseline --mode baseline --existing
+      - name: Build scoped discovery candidate
+        working-directory: candidate
+        timeout-minutes: 12
+        run: |
+          scripts/install.sh
+          sha256sum bin/mailbend-core bin/mailbend-tls bin/mailbend-attach bin/mailbend-stdio bin/mailbend-typesafe
+      - name: Full MIME corpus and nested resource boundaries
+        working-directory: candidate
+        timeout-minutes: 10
+        run: python3 -B tests/test-mime-corpus.py --nested-resources
+      - name: Candidate CLI and MCP controls
+        timeout-minutes: 5
+        run: |
+          python3 -I -B validation/validation/discovery_reply_controls.py --root candidate --mode candidate --existing
+          MAILBEND_TEST_MCP=1 python3 -I -B validation/validation/discovery_reply_controls.py --root candidate --mode candidate --existing
+      - name: Independent observer and accepted-data mutations with restoration
+        timeout-minutes: 45
+        run: python3 -I -B validation/validation/discovery_reply_mutations.py --root candidate --source-sha256 d8686bb53df488fe0667ebb34023f562406e81939c222d33f0f8755b45d6e210
+      - name: Verify unchanged tracked inputs
+        if: always()
+        run: |
+          git -C baseline diff --exit-code
+          git -C candidate diff --exit-code
+          git -C validation diff --exit-code
