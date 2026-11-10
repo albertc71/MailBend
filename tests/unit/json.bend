@@ -142,7 +142,7 @@ def escape_count.range(n: Nat, +code: U32, ok: Bool) -> Bool:
     case 0n:
       ok
     case 1n+p:
-      +s = SCon{Char.from_u32(code), SNil{}}
+      +s = (SCon{Char.from_u32(code), SNil{}} : String)
       escape_count.range(p, (code + 1 : U32), ok &&
         escape_count.agrees(s, 0) && escape_count.agrees(s, 4294967293))
 
@@ -151,7 +151,7 @@ def escape_count.edges(xs: List<&2, U32>) -> Bool:
     case Nil{}:
       True{}
     case code <> tail:
-      +s = SCon{Char.from_u32(code), SNil{}}
+      +s = (SCon{Char.from_u32(code), SNil{}} : String)
       escape_count.agrees(s, 0) && escape_count.agrees(s, 4294967295) &&
         escape_count.edges(tail)
 
