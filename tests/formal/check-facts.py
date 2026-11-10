@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Reject three facts regressions with the exact focused laws from the root contract.
+"""Reject five facts regressions with the exact focused laws from the root contract.
 
 The full root verdict supplies kernel rechecking. These isolated negative controls
-check source-span width, rendered values, and an inhabited extraction independently.
+check provider-specific span widths, rendered values, and inhabited extractions.
 """
 import hashlib
 import os
@@ -14,21 +14,30 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ("meeting_facts_spans_within_text", "meeting_facts_emitted_values",
-         "meeting_facts_complete_source_witness", "meeting_facts_unicode_source_witness")
+         "meeting_facts_complete_source_witness", "meeting_facts_unicode_source_witness",
+         "meeting_facts_zoom_complete_source_witness", "meeting_facts_zoom_unicode_source_witness")
 FILES = ("src/facts.bend", "LAWS.bend", "PROOF.bend",
          "tests/formal/facts-observers.bend", "tests/formal/facts-proofs.bend")
 IMPORTS = ("import Base\nimport ./src/facts.bend as Facts\nimport ./src/json.bend as J\n"
            "import ./tests/formal/facts-observers.bend as FactObserve\n")
 MUTATIONS = (
     ("emitted-span-width",
-     "put(found, Span{offset, Nat.add(offset, 36n), line}, spans))",
-     "put(found, Span{offset, Nat.add(offset, 35n), line}, spans))", "scan_bounds"),
+     "Span{offset, Nat.add(offset, 36n), line}",
+     "Span{offset, Nat.add(offset, 35n), line}", "scan_bounds", None),
+    ("emitted-zoom-span-width",
+     "ZoomSpan{offset, Nat.add(offset, zoom), line}",
+     "ZoomSpan{offset, Nat.add(offset, 513n), line}", "scan_bounds", None),
     ("rendered-value",
      'J.kv("value", J.str(String.take(String.drop(source, start), Nat.sub(end, start))))',
-     'J.kv("value", J.str("changed"))', "rendered_all"),
+     'J.kv("value", J.str("changed"))', "rendered_all", None),
     ("always-empty",
      "scan(65536n, source, 16n, ending, True{}, 0n, 1n, [])",
-     "Extraction{[], False{}}", "meeting_facts_complete_source_witness"),
+     "Extraction{[], False{}}", "meeting_facts_complete_source_witness",
+     ("meeting_facts_complete_source_witness",)),
+    ("zoom-disabled",
+     "      zoom_candidate_within(source, fuel, ending)\n",
+     "      0n\n", "meeting_facts_zoom_complete_source_witness",
+     ("meeting_facts_zoom_complete_source_witness",)),
 )
 
 
@@ -43,10 +52,10 @@ def declaration(text, prefix):
     return "".join(lines[start:end]).rstrip() + "\n"
 
 
-def probe(witness_only=False):
-    names = NAMES[2:] if witness_only else NAMES
+def probe(witnesses=None):
+    names = NAMES if witnesses is None else witnesses
     result = IMPORTS
-    if not witness_only:
+    if witnesses is None:
         result += "import ./tests/formal/facts-proofs.bend as FactProof\n"
     for name in names:
         result += "\n" + declaration((ROOT / "LAWS.bend").read_text(), "law " + name + ":")
@@ -77,10 +86,10 @@ def main():
         base = run(root)
         assert base.returncode == 0 and "ALL PROOFS CHECK" in base.stdout, base.stdout + base.stderr
         print("PASS focused root facts laws")
-        for name, original, broken, expected_location in MUTATIONS:
+        for name, original, broken, expected_location, witnesses in MUTATIONS:
             assert source.count(original) == 1, (name, "mutation target drifted")
             (root / "src/facts.bend").write_text(source.replace(original, broken))
-            check.write_text(probe(witness_only=name == "always-empty"))
+            check.write_text(probe(witnesses))
             result = run(root)
             output = result.stdout + result.stderr
             location = re.search(r"^Location: (\S+)", output, re.M)
@@ -100,3 +109,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

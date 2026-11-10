@@ -7,10 +7,15 @@ def spans(result: Facts.Extraction) -> List<&2, Facts.Span>:
   items
 
 def span_within(cap: Nat, span: Facts.Span) -> Type:
-  Facts.Span{+start, +end, line} = span
-  {end == Nat.add(start, 36n) : Nat} &
-  ({Nat.is_lt(start, end) == True{} : Bool} &
-   {Nat.is_le(end, cap) == True{} : Bool})
+  match span:
+    case Facts.Span{+start, +end, line}:
+      {end == Nat.add(start, 36n) : Nat} &
+      ({Nat.is_lt(start, end) == True{} : Bool} &
+       {Nat.is_le(end, cap) == True{} : Bool})
+    case Facts.ZoomSpan{+start, +end, line}:
+      {Nat.is_lt(start, end) == True{} : Bool} &
+      ({Nat.is_le(end, Nat.add(start, 512n)) == True{} : Bool} &
+       {Nat.is_le(end, cap) == True{} : Bool})
 
 def spans_within(+cap: Nat, items: List<&2, Facts.Span>) -> Type:
   match items:
@@ -31,6 +36,14 @@ def emitted(+source: String, spans: List<&2, Facts.Span>, chain: J.Json) -> Type
       ({J.get(fact, "source") == Some{J.str("text")} : Maybe<&2, J.Json>} &
       ({J.get(fact, "untrusted") == Some{J.bool(True{})} : Maybe<&2, J.Json>} &
         emitted(source, rest, tail)))))
+    case Facts.ZoomSpan{+start, +end, line} <> rest J.JCons{+fact, tail}:
+      {J.get(fact, "value") == Some{J.str(String.take(String.drop(source, start),
+        Nat.sub(end, start)))} : Maybe<&2, J.Json>} &
+      ({J.get(fact, "start") == Some{J.JNum{Nat.show(start)}} : Maybe<&2, J.Json>} &
+      ({J.get(fact, "end") == Some{J.JNum{Nat.show(end)}} : Maybe<&2, J.Json>} &
+      ({J.get(fact, "source") == Some{J.str("text")} : Maybe<&2, J.Json>} &
+      ({J.get(fact, "untrusted") == Some{J.bool(True{})} : Maybe<&2, J.Json>} &
+        emitted(source, rest, tail)))))
     case _ _:
       Empty
 
@@ -40,3 +53,4 @@ def rendered(source: String, spans: List<&2, Facts.Span>, value: Maybe<&2, J.Jso
       emitted(source, spans, chain)
     case _:
       Empty
+

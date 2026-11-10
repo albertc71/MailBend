@@ -17,6 +17,10 @@ LINK = "https://meet.google.com/abc-defg-hij"
 TEXT = "é😀 \n" + LINK + "\n"
 EXPECTED = {"kind": "meeting_link", "value": LINK, "source": "text",
             "start": 4, "end": 40, "line": 2, "untrusted": True}
+ZOOM = "https://us02web.zoom.us/j/12345678901?pwd=A%2Fb.1"
+ZOOM_TEXT = "é😀 \n" + ZOOM + "\n"
+ZOOM_EXPECTED = {"kind": "meeting_link", "value": ZOOM, "source": "text",
+                 "start": 4, "end": 53, "line": 2, "untrusted": True}
 
 
 def fixture():
@@ -29,6 +33,11 @@ def fixture():
     long_message["uid"] = 7
     long_message["raw"] += "history " * 600
     result["mailboxes"]["INBOX"]["messages"].append(long_message)
+    zoom_message = copy.deepcopy(result["mailboxes"]["INBOX"]["messages"][0])
+    zoom_message["uid"] = 8
+    zoom_message["raw"] = zoom_message["raw"].replace(
+        TEXT.encode("utf-8").decode("latin-1"), ZOOM_TEXT.encode("utf-8").decode("latin-1"))
+    result["mailboxes"]["INBOX"]["messages"].append(zoom_message)
     return result
 
 
@@ -54,6 +63,21 @@ def integration_cases(srv):
         assert ("html" in result) == (mode == "full"), result
         assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()) <= 4096, result
     print("PASS full/text projections and final UTF-8 byte budget")
+    code, zoom_ordinary = e2e.tool(srv, "mail_get", {"uid": 8})
+    assert code == 0 and "facts" not in zoom_ordinary and "facts_scan" not in zoom_ordinary, zoom_ordinary
+    start = len(srv.log_lines())
+    code, zoom_disabled = e2e.tool(srv, "mail_get", {"uid": 8, "facts": False})
+    zoom_commands = srv.log_lines()[start:]
+    assert code == 0 and zoom_disabled == zoom_ordinary, zoom_disabled
+    start = len(srv.log_lines())
+    code, zoom_enabled = e2e.tool(srv, "mail_get", {"uid": 8, "facts": True})
+    assert code == 0 and zoom_enabled["facts"] == [ZOOM_EXPECTED], zoom_enabled
+    assert zoom_enabled["text"] == ZOOM_TEXT, zoom_enabled
+    assert zoom_enabled["facts_scan"] == {"scope": "returned_text", "limited": False}, zoom_enabled
+    assert {key: value for key, value in zoom_enabled.items()
+            if key not in ("facts", "facts_scan")} == zoom_ordinary, zoom_enabled
+    assert srv.log_lines()[start:] == zoom_commands, srv.log_lines()[start:]
+    print("PASS Zoom query provenance, omitted/false parity and unchanged read commands")
     for extra in ({"projection": "html"}, {"projection": "metadata"},
                   {"section": "list"}, {"section": "text"}, {"section": "1"}, {"section": " "}):
         start = len(srv.log_records())
@@ -121,11 +145,15 @@ def completeness_fixture():
               "Content-Type: text/plain; charset=us-ascii\r\n\r\n")
     template = result["mailboxes"]["INBOX"]["messages"][0]
     window = header + " " * (1024 - len(header) - 36) + LINK + ".evil.invalid"
+    zoom_window = header + " " * (1024 - len(header) - len(ZOOM)) + ZOOM + "unseen-query-tail"
     result["mailboxes"]["INBOX"]["messages"] = [
         {**template, "uid": 1, "raw": window, "reported_size": 1024},
         {**template, "uid": 2, "raw": header + LINK, "reported_size": 1},
         {**template, "uid": 3, "raw": header + LINK},
         {**template, "uid": 4, "raw": header + LINK + "\n", "reported_size": 1},
+        {**template, "uid": 5, "raw": zoom_window, "reported_size": 1024},
+        {**template, "uid": 6, "raw": header + ZOOM + "\n", "reported_size": 1},
+        {**template, "uid": 7, "raw": header + ZOOM},
     ]
     return result
 
@@ -147,6 +175,18 @@ def completeness_cases(srv):
     assert code == 0 and delimited["facts"] == [{**EXPECTED, "start": 0, "end": 36, "line": 1}], delimited
     assert delimited["facts_scan"]["limited"] is True, delimited
     print("PASS complete EOF and independently delimited prefix retain inhabited facts")
+    code, zoom_cut = e2e.tool(srv, "mail_get", {"uid": 5, "facts": True, "max_bytes": 1024})
+    assert code == 0 and zoom_cut.get("text", "").endswith(ZOOM), zoom_cut
+    assert zoom_cut["truncated"] is False, zoom_cut
+    assert zoom_cut["facts"] == [] and zoom_cut["facts_scan"]["limited"] is True, zoom_cut
+    zoom_fact = {**ZOOM_EXPECTED, "start": 0, "end": 49, "line": 1}
+    code, zoom_delimited = e2e.tool(srv, "mail_get", {"uid": 6, "facts": True, "max_bytes": 1024})
+    assert code == 0 and zoom_delimited["facts"] == [zoom_fact], zoom_delimited
+    assert zoom_delimited["facts_scan"]["limited"] is True, zoom_delimited
+    code, zoom_complete = e2e.tool(srv, "mail_get", {"uid": 7, "facts": True, "max_bytes": 1024})
+    assert code == 0 and zoom_complete["facts"] == [zoom_fact], zoom_complete
+    assert zoom_complete["facts_scan"]["limited"] is False, zoom_complete
+    print("PASS Zoom query prefixes are not shortened and delimited/complete URLs remain exact")
 
 
 def main():

@@ -2117,8 +2117,8 @@ law brief_unseen_filter_interval:
 # Literal meeting-link facts
 # --------------------------
 
-# Every span emitted by the production extractor is nonempty, 36 scalars wide,
-# and contained in the supplied text. Recognition and line numbers remain tested.
+# Every emitted span is nonempty and contained in the supplied text.
+# Meet spans stay 36 scalars wide; Zoom spans fit 512. Recognition remains tested.
 law meeting_facts_spans_within_text:
   for source: String
   for ending: Facts.SourceEnd
@@ -2141,6 +2141,17 @@ law meeting_facts_complete_source_witness:
 law meeting_facts_unicode_source_witness:
   {FactObserve.spans(Facts.extract("é😀 \nhttps://meet.google.com/abc-defg-hij", Facts.Complete{})) ==
     [Facts.Span{4n, 40n, 2n}] : List<&2, Facts.Span>}
+
+# LAW: A complete Zoom link produces the concrete span from scalar 0 to 27 on line 1.
+law meeting_facts_zoom_complete_source_witness:
+  {FactObserve.spans(Facts.extract("https://zoom.us/j/123456789", Facts.Complete{})) ==
+    [Facts.ZoomSpan{0n, 27n, 1n}] : List<&2, Facts.Span>}
+
+# LAW: A Zoom link with a preserved query after Unicode and LF spans scalars 4 to 53 on line 2.
+law meeting_facts_zoom_unicode_source_witness:
+  {FactObserve.spans(Facts.extract(
+    "é😀 \nhttps://us02web.zoom.us/j/12345678901?pwd=A%2Fb.1", Facts.Complete{})) ==
+    [Facts.ZoomSpan{4n, 53n, 2n}] : List<&2, Facts.Span>}
 
 # Client-side prompts
 # -------------------
@@ -2251,3 +2262,4 @@ law hook_nonobject_input_asks:
   for +args: Maybe<&2, J.Json>
   for nonobject: hook_nonobject_input(args)
   {hook_printed_decision(Hook.event.fields(Some{name}, args)) == Some{"ask"} : Maybe<&2, String>}
+

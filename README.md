@@ -173,17 +173,33 @@ it to false preserves the existing output.
 scripts/mailbend call mail_get '{"uid":42,"facts":true,"projection":"text"}'
 ```
 
-This first version recognizes only canonical lowercase HTTPS Google Meet
-links with a three-four-three letter meeting code, such as
-`https://meet.google.com/abc-defg-hij`. It does not open links or establish
-that a meeting is safe, current, or authentic. Treat each fact as untrusted
-mail content, never as an instruction or permission.
+The extractor recognizes canonical lowercase HTTPS Google Meet links with a
+three-four-three letter meeting code, such as
+`https://meet.google.com/abc-defg-hij`, and the Zoom subset below. It does not
+open links or establish that a meeting is safe, current, or authentic. Treat
+each fact as untrusted mail content, never as an instruction or permission.
+
+Zoom links use lowercase `https://`, the host `zoom.us` or one lowercase
+ASCII DNS label followed by `.zoom.us`, and `/j/` followed by 9 to 11 ASCII
+digits. A subdomain label contains 1 to 63 letters, digits, or hyphens and
+starts and ends with a letter or digit. Other Zoom domains, nested
+subdomains, ports, userinfo, personal-link paths, and web-client paths are
+not recognized. This is a syntax subset, not a check that Zoom issued the
+host or meeting ID.
+
+A Zoom link can include a nonempty query after `?`. Supported query
+characters are ASCII letters, digits, `-._~=&+`, and complete `%HH` escapes
+with hexadecimal digits. The entire query is preserved without decoding,
+reordering, or removing parameters. Unsupported query characters, fragments,
+and malformed escapes reject the whole candidate. Each Zoom URL is at most
+512 Unicode scalars, including its query. A delimiter or complete-source
+end must also fit inside the scan window. Longer URLs are not shortened.
 
 Each fact has `kind: "meeting_link"`, the unchanged `value`, `source: "text"`,
 and `untrusted: true`. Its `start` and `end` are zero-based, half-open
 Unicode-scalar offsets into the **returned top-level `text`**, not byte
 positions or UTF-16 code units. `line` counts LF characters from one.
-For `é😀 ` followed by a canonical link, its span is `[3,39)` on line 1.
+For `é😀 ` followed by a canonical Google Meet link, its span is `[3,39)` on line 1.
 
 The scanner examines at most 65,536 scalar positions and emits at most 16
 facts in source order, including repeated occurrences. `facts_scan.scope`
@@ -199,9 +215,13 @@ A link must start at the beginning of the returned text or after ASCII
 space, tab, CR, LF, or an opening wrapper `(`, `[`, `{`, `<`, `"`, or `'`.
 It must end before that ASCII whitespace or a closing wrapper `)`, `]`,
 `}`, `>`, `"`, or `'`. End of text is accepted only for a complete source.
-The scanner rejects query strings, fragments, paths, trailing dots,
-userinfo, percent escapes, backslashes, suffix letters, and Unicode
-lookalikes. These conservative boundaries intentionally miss some links.
+Google Meet links retain their strict fixed-width grammar and reject query
+strings, fragments, extra paths, trailing dots, percent escapes, and suffix
+characters. Zoom links reject those tails except for the supported query
+subset. A period after a bare Zoom meeting ID rejects the token. A period
+inside a supported query is preserved as query data, including at its end.
+The extractor never trims sentence punctuation or repairs a malformed URL.
+These conservative boundaries intentionally miss some links.
 
 `facts: true` requires the default or explicit `full` projection, or `text`.
 It rejects `html`, `metadata`, and every nonempty `section` before network
@@ -1149,19 +1169,21 @@ and exact unused allowance are preserved. The proof follows the production
 escape/reverse loops and machine-word addition, not a parallel serializer.
 
 The meeting-facts laws prove that every span emitted by the actual extractor <!-- claim:meeting-facts-source -->
-is nonempty, exactly 36 scalars wide, and contained in the supplied text.
+is nonempty and contained in the supplied text. Google Meet spans retain
+their exact 36-scalar width. Zoom spans are at most 512 scalars wide.
 [meeting_facts_spans_within_text](LAWS.bend) follows the production scanner
 and its final list reversal.
 [meeting_facts_emitted_values](LAWS.bend) observes the `facts` array from
 production `Facts.fields`, not an arbitrary substring accessor. Every emitted
 value equals its source substring, and its serialized start/end, text source,
-and untrusted marker match that extraction. Two concrete extraction witnesses
-prevent an always-empty implementation from satisfying the complete contract.
+and untrusted marker match that extraction. Four concrete extraction witnesses
+cover both formats and prevent an always-empty or Meet-only implementation
+from satisfying the complete contract.
 
 These laws do not prove canonical link recognition, line counting, scan or
 result caps, completeness flags, or the IO finalizer. Focused pure and fake-mail
-CLI/MCP tests cover those behaviors. Targeted mutations change emitted span
-width, rendered value, and extraction to always-empty independently.
+CLI/MCP tests cover those behaviors. Targeted mutations change both formats'
+emitted span widths, rendered values, and extraction independently.
 
 Image admission laws retain the original `Budget.admit_all` cap proofs and <!-- claim:image-budget -->
 also bound the production `Image.bind_next` state machine used by `bind_run`.
@@ -1448,3 +1470,4 @@ later changes to flags.
 ## License
 
 MIT; see [LICENSE](LICENSE).
+

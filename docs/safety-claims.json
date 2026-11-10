@@ -897,14 +897,16 @@
     },
     {
       "id": "meeting-facts-source",
-      "claim": "For every supplied text and completeness marker, actual extracted spans are nonempty, exactly 36 scalars wide and within the text. Production facts fields render exact source substrings and matching coordinates, source and untrusted markers. Two concrete positive witnesses exclude always-empty extraction. Recognition, line counting, limits, completeness and IO wiring are tested, not universally proved.",
+      "claim": "For every supplied text and completeness marker, actual extracted spans are nonempty and within the text. Google Meet spans remain exactly 36 scalars wide; Zoom spans are at most 512 scalars wide. Production facts fields render exact source substrings and matching coordinates, source and untrusted markers. Four concrete positive witnesses exclude always-empty and Meet-only extraction. Recognition, line counting, limits, completeness and IO wiring are tested, not universally proved.",
       "anchor": "what-the-proofs-cover",
       "status": "proven",
       "laws": [
         "meeting_facts_spans_within_text",
         "meeting_facts_emitted_values",
         "meeting_facts_complete_source_witness",
-        "meeting_facts_unicode_source_witness"
+        "meeting_facts_unicode_source_witness",
+        "meeting_facts_zoom_complete_source_witness",
+        "meeting_facts_zoom_unicode_source_witness"
       ],
       "tests": [
         "tests/formal/check-facts.py#main",
@@ -931,3 +933,4 @@
     "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim."
   }
 }
+
