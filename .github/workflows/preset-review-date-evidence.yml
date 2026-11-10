@@ -1,0 +1,120 @@
+name: Preset review-date focused evidence
+on:
+  push:
+    branches:
+      - aegis/verify-preset-review-dates-v2-20261110
+permissions:
+  contents: read
+env:
+  BEND_NO_TELEMETRY: '1'
+jobs:
+  preset-review-dates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 3775bee26c1c9662bc764d06e2486b5393fe5015
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable product and evidence ancestry
+        run: |
+          test "$(git rev-parse HEAD)" = "3775bee26c1c9662bc764d06e2486b5393fe5015"
+          test "$(git rev-parse HEAD^{tree})" = "d471210237dde7d544d959e8fb41351259ebbfda"
+          test "$(git show -s --format=%P "$GITHUB_SHA")" = "3775bee26c1c9662bc764d06e2486b5393fe5015"
+          test "$(git diff-tree --no-commit-id --name-only -r HEAD "$GITHUB_SHA")" = ".github/workflows/preset-review-date-evidence.yml"
+          git status --porcelain
+      - name: Install existing pinned Bend
+        run: |
+          sh scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Observe compiler and compare outputs, reject mutations, restore
+        run: |
+          bend version
+          python3 - <<'PY'
+          import runpy, signal, subprocess, tempfile
+          from pathlib import Path
+          
+          root = Path.cwd()
+          source = root / "src/providers.bend"
+          original = source.read_bytes()
+          unit = root / "tests/unit/providers.bend"
+          expected = b"".join(line[2:] for line in unit.read_bytes().splitlines(keepends=True) if line.startswith(b"#|"))
+          probe = root / ".provider-review-output.bend"
+          driver = "import Base\nimport ./src/providers.bend as P\n\ndef result(r: Result<&2, &2, String, String>) -> String:\n  match r:\n    case Done{text}:\n      \"Done:\\n\" ++ text\n    case Fail{text}:\n      \"Fail:\\n\" ++ text\n\ndef rows(xs: List<&2, String>) -> IO(Unit):\n  match xs:\n    case Nil{}:\n      IO.pure(Unit, Unit{})\n    case name <> rest:\n      do IO<Unit>:\n        IO.print(result(P.render(name, \"Reader.Name@web.de\")))\n        rows(rest)\n\ndef main() -> IO(Unit):\n  do IO<Unit>:\n    IO.print(String.join(P.names(P.presets()), \", \"))\n    rows([\"icloud\", \"gmail\", \"yahoo\", \"aol\", \"fastmail\", \"zoho\", \"gmx\",\n      \"web.de\", \"mailbox.org\", \"posteo\", \"proton-bridge\", \"unknown\",\n      \"outlook\", \"outlook.com\", \"hotmail\", \"hotmail.com\", \"office365\", \"microsoft365\"])\n    IO.print(result(P.render(\"WEB.DE\", \"Reader.Name@WEB.DE\")))\n    IO.print(result(P.render(\"GMAIL\", \"o'hara+$`whoami`@example.com\")))\n    IO.print(result(P.render(\"web.de\", \"reader@example.com\")))\n    IO.print(result(P.render(\"gmail\", \"invalid\")))\n"
+          base = "ba7288f35f5309fc69c40e2c340fbff121f5226d"
+          supervisor = runpy.run_path("tests/run-unit.py")["Supervisor"]()
+          for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
+              signal.signal(signum, supervisor.cancel)
+          
+          def run(args, cwd=root):
+              with tempfile.TemporaryFile() as output:
+                  process = supervisor.launch(args, cwd=cwd, stdout=output, stderr=subprocess.STDOUT)
+                  signal.alarm(120)
+                  try:
+                      code = supervisor.wait(process)
+                  finally:
+                      signal.alarm(0)
+                      supervisor.cleanup()
+                  output.seek(0)
+                  data = output.read(1048577)
+                  assert len(data) <= 1048576, "unexpected output size"
+                  assert code == 0, (args, code, data.decode(errors="replace")[:4000])
+                  return data
+          
+          def replace_once(text, before, after):
+              assert text.count(before) == 1, before
+              return text.replace(before, after, 1)
+          
+          try:
+              assert not probe.exists()
+              clean = run(["bend", "tests/unit/providers.bend"])
+              assert clean == expected, "clean provider unit mismatch"
+              print("PASS: fixed date, metadata, legacy helper and login-policy expectations")
+              probe.write_text(driver)
+              candidate_output = run(["bend", probe.name])
+              with tempfile.TemporaryDirectory(prefix="mailbend-review-baseline-") as temp:
+                  baseline = Path(temp)
+                  archive = subprocess.run(["git", "archive", base], stdout=subprocess.PIPE, check=True, timeout=30)
+                  subprocess.run(["tar", "-x", "-C", str(baseline)], input=archive.stdout, check=True, timeout=30)
+                  (baseline / probe.name).write_text(driver)
+                  baseline_output = run(["bend", probe.name], cwd=baseline)
+              assert candidate_output == baseline_output, "full emitted setup output changed"
+              print("PASS: complete emitted output equals pinned base for all 11 presets, refusals and case/quoting probes")
+              probe.unlink()
+              text = original.decode()
+              mutations = {
+                  "ignore all stored dates": replace_once(text, '"\\nReviewed: " ++ reviewed ++', '"\\nReviewed: " ++ reviewed_on() ++'),
+                  "restore provider-name special case": replace_once(
+                      replace_once(text, 'Preset{name, settings, username, prerequisites, sources, tier, reviewed} = p\n',
+                                   'Preset{+name, settings, username, prerequisites, sources, tier, reviewed} = p\n'),
+                      '"\\nReviewed: " ++ reviewed ++',
+                      '"\\nReviewed: " ++ Bool.pick(String, String.eq(name, "web.de"), "2026-11-08", reviewed_on()) ++'),
+                  "change iCloud stored date": replace_once(text,
+                      '"documented; existing default profile, not newly live-tested", "2026-10-31"',
+                      '"documented; existing default profile, not newly live-tested", "2000-01-01"'),
+                  "change WEB.DE stored date": replace_once(text,
+                      '"endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested", "2026-11-08"',
+                      '"endpoints documented; username ISPDB-reviewed 2026-11-08; not live-tested", "2000-01-01"'),
+                  "change manual stored date": replace_once(text,
+                      '"manual review required", "2026-10-31"',
+                      '"manual review required", "2000-01-01"'),
+              }
+              for name, mutant in mutations.items():
+                  try:
+                      source.write_text(mutant)
+                      actual = run(["bend", "tests/unit/providers.bend"])
+                      assert actual != expected, "surviving mutant: " + name
+                      print("REJECTED (successful execution, output mismatch): " + name)
+                  finally:
+                      source.write_bytes(original)
+              assert run(["bend", "tests/unit/providers.bend"]) == expected
+              print("PASS: restored unit suite")
+          finally:
+              source.write_bytes(original)
+              probe.unlink(missing_ok=True)
+          assert source.read_bytes() == original
+          assert subprocess.check_output(["git", "status", "--porcelain"]) == b""
+          print("PASS: original source restored; tracked and untracked tree clean")
+          
+          PY
