@@ -68,8 +68,8 @@ class InstallTests(unittest.TestCase):
     def env(self, root):
         return {"PATH": str(root / "tools"), "HOME": str(root), "LANG": "C"}
 
-    def run_install(self, root):
-        return subprocess.run(["/bin/sh", str(root / "scripts/install.sh")],
+    def run_install(self, root, shell="/bin/sh"):
+        return subprocess.run([shell, str(root / "scripts/install.sh")],
                               env=self.env(root), capture_output=True, timeout=10)
 
     def install(self, old_core=False, clang=False):
@@ -308,14 +308,15 @@ exit 1
             self.assertEqual(sorted(p.name for p in (root / "bin").iterdir()),
                              ["mailbend-stdio", "mailbend-tls"])
 
-    def check_failure_publishes_nothing(self, needle, clang=True, cargo=None, bend=CORE_BEND):
+    def check_failure_publishes_nothing(self, needle, clang=True, cargo=None, bend=CORE_BEND,
+                                       shell="/bin/sh"):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             self.prepare(root, clang=clang, cargo=cargo, bend=bend)
             old = self.old_bin(root)
             if not clang:
                 (root / "bin/mailbend-core").chmod(0o644)
-            proc = self.run_install(root)
+            proc = self.run_install(root, shell=shell)
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn(needle, proc.stdout + proc.stderr)
             self.assert_unchanged(root, old)
@@ -346,7 +347,10 @@ if [ "$1" = main.bend ]; then
   exit 1
 fi
 '''
-        self.check_failure_publishes_nothing(b"clang disappeared", bend=bend)
+        # dash can find removed commands in its cache; bash exposes a second probe.
+        for shell in ("/bin/sh", "/bin/bash"):
+            with self.subTest(shell=shell):
+                self.check_failure_publishes_nothing(b"clang disappeared", bend=bend, shell=shell)
 
     def test_a_signal_during_the_compile_leaves_bin_unchanged(self):
         sleep = shutil.which("sleep")

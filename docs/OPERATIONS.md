@@ -155,10 +155,11 @@ into place. Those renames are sequential, not one atomic directory swap.
    The flags install missing tools; they do not force an existing Bend
    executable to match the pinned version. Follow
    [contributor toolchain guidance](../CONTRIBUTING.md#checks) if versions differ.
-5. Require a successful build of all five binaries. Do not accept the
-   warning that an old core was kept because Clang was missing. Without
-   Clang, a fresh checkout uses the slower interpreter fallback, not a
-   newly compiled core.
+5. Require a successful build of all five binaries. Without Clang, updating
+   an existing executable core exits nonzero with "clang not found; refusing
+   to update an existing compiled installation." Install Clang and rerun.
+   Without Clang, a fresh checkout uses the slower interpreter fallback, not
+   a newly compiled core.
 6. Point the MCP client's command at the new checkout's `scripts/mailbend`
    or your configured wrapper. Preserve its approved configuration and
    the same state directory. Check custom helper overrides for old paths.
