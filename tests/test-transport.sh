@@ -148,8 +148,8 @@ check_leak() {
   # An empty password has no secret bytes. Match literal bytes, including
   # SMTP's LOGIN password and PLAIN NUL-user-NUL-password encodings.
   [ -n "$password" ] || return 0
-  encoded_password=$(set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n') 2>/dev/null || return 2
-  encoded_plain=$(set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n') 2>/dev/null || return 2
+  encoded_password=$({ set -o pipefail; printf '%s' "$password" | base64 | tr -d '\n'; } 2>/dev/null) || return 2
+  encoded_plain=$({ set -o pipefail; printf '\0%s\0%s' "$login" "$password" | base64 | tr -d '\n'; } 2>/dev/null) || return 2
   if grep -aFq -e "$password" -e "$encoded_password" -e "$encoded_plain" -- "$OUT" "$ERR"; then
     GLOBAL_LEAK=1
     return 1
