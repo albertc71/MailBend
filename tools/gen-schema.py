@@ -703,6 +703,10 @@ TOOLS = [
                         "If unseen is also given, the values must be opposite."),
           "flagged": param("boolean", "True selects flagged; false selects unflagged. "
                            "Omit for either."),
+          "answered": param("boolean", "True selects the IMAP \\Answered flag; false selects its absence. "
+                            "Omit for either. This does not infer replies or resolved conversations."),
+          "draft": param("boolean", "True selects the IMAP \\Draft flag; false selects its absence. "
+                         "Omit for either. Searches the selected folder, not automatically Drafts."),
           "cursor": param("string", "Opaque continuation from next_cursor; at most 4096 characters.",
                           maxLength=4096),
           "limit": param("integer", "Default 20.", minimum=1, maximum=200)}),

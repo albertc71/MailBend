@@ -504,3 +504,45 @@ law posture_trust_without_overrides_is_system:
 
 def posture_trust_without_overrides_is_system():
   {==}
+
+# Structured search flag witnesses
+# --------------------------------
+
+# LAW: this validated answered Boolean selects its exact flag key.
+law search_answered_true_key:
+  {Tools.keys_of(J.obj([J.kv("answered", J.bool(True{}))])) ==
+    Done{[I.KAnswered{}]} : Tools.Keys()}
+
+def search_answered_true_key():
+  {==}
+
+# LAW: this validated answered Boolean selects its exact flag key.
+law search_answered_false_key:
+  {Tools.keys_of(J.obj([J.kv("answered", J.bool(False{}))])) ==
+    Done{[I.KUnanswered{}]} : Tools.Keys()}
+
+def search_answered_false_key():
+  {==}
+
+# LAW: this validated draft Boolean selects its exact flag key.
+law search_draft_true_key:
+  {Tools.keys_of(J.obj([J.kv("draft", J.bool(True{}))])) ==
+    Done{[I.KDraft{}]} : Tools.Keys()}
+
+def search_draft_true_key():
+  {==}
+
+# LAW: this validated draft Boolean selects its exact flag key.
+law search_draft_false_key:
+  {Tools.keys_of(J.obj([J.kv("draft", J.bool(False{}))])) ==
+    Done{[I.KUndraft{}]} : Tools.Keys()}
+
+def search_draft_false_key():
+  {==}
+
+# LAW: the empty argument object adds no structured search flag.
+law search_flags_omitted:
+  {Tools.keys_of(J.obj([])) == Done{[]} : Tools.Keys()}
+
+def search_flags_omitted():
+  {==}

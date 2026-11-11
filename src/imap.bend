@@ -51,6 +51,10 @@ type Key is Data:
   KUnseen{}
   KFlagged{}
   KUnflagged{}
+  KAnswered{}
+  KUnanswered{}
+  KDraft{}
+  KUndraft{}
   KUndeleted{}
   KHeader{name: String, value: String}
   KUidFrom{n: U32}
@@ -562,6 +566,14 @@ def key_str(k: Key) -> String:
       "FLAGGED"
     case KUnflagged{}:
       "UNFLAGGED"
+    case KAnswered{}:
+      "ANSWERED"
+    case KUnanswered{}:
+      "UNANSWERED"
+    case KDraft{}:
+      "DRAFT"
+    case KUndraft{}:
+      "UNDRAFT"
     case KUndeleted{}:
       "UNDELETED"
     case KHeader{n, v}:

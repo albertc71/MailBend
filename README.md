@@ -971,6 +971,13 @@ review boundaries, and build steps for a future independent audit.
   conventional names follow the per-role precedence above (proven for every <!-- claim:role-resolution -->
   folder list); ambiguous or unselectable targets never trigger a guessed
   mutation.
+- **Search flags are optional Boolean criteria.** `answered: true` selects the
+  IMAP `\Answered` flag, and `answered: false` selects its absence. `draft: true`
+  selects `\Draft`, and `draft: false` selects its absence. Omit either field to
+  allow both states. They combine with the other `mail_search` criteria using
+  AND. For example, `{"answered": false, "draft": false}` finds messages with
+  neither flag in the selected folder. Answered does not infer replies or
+  resolved conversations. Draft does not automatically select the Drafts folder.
 - **Search pages move toward older UIDs.** `mail_search` keeps its newest-first
   first page (default 20, at most 200 summaries). Pass its `next_cursor` as
   `cursor`, with the same folder and criteria; `limit` may change. A mismatched,

@@ -30,6 +30,63 @@ def run(root, entry="tests/unit/search-cursor.bend"):
                           capture_output=True, text=True, env=env, timeout=120)
 
 
+def flag_contract_mutations(root):
+    entry = "tests/unit/search-flags.bend"
+    expected = "".join(line[2:] + "\n" for line in
+                       (ROOT / entry).read_text(encoding="utf-8").splitlines()
+                       if line.startswith("#|"))
+    baseline = run(ROOT, entry)
+    require(baseline.returncode == 0 and baseline.stdout == expected,
+            ("baseline structured flags failed", baseline.stdout, baseline.stderr))
+    shutil.copy2(ROOT / entry, root / entry)
+    imap = root / "src/imap.bend"
+    renderer = imap.read_text(encoding="utf-8")
+    atoms = (("KAnswered", "ANSWERED", "UNANSWERED", 0),
+             ("KUnanswered", "UNANSWERED", "ANSWERED", 1),
+             ("KDraft", "DRAFT", "UNDRAFT", 2),
+             ("KUndraft", "UNDRAFT", "DRAFT", 3))
+    try:
+        for constructor, atom, wrong, index in atoms:
+            old = f'    case {constructor}{{}}:\n      "{atom}"'
+            new = f'    case {constructor}{{}}:\n      "{wrong}"'
+            require(renderer.count(old) == 1, "flag renderer moved: update mutation explicitly")
+            imap.write_text(renderer.replace(old, new), encoding="utf-8")
+            broken = run(root, entry)
+            require(broken.returncode == 0, ("flag mutation did not run", broken.stdout, broken.stderr))
+            lines = broken.stdout.splitlines()
+            require(len(lines) == len(expected.splitlines()) and lines[index] == wrong
+                    and broken.stdout != expected,
+                    ("wrong flag atom was not detected", constructor, broken.stdout))
+            print(f"PASS actual Bend wrong flag atom detected: {constructor} -> {wrong}")
+    finally:
+        imap.write_text(renderer, encoding="utf-8")
+    restored = run(root, entry)
+    require(restored.returncode == 0 and restored.stdout == expected,
+            ("restored flag renderers failed", restored.stdout, restored.stderr))
+    tools = root / "src/tools.bend"
+    original = tools.read_text(encoding="utf-8")
+    try:
+        for field, yes, no, index in (("answered", "KAnswered", "KUnanswered", 10),
+                                      ("draft", "KDraft", "KUndraft", 6)):
+            old = f'flag_key(J.as_bool(J.get(args, "{field}")), I.{yes}{{}}, I.{no}{{}})'
+            new = ('Bool.pick(List<&2, I.Key>, Maybe.default(&2, Bool, '
+                   f'J.as_bool(J.get(args, "{field}")), False{{}}), [I.{yes}{{}}], [])')
+            require(original.count(old) == 1, "flag mapper moved: update mutation explicitly")
+            tools.write_text(original.replace(old, new), encoding="utf-8")
+            broken = run(root, entry)
+            require(broken.returncode == 0, ("false mutation did not run", broken.stdout, broken.stderr))
+            lines = broken.stdout.splitlines()
+            require(len(lines) == len(expected.splitlines()) and lines[index] == "ALL"
+                    and broken.stdout != expected,
+                    ("dropped false flag was not detected", field, broken.stdout))
+            print(f"PASS actual Bend dropped false flag detected: {field}")
+    finally:
+        tools.write_text(original, encoding="utf-8")
+    restored = run(root, entry)
+    require(restored.returncode == 0 and restored.stdout == expected,
+            ("restored flag mapper failed", restored.stdout, restored.stderr))
+
+
 def main():
     expected = "".join(line[2:] + "\n" for line in
                        (ROOT / "tests/unit/search-cursor.bend").read_text(encoding="utf-8").splitlines()
@@ -46,6 +103,7 @@ def main():
                         ignore=shutil.ignore_patterns("__pycache__", "mailbend-search-mutation-*"))
         (root / "tests/unit").mkdir(parents=True)
         shutil.copy2(ROOT / "tests/unit/search-cursor.bend", root / "tests/unit/search-cursor.bend")
+        flag_contract_mutations(root)
         source = root / "src/search-cursor.bend"
         text = source.read_text(encoding="utf-8")
         old, new = "U32.is_lt(u, before)", "U32.is_le(u, before)"
