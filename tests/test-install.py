@@ -881,6 +881,12 @@ exec {shutil.which("sync")} "$@"
             self.assertFalse((root / "native/target").exists())
 
     def test_root_path_replacement_is_refused_before_layout_mutation(self):
+        self.check_root_path_replacement(before_stat=True)
+
+    def test_root_path_replacement_after_stat_fails_without_layout_mutation(self):
+        self.check_root_path_replacement(before_stat=False)
+
+    def check_root_path_replacement(self, *, before_stat):
         with tempfile.TemporaryDirectory() as directory:
             parent = pathlib.Path(directory)
             root = parent / "checkout"
@@ -889,15 +895,24 @@ exec {shutil.which("sync")} "$@"
             shared_tools = parent / "tools"
             tools.rename(shared_tools)
             (shared_tools / "stat").unlink()
-            executable(shared_tools / "stat", f'{shutil.which("stat")} "$@" || exit 1\n'
-                       'if [ "$4" = "$HOME" ] && [ ! -e "$HOME.moved" ]; then\n'
-                       '  /bin/mv "$HOME" "$HOME.moved"\n'
-                       '  /bin/mkdir -m 700 "$HOME"\nfi\n')
+            replacement = 'if [ "$4" = "$HOME" ] && [ ! -e "$HOME.moved" ]; then\n' \
+                          '  /bin/mv "$HOME" "$HOME.moved" || exit 73\n' \
+                          '  /bin/mkdir -m 700 "$HOME" || exit 74\nfi\n'
+            observation = f'actual=$({shutil.which("stat")} "$@") || exit 1\n' \
+                          'printf "%s\\n" "$actual"\n'
+            executable(shared_tools / "stat", replacement + observation if before_stat
+                       else observation + replacement)
             proc = subprocess.run(["/bin/sh", str(root / "scripts/install.sh")],
                                   env={"HOME": str(root), "PATH": str(shared_tools), "LANG": "C"},
                                   capture_output=True, timeout=10)
             self.assertNotEqual(proc.returncode, 0)
-            self.assertIn(b"checkout root moved or was replaced", proc.stderr)
+            if before_stat:
+                self.assertIn(b"checkout root moved or was replaced", proc.stderr)
+            moved = parent / "checkout.moved"
+            self.assertTrue(moved.is_dir())
+            self.assertTrue(root.is_dir())
+            self.assertNotEqual((root.stat().st_dev, root.stat().st_ino),
+                                (moved.stat().st_dev, moved.stat().st_ino))
             self.assertFalse((root / ".mailbend-install").exists())
             self.assertFalse((parent / "checkout.moved/.mailbend-install").exists())
 
