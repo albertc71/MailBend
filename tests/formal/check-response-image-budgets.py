@@ -141,6 +141,24 @@ MUTATIONS = (
 )
 
 
+COUNTER_MUTATIONS = (
+    (
+        "json-escape-counter-overcounts-control-prefix",
+        "src/json.bend",
+        "((4 + C.utf8_width(Char.to_u32(C.hex_low((u >> 4n : U32)))) : U32) +",
+        "((5 + C.utf8_width(Char.to_u32(C.hex_low((u >> 4n : U32)))) : U32) +",
+        "atom_exact.if",
+    ),
+    (
+        "json-escape-counter-omits-character-width",
+        "src/json.bend",
+        "esc_bytes.go(t, (acc + esc_bytes.char(c) : U32))",
+        "esc_bytes.go(t, acc)",
+        "escape_go_count",
+    ),
+)
+
+
 def check(root):
     return subprocess.run(
         ["bend", ENTRY, "--check-only"],
@@ -177,7 +195,8 @@ def main():
     require(original.returncode == 0 and "ALL PROOFS CHECK" in original.stdout,
             ("baseline", original.stdout, original.stderr))
     print("PASS universal budget proofs: ALL PROOFS CHECK")
-    for name, path, old, new, proof in MUTATIONS:
+    for mutation in MUTATIONS + COUNTER_MUTATIONS:
+        name, path, old, new, proof = mutation
         with tempfile.TemporaryDirectory(prefix="mailbend-budget-mutation-") as directory:
             root = Path(directory)
             shutil.copytree(ROOT / "src", root / "src")
@@ -198,6 +217,22 @@ def main():
                     (name, "mutant not rejected by the checker", output))
             require(location is not None and proof == location.group(1),
                     (name, "failure did not reach the expected universal proof", output))
+            if mutation in COUNTER_MUTATIONS:
+                require(0 < result.returncode < 128
+                        and re.search(r"^- expected\s*:", output, re.MULTILINE)
+                        and re.search(r"^- observed\s*:", output, re.MULTILINE)
+                        and not re.search(
+                            r"consumed more than once|a defined name|a term \(|"
+                            r"a live scrutinee|can.t be matched|Error parsing|"
+                            r"out of memory|bad_alloc|MemoryError|segmentation fault|"
+                            r"timed? out|killed|stack overflow|resource exhausted",
+                            output, re.IGNORECASE),
+                        (name, "not an attributable equality mismatch", output))
+                target.write_text(source, encoding="utf-8")
+                restored = check(root)
+                require(restored.returncode == 0 and "ALL PROOFS CHECK" in restored.stdout,
+                        (name, "restored copy", restored.stdout, restored.stderr))
+                print(f"PASS restored {name}: ALL PROOFS CHECK")
             print(f"PASS rejected {name}: universal proof {location.group(1)} fails")
     require(before == fingerprint(), "checkout changed")
     print("PASS checkout unchanged")
