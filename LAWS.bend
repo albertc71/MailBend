@@ -140,6 +140,84 @@ law folders_write_nothing:
 law roles_write_nothing:
   {I.any_writes(Ops.plan_roles()) == False{} : Bool}
 
+# LAW: folder status commands and their finite capability gate have no mail effect.
+law folder_status_effects:
+  for name: String
+  for modseq: Bool
+  for required: List<&2, I.Capability>
+  {(I.effect(I.CStatus{name, modseq}),
+    (I.effect(I.CListStatus{modseq}), I.effect(I.CExpectCapabilities{required}))) ==
+    (I.ENone{}, (I.ENone{}, I.ENone{})) : I.Effect & (I.Effect & I.Effect)}
+
+# LAW: role discovery checks SPECIAL-USE in the same session before its LIST.
+law folder_status_roles_exact:
+  {Ops.plan_folder_status_roles() ==
+    [I.CCapability{}, I.CExpectCapabilities{[I.CapSpecialUse{}]}, I.CListRoles{}] : List<&2, I.Cmd>}
+
+# LAW: the empty status scope opens no session and sends no command.
+law folder_status_empty_exact:
+  for fast: Bool
+  for modseq: Bool
+  {Ops.plan_folder_status([], fast, modseq) == [] : List<&2, I.Cmd>}
+
+# LAW: the status batch has no commands for an empty mailbox list.
+law folder_status_commands_empty:
+  for modseq: Bool
+  {Ops.folder_status_commands([], modseq) == [] : List<&2, I.Cmd>}
+
+# LAW: each supplied mailbox adds exactly one STATUS before the remaining mailbox batch.
+law folder_status_commands_exact:
+  for name: String
+  for rest: List<&2, String>
+  for modseq: Bool
+  {Ops.folder_status_commands(name <> rest, modseq) ==
+    I.CStatus{name, modseq} <> Ops.folder_status_commands(rest, modseq) : List<&2, I.Cmd>}
+
+# LAW: a nonempty fast plan has one LIST-STATUS after the exact capability conjunction.
+law folder_status_fast_exact:
+  for name: String
+  for rest: List<&2, String>
+  for modseq: Bool
+  {Ops.plan_folder_status(name <> rest, True{}, modseq) ==
+    [I.CCapability{}, I.CExpectCapabilities{Bool.pick(List<&2, I.Capability>, modseq,
+      [I.CapListStatus{}, I.CapCondstore{}], [I.CapListStatus{}])}, I.CListStatus{modseq}] : List<&2, I.Cmd>}
+
+# LAW: the fallback sends CAPABILITY, only the required CONDSTORE gate, then the fixed mailbox batch.
+law folder_status_fallback_exact:
+  for name: String
+  for rest: List<&2, String>
+  for modseq: Bool
+  {Ops.plan_folder_status(name <> rest, False{}, modseq) ==
+    I.CCapability{} <> List.append(&2, I.Cmd,
+      Bool.pick(List<&2, I.Cmd>, modseq, [I.CExpectCapabilities{[I.CapCondstore{}]}], []),
+      Ops.folder_status_commands(name <> rest, modseq)) : List<&2, I.Cmd>}
+
+# LAW: STATUS renders the caller's encoded mailbox and exactly the fixed status items.
+law folder_status_render_exact:
+  for name: String
+  for modseq: Bool
+  {I.cmd_str(I.CStatus{name, modseq}) == "STATUS " ++ I.mailbox(name) ++
+    " (MESSAGES UNSEEN UIDNEXT UIDVALIDITY" ++ Bool.pick(String, modseq, " HIGHESTMODSEQ", "") ++ ")" : String}
+
+# LAW: LIST-STATUS renders only the fixed wildcard and status items.
+law folder_list_status_render_exact:
+  for modseq: Bool
+  {I.cmd_str(I.CListStatus{modseq}) == "LIST \"\" \"*\" RETURN (STATUS (MESSAGES UNSEEN UIDNEXT UIDVALIDITY" ++
+    Bool.pick(String, modseq, " HIGHESTMODSEQ", "") ++ "))" : String}
+
+# LAW: a capability conjunction consumes no wire tag and retains its exact token order.
+law folder_status_gate_render_exact:
+  {I.script([I.CCapability{}, I.CExpectCapabilities{[I.CapListStatus{}, I.CapCondstore{}]},
+    I.CListStatus{True{}}]) ==
+    "a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE\r\na2 LIST \"\" \"*\" RETURN (STATUS (MESSAGES UNSEEN UIDNEXT UIDVALIDITY HIGHESTMODSEQ))\r\n" : String}
+
+# LAW: every overview plan contains only nonwriting commands.
+law folder_status_writes_nothing:
+  for names: List<&2, String>
+  for fast: Bool
+  for modseq: Bool
+  {I.any_writes(Ops.plan_folder_status(names, fast, modseq)) == False{} : Bool}
+
 # LAW: the scan before a folder change writes nothing
 law folder_scan_writes_nothing:
   {I.any_writes(Ops.plan_folder_scan()) == False{} : Bool}
@@ -2267,3 +2345,4 @@ law hook_nonobject_input_asks:
   for +args: Maybe<&2, J.Json>
   for nonobject: hook_nonobject_input(args)
   {hook_printed_decision(Hook.event.fields(Some{name}, args)) == Some{"ask"} : Maybe<&2, String>}
+

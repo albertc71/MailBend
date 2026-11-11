@@ -625,6 +625,55 @@ roles. `mail_list_folders` retains actual advertised attributes and
 `special_use`, so a folder resolved by override or name can still have
 `special_use: null`.
 
+### Optional folder counts
+
+`mail_list_folders` accepts an optional Boolean `counts`. Missing or false
+keeps the existing listing, including its commands and result shape. True
+returns `folders`, `complete`, `method`, and `reason`. Each folder keeps its
+existing fields and adds `status`.
+
+A known status has `state: "known"`, `messages`, `unseen`, `uidnext`,
+`uidvalidity`, `highest_modseq`, and `modseq_state`. An unknown status has
+only `state: "unknown"` and a fixed reason. Missing data never means zero.
+Nonselectable folders remain unknown with `reason: "not_selectable"`.
+
+When the authenticated server advertises LIST-STATUS, MailBend selects one
+LIST-STATUS command. Otherwise it selects one STATUS per selectable folder.
+CONDSTORE adds HIGHESTMODSEQ to that plan. Every optional capability is
+checked again in the count session before the extension command is sent.
+A lost capability or refused command causes no retry or alternate session.
+`method` describes the selected plan, not proof that the server received it.
+
+HIGHESTMODSEQ is a precise decimal string through `9223372036854775807` when
+`modseq_state` is `known`. An unrequested value is null with `unsupported`.
+A server value of zero is null with `not_persistent`. This overview is not
+an atomic account snapshot and provides no refresh checkpoint.
+
+`complete: true` means discovery was complete and every selectable folder
+has valid requested counts. Its top-level reason is empty. Partial results
+have a fixed nonempty reason and keep only independently established
+counts. An explicit STATUS refusal preserves earlier completed commands.
+Transport, authentication, timeout, or output loss discards the entire count
+phase. LIST-STATUS scope or selectability changes also invalidate its counts.
+
+The opt-in path admits at most 100 folders, each with a nonempty name of at
+most 1024 decoded UTF-8 bytes. It requires a canonical modified UTF-7
+round trip before comparing identities. Some valid alternative wire
+spellings, such as encoding printable ASCII inside a shifted sequence,
+are deliberately refused. Only ASCII INBOX casing is normalized. Other
+names keep their exact Unicode scalars and sort in that order.
+
+At most three helpers run, each with a 10000ms subprocess deadline and a
+262144-byte combined captured-output limit. The aggregate helper allowances
+are at most 30000ms and 786432 captured bytes. Parsing and JSON assembly
+add work, so this is not a whole-call latency or native-memory guarantee.
+The plans contain at most 105 tagged commands, plus at most three LOGINs
+and three LOGOUTs. The result JSON has a separate 262144-byte limit before
+the CLI or MCP envelope. Overflow removes known counts and reports
+`result_limit`; if identities and metadata still do not fit, the call
+returns a bounded error. Incomplete discovery also returns an error rather
+than a partial folder scope. Existing refresh behavior is unchanged.
+
 ## Use
 
 For client configuration, use the [MCP client quickstarts](docs/MCP_CLIENTS.md).

@@ -13,7 +13,7 @@ use crate::exit::AuthReason;
 use crate::imap::response::{
     Greeting, Status, greeting, is_bye, is_continuation, is_untagged, refusal_reason, tagged_status,
 };
-use crate::imap::script::{Command, Expect};
+use crate::imap::script::{Command, Expect, is_capability_response};
 use crate::imap::{LOGIN_TAG, LOGOUT_TAG, literal_len, push_quoted};
 use crate::{Exit, Outcome};
 
@@ -168,6 +168,8 @@ fn wait(
     expect: Option<&Expect<'_>>,
 ) -> Result<Reply, Exit> {
     let mut expectation_met = false;
+    let mut capability_seen = false;
+    let mut capability_ambiguous = false;
     let mut bye_reason = None;
     loop {
         let Some(line) = conn.read_line()? else {
@@ -197,7 +199,15 @@ fn wait(
         }
         conn.emit(&line)?;
         if is_untagged(&line) {
-            expectation_met |= expect.is_some_and(|e| e.met_by(&line));
+            if let Some(gate @ Expect::Capabilities(_)) = expect {
+                if is_capability_response(&line) {
+                    capability_ambiguous |= capability_seen;
+                    capability_seen = true;
+                    expectation_met = !capability_ambiguous && gate.met_by(&line);
+                }
+            } else {
+                expectation_met |= expect.is_some_and(|e| e.met_by(&line));
+            }
             pass_literals(conn, line)?;
             continue;
         }
@@ -252,6 +262,78 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
+
+    fn gated_commands(answer: &'static [u8]) -> (Result<Outcome, Exit>, Vec<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let (peer, _) = listener.accept().expect("accept");
+            peer.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .expect("timeout");
+            peer.set_write_timeout(Some(std::time::Duration::from_secs(5)))
+                .expect("timeout");
+            let mut reader = BufReader::new(peer);
+            let mut commands = Vec::new();
+            let mut line = Vec::new();
+            reader.read_until(b'\n', &mut line).expect("CAPABILITY");
+            commands.push(line);
+            reader.get_mut().write_all(answer).expect("capabilities");
+            let mut line = Vec::new();
+            if reader.read_until(b'\n', &mut line).expect("next command") > 0 {
+                commands.push(line);
+                reader
+                    .get_mut()
+                    .write_all(b"a2 OK done\r\n")
+                    .expect("completion");
+            }
+            commands
+        });
+        let socket = TcpStream::connect(addr).expect("connect");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        socket
+            .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        let mut conn = Connection::new(socket);
+        let commands = crate::imap::script::parse(
+            b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE\r\na2 LIST \"\" \"*\" RETURN (STATUS (MESSAGES UNSEEN UIDNEXT UIDVALIDITY HIGHESTMODSEQ))\r\n",
+        )
+        .expect("script");
+        let result = run_commands(&mut conn, &commands);
+        drop(conn);
+        (result, server.join().expect("server"))
+    }
+
+    #[test]
+    fn one_complete_capability_snapshot_allows_the_extension_command() {
+        let (result, commands) =
+            gated_commands(b"* CAPABILITY IMAP4rev1 list-status condstore\r\na1 OK done\r\n");
+        assert!(matches!(result, Ok(Outcome::Completed)));
+        assert_eq!(commands.len(), 2);
+    }
+
+    #[test]
+    fn invalid_capability_evidence_never_sends_the_extension_command() {
+        for answer in [
+            b"* OK [ALERT] LIST-STATUS CONDSTORE\r\na1 OK done\r\n".as_slice(),
+            b"* CAPABILITY IMAP4rev1 LIST-STATUS\r\n* CAPABILITY CONDSTORE\r\na1 OK done\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE\r\n* CAPABILITY LIST-STATUS CONDSTORE\r\na1 OK done\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE\r\n* CAPABILITY {0}\r\n\r\na1 OK done\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE\r\n*CAPABILITY CONDSTORE\r\na1 OK done\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE\r\n*\tCAPABILITY CONDSTORE\r\na1 OK done\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE\r\na1 NO refused\r\n",
+            b"* 1 FETCH (BODY[] {36}\r\n* CAPABILITY LIST-STATUS CONDSTORE\r\n)\r\na1 OK done\r\n",
+            b"a1 OK [CAPABILITY LIST-STATUS CONDSTORE] done\r\n",
+        ] {
+            let (result, commands) = gated_commands(answer);
+            assert!(
+                matches!(result, Ok(Outcome::Rejected(_))),
+                "{answer:?}: {result:?}"
+            );
+            assert_eq!(commands, [b"a1 CAPABILITY\r\n".to_vec()], "{answer:?}");
+        }
+    }
 
     /// Runs `login` against a server that reads the LOGIN line, then sends
     /// `answer` (if any) and closes the connection.

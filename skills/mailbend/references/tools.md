@@ -11,7 +11,7 @@ and flag changes are writes too.
 [Read and write safety](https://github.com/albertc71/MailBend/blob/main/README.md#safety).
 
 - `mail_probe()`: Check connection, capabilities and role folders.
-- `mail_list_folders()`: List existing folders and special-use attributes.
+- `mail_list_folders(counts)`: List existing folders and special-use attributes. The optional Boolean `counts` enables bounded per-folder status counts when true, with explicit completeness and unknown reasons. Absent or false preserves the original result.
 - `mail_search(folder, from, to, cc, subject, body, text, since, before, unseen, seen, flagged, answered, draft, cursor, limit, projection, max_response_bytes)`: Search and page summaries, newest first. Optional answered and draft booleans select their IMAP flag when true or its absence when false; omission allows either. Answered does not infer replies or resolved conversations. Draft searches the selected folder, not automatically Drafts.
 - `mail_get(folder, uid, uidvalidity, facts, section, nested_message, attached_message_headers, max_bytes, projection, max_response_bytes)`: Read one message or a listed MIME part. `nested_message=true` requires a numeric message section and positive uidvalidity. `attached_message_headers=true` adds sanitized key headers to attached-message entries of a whole-message read; Jev does not see them, so `jev` then reports `coverage` with that reason.
 - `mail_get_new(folder, start, since_uid, uidvalidity, limit, projection, max_response_bytes)`: Read arrivals after a mailbox checkpoint.
@@ -43,3 +43,4 @@ For a permanent-delete request, consult the advertised confirmation requirement
 only after the user approves that operation. This reference intentionally does
 not provide the confirmation word.
 [Deletion safety](https://github.com/albertc71/MailBend/blob/main/README.md#safety).
+
