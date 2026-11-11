@@ -68,7 +68,9 @@ fn capability_matches(line: &[u8], required: &[u8]) -> bool {
     }
     body[13..].split(|&b| b == b' ').all(|token| {
         !token.is_empty()
-            && token.iter().all(|b| (0x21..=0x7e).contains(b) && !b"(){}%*\"\\[]".contains(b))
+            && token
+                .iter()
+                .all(|b| (0x21..=0x7e).contains(b) && !b"(){}%*\"\\[]".contains(b))
     }) && required.split(|&b| b == b' ').all(|want| {
         body[13..]
             .split(|&b| b == b' ')
@@ -253,7 +255,8 @@ mod tests {
             assert!(parse(script).is_err(), "{script:?}");
         }
         assert!(
-            parse(b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE SPECIAL-USE\r\n").is_ok()
+            parse(b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE SPECIAL-USE\r\n")
+                .is_ok()
         );
         assert!(is_capability_response(b"*CAPABILITY CONDSTORE\r\n"));
         assert!(is_capability_response(b"*\tCAPABILITY CONDSTORE\r\n"));
@@ -337,4 +340,3 @@ mod tests {
         assert_eq!(parse(b""), Ok(vec![]));
     }
 }
-

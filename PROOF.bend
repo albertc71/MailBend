@@ -414,6 +414,10 @@ def Laws.checked_read_preserves_writes(cs, ids):
       Laws.checked_read_preserves_writes(t, ids)
     case I.CListRoles{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
+    case I.CStatus{name, modseq} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CListStatus{modseq} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
     case I.CLsub{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
     case I.CExamine{f} <> t:
@@ -451,6 +455,8 @@ def Laws.checked_read_preserves_writes(cs, ids):
       Laws.checked_read_preserves_writes(t, ids)
     case I.CExpectWord{word} <> t:
       Laws.checked_read_preserves_writes(t, ids)
+    case I.CExpectCapabilities{required} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
 
 def Laws.checked_read_without_identities_unchanged(cs):
   match cs:
@@ -467,6 +473,12 @@ def Laws.checked_read_without_identities_unchanged(cs):
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CListRoles{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CListRoles{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CStatus{name, modseq} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CStatus{name, modseq} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CListStatus{modseq} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CListStatus{modseq} <> x,
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CLsub{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CLsub{} <> x,
@@ -515,6 +527,9 @@ def Laws.checked_read_without_identities_unchanged(cs):
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CExpectWord{word} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpectWord{word} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CExpectCapabilities{required} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpectCapabilities{required} <> x,
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
 
 def Laws.checked_headers_write_nothing(mbox, uids, uidv):
