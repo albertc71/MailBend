@@ -20,8 +20,12 @@ BASELINE = "5ff799d094fd08078391c33218dc2a9ef598494b"
 THREAD_BLOB = "f02c2bb36b2faac9946270985cd0061e76d16649"
 OUTPUT_LIMIT = 16 * 1024 * 1024
 START = time.monotonic()
+GLOBAL_SECONDS = 900
+RESERVE_SECONDS = 20
+WORK_DEADLINE = START + GLOBAL_SECONDS - RESERVE_SECONDS
 CANCELLED = 0
-REPORT = {"baseline": BASELINE, "commands": [], "controls": [], "cases": []}
+PRODUCT = "6a4792282d3d115a13909fcfd04a619b5536636a"
+REPORT = {"baseline": BASELINE, "product": PRODUCT, "commands": [], "controls": [], "cases": []}
 
 
 def digest(data):
@@ -62,24 +66,77 @@ def group_snapshot(pgid):
     return rss, live
 
 
-def stop_group(process):
+def stop_group(process, cleanup):
+    before = time.monotonic()
+    cleanup.update(signal=signal.SIGKILL, signal_sent=False,
+                   no_live_members_observed=False, reaped=False)
     try:
         os.killpg(process.pid, signal.SIGKILL)
+        cleanup["signal_sent"] = True
         deadline = time.monotonic() + 1
         while group_snapshot(process.pid)[1]:
             if time.monotonic() >= deadline:
                 raise RuntimeError("owned process group did not stop")
             time.sleep(0.01)
+        cleanup["no_live_members_observed"] = True
+    except Exception as exc:
+        cleanup["group_error_type"] = type(exc).__name__
+        raise
     finally:
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+            cleanup.update(reaped=True, leader_returncode=process.returncode)
+        except Exception as exc:
+            cleanup["reap_error_type"] = type(exc).__name__
+            raise
+        finally:
+            cleanup["elapsed_seconds"] = time.monotonic() - before
 
 
-def run(argv, cwd=ROOT, seconds=90):
+def emit_receipt(event, record):
+    line = json.dumps({"command_event": event, "receipt": record}, sort_keys=True)
+    if len(line.encode()) > 16 * 1024:
+        raise RuntimeError("diagnostic receipt exceeds 16 KiB")
+    print(line, flush=True)
+
+
+def run(argv, cwd=ROOT, seconds=90, *, stage):
+    before = time.monotonic()
+    if len(REPORT["commands"]) >= 65:
+        raise RuntimeError("unexpected command count exceeds fixed comparison matrix")
+    record = {"sequence": len(REPORT["commands"]), "argv": list(argv), "stage": stage, "status": "starting",
+              "requested_limit_seconds": seconds, "exit": None,
+              "sampled_group_peak_rss_kib": None, "cleanup": {"attempted": False}}
+    REPORT["commands"].append(record)
+    emit_receipt("started", record)
+    try:
+        result = run_command(argv, cwd, seconds, record)
+        record["status"] = "passed"
+        return result
+    except Exception as exc:
+        record.update(status="failed", error_type=type(exc).__name__)
+        if CANCELLED:
+            record["cancellation_signal"] = CANCELLED
+        raise
+    finally:
+        record["receipt_elapsed_seconds"] = time.monotonic() - before
+        emit_receipt("finished", record)
+
+
+def run_command(argv, cwd, seconds, record):
     check_interruption()
-    remaining = 900 - (time.monotonic() - START)
+    admitted = time.monotonic()
+    remaining = WORK_DEADLINE - admitted
+    record.update(global_elapsed_at_admission_seconds=admitted - START,
+                  work_remaining_at_admission_seconds=remaining,
+                  global_limit_seconds=GLOBAL_SECONDS, reserve_seconds=RESERVE_SECONDS,
+                  cpu_limit_seconds=180)
     if remaining <= 0:
-        raise RuntimeError("thread comparison total deadline exhausted")
+        record["termination_trigger"] = "reserve_exhausted_before_launch"
+        raise RuntimeError("thread comparison reserve reached; matrix incomplete")
     seconds = min(seconds, remaining)
+    record["effective_limit_seconds"] = seconds
+    deadline = min(admitted + seconds, WORK_DEADLINE)
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("MAILBEND_", "TYPESAFE_"))}
     env["BEND_NO_TELEMETRY"] = "1"
@@ -89,39 +146,69 @@ def run(argv, cwd=ROOT, seconds=90):
         with out.open("wb") as stdout, err.open("wb") as stderr:
             before = time.monotonic()
             sampled_peak = 0
+            record["sampled_group_peak_rss_kib"] = 0
+            if time.monotonic() >= deadline:
+                record["termination_trigger"] = "deadline_before_spawn"
+                raise RuntimeError("command allocation exhausted before spawn")
             process = subprocess.Popen(
                 ["/usr/bin/time", "-f", "%e %U %S %M", "-o", str(timing), *argv],
                 cwd=cwd, env=env, stdout=stdout, stderr=stderr,
                 start_new_session=True, preexec_fn=limits)
+            record["status"] = "running"
+            record["exit_observation_scope"] = "GNU time session leader, not wrapped child"
             try:
                 while True:
                     check_interruption()
                     rss, _ = group_snapshot(process.pid)
                     sampled_peak = max(sampled_peak, rss)
+                    record["sampled_group_peak_rss_kib"] = sampled_peak
                     if rss > 2 * 1024**2:
+                        record["termination_trigger"] = "sampled_group_rss_limit"
                         raise RuntimeError("sampled process-group RSS exceeded 2 GiB")
                     state = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+                    if time.monotonic() >= deadline:
+                        record["termination_trigger"] = "deadline_or_late_observed_completion"
+                        raise RuntimeError("incomplete evidence: timely command completion unverified")
                     if state is not None:
+                        record["waitid_observation"] = {"code": state.si_code, "status": state.si_status}
                         break
-                    if time.monotonic() - before > seconds:
+                    if time.monotonic() >= deadline:
+                        record["termination_trigger"] = "deadline"
                         raise RuntimeError(f"incomplete evidence: command exceeded {seconds:.1f}s")
                     if out.stat().st_size > OUTPUT_LIMIT or err.stat().st_size > OUTPUT_LIMIT:
+                        record["termination_trigger"] = "output_limit"
                         raise RuntimeError("command output exceeded 16 MiB")
                     time.sleep(0.02)
+            except Exception as exc:
+                record["monitor_error_type"] = type(exc).__name__
+                raise
             finally:
                 # Keep the unreaped session leader until its owned group is signalled.
-                stop_group(process)
-                code = process.returncode
+                record["cleanup"]["attempted"] = True
+                record["before_cleanup_elapsed_seconds"] = time.monotonic() - before
+                try:
+                    stop_group(process, record["cleanup"])
+                finally:
+                    code = process.returncode
+                    record["exit"] = code
+                    record["leader_signal"] = -code if code is not None and code < 0 else None
+                    record["supervisor_wall_seconds"] = time.monotonic() - before
+                    for label, path in (("stdout", out), ("stderr", err), ("gnu_time", timing)):
+                        try:
+                            record[label + "_bytes_observed"] = path.stat().st_size
+                        except OSError as exc:
+                            record[label + "_stat_error_type"] = type(exc).__name__
             elapsed = time.monotonic() - before
         check_interruption()
         if out.stat().st_size > OUTPUT_LIMIT or err.stat().st_size > OUTPUT_LIMIT:
+            record["termination_trigger"] = "output_limit_after_exit"
             raise RuntimeError("command output exceeded 16 MiB")
         output, errors = out.read_bytes(), err.read_bytes()
-        record = {"argv": argv, "supervisor_wall_seconds": elapsed, "exit": code,
-                  "output_bytes": len(output), "output_sha256": digest(output),
-                  "sampled_group_peak_rss_kib": sampled_peak}
-        REPORT["commands"].append(record)
+        record.update(supervisor_wall_seconds=elapsed, exit=code,
+                      output_bytes=len(output), output_sha256=digest(output),
+                      sampled_group_peak_rss_kib=sampled_peak)
         if code != 0 or errors:
+            record["termination_trigger"] = "nonzero_exit_or_stderr"
             raise RuntimeError(f"command failed: {record}; diagnostic={errors[:2048]!r}")
         fields = timing.read_text().split()
         if len(fields) != 4:
@@ -131,6 +218,7 @@ def run(argv, cwd=ROOT, seconds=90):
         if not all(math.isfinite(float(value)) and float(value) >= 0 for value in fields):
             raise RuntimeError("invalid GNU time measurements")
         if record["peak_rss_kib"] > 2 * 1024**2:
+            record["termination_trigger"] = "gnu_time_rss_limit"
             raise RuntimeError("command RSS exceeded 2 GiB")
         return output, record
 
@@ -152,15 +240,17 @@ def reference_source(source):
 
 
 def provenance(baseline):
-    REPORT["host"] = {"platform": platform.platform(), "cpus": os.cpu_count(),
+    REPORT["host"] = {"platform": platform.platform(), "python": platform.python_version(), "cpus": os.cpu_count(),
                       "load_average": os.getloadavg(), "rss_poll_seconds": 0.02,
                       "sampled_group_rss_limit_kib": 2 * 1024**2}
-    version, _ = run(["bend", "version"], seconds=10)
+    version, _ = run(["bend", "version"], seconds=10, stage="provenance:bend")
     REPORT["bend"] = version.decode().strip()
     if REPORT["bend"] != "bend 2.0.35":
         raise RuntimeError("unexpected Bend toolchain")
-    clang, _ = run(["clang", "--version"], seconds=10)
+    clang, _ = run(["clang", "--version"], seconds=10, stage="provenance:clang")
     REPORT["clang"] = clang.decode().strip()
+    if REPORT["clang"].splitlines()[0] != "Ubuntu clang version 18.1.3 (1ubuntu1)":
+        raise RuntimeError("unexpected comparison clang version")
     source = (baseline / "src/thread.bend").read_bytes()
     blob = hashlib.sha1(b"blob " + str(len(source)).encode() + b"\0" + source).hexdigest()
     if blob != THREAD_BLOB:
@@ -180,7 +270,7 @@ def provenance(baseline):
         for path in [ROOT / "src/thread.bend", retained,
                      ROOT / "tests/thread-support/fixtures.bend",
                      ROOT / "tests/perf/thread-index.bend", Path(__file__)]}
-    head, _ = run(["git", "rev-parse", "HEAD"], seconds=5)
+    head, _ = run(["git", "rev-parse", "HEAD"], seconds=5, stage="provenance:head")
     REPORT["candidate"] = head.decode().strip()
     for path in ("scripts/install-bend.sh", "src/codec.bend", "src/imap.bend", "src/mime.bend"):
         if (ROOT / path).read_bytes() != (baseline / path).read_bytes():
@@ -190,7 +280,7 @@ def provenance(baseline):
 def controls():
     unit = Path("tests/unit/thread-index.bend")
     wanted = expected(ROOT / unit)
-    output, _ = run(["bend", str(unit)], seconds=90)
+    output, _ = run(["bend", str(unit)], seconds=90, stage="characterization")
     if output != wanted:
         raise RuntimeError(f"characterization mismatch: {output[:2048]!r}")
     mutations = (
@@ -245,7 +335,7 @@ def controls():
                     raise RuntimeError("payload mutation insertion point changed")
                 changed = changed.replace("def thread_order.step.finish(", helper + "def thread_order.step.finish(")
             (copy / "src/thread.bend").write_text(changed)
-            actual, _ = run(["bend", str(unit)], cwd=copy, seconds=90)
+            actual, _ = run(["bend", str(unit)], cwd=copy, seconds=90, stage="mutation:" + name)
             if actual == wanted or len(actual.splitlines()) != len(wanted.splitlines()):
                 raise RuntimeError(f"mutation was not a semantic mismatch: {name}")
             label, offset = assertions[name]
@@ -261,29 +351,42 @@ def controls():
 def compare():
     with tempfile.TemporaryDirectory(prefix="thread-binary-") as temp:
         binary = Path(temp) / "thread-index"
-        run(["bend", "tests/perf/thread-index.bend", "-o", str(binary)], seconds=180)
+        run(["bend", "tests/perf/thread-index.bend", "-o", str(binary)],
+            seconds=180, stage="compile")
         REPORT["binary_sha256"] = digest(binary.read_bytes())
-        output, _ = run([str(binary), "check"], seconds=90)
+        output, _ = run([str(binary), "check"], seconds=90, stage="equivalence")
         if output != b"equivalence cases=3770 failures=0\n":
             raise RuntimeError(f"equivalence failed: {output!r}")
         REPORT["equivalence_cases"] = 3770
-        for size, shape in ((10, "chain"), (100, "chain"), (1000, "chain"),
-                            (1000, "cycle"), (1000, "prefix")):
-            rows = {"baseline": [], "candidate": []}
-            for pair in range(5):
-                outputs = {}
-                for side in (("baseline", "candidate") if pair % 2 == 0 else ("candidate", "baseline")):
-                    outputs[side], sample = run([str(binary), side, str(size), shape], seconds=15)
-                    rows[side].append(sample)
-                if (not outputs["baseline"] or b"EXHAUSTED" in outputs["baseline"] or
-                        outputs["baseline"] != outputs["candidate"]):
-                    raise RuntimeError(f"paired output mismatch: {size} {shape} pair {pair}")
-            REPORT["cases"].append({"size": size, "shape": shape, "pairs": 5, "samples": rows,
+        shapes = ((10, "chain"), (100, "chain"), (1000, "prefix"),
+                  (1000, "cycle"), (1000, "chain"))
+        rows = {key: {"baseline": [], "candidate": []} for key in shapes}
+        schedule = ([(size, shape, pair) for size, shape in shapes[:2] for pair in range(5)] +
+                    [(size, shape, pair) for pair in range(5) for size, shape in shapes[2:]])
+        REPORT["required_pairs"] = len(schedule)
+        REPORT["completed_pairs"] = []
+        for size, shape, pair in schedule:
+            outputs = {}
+            for side in (("baseline", "candidate") if pair % 2 == 0 else ("candidate", "baseline")):
+                outputs[side], sample = run([str(binary), side, str(size), shape],
+                    seconds=180 if size == 1000 else 15,
+                    stage={"phase": "measurement", "size": size, "shape": shape,
+                           "pair": pair, "side": side})
+                rows[(size, shape)][side].append(sample)
+            if (not outputs["baseline"] or b"EXHAUSTED" in outputs["baseline"] or
+                    outputs["baseline"] != outputs["candidate"]):
+                raise RuntimeError(f"paired output mismatch: {size} {shape} pair {pair}")
+            REPORT["completed_pairs"].append({"size": size, "shape": shape, "pair": pair})
+        for size, shape in shapes:
+            samples_by_side = rows[(size, shape)]
+            if any(len(samples) != 5 for samples in samples_by_side.values()):
+                raise RuntimeError("incomplete required sample matrix")
+            REPORT["cases"].append({"size": size, "shape": shape, "pairs": 5, "samples": samples_by_side,
                 "median_seconds": {side: statistics.median(r["wall_seconds"] for r in samples)
-                                   for side, samples in rows.items()},
+                                   for side, samples in samples_by_side.items()},
                 "range_seconds": {side: [min(r["wall_seconds"] for r in samples),
                                           max(r["wall_seconds"] for r in samples)]
-                                  for side, samples in rows.items()}})
+                                  for side, samples in samples_by_side.items()}})
 
 
 def main():
@@ -298,12 +401,19 @@ def main():
         controls()
         compare()
         check_interruption()
+        if time.monotonic() >= WORK_DEADLINE:
+            raise RuntimeError("matrix completed after work deadline; reserve unavailable")
+        if len(REPORT["commands"]) != 65 or len(REPORT["completed_pairs"]) != 25:
+            raise RuntimeError("incomplete required command matrix")
         REPORT["status"] = "passed"
     except Exception as exc:
         REPORT["status"] = "failed"
         REPORT["reason"] = str(exc)
         raise
     finally:
+        REPORT["driver_elapsed_seconds"] = time.monotonic() - START
+        REPORT["global_limit_seconds"] = GLOBAL_SECONDS
+        REPORT["reserve_seconds"] = RESERVE_SECONDS
         print(json.dumps(REPORT, sort_keys=True), flush=True)
 
 

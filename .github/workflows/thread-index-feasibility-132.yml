@@ -1,0 +1,57 @@
+name: Thread index finite feasibility observation
+
+on:
+  push:
+    branches:
+      - codex/thread-index-feasibility-132-6a479228-01
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          path: candidate
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: 5ff799d094fd08078391c33218dc2a9ef598494b
+          path: baseline
+      - name: Verify exact product and permitted overlay
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          PRODUCT: 6a4792282d3d115a13909fcfd04a619b5536636a
+        run: |
+          test "$(git -C candidate rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git -C candidate rev-parse HEAD^)" = "$PRODUCT"
+          test "$(git -C candidate cat-file -p HEAD | grep -c '^parent ')" = 1
+          expected=$(printf '%s\n' '.github/workflows/thread-index-feasibility-132.yml' 'tests/test-thread-index.py')
+          test "$(git -C candidate diff --name-only --no-renames "$PRODUCT" HEAD)" = "$expected"
+          test "$(git -C candidate rev-parse HEAD:src/thread.bend)" = 4abeeb0988cfb8db1885a154692c2128aeccdc54
+          test "$(git -C candidate rev-parse HEAD:tests/test-thread-index.py)" = 4065315f3bf2a42552f3218f621c7d2a7a34f33f
+          test "$(git -C baseline rev-parse HEAD)" = 5ff799d094fd08078391c33218dc2a9ef598494b
+          printf 'Validated product=%s diagnostic_child=%s\n' "$PRODUCT" "$EXPECTED_HEAD"
+      - name: Scan entire immutable child tree and history, redacted
+        timeout-minutes: 3
+        run: sh candidate/scripts/scan-secrets.sh
+      - name: Use repository-pinned Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.13.18'
+      - name: Install pinned comparison tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 'clang=1:18.0-59~exp2' 'time=1.9-0.2build1'
+          sh baseline/scripts/install-bend.sh
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Observe full matrix with reserved aggregate ledger
+        env:
+          BEND_NO_TELEMETRY: '1'
+        run: python3 -I candidate/tests/test-thread-index.py --baseline baseline
