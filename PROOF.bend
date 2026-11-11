@@ -137,6 +137,79 @@ def Laws.folders_write_nothing():
 def Laws.roles_write_nothing():
   {==}
 
+def Laws.folder_status_effects(name, modseq, required):
+  {==}
+
+def Laws.folder_status_roles_exact():
+  {==}
+
+def Laws.folder_status_empty_exact(fast, modseq):
+  {==}
+
+def Laws.folder_status_commands_empty(modseq):
+  {==}
+
+def Laws.folder_status_commands_exact(name, rest, modseq):
+  {==}
+
+def Laws.folder_status_fast_exact(name, rest, modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_status_fallback_exact(name, rest, modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_status_render_exact(name, modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_list_status_render_exact(modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_status_gate_render_exact():
+  {==}
+
+def folder_status_commands_write_nothing(names: List<&2, String>, +modseq: Bool)
+  -> {I.any_writes(Ops.folder_status_commands(names, modseq)) == False{} : Bool}:
+  match names:
+    case Nil{}:
+      {==}
+    case name <> rest:
+      folder_status_commands_write_nothing(rest, modseq)
+
+def folder_status_nonempty_write_nothing(name: String, rest: List<&2, String>, fast: Bool, modseq: Bool)
+  -> {I.any_writes(Ops.plan_folder_status(name <> rest, fast, modseq)) == False{} : Bool}:
+  match fast modseq:
+    case False{} False{}:
+      folder_status_commands_write_nothing(rest, False{})
+    case False{} True{}:
+      folder_status_commands_write_nothing(rest, True{})
+    case True{} False{}:
+      {==}
+    case True{} True{}:
+      {==}
+
+def Laws.folder_status_writes_nothing(names, fast, modseq):
+  match names:
+    case Nil{}:
+      {==}
+    case name <> rest:
+      folder_status_nonempty_write_nothing(name, rest, fast, modseq)
+
 def Laws.folder_scan_writes_nothing():
   {==}
 
@@ -2699,3 +2772,4 @@ def hook_pretool_read_is_quiet()
     J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]))) ==
       None{} : Maybe<&2, String>}:
   {==}
+

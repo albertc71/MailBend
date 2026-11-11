@@ -24,6 +24,7 @@ import ./response.bend as Response
 import ./facts.bend as Facts
 import ./policy.bend as Policy
 import ./message-metadata.bend as Metadata
+import ./folder-status.bend as FolderStatus
 
 # The steps of a tool answer Base's Result: a value, or the message of the
 # tool's error.
@@ -1012,10 +1013,198 @@ def folders_out(r: Run()) -> IO(Policy.Out):
         f : Fs() <- folders_io(lines)
         return folders_fs(f)
 
-def t_folders(args: J.Json) -> IO(Policy.Out):
+def t_folders_legacy(args: J.Json) -> IO(Policy.Out):
   do IO<Policy.Out>:
     r : Run() <- imap_run(Ops.plan_folders())
     folders_out(r)
+
+def folder_status_helper_at(path: String, input: String) -> IO(Policy.Proc):
+  match path:
+    case SCon{'/', t}:
+      do IO<Policy.Proc>:
+        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
+          Process.run(SCon{'/', t}, ["imap"], input, 262144, 10000)
+        return Policy.proc_of(r)
+    case _:
+      IO.pure(Policy.Proc, Policy.ProcRefused{helper_refusal("MAILBEND_TLS_HELPER", "mailbend-tls")})
+
+def folder_status_run(cmds: List<&2, I.Cmd>) -> IO(Policy.Proc):
+  do IO<Policy.Proc>:
+    path : String <- env_or("MAILBEND_TLS_HELPER", "")
+    folder_status_helper_at(path, I.script(cmds))
+
+def folder_status_modseq(modseq: FolderStatus.Modseq) -> List<&2, J.Json>:
+  match modseq:
+    case FolderStatus.Unsupported{}:
+      [J.kv("highest_modseq", J.JNull{}), J.kv("modseq_state", J.str("unsupported"))]
+    case FolderStatus.NotPersistent{}:
+      [J.kv("highest_modseq", J.JNull{}), J.kv("modseq_state", J.str("not_persistent"))]
+    case FolderStatus.Highest{decimal}:
+      [J.kv("highest_modseq", J.str(decimal)), J.kv("modseq_state", J.str("known"))]
+
+def folder_status_count(count: FolderStatus.Count) -> J.Json:
+  match count:
+    case FolderStatus.Unknown{reason}:
+      J.obj([J.kv("state", J.str("unknown")), J.kv("reason", J.str(FolderStatus.unknown_name(reason)))])
+    case FolderStatus.Known{messages, unseen, uidnext, uidvalidity, modseq}:
+      J.obj(List.append(&2, J.Json, [J.kv("state", J.str("known")),
+        J.kv("messages", J.num(messages)), J.kv("unseen", J.num(unseen)),
+        J.kv("uidnext", J.num(uidnext)), J.kv("uidvalidity", J.num(uidvalidity))],
+        folder_status_modseq(modseq)))
+
+def folder_status_object(base: J.Json, count: FolderStatus.Count) -> J.Json:
+  match base:
+    case J.JObj{items}:
+      J.obj(List.append(&2, J.Json, J.unchain(items), [J.kv("status", folder_status_count(count))]))
+    case _:
+      base
+
+def folder_status_entries(entries: List<&2, FolderStatus.Entry>) -> List<&2, J.Json>:
+  match entries:
+    case Nil{}:
+      []
+    case FolderStatus.Entry{folder, count} <> t:
+      folder_status_object(folder_json(folder), count) <> folder_status_entries(t)
+
+def folder_status_json(result: FolderStatus.Overview) -> J.Json:
+  FolderStatus.Overview{entries, method, +reason} = result
+  J.obj([J.kv("folders", J.arr(folder_status_entries(entries))),
+    J.kv("complete", J.bool(FolderStatus.complete(reason))),
+    J.kv("method", J.str(FolderStatus.method_name(method))),
+    J.kv("reason", J.str(FolderStatus.reason_name(reason)))])
+
+def folder_status_out.bounded(fits: Bool, complete: Bool, +json: J.Json) -> Policy.Out:
+  match fits:
+    case False{}:
+      Policy.Err{"folder overview exceeds the 262144-byte result limit"}
+    case True{}:
+      Bool.pick(Policy.Out, complete, Policy.Ok{json}, Policy.Partial{json})
+
+def folder_status_out.fallback(fits: Bool, complete: Bool, +json: J.Json,
+  fallback: FolderStatus.Overview) -> Policy.Out:
+  match fits:
+    case True{}:
+      Bool.pick(Policy.Out, complete, Policy.Ok{json}, Policy.Partial{json})
+    case False{}:
+      +bounded = folder_status_json(fallback)
+      folder_status_out.bounded(U32.is_le(C.utf8_len(J.show(bounded)), 262144), False{}, bounded)
+
+def folder_status_out(+result: FolderStatus.Overview) -> Policy.Out:
+  FolderStatus.Overview{_, _, reason} = result
+  +json = folder_status_json(result)
+  folder_status_out.fallback(U32.is_le(C.utf8_len(J.show(json)), 262144), FolderStatus.complete(reason),
+    json, FolderStatus.result_limit(result))
+
+def FolderDiscovery() -> Data:
+  Result<&2, &2, String, FolderStatus.Discovery>
+
+def folder_status_discovery.checked(found: Maybe<&2, FolderStatus.Discovery>, roles: Bool)
+  -> FolderDiscovery():
+  match found:
+    case None{}:
+      Fail{"folder overview requires complete, valid capability and folder discovery"}
+    case Some{FolderStatus.Discovery{+caps, fs}}:
+      Bool.pick(FolderDiscovery(), Bool.not(roles) || I.has_cap(caps, "SPECIAL-USE"),
+        Done{FolderStatus.Discovery{caps, fs}}, Fail{"folder overview special-use capability changed"})
+
+def folder_status_discovery(p: Policy.Proc, roles: Bool) -> FolderDiscovery():
+  match p:
+    case Policy.ProcOk{0, out, err}:
+      folder_status_discovery.checked(FolderStatus.discovery(I.frame(out)), roles)
+    case _:
+      Fail{"folder overview could not complete folder discovery"}
+
+def folder_status_merge_one(fs: List<&2, I.Folder>, +entry: I.Folder) -> List<&2, I.Folder>:
+  match fs:
+    case Nil{}:
+      [entry]
+    case +f <> +t:
+      Bool.pick(List<&2, I.Folder>, String.eq(FolderStatus.folder_name(f), FolderStatus.folder_name(entry)),
+        merge_folder.into(f, entry) <> t, f <> folder_status_merge_one(t, entry))
+
+def folder_status_merge(extra: List<&2, I.Folder>, fs: List<&2, I.Folder>) -> List<&2, I.Folder>:
+  match extra:
+    case Nil{}:
+      fs
+    case entry <> t:
+      folder_status_merge(t, folder_status_merge_one(fs, entry))
+
+def folder_status_merged(extra: FolderDiscovery(), caps: List<&2, String>, fs: List<&2, I.Folder>)
+  -> FolderDiscovery():
+  match extra:
+    case Fail{m}:
+      Fail{m}
+    case Done{FolderStatus.Discovery{_, roles}}:
+      +merged = folder_status_merge(roles, fs)
+      Bool.pick(FolderDiscovery(), U32.is_le(U32.from_nat(List.length(&2, I.Folder, merged)), 100),
+        Done{FolderStatus.Discovery{caps, FolderStatus.sorted(merged)}},
+        Fail{"folder overview admits at most 100 folders"})
+
+def folder_status_roles(ask: Bool, caps: List<&2, String>, fs: List<&2, I.Folder>)
+  -> IO(FolderDiscovery()):
+  match ask:
+    case False{}:
+      IO.pure(FolderDiscovery(), Done{FolderStatus.Discovery{caps, FolderStatus.sorted(fs)}})
+    case True{}:
+      do IO<FolderDiscovery()>:
+        p : Policy.Proc <- folder_status_run(Ops.plan_folder_status_roles())
+        return folder_status_merged(folder_status_discovery(p, True{}), caps, fs)
+
+def folder_status_counts(names: List<&2, String>, fs: List<&2, I.Folder>, +fast: Bool, +modseq: Bool)
+  -> IO(Policy.Out):
+  match names:
+    case Nil{}:
+      pure_out(folder_status_out(FolderStatus.overview(
+        FolderStatus.unknown_entries(fs, FolderStatus.NotReturned{}), FolderStatus.NoCounts{})))
+    case name <> t:
+      do IO<Policy.Out>:
+        p : Policy.Proc <- folder_status_run(Ops.plan_folder_status(name <> t, fast, modseq))
+        return folder_status_out(FolderStatus.count_result(p, fs, fast, modseq))
+
+def folder_status_overrides(checked: Fs(), +caps: List<&2, String>) -> IO(Policy.Out):
+  match checked:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{Policy.Folders{+fs, _, _, _, _, _}}:
+      folder_status_counts(FolderStatus.selectable_names(fs), fs,
+        I.has_cap(caps, "LIST-STATUS"), I.has_cap(caps, "CONDSTORE"))
+
+def folder_status_admitted(found: FolderDiscovery()) -> IO(Policy.Out):
+  match found:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{FolderStatus.Discovery{caps, fs}}:
+      do IO<Policy.Out>:
+        checked : Fs() <- folders_overrides(fs)
+        folder_status_overrides(checked, caps)
+
+def folder_status_discovered(found: FolderDiscovery()) -> IO(Policy.Out):
+  match found:
+    case Fail{m}:
+      pure_out(Policy.Err{m})
+    case Done{FolderStatus.Discovery{+caps, fs}}:
+      do IO<Policy.Out>:
+        admitted : FolderDiscovery() <- folder_status_roles(I.has_cap(caps, "SPECIAL-USE"), caps, fs)
+        folder_status_admitted(admitted)
+
+def t_folder_status() -> IO(Policy.Out):
+  do IO<Policy.Out>:
+    p : Policy.Proc <- folder_status_run(Ops.plan_folders())
+    folder_status_discovered(folder_status_discovery(p, False{}))
+
+def t_folders.choice(counts: Maybe<&2, J.Json>, args: J.Json) -> IO(Policy.Out):
+  match counts:
+    case None{}:
+      t_folders_legacy(args)
+    case Some{J.JBool{False{}}}:
+      t_folders_legacy(args)
+    case Some{J.JBool{True{}}}:
+      t_folder_status()
+    case _:
+      pure_out(Policy.Err{"counts must be a Boolean"})
+
+def t_folders(+args: J.Json) -> IO(Policy.Out):
+  t_folders.choice(J.get(args, "counts"), args)
 
 # What reads show
 # ---------------
@@ -9870,3 +10059,4 @@ def call_problem(+name: String, +args: J.Json) -> String:
 # Runs the named tool with its JSON arguments, once they match its schema.
 def call(+name: String, +args: J.Json) -> IO(Policy.Out):
   call.if(call_problem(name, args), name, args)
+

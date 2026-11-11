@@ -219,6 +219,9 @@ class State:
         self.candidate_search_faults = fixture.get("candidate_search_faults", {})
         self.search_responses = fixture.get("search_responses", {})
         self.untagged_replies = fixture.get("untagged_replies", {})
+        self.folder_status_script = fixture.get("folder_status_script", {})
+        self.folder_modseq = {name: str(mb.get("highest_modseq", "1"))
+                             for name, mb in fixture['mailboxes'].items()}
         self.remove_after_fetch = set()
         self.measure_responses = False
         self.flags_first = False
@@ -797,6 +800,22 @@ class IMAPSession:
             self.logger.composition('append', tokens[-1].decode('latin-1'))
         self.state.seen[verb] = self.state.seen.get(verb, 0) + 1
         names = {verb, f'{verb}#{self.state.seen[verb]}'}
+        scripted = self.state.folder_status_script.get(f'{verb}#{self.state.seen[verb]}')
+        if scripted is not None:
+            delay = scripted.get('delay_ms', 0)
+            if not isinstance(delay, int) or not 0 <= delay <= 11000:
+                raise ValueError('folder status fixture delay must be at most 11000ms')
+            if delay:
+                time.sleep(delay / 1000)
+            self.send(scripted.get('responses', ''))
+            completion = scripted.get('completion', 'OK')
+            if completion is not None:
+                if completion not in ('OK', 'NO', 'BAD'):
+                    raise ValueError('invalid folder status fixture completion')
+                self.send(f'{tokens[0].decode("latin-1")} {completion} fixture completed\r\n')
+            if scripted.get('close'):
+                self.done = True
+            return
         if names & self.state.reject and tokens and isinstance(tokens[0], bytes):
             self.send(f'{tokens[0].decode("latin-1")} NO refused by the test server\r\n')
             return
@@ -933,6 +952,8 @@ class IMAPSession:
             self.send(f'{tag} {self.state.quota_status} quota fixture completed\r\n')
         elif verb == b'LIST':
             self.cmd_list(tag, args)
+        elif verb == b'STATUS':
+            self.cmd_status(tag, args)
         elif verb in (b'SELECT', b'EXAMINE'):
             self.cmd_select(tag, args, readonly=(verb == b'EXAMINE'))
         elif uid_mode and verb == b'SEARCH':
@@ -1009,7 +1030,17 @@ class IMAPSession:
         with self.state.lock:
             names = list(self.state.data['mailboxes'].keys())
             specials = {n: list(self.state.data['mailboxes'][n]['special']) for n in names}
-        requested = any(astring_val(arg).upper() == 'RETURN' for arg in args)
+        status_items = None
+        if len(args) == 4 and args[2] == b'RETURN' and isinstance(args[3], list) \
+                and len(args[3]) == 2 and args[3][0] == b'STATUS':
+            status_items = args[3][1]
+            if 'LIST-STATUS' not in self.caps:
+                self.send(f'{tag} BAD LIST-STATUS not supported\r\n')
+                return
+            if b'HIGHESTMODSEQ' in status_items and 'CONDSTORE' not in self.caps:
+                self.send(f'{tag} BAD CONDSTORE not supported\r\n')
+                return
+        requested = status_items is None and any(astring_val(arg).upper() == 'RETURN' for arg in args)
         if requested and self.state.special_return_fails:
             self.send(f'{tag} NO [UNAVAILABLE] special-use lookup failed\r\n')
             return
@@ -1021,7 +1052,36 @@ class IMAPSession:
             nil = '*' in self.state.nil_delim or name in self.state.nil_delim
             shown = 'NIL' if nil else f'"{delim}"'
             self.send(f'* LIST ({" ".join(attrs)}) {shown} {imap_quote(mutf7_encode(name))}\r\n')
+            if status_items is not None and not {'\\Noselect', '\\NonExistent'}.intersection(attrs):
+                self.send_status(name, status_items)
         self.send(f'{tag} OK LIST completed\r\n')
+
+    def send_status(self, name, items):
+        expected = [b'MESSAGES', b'UNSEEN', b'UIDNEXT', b'UIDVALIDITY']
+        if items not in (expected, expected + [b'HIGHESTMODSEQ']):
+            raise ValueError('folder status must use the fixed item order')
+        with self.state.lock:
+            box = self.state.data['mailboxes'][name]
+            values = {'MESSAGES': len(box['messages']),
+                      'UNSEEN': sum('\\Seen' not in m['flags'] for m in box['messages']),
+                      'UIDNEXT': box['uidnext'], 'UIDVALIDITY': box['uidvalidity'],
+                      'HIGHESTMODSEQ': self.state.folder_modseq.get(name, '1')}
+            fields = ' '.join(f'{item.decode()} {values[item.decode()]}' for item in items)
+        self.send(f'* STATUS {imap_quote(mutf7_encode(name))} ({fields})\r\n')
+
+    def cmd_status(self, tag, args):
+        if len(args) != 2 or not isinstance(args[1], list):
+            self.send(f'{tag} BAD malformed STATUS\r\n')
+            return
+        name = self.decode_mailbox_token(args[0])
+        if not self.state.exists(name):
+            self.send(f'{tag} NO unknown mailbox\r\n')
+            return
+        if b'HIGHESTMODSEQ' in args[1] and 'CONDSTORE' not in self.caps:
+            self.send(f'{tag} BAD CONDSTORE not supported\r\n')
+            return
+        self.send_status(name, args[1])
+        self.send(f'{tag} OK STATUS completed\r\n')
 
     def cmd_select(self, tag, args, readonly):
         if not args:
@@ -1927,3 +1987,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

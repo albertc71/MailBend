@@ -268,6 +268,52 @@ def plan_folder_scan() -> List<&2, I.Cmd>:
 def plan_roles() -> List<&2, I.Cmd>:
   [I.CListRoles{}]
 
+def plan_folder_status_roles() -> List<&2, I.Cmd>:
+  [I.CCapability{}, I.CExpectCapabilities{[I.CapSpecialUse{}]}, I.CListRoles{}]
+
+def folder_status_commands(names: List<&2, String>, +modseq: Bool) -> List<&2, I.Cmd>:
+  match names:
+    case Nil{}:
+      []
+    case name <> t:
+      I.CStatus{name, modseq} <> folder_status_commands(t, modseq)
+
+def folder_status_required(fast: Bool, modseq: Bool) -> List<&2, I.Capability>:
+  match fast modseq:
+    case False{} False{}:
+      []
+    case False{} True{}:
+      [I.CapCondstore{}]
+    case True{} False{}:
+      [I.CapListStatus{}]
+    case True{} True{}:
+      [I.CapListStatus{}, I.CapCondstore{}]
+
+def folder_status_guard(required: List<&2, I.Capability>) -> List<&2, I.Cmd>:
+  match required:
+    case Nil{}:
+      []
+    case h <> t:
+      [I.CExpectCapabilities{h <> t}]
+
+def folder_status_count_commands(fast: Bool, names: List<&2, String>, modseq: Bool)
+  -> List<&2, I.Cmd>:
+  match fast:
+    case True{}:
+      [I.CListStatus{modseq}]
+    case False{}:
+      folder_status_commands(names, modseq)
+
+def plan_folder_status(names: List<&2, String>, +fast: Bool, +modseq: Bool)
+  -> List<&2, I.Cmd>:
+  match names:
+    case Nil{}:
+      []
+    case name <> t:
+      I.CCapability{} <> List.append(&2, I.Cmd,
+        folder_status_guard(folder_status_required(fast, modseq)),
+        folder_status_count_commands(fast, name <> t, modseq))
+
 # The UIDs in `mbox` that match every key.
 def plan_search(mbox: String, keys: List<&2, I.Key>) -> List<&2, I.Cmd>:
   [I.CExamine{mbox}, I.CSearch{keys}]
@@ -1204,3 +1250,4 @@ def plans_copied(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, List<&2, List<&2, U3
       []
     case p <> t:
       copied_uids(p) <> plans_copied(t)
+
