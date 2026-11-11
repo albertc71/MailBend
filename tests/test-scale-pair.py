@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,12 @@ def sample(count, value=1):
             "wall_seconds": value, "peak_rss_kib": 1024, "sampled_group_peak_rss_kib": 1024, "imap_logins": 1,
             "work": {"fixture_count": count, "body_bytes_fetched": 0,
                      "smtp_messages": 0, "typesafe_requests": 0}}
+
+
+def historical_scripts():
+    return {"scripts/mailbend": b"#!/bin/sh\n# historical launcher fixture\n",
+            "scripts/install.sh": b"#!/bin/sh\n# historical installer fixture\n",
+            **{name: (ROOT / name).read_bytes() for name in pair.INSTALLERS[1:]}}
 
 
 class PairTests(unittest.TestCase):
@@ -229,7 +236,7 @@ class PairTests(unittest.TestCase):
         # Keep filesystem validation, source hashing and preflight real. Only Git
         # metadata and the reviewed new tuple use small synthetic fixtures here.
         names = ("scripts/mailbend", *pair.INSTALLERS)
-        original = {name: (ROOT / name).read_bytes() for name in names}
+        original = historical_scripts()
         revised = {name: original[name] + b"\n# synthetic reviewed revision\n"
                    for name in pair.INSTALLERS[1:]}
         allowed = tuple(pair.sha(revised[name]) for name in pair.INSTALLERS[1:])
@@ -244,7 +251,7 @@ class PairTests(unittest.TestCase):
                     for name in (*pair.PINNED, *names):
                         path = root / name
                         path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_bytes((ROOT / name).read_bytes())
+                        path.write_bytes(original[name] if name in original else (ROOT / name).read_bytes())
                 for name, data in revised.items():
                     if case != "old":
                         (roots[1] / name).write_bytes(data)
@@ -328,20 +335,19 @@ class PairTests(unittest.TestCase):
         self.assertEqual(pair.CANDIDATE_REPORT_LAUNCHER_SHA256,
                          "251f054ca4f223c180602b00c16192f08dc7ff88d77522951efbfd3a021af26e")
 
-    def test_current_launcher_passes_production_preflight(self):
+    def test_current_managed_scripts_pass_production_preflight_as_one_tuple(self):
+        original = historical_scripts()
         names = ("scripts/mailbend", *pair.INSTALLERS)
-        original = {name: (ROOT / name).read_bytes() for name in names}
-        original["scripts/mailbend"] = b"#!/bin/sh\n# historical launcher fixture\n"
         with tempfile.TemporaryDirectory() as tmp:
             roots = tuple(pathlib.Path(tmp) / side for side in pair.SIDES)
             for root in roots:
                 for name in (*pair.PINNED, *names):
                     path = root / name
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(original[name] if name in original else
-                                     (ROOT / name).read_bytes())
-            (roots[1] / "scripts/mailbend").write_bytes((ROOT / "scripts/mailbend").read_bytes())
-
+                    path.write_bytes(original[name] if name in original else (ROOT / name).read_bytes())
+            current = {name: (ROOT / name).read_bytes() for name in pair.MANAGED_SCRIPT_PATHS}
+            for name, data in current.items():
+                (roots[1] / name).write_bytes(data)
             def git(root, *args):
                 if args == ("rev-parse", "HEAD"):
                     return (pair.REFERENCE_SHA if root == roots[0] else "a" * 40).encode()
@@ -351,26 +357,27 @@ class PairTests(unittest.TestCase):
                     return pair.REFERENCE_SHA.encode()
                 self.assertEqual(args[0], "show")
                 return original[args[1].split(":", 1)[1]]
-
             with mock.patch.object(pair, "git", side_effect=git):
                 self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
-                launcher = roots[1] / "scripts/mailbend"
-                current = launcher.read_bytes()
-                for case, data in (("unknown", b"#!/bin/sh\n# unreviewed launcher fixture\n"),
-                                   ("comment", current + b"\n# unreviewed comment\n"),
-                                   ("executable", current + b"\nexit 0\n")):
-                    with self.subTest(candidate=case):
-                        launcher.write_bytes(data)
-                        with self.assertRaisesRegex(ValueError, "candidate launcher is not a reviewed revision"):
+                for name, data in current.items():
+                    with self.subTest(tampered=name):
+                        (roots[1] / name).write_bytes(data + b"\n# unknown bytes\n")
+                        with self.assertRaisesRegex(ValueError, "not a reviewed revision"):
                             pair.preflight(*roots, "a" * 40)
-                launcher.write_bytes(current)
-                (roots[0] / "scripts/mailbend").write_bytes(current)
+                        (roots[1] / name).write_bytes(data)
+                for name in pair.MANAGED_SCRIPT_PATHS[:2]:
+                    with self.subTest(cross_pair=name):
+                        (roots[1] / name).write_bytes(original[name])
+                        with self.assertRaises(ValueError):
+                            pair.preflight(*roots, "a" * 40)
+                        (roots[1] / name).write_bytes(current[name])
+                (roots[0] / "scripts/mailbend").write_bytes(current["scripts/mailbend"])
                 with self.assertRaisesRegex(ValueError, "fixed launcher/installer changed"):
                     pair.preflight(*roots, "a" * 40)
 
     def test_candidate_launcher_migration_through_real_preflight(self):
         names = ("scripts/mailbend", *pair.INSTALLERS)
-        original = {name: (ROOT / name).read_bytes() for name in names}
+        original = historical_scripts()
         original["scripts/mailbend"] = b"#!/bin/sh\n# historical launcher fixture\n"
         revised = b"#!/bin/sh\n# independently approved launcher fixture\n"
         for case in ("original", "approved", "tampered", "reference-approved",
@@ -441,11 +448,11 @@ class PairTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, expected):
                             pair.preflight(*roots, "a" * 40)
 
-    def test_actual_installer_migration_through_real_preflight(self):
+    def test_historical_installer_migration_through_real_preflight(self):
         names = ("scripts/mailbend", *pair.INSTALLERS)
-        original = {name: (ROOT / name).read_bytes() for name in names}
+        original = historical_scripts()
         original["scripts/install.sh"] = b"#!/bin/sh\n# historical installer fixture\n"
-        revised = (ROOT / "scripts/install.sh").read_bytes()
+        revised = b"#!/bin/sh\n# independently reviewed flat installer fixture\n"
         self.assertEqual(pair.CANDIDATE_INSTALLER_SHA256,
                          "ae7a0f7ef0c8606488cbd5414c5a3914a027fce6773b9cae2bdf865b9d564f9b")
         for case in ("original", "approved", "unknown", "reference-approved",
@@ -484,7 +491,8 @@ class PairTests(unittest.TestCase):
                     self.assertEqual(args[0], "show")
                     return original[args[1].split(":", 1)[1]]
 
-                with mock.patch.object(pair, "git", side_effect=git):
+                with mock.patch.object(pair, "git", side_effect=git), \
+                        mock.patch.object(pair, "CANDIDATE_INSTALLER_SHA256", pair.sha(revised)):
                     if case in ("original", "approved", "post-run-drift"):
                         self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
                         if case == "post-run-drift":
@@ -626,5 +634,232 @@ class PairTests(unittest.TestCase):
             self.assertEqual(cap, int(counts.pop() * 1.25))
 
 
+
+class ManagedPairTests(unittest.TestCase):
+    MEMBERS = ("mailbend-core", "mailbend-tls", "mailbend-attach",
+               "mailbend-typesafe", "mailbend-stdio")
+
+    def test_managed_source_tuple_is_literal_and_path_ordered(self):
+        self.assertEqual(pair.MANAGED_SCRIPT_PATHS,
+                         ("scripts/install.sh", "scripts/mailbend", "scripts/install-layout.sh"))
+        self.assertEqual(pair.MANAGED_SCRIPT_TUPLE, (
+            "1e6021a670a6d26f2a68a27cd748c1b63238e816dd1dbcf677ba6e9d3b934326",
+            "90d6cbca18d2ed0e24883a7417225b98657dd023fee8afe4686ba9c9fecb6aac",
+            "d2414f2f66c1a297d1d4330056d86f13a8456ce3053017d3c2209728593fd17f"))
+
+    def roots(self, parent, managed=True):
+        roots = tuple(parent / side for side in ("reference", "candidate"))
+        original = historical_scripts()
+        for root in roots:
+            for name in (*pair.PINNED, *original):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(original[name] if name in original else (ROOT / name).read_bytes())
+                path.chmod(0o755 if name.startswith("scripts/") else 0o644)
+            (root / "bin").mkdir()
+            for name in self.MEMBERS:
+                path = root / "bin" / name
+                path.write_bytes(("#!/bin/sh\necho original-" + name + "\n").encode())
+                path.chmod(0o755)
+        for name in pair.MANAGED_SCRIPT_PATHS:
+            path = roots[1] / name
+            path.write_bytes((ROOT / name).read_bytes())
+            path.chmod(0o644 if name.endswith("install-layout.sh") else 0o755)
+        if managed:
+            shutil.rmtree(roots[1] / "bin")
+            self.generation(roots[1], "A")
+        def git(root, *args):
+            if args == ("rev-parse", "HEAD"):
+                return (pair.REFERENCE_SHA if root == roots[0] else "a" * 40).encode()
+            if args[0] == "status":
+                return b""
+            if args[0] == "rev-parse":
+                return pair.REFERENCE_SHA.encode()
+            return original[args[1].split(":", 1)[1]]
+        return roots, git
+
+    def generation(self, root, letter, previous="none"):
+        identifier = "g." + letter * 12
+        meta = root / ".mailbend-install"
+        directory = meta / "generations" / identifier
+        directory.mkdir(parents=True)
+        manifest = "mailbend-generation-v1\ngeneration=" + identifier + "\n"
+        for name in self.MEMBERS:
+            data = ("#!/bin/sh\necho " + letter + "-" + name + "\n").encode()
+            (directory / name).write_bytes(data)
+            (directory / name).chmod(0o755)
+            manifest += f"{name} {pair.sha(data)} 0755\n"
+        (directory / "MANIFEST").write_text(manifest)
+        state_id = "s." + letter * 12
+        state = meta / "states" / state_id
+        state.mkdir(parents=True)
+        (state / "FORMAT").write_text("mailbend-install-state-v1\nkind=install\n"
+                                      f"active={identifier}\nprevious={previous}\n")
+        (state / "active").symlink_to("../../generations/" + identifier)
+        if previous != "none":
+            (state / "previous").symlink_to("../../generations/" + previous)
+        new = meta / "fixture-selector"
+        new.symlink_to("states/" + state_id)
+        new.replace(meta / "current")
+        for name, role in (("bin", "active"), ("bin.prev", "previous")):
+            if not (root / name).is_symlink():
+                (root / name).symlink_to(".mailbend-install/current/" + role)
+        return directory, state
+
+    def test_actual_managed_layout_and_records_are_captured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots, git = self.roots(pathlib.Path(directory))
+            with mock.patch.object(pair, "git", side_effect=git):
+                self.assertEqual(pair.preflight(*roots, "a" * 40), roots)
+                result = pair.identities(roots, "a" * 40)
+            candidate = result["checkouts"]["candidate"]
+            self.assertEqual(candidate["installation"]["generation"], "g.AAAAAAAAAAAA")
+            self.assertIn("scripts/install-layout.sh", candidate["files"])
+            self.assertEqual(candidate["installation"]["records"][
+                ".mailbend-install/states/s.AAAAAAAAAAAA/FORMAT"]["bytes"],
+                "mailbend-install-state-v1\nkind=install\nactive=g.AAAAAAAAAAAA\nprevious=none\n")
+            for name in self.MEMBERS:
+                self.assertIn("/generations/g.AAAAAAAAAAAA/" + name,
+                              candidate["files"]["bin/" + name]["physical_path"])
+
+    def test_layout_matrix_refuses_flat_new_and_managed_historical_or_reference(self):
+        for case in ("new-flat", "historical-managed", "reference-managed"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                roots, git = self.roots(pathlib.Path(directory), managed=case != "new-flat")
+                if case == "historical-managed":
+                    for name, data in historical_scripts().items():
+                        (roots[1] / name).write_bytes(data)
+                elif case == "reference-managed":
+                    shutil.rmtree(roots[0] / "bin")
+                    self.generation(roots[0], "R")
+                with mock.patch.object(pair, "git", side_effect=git):
+                    pair.preflight(*roots, "a" * 40)
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        pair.identities(roots, "a" * 40)
+
+    def test_managed_negative_layout_and_record_controls(self):
+        cases = ("member-link", "hardlink", "external-bin", "ancestor-link", "missing",
+                 "version", "field", "reordered", "duplicate", "oversized", "wrong-generation",
+                 "manifest-hash", "mode", "missing-previous", "current-traversal")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                parent = pathlib.Path(directory)
+                roots, git = self.roots(parent)
+                root = roots[1]
+                meta = root / ".mailbend-install"
+                generation = meta / "generations/g.AAAAAAAAAAAA"
+                state = meta / "states/s.AAAAAAAAAAAA"
+                member = generation / "mailbend-core"
+                record = state / "FORMAT"
+                if case in ("member-link", "hardlink", "missing"):
+                    member.unlink()
+                    if case == "member-link":
+                        member.symlink_to(roots[0] / "bin/mailbend-core")
+                    elif case == "hardlink":
+                        os.link(roots[0] / "bin/mailbend-core", member)
+                elif case == "external-bin":
+                    (root / "bin").unlink()
+                    (root / "bin").symlink_to(generation)
+                elif case == "ancestor-link":
+                    moved = parent / "moved-generations"
+                    (meta / "generations").rename(moved)
+                    (meta / "generations").symlink_to(moved)
+                elif case in ("version", "field", "reordered", "duplicate", "oversized"):
+                    data = record.read_bytes()
+                    data = {"version": data.replace(b"state-v1", b"state-v2"),
+                            "field": data + b"extra=bad\n",
+                            "reordered": b"\n".join(data.split(b"\n")[1:2] + data.split(b"\n")[:1]
+                                                     + data.split(b"\n")[2:]),
+                            "duplicate": data + b"previous=none\n",
+                            "oversized": b"x" * 257}[case]
+                    record.write_bytes(data)
+                elif case == "wrong-generation":
+                    manifest = generation / "MANIFEST"
+                    manifest.write_bytes(manifest.read_bytes().replace(b"g.AAAAAAAAAAAA", b"g.BBBBBBBBBBBB"))
+                elif case == "manifest-hash":
+                    member.write_bytes(b"#!/bin/sh\necho changed\n")
+                elif case == "mode":
+                    member.chmod(0o775)
+                elif case == "missing-previous":
+                    record.write_bytes(record.read_bytes().replace(b"previous=none", b"previous=g.BBBBBBBBBBBB"))
+                    (state / "previous").symlink_to("../../generations/g.BBBBBBBBBBBB")
+                else:
+                    (meta / "current").unlink()
+                    (meta / "current").symlink_to("states/../states/s.AAAAAAAAAAAA")
+                with mock.patch.object(pair, "git", side_effect=git):
+                    if case == "missing-previous":
+                        with self.assertRaises(FileNotFoundError):
+                            pair.identities(roots, "a" * 40)
+                    else:
+                        reason = {"member-link": "object type", "hardlink": "unaliased regular",
+                                  "external-bin": "link target", "ancestor-link": "object type",
+                                  "missing": "generation inventory", "version": "state record grammar",
+                                  "field": "state record grammar", "reordered": "state record grammar",
+                                  "duplicate": "state record grammar", "oversized": "oversized or empty",
+                                  "wrong-generation": "manifest record grammar", "manifest-hash": "manifest mismatch",
+                                  "mode": "object mode", "current-traversal": "complete normal state"}[case]
+                        with self.assertRaisesRegex(ValueError, reason):
+                            pair.identities(roots, "a" * 40)
+
+    def test_identity_phase_rejects_selector_change_during_opened_member_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            roots, git = self.roots(pathlib.Path(directory))
+            meta = roots[1] / ".mailbend-install"
+            wanted = (roots[1] / "bin/mailbend-core").stat().st_ino
+            read, fired = os.read, []
+            def moving_read(fd, size):
+                data = read(fd, size)
+                if not fired and os.fstat(fd).st_ino == wanted:
+                    fired.append(True)
+                    new = meta / "replacement"
+                    new.symlink_to(os.readlink(meta / "current"))
+                    new.replace(meta / "current")
+                return data
+            with mock.patch.object(pair, "git", side_effect=git), mock.patch.object(os, "read", side_effect=moving_read):
+                with self.assertRaisesRegex(ValueError, "snapshot changed during capture"):
+                    pair.identities(roots, "a" * 40)
+            self.assertEqual(fired, [True], "the drift control must actually intercept a member read")
+
+    def test_saved_identity_refuses_identical_target_replacement_and_approved_upgrade(self):
+        for change in ("identical-target", "upgrade", "shared-script"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                parent = pathlib.Path(directory)
+                roots, git = self.roots(parent)
+                output = parent / "output"
+                output.mkdir()
+                with mock.patch.object(pair, "git", side_effect=git):
+                    pair.write_json(output / "paired-identities.json", pair.identities(roots, "a" * 40))
+                    if change == "upgrade":
+                        self.generation(roots[1], "B", "g.AAAAAAAAAAAA")
+                    elif change == "shared-script":
+                        with (roots[1] / "scripts/install-layout.sh").open("ab") as handle:
+                            handle.write(b"\n# drift\n")
+                    else:
+                        meta = roots[1] / ".mailbend-install"
+                        replacement = meta / "replacement"
+                        replacement.symlink_to(os.readlink(meta / "current"))
+                        replacement.replace(meta / "current")
+                    with self.assertRaises(ValueError):
+                        pair.unchanged(roots, "a" * 40, output)
+
+    def test_root_and_compatible_bin_locks_fail_fast_and_release(self):
+        import fcntl
+        for selected in ("root", "bin"):
+            with self.subTest(lock=selected), tempfile.TemporaryDirectory() as directory:
+                roots, git = self.roots(pathlib.Path(directory))
+                path = roots[0] if selected == "root" else roots[0] / "bin"
+                held = os.open(path, os.O_RDONLY)
+                try:
+                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with mock.patch.object(pair, "git", side_effect=git):
+                        with self.assertRaisesRegex(ValueError, "lock is busy"):
+                            pair.identities(roots, "a" * 40)
+                finally:
+                    os.close(held)
+                with mock.patch.object(pair, "git", side_effect=git):
+                    pair.identities(roots, "a" * 40)
+
+
 if __name__ == "__main__":
+    os.umask(0o022)
     unittest.main()

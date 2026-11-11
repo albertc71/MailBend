@@ -14,7 +14,9 @@
 
 # native/build output
 build/
-bin/
+/bin
+/bin.prev
+/.mailbend-install/
 native/target/
 *.o
 *.so

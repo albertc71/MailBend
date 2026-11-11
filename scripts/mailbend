@@ -1,7 +1,6 @@
 #!/usr/bin/env sh
-# MailBend launcher: runs the compiled core (bin/mailbend-core) with the TLS
-# helper, the attachment reader and the TypeSafe helper next to it. Falls back to
-# `bend main.bend` (slower start) when the core was not compiled.
+# MailBend launcher: pin one complete managed generation for this session.
+# Only legacy layouts may fall back to interpreting main.bend.
 # MCP uses the stdio helper to adapt inherited sockets before starting the core.
 # Usage: scripts/mailbend mcp | tools | call <tool> [json or -] | diagnose [--imap] [--smtp] [--report] | setup | hook claude-pretooluse | version
 set -eu
@@ -13,10 +12,20 @@ if [ "$#" -eq 2 ] && [ "$1" = hook ] && [ "$2" = claude-pretooluse ]; then
     exit 0
   fi
 fi
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-: "${MAILBEND_TLS_HELPER:=$root/bin/mailbend-tls}"
-: "${MAILBEND_ATTACH_HELPER:=$root/bin/mailbend-attach}"
-: "${MAILBEND_TYPESAFE_HELPER:=$root/bin/mailbend-typesafe}"
+root=$(CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd -P)
+. "$root/scripts/install-layout.sh"
+selected_bin=$root/bin
+managed=0
+if mb_exists "$root/.mailbend-install" || [ -L "$root/bin" ] || mb_exists "$root/bin.prev"; then
+  mb_root_open
+  mb_capture
+  [ "$MB_KIND" != bootstrap ] || mb_fail "installation is incomplete; rerun scripts/install.sh"
+  selected_bin=$MB_GENERATION
+  managed=1
+fi
+: "${MAILBEND_TLS_HELPER:=$selected_bin/mailbend-tls}"
+: "${MAILBEND_ATTACH_HELPER:=$selected_bin/mailbend-attach}"
+: "${MAILBEND_TYPESAFE_HELPER:=$selected_bin/mailbend-typesafe}"
 export MAILBEND_TLS_HELPER MAILBEND_ATTACH_HELPER MAILBEND_TYPESAFE_HELPER
 export BEND_NO_TELEMETRY=1
 case "${1:-}:${2:-}" in
@@ -30,16 +39,23 @@ case "${1:-}:${2:-}" in
     fi
     ;;
 esac
+if [ "$managed" = 1 ]; then
+  mb_root_same
+  mb_restore_locale
+  # A directory descriptor is not a lifetime lock and is not needed by the core.
+  exec 8<&-
+fi
 if [ "$#" -eq 1 ] && [ "$1" = mcp ]; then
-  if [ ! -x "$root/bin/mailbend-stdio" ]; then
+  if [ ! -x "$selected_bin/mailbend-stdio" ]; then
     echo "mailbend: stdio helper is missing; run scripts/install.sh" >&2
     exit 2
   fi
-  exec "$root/bin/mailbend-stdio" mcp
+  exec "$selected_bin/mailbend-stdio" mcp
 fi
-if [ -x "$root/bin/mailbend-core" ]; then
-  exec "$root/bin/mailbend-core" "$@"
+if [ -x "$selected_bin/mailbend-core" ]; then
+  exec "$selected_bin/mailbend-core" "$@"
 fi
+[ "$managed" = 0 ] || mb_fail "compiled core is missing; rerun scripts/install.sh"
 if command -v bend >/dev/null 2>&1; then
   exec bend "$root/main.bend" -- "$@"
 fi

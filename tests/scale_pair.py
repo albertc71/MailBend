@@ -2,6 +2,7 @@
 """Verify a fixed-reference, same-runner scale pair without changing measurements."""
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import json
 import math
@@ -71,6 +72,215 @@ def regular(root, relative, executable=False):
     return path, info
 
 
+# Candidate-only managed v1 installer, launcher and sourced validator. These
+# literals require independent review of the exact three files as one unit.
+MANAGED_SCRIPT_PATHS = ("scripts/install.sh", "scripts/mailbend", "scripts/install-layout.sh")
+MANAGED_SCRIPT_TUPLE = (
+    "1e6021a670a6d26f2a68a27cd748c1b63238e816dd1dbcf677ba6e9d3b934326",
+    "90d6cbca18d2ed0e24883a7417225b98657dd023fee8afe4686ba9c9fecb6aac",
+    "d2414f2f66c1a297d1d4330056d86f13a8456ce3053017d3c2209728593fd17f",
+)
+GENERATION_MEMBERS = ("mailbend-core", "mailbend-tls", "mailbend-attach",
+                      "mailbend-typesafe", "mailbend-stdio")
+
+
+def script_layout(reference, candidate):
+    actual = tuple(sha(regular(candidate, name)[0].read_bytes())
+                   for name in MANAGED_SCRIPT_PATHS[:2])
+    original = tuple(sha(git(reference, "show", f"{REFERENCE_SHA}:{name}"))
+                     for name in MANAGED_SCRIPT_PATHS[:2])
+    for name, expected in zip(MANAGED_SCRIPT_PATHS[:2], original):
+        require(sha(regular(reference, name)[0].read_bytes()) == expected,
+                "fixed launcher/installer changed")
+    if actual == MANAGED_SCRIPT_TUPLE[:2]:
+        path, _ = regular(candidate, MANAGED_SCRIPT_PATHS[2])
+        require(sha(path.read_bytes()) == MANAGED_SCRIPT_TUPLE[2],
+                "candidate managed validator is not a reviewed revision")
+        return "managed-v1"
+    require(actual[0] in (original[0], CANDIDATE_INSTALLER_SHA256),
+            "candidate installer is not a reviewed revision")
+    require(actual[1] in (original[1], CANDIDATE_LAUNCHER_SHA256,
+                          CANDIDATE_REPORT_LAUNCHER_SHA256),
+            "candidate launcher is not a reviewed revision")
+    require(actual[0] != MANAGED_SCRIPT_TUPLE[0] and actual[1] != MANAGED_SCRIPT_TUPLE[1],
+            "mixed managed/legacy script pair")
+    return "flat"
+
+
+def metadata(info):
+    return {"device": info.st_dev, "inode": info.st_ino, "size": info.st_size,
+            "mode": info.st_mode, "uid": info.st_uid, "links": info.st_nlink,
+            "mtime_ns": info.st_mtime_ns, "ctime_ns": info.st_ctime_ns}
+
+
+def opened_file(path, info, limit=None):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        before = os.fstat(fd)
+        require(metadata(before) == metadata(info), f"file changed before open: {path}")
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1,
+                f"not an unaliased regular file: {path}")
+        digest, data = hashlib.sha256(), bytearray()
+        while True:
+            chunk = os.read(fd, 1024 * 1024 if limit is None else limit + 1 - len(data))
+            if not chunk:
+                break
+            digest.update(chunk)
+            if limit is not None:
+                data.extend(chunk)
+                require(len(data) <= limit, f"oversized record: {path}")
+        require(metadata(os.fstat(fd)) == metadata(before)
+                == metadata(path.lstat()), f"file changed during hashing: {path}")
+        return {**metadata(before), "sha256": digest.hexdigest()}, bytes(data)
+    finally:
+        os.close(fd)
+
+
+def trusted_root(root):
+    owner = root.lstat().st_uid
+    child = None
+    for path in (root, *root.parents):
+        info = path.lstat()
+        require(stat.S_ISDIR(info.st_mode), f"linked checkout ancestor: {path}")
+        require(info.st_uid in (0, owner), f"foreign checkout ancestor: {path}")
+        if info.st_mode & 0o022:
+            require(path != root and info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+                    and child is not None and child.st_uid in (0, owner)
+                    and not child.st_mode & 0o022, f"writable checkout ancestor: {path}")
+        if path == root:
+            require(not info.st_mode & 0o7000, "special checkout permissions")
+        child = info
+    return owner
+
+
+@contextlib.contextmanager
+def locked_roots(roots):
+    with contextlib.ExitStack() as stack:
+        saved = {}
+        for root in sorted(roots):
+            trusted_root(root)
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            stack.callback(os.close, fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError(f"checkout install lock is busy: {root}") from exc
+            saved[root] = (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+            bin_dir = root / "bin"
+            if bin_dir.is_dir() and not bin_dir.is_symlink():
+                legacy = os.open(bin_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                stack.callback(os.close, legacy)
+                try:
+                    fcntl.flock(legacy, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise ValueError(f"legacy bin install lock is busy: {root}") from exc
+                require((os.fstat(legacy).st_dev, os.fstat(legacy).st_ino)
+                        == (bin_dir.lstat().st_dev, bin_dir.lstat().st_ino),
+                        "legacy bin changed during lock acquisition")
+        def same_roots():
+            for root, identity in saved.items():
+                info = root.lstat()
+                require(stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == identity,
+                        "checkout root moved or was replaced")
+        same_roots()
+        yield
+        same_roots()
+
+
+def managed_snapshot(root, seen):
+    owner = trusted_root(root)
+    device = root.lstat().st_dev
+    nodes, records, files = {}, {}, {}
+
+    def node(path, kind, mode=None, target=None):
+        info = path.lstat()
+        require(info.st_uid == owner and info.st_dev == device,
+                f"managed owner or filesystem: {path}")
+        require(stat.S_IFMT(info.st_mode) == kind, f"managed object type: {path}")
+        if mode is not None:
+            require(stat.S_IMODE(info.st_mode) == mode, f"managed object mode: {path}")
+        value = metadata(info)
+        if kind == stat.S_IFLNK:
+            text = os.readlink(path)
+            require(text == target, f"managed link target: {path}")
+            value["target"] = text
+        nodes[str(path.relative_to(root))] = value
+        return info
+
+    def directory(path):
+        return node(path, stat.S_IFDIR, 0o755)
+
+    def record(path, limit):
+        info = node(path, stat.S_IFREG, 0o644)
+        require(0 < info.st_size <= limit, f"oversized or empty record: {path}")
+        identity, data = opened_file(path, info, limit)
+        try:
+            text = data.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"non-ASCII record: {path}") from exc
+        records[str(path.relative_to(root))] = {**identity, "bytes": text}
+        return data
+
+    meta = root / ".mailbend-install"
+    for path in (meta, meta / "generations", meta / "states"):
+        directory(path)
+    node(root / "bin", stat.S_IFLNK, target=".mailbend-install/current/active")
+    node(root / "bin.prev", stat.S_IFLNK, target=".mailbend-install/current/previous")
+    current = meta / "current"
+    selected = os.readlink(current)
+    require(re.fullmatch(r"states/s\.[A-Za-z0-9]{12}", selected) is not None,
+            "managed current must select a complete normal state")
+    node(current, stat.S_IFLNK, target=selected)
+    state = meta / selected
+    directory(state)
+    raw = record(state / "FORMAT", 256)
+    match = re.fullmatch(rb"mailbend-install-state-v1\nkind=(install|rollback)\n"
+                         rb"active=(g\.[A-Za-z0-9]{12})\n"
+                         rb"previous=(g\.[A-Za-z0-9]{12}|none)\n", raw)
+    require(match is not None, "state record grammar")
+    kind, active, previous = (value.decode("ascii") for value in match.groups())
+    require(previous != active and (kind != "rollback" or previous == "none"),
+            "state previous declaration")
+    require(set(os.listdir(state)) == {"FORMAT", "active"} |
+            ({"previous"} if previous != "none" else set()), "state inventory")
+    node(state / "active", stat.S_IFLNK, target="../../generations/" + active)
+    if previous != "none":
+        node(state / "previous", stat.S_IFLNK, target="../../generations/" + previous)
+    for generation in (active,) + ((previous,) if previous != "none" else ()):
+        physical = meta / "generations" / generation
+        directory(physical)
+        require(set(os.listdir(physical)) == {*GENERATION_MEMBERS, "MANIFEST"},
+                "generation inventory")
+        raw = record(physical / "MANIFEST", 1024)
+        lines = raw.split(b"\n")
+        require(len(lines) == 8 and lines[0] == b"mailbend-generation-v1"
+                and lines[1] == b"generation=" + generation.encode()
+                and lines[-1] == b"", "manifest record grammar")
+        for name, line in zip(GENERATION_MEMBERS, lines[2:-1]):
+            match = re.fullmatch(re.escape(name.encode()) + rb" ([0-9a-f]{64}) 0755", line)
+            require(match is not None, "manifest member grammar")
+            path = physical / name
+            info = node(path, stat.S_IFREG, 0o755)
+            require(info.st_size > 0 and os.access(path, os.X_OK), "empty or nonexecutable member")
+            identity, _ = opened_file(path, info)
+            require(identity["sha256"] == match.group(1).decode(), "manifest mismatch")
+            if generation == active:
+                key = (info.st_dev, info.st_ino)
+                require(key not in seen, f"executable alias: {path}")
+                seen.add(key)
+                files["bin/" + name] = {**identity, "physical_path": str(path)}
+    for relative, before in nodes.items():
+        path = root / relative
+        after = metadata(path.lstat())
+        if "target" in before:
+            after["target"] = os.readlink(path)
+        require(before == after, f"managed snapshot changed during capture: {relative}")
+    return files, {"layout": "managed-v1", "state": selected.removeprefix("states/"),
+                   "generation": active, "previous": previous,
+                   "physical_generation": str(meta / "generations" / active),
+                   "nodes": nodes, "records": records}
+
+
 def import_boundary(root):
     for directory in (root, root / "tests"):
         for path in directory.iterdir():
@@ -117,10 +327,10 @@ def preflight(reference, candidate, candidate_sha):
             actual = sha(path.read_bytes())
             if side == 1 and name == "scripts/mailbend":
                 require(actual in (expected, CANDIDATE_LAUNCHER_SHA256,
-                                   CANDIDATE_REPORT_LAUNCHER_SHA256),
+                                   CANDIDATE_REPORT_LAUNCHER_SHA256, MANAGED_SCRIPT_TUPLE[1]),
                         f"candidate launcher is not a reviewed revision: {path}")
             elif side == 1 and name == "scripts/install.sh":
-                require(actual in (expected, CANDIDATE_INSTALLER_SHA256),
+                require(actual in (expected, CANDIDATE_INSTALLER_SHA256, MANAGED_SCRIPT_TUPLE[0]),
                         f"candidate installer is not a reviewed revision: {path}")
             elif side == 1 and name in INSTALLERS[1:]:
                 original_helpers.append(expected)
@@ -129,6 +339,7 @@ def preflight(reference, candidate, candidate_sha):
                 require(actual == expected, f"fixed launcher/installer changed: {path}")
     require(tuple(candidate_helpers) in (tuple(original_helpers), CANDIDATE_HELPER_TUPLE),
             "candidate installer helper tuple is not a reviewed complete revision")
+    script_layout(*roots)
     return roots
 
 
@@ -160,16 +371,38 @@ def comparator(reference):
 def identities(roots, candidate_sha):
     result = {"reference_sha": REFERENCE_SHA, "candidate_sha": candidate_sha, "checkouts": {}}
     seen = set()
-    for side, root, source in zip(("reference", "candidate"), roots, (REFERENCE_SHA, candidate_sha)):
-        files = {}
-        for name in (*EXECUTABLES, "scripts/install.sh"):
-            path, info = regular(root, name, executable=True)
-            identity = (info.st_dev, info.st_ino)
-            require(identity not in seen, f"executable alias: {path}")
-            seen.add(identity)
-            files[name] = {"sha256": sha(path.read_bytes()), "device": info.st_dev,
-                           "inode": info.st_ino, "size": info.st_size, "mode": info.st_mode}
-        result["checkouts"][side] = {"root": str(root), "source_sha": source, "files": files}
+    with locked_roots(roots):
+        candidate_layout = script_layout(*roots)
+        source_before = {(root, name): metadata((root / name).lstat())
+                         for side, root in zip(("reference", "candidate"), roots)
+                         for name in MANAGED_SCRIPT_PATHS[:3 if side == "candidate"
+                             and candidate_layout == "managed-v1" else 2]}
+        for side, root, source in zip(("reference", "candidate"), roots, (REFERENCE_SHA, candidate_sha)):
+            managed = side == "candidate" and candidate_layout == "managed-v1"
+            if managed:
+                files, snapshot = managed_snapshot(root, seen)
+                names = ("scripts/mailbend", "scripts/install.sh", "scripts/install-layout.sh")
+            else:
+                require(not (root / ".mailbend-install").exists()
+                        and not (root / ".mailbend-install").is_symlink()
+                        and not (root / "bin.prev").exists()
+                        and not (root / "bin.prev").is_symlink(), "flat outputs required")
+                files, snapshot = {}, {"layout": "flat", "bin": metadata((root / "bin").lstat())}
+                names = (*EXECUTABLES, "scripts/install.sh")
+            for name in names:
+                path, info = regular(root, name, executable=name != "scripts/install-layout.sh")
+                identity = (info.st_dev, info.st_ino)
+                require(identity not in seen, f"executable alias: {path}")
+                seen.add(identity)
+                files[name], _ = opened_file(path, info)
+            root_info = root.lstat()
+            root_identity = {"device": root_info.st_dev, "inode": root_info.st_ino,
+                             "uid": root_info.st_uid, "mode": root_info.st_mode}
+            result["checkouts"][side] = {"root": str(root), "root_identity": root_identity, "source_sha": source,
+                                        "files": files, "installation": snapshot}
+        for (root, name), before in source_before.items():
+            require(metadata((root / name).lstat()) == before,
+                    "script changed during identity capture")
     result["adapter_sha256"] = sha(pathlib.Path(__file__).read_bytes())
     return result
 
@@ -414,7 +647,7 @@ def run(args):
             "paired run does not reuse reports or cached acceptance")
     # One frozen reference module, one shared fixture implementation, both binaries.
     with comparator(roots[0]) as harness:
-        with harness.RunControl(time.monotonic() + 1800) as outer:
+        with harness.RunControl(time.monotonic() + 1800) as outer, locked_roots(roots):
             identity = unchanged(roots, args.candidate_sha, output)
             result = collect(harness, roots, identity, output, outer)
             preflight(args.reference, args.candidate, args.candidate_sha)

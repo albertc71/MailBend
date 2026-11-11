@@ -534,6 +534,7 @@ class LauncherTrustTests(unittest.TestCase):
             (work / "scripts").mkdir()
             (work / "bin").mkdir()
             shutil.copyfile(ROOT / "scripts/mailbend", work / "scripts/mailbend")
+            shutil.copyfile(ROOT / "scripts/install-layout.sh", work / "scripts/install-layout.sh")
             core = work / "bin/mailbend-core"
             core.write_text("#!/bin/sh\nexit 0\n")
             core.chmod(0o700)

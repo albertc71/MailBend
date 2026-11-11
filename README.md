@@ -352,13 +352,19 @@ Needs a C compiler, the Rust release pinned in `native/rust-toolchain.toml`
 core, it runs through `bend` with a slower start). The three commands at the top
 install all of it on Debian or Ubuntu.
 
-`scripts/install.sh` builds `bin/mailbend-tls`, `bin/mailbend-attach`,
-`bin/mailbend-typesafe` and `bin/mailbend-stdio`, checks the safety proofs with `bend PROOF.bend`,
-and compiles the core to `bin/mailbend-core`. Nothing in `bin/` changes until
-all of that has passed, and then each binary is renamed into place, so a
-failed build, check, proof or compile leaves the installation as it was. A
-running MCP server keeps running; restart it so its core matches the new
-helpers. One install runs at a time (util-linux `flock`). With `--install-bend` and no
+`scripts/install.sh` builds all four helpers, runs their existing checks and
+`bend PROOF.bend`, and compiles the core into one complete generation. On a
+fresh compiled installation, `bin` becomes a fixed alias through
+`.mailbend-install/current/active`. One atomic selector rename publishes the
+active generation and its previous-generation slot together. A failed build,
+check, proof or compile leaves an existing selected set unchanged. New sessions
+use the new set; sessions started through `scripts/mailbend` keep their original
+core and default helpers through later upgrades and rollback.
+
+One installer runs at a time using a nonblocking directory `flock` on the checkout
+root, plus the compatible legacy-bin lock when needed. Historical installer
+scripts must be stopped and must not run against this managed checkout.
+With `--install-bend` and no
 `bend` on the `PATH`, it first runs `scripts/install-bend.sh`, which installs
 the pinned Bend to `~/.bend` after checking the archive's sha256. This installer
 pins Linux x86_64 and aarch64 archives, each with its own checksum.
@@ -366,10 +372,52 @@ Other operating systems and architectures are refused.
 An already installed Bend is reused as is. Likewise, `--install-rust` runs
 `scripts/install-rust.sh` (a sha256-checked `rustup-init` that installs the
 pinned Rust to `~/.cargo`) only when `cargo` does not already provide it.
-Without clang, the installer refuses to update an executable compiled core
-before building or publishing helpers, leaving all five installed binaries
-unchanged. Install clang and rerun `scripts/install.sh` to rebuild them.
-When no executable core exists, the interpreter installation remains supported.
+Without clang, the installer refuses a managed installation or an executable
+legacy compiled core before building or publishing helpers. Install clang and
+rerun `scripts/install.sh`. A real legacy `bin` without an executable core can
+still use the interpreter mode. Its source and individually replaced helper paths
+remain mutable: restart existing MCP servers after that mode's update. It has no
+generation consistency or rollback guarantee.
+
+Compiled installation refuses automatic conversion of any nonempty legacy
+`bin`, including an interpreter installation. Use a new clean checkout, install
+there, stop legacy sessions, then intentionally switch client configuration.
+An empty real `bin` is converted only while its legacy lock is held. The installer
+never moves a nonempty directory aside to create a temporary path gap.
+
+Run `scripts/install.sh --rollback` to restore the recorded previous complete set
+without compiling or downloading anything. Rollback consumes that slot. Repeating
+the command with no intervening install validates the restored set and repeats
+the final durability flush before reporting no-op success. An initial install
+has no previous set. A later install creates a new slot, so a bare rollback after
+that install applies to the new slot, not an earlier operation.
+
+Completed generations and activation records are retained for live sessions;
+disk usage grows with upgrades. This version has no garbage collection or
+roll-forward command. Do not delete these files while sessions may use them.
+Keep the canonical checkout path and its trusted, non-writable-by-others
+ancestors stable. The installer requires the checkout owner. It does not widen
+private directory permissions. Staging starts at 0700 and can become readable
+at its explicit 0755 preparation step before activation.
+
+The launcher captures and validates one state and physical generation. It checks
+structure and completeness, not executable content hashes on every launch.
+Install, rollback and paired provenance checks verify full hashes. Explicit
+nonempty helper overrides remain supported outside the default-set guarantee.
+Direct `bin/*` paths still work, but unrelated opens through that alias can
+straddle an update; callers needing one set must capture a generation first.
+
+A managed bootstrap or corrupt managed layout never falls back to mutable source.
+Interrupted bootstrap can resume only its recognized preparation states. Missing
+or damaged selected content requires separate recovery, not guessing a newest
+directory. If the final directory flush fails after activation, the diagnostic
+names the selected generation and reports uncertain durability. Do not infer
+that nothing changed or blindly reverse it. Process-kill and syscall-failure
+tests do not establish power-loss behavior on arbitrary filesystems.
+
+This is the compiled-generation portion of [#155](https://github.com/albertc71/MailBend/issues/155).
+Native contract-number checking, release tarballs, nonempty legacy migration and
+retention cleanup remain separate work; #155 stays open.
 
 On a Grok Bot or Cursor cloud computer, follow
 [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md) instead.
