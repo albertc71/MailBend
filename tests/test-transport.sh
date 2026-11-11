@@ -6,8 +6,8 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURE="$ROOT/tests/fixtures/mailbox.json"
-HELPER="$ROOT/bin/mailbend-tls"
 WORK="$ROOT/build/test-transport-$$"
+HELPER="$WORK/bin/mailbend-tls"
 mkdir -p "$WORK"
 
 PASS_COUNT=0
@@ -33,10 +33,10 @@ pass() { echo "PASS $1"; PASS_COUNT=$((PASS_COUNT + 1)); }
 fail() { echo "FAIL $1 -- $2"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 # --- build the helper -------------------------------------------------
-mkdir -p "$ROOT/bin"
+mkdir -p "$WORK/bin"
 if ! { (cd "$ROOT/native" && "${CARGO:-cargo}" build --release --locked --quiet -p mailbend-tls -p mailbend-typesafe) \
        && cp "$ROOT/native/target/release/mailbend-tls" "$HELPER" \
-       && cp "$ROOT/native/target/release/mailbend-typesafe" "$ROOT/bin/mailbend-typesafe"; } 2>"$WORK/build.err"; then
+       && cp "$ROOT/native/target/release/mailbend-typesafe" "$WORK/bin/mailbend-typesafe"; } 2>"$WORK/build.err"; then
   echo "FAIL build -- $(cat "$WORK/build.err")"
   exit 1
 fi
@@ -1228,7 +1228,7 @@ else
 fi
 case_smtp_auth_selection
 case2
-if python3 "$ROOT/tests/test-process-protection.py"; then
+if python3 "$ROOT/tests/test-process-protection.py" --helper-dir "$WORK/bin"; then
   pass "secret helpers refuse dumps and external environment reads"
 else
   fail "secret helper process protection" "process checks failed"

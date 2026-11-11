@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Exercise helper-local dump controls without changing the host core pattern."""
 
+import argparse
 import errno
 import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -15,6 +17,7 @@ from unittest.mock import patch
 from fake_typesafe import environ_names, protected_environment
 
 ROOT = Path(__file__).resolve().parents[1]
+HELPER_DIR = ROOT / "bin"
 
 
 class ProcessProtection(unittest.TestCase):
@@ -25,7 +28,7 @@ class ProcessProtection(unittest.TestCase):
             key.write_text("synthetic-typesafe-key")
             key.chmod(0o600)
             helper = subprocess.Popen(
-                [str(ROOT / "bin" / name), mode],
+                [str(HELPER_DIR / name), mode],
                 env={"MAILBEND_TYPESAFE_KEY_FILE": str(key), **env}, cwd=path,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
@@ -75,6 +78,7 @@ class ProcessProtection(unittest.TestCase):
             (root / "bin").mkdir()
             launcher = root / "scripts/mailbend"
             launcher.write_bytes((ROOT / "scripts/mailbend").read_bytes())
+            (root / "scripts/install-layout.sh").write_bytes((ROOT / "scripts/install-layout.sh").read_bytes())
             core = root / "bin/mailbend-core"
             core.write_text("#!/bin/sh\nulimit -c\n")
             core.chmod(0o700)
@@ -143,9 +147,13 @@ class EnvironmentObservation(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--helper-dir", type=Path, default=HELPER_DIR)
+    args, unittest_args = parser.parse_known_args()
+    HELPER_DIR = args.helper_dir.resolve()
     try:
         pattern = Path("/proc/sys/kernel/core_pattern").read_text().strip()
     except OSError as error:
         pattern = f"unavailable ({error.strerror})"
     print(f"Process-local SIGQUIT checks with unchanged core_pattern={pattern!r}")
-    unittest.main()
+    unittest.main(argv=[sys.argv[0], *unittest_args])
