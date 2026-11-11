@@ -210,90 +210,114 @@ def no_later(+a: Node, +b: Node) -> Bool:
   +tb = node_time(b)
   U32.is_lt(ta, tb) || (U32.is_eq(ta, tb) && U32.is_le(node_uid(a), node_uid(b)))
 
-# Walks `ps` until a message placed is `id`: `hit` says whether the one
-# before them was, and `parent` is its parent.
-def placed_parent.go(ps: List<&2, Placed>, hit: Bool, parent: String, +id: String) -> String:
-  match ps hit:
-    case _ True{}:
-      parent
-    case Nil{} False{}:
-      ""
-    case Placed{n, p} <> t False{}:
-      placed_parent.go(t, String.eq(node_id(n), id), p, id)
+# An ID is present as a key; its value says whether it occurs more than once.
+def thread_order.present.put(id: String, r: Map<&2, Bool> & Bool) -> Map<&2, Bool>:
+  (present2, seen) = r
+  Map.set(&2, Bool, present2, id, seen)
 
-# The parent of the message `id` among the messages placed so far; "" when
-# it is not placed or has none. The walk stops at the first hit.
-def placed_parent(ps: List<&2, Placed>, id: String) -> String:
-  placed_parent.go(ps, False{}, "", id)
-
-# Whether following parents from `at` leads to `target`, through the
-# messages placed so far; `hit` says whether `at` is `target`. An empty `at`
-# names no message, so a walk ends there even when `target` has no ID.
-# `fuel` bounds the walk.
-def reaches(
-  fuel: Nat, at: String, hit: Bool, +ps: List<&2, Placed>, +target: String
-) -> Bool:
-  match fuel at hit:
-    case _ SNil{} _:
-      False{}
-    case _ SCon{h, t} True{}:
-      True{}
-    case 0n SCon{h, t} False{}:
-      False{}
-    case 1n+f SCon{h, t} False{}:
-      +next = placed_parent(ps, SCon{h, t})
-      reaches(f, next, String.eq(next, target), ps, target)
-
-# Walks `cands` until one is a message of the thread (`present`) other than
-# `self`: `hit` says whether the candidate `c` before them was.
-def parent_in.go(
-  cands: List<&2, String>, hit: Bool, c: String, +present: List<&2, String>, +self: String
-) -> String:
-  match cands hit:
-    case _ True{}:
-      c
-    case Nil{} False{}:
-      ""
-    case +d <> t False{}:
-      parent_in.go(t, C.is_in(d, present) && Bool.not(String.eq(d, self)), d, present, self)
-
-# The first of `cands` that is a message of the thread (`present`) other
-# than `self`; "" for none. The walk stops at the first hit.
-def parent_in(
-  cands: List<&2, String>, present: List<&2, String>, self: String
-) -> String:
-  parent_in.go(cands, False{}, "", present, self)
-
-# Whether `id` is the ID of two or more messages of the thread (`ids`),
-# given whether one came before (`once`).
-def is_shared(ids: List<&2, String>, +id: String, +once: Bool) -> Bool:
+def thread_order.present(
+  ids: List<&2, String>, present: Map<&2, Bool>
+) -> Map<&2, Bool>:
   match ids:
     case Nil{}:
-      False{}
-    case x <> t:
-      +hit = String.eq(x, id)
-      (hit && once) || is_shared(t, id, hit || once)
+      present
+    case +id <> t:
+      thread_order.present(t, thread_order.present.put(id, Map.has(&2, Bool, present, id)))
 
-# Places `n` after the messages `ps` placed so far. It takes its parent
-# unless following that parent's own parents leads back to it, or another
-# message has its ID, which leaves no way to tell which of them a parent is.
+# Empty IDs stop before the hit check; hits succeed even without fuel.
+def reaches.next(
+  +target: String, r: Map<&2, String> & String
+) -> Map<&2, String> & String & Bool:
+  (parents, +next) = r
+  (parents, next, String.eq(next, target))
+
+def reaches.go(
+  fuel: Nat, state: Map<&2, String> & String & Bool, +target: String
+) -> Map<&2, String> & Bool:
+  match fuel state:
+    case _ Tuple{parents, Tuple{SNil{}, _}}:
+      (parents, False{})
+    case _ Tuple{parents, Tuple{SCon{h, t}, True{}}}:
+      (parents, True{})
+    case 0n Tuple{parents, Tuple{SCon{h, t}, False{}}}:
+      (parents, False{})
+    case 1n+f Tuple{parents, Tuple{SCon{h, t}, False{}}}:
+      reaches.go(f, reaches.next(target, Map.get(String, "", parents, SCon{h, t})), target)
+
+def reaches(
+  fuel: Nat, at: String, hit: Bool, parents: Map<&2, String>, target: String
+) -> Map<&2, String> & Bool:
+  reaches.go(fuel, (parents, at, hit), target)
+
+# Unique IDs have false values, so membership must check the key.
+def parent_in.next(
+  +d: String, self: String, r: Map<&2, Bool> & Bool
+) -> Map<&2, Bool> & Bool & String:
+  (present, found) = r
+  (present, found && Bool.not(String.eq(d, self)), d)
+
+def parent_in.go(
+  cands: List<&2, String>, state: Map<&2, Bool> & Bool & String, +self: String
+) -> Map<&2, Bool> & String:
+  match cands state:
+    case _ Tuple{present, Tuple{True{}, c}}:
+      (present, c)
+    case Nil{} Tuple{present, Tuple{False{}, c}}:
+      (present, "")
+    case +d <> t Tuple{present, Tuple{False{}, c}}:
+      parent_in.go(t, parent_in.next(d, self, Map.has(&2, Bool, present, d)), self)
+
+def parent_in(
+  cands: List<&2, String>, present: Map<&2, Bool>, self: String
+) -> Map<&2, Bool> & String:
+  parent_in.go(cands, (present, False{}, ""), self)
+
+# Cut parents are not retried; duplicate keys retain the newest placement.
+def thread_order.step.finish(
+  +n: Node, id: String, p: String, present3: Map<&2, Bool>, shared: Bool,
+  r: Map<&2, String> & Bool
+) -> Map<&2, Bool> & Map<&2, String> & Placed:
+  (parents2, cycle) = r
+  +parent = Bool.pick(String, cycle || shared, "", p)
+  (present3, Map.set(&2, String, parents2, id, parent), Placed{n, parent})
+
+def thread_order.step.shared(
+  n: Node, +id: String, +p: String, fuel: Nat, parents: Map<&2, String>,
+  r: Map<&2, Bool> & Bool
+) -> Map<&2, Bool> & Map<&2, String> & Placed:
+  (present3, shared) = r
+  thread_order.step.finish(n, id, p, present3, shared,
+    reaches(fuel, p, String.eq(p, id), parents, id))
+
+def thread_order.step.parent(
+  n: Node, +id: String, fuel: Nat, parents: Map<&2, String>, r: Map<&2, Bool> & String
+) -> Map<&2, Bool> & Map<&2, String> & Placed:
+  (present2, p) = r
+  thread_order.step.shared(n, id, p, fuel, parents, Map.get(Bool, False{}, present2, id))
+
 def thread_order.step(
-  +n: Node, +present: List<&2, String>, fuel: Nat, +ps: List<&2, Placed>
-) -> List<&2, Placed>:
+  +n: Node, present: Map<&2, Bool>, fuel: Nat, parents: Map<&2, String>
+) -> Map<&2, Bool> & Map<&2, String> & Placed:
   +id = node_id(n)
-  +p = parent_in(parent_ids(n), present, id)
-  cut = reaches(fuel, p, String.eq(p, id), ps, id) || is_shared(present, id, False{})
-  Placed{n, Bool.pick(String, cut, "", p)} <> ps
+  thread_order.step.parent(n, id, fuel, parents, parent_in(parent_ids(n), present, id))
 
-# Places the messages oldest first; `ps` holds those placed (reversed).
+# Indexes are consumed and returned by each step, not copied with output.
+def thread_order.go.next(
+  ps: List<&2, Placed>, r: Map<&2, Bool> & Map<&2, String> & Placed
+) -> Map<&2, Bool> & Map<&2, String> & List<&2, Placed>:
+  (present, parents, p) = r
+  (present, parents, p <> ps)
+
 def thread_order.go(
-  ns: List<&2, Node>, +present: List<&2, String>, +fuel: Nat, ps: List<&2, Placed>
+  ns: List<&2, Node>,
+  state: Map<&2, Bool> & Map<&2, String> & List<&2, Placed>, +fuel: Nat
 ) -> List<&2, Placed>:
-  match ns:
-    case Nil{}:
+  match ns state:
+    case Nil{} Tuple{present, Tuple{parents, ps}}:
       List.reverse(&2, Placed, ps)
-    case n <> t:
-      thread_order.go(t, present, fuel, thread_order.step(n, present, fuel, ps))
+    case n <> t Tuple{present, Tuple{parents, ps}}:
+      thread_order.go(t,
+        thread_order.go.next(ps, thread_order.step(n, present, fuel, parents)), fuel)
 
 # The Message-IDs of the messages, leaving out those that have none.
 def ids_of(ns: List<&2, Node>) -> List<&2, String>:
@@ -312,4 +336,6 @@ def ids_of(ns: List<&2, Node>) -> List<&2, String>:
 def thread_order(ns: List<&2, Node>) -> List<&2, Placed>:
   +sorted = List.sort(~Node, ~(a => b => no_later(a, b)), ns)
   fuel = (List.length(&2, Node, sorted) + 1n : Nat)
-  thread_order.go(sorted, ids_of(sorted), fuel, [])
+  present = thread_order.present(ids_of(sorted), Map.new(&2, Bool))
+  thread_order.go(sorted, (present, Map.new(&2, String), []), fuel)
+
