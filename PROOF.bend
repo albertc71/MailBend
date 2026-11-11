@@ -137,6 +137,10 @@ def Laws.folders_write_nothing():
 def Laws.roles_write_nothing():
   {==}
 
+# Keep before folder_status_commands_write_nothing and image_reads_write_nothing: the effect-classifiers-negative-control mutant (docs/safety-claims.json) must first fail here.
+def Laws.any_writes_after_read():
+  {==}
+
 def Laws.folder_status_effects(name, modseq, required):
   {==}
 
@@ -238,10 +242,6 @@ def Laws.image_round_section_empty():
   {==}
 
 def Laws.image_round_section_exact(section, max, rest):
-  {==}
-
-# Keep before image_reads_write_nothing: the effect-classifiers-negative-control mutant (docs/safety-claims.json) must first fail here.
-def Laws.any_writes_after_read():
   {==}
 
 def image_reads_write_nothing(reads: List<&2, Ops.PartRead>)

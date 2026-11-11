@@ -118,24 +118,25 @@ def lexer_other(literal: Bool, +c: Char, root: List<&2, Value>,
       Bool.pick(Maybe<&2, Lexer>, atom_char(c),
         Some{Lexer{Atom{}, SCon{c, SNil{}}, root, nested, inside, literals}}, None{})
 
-def lexer_plain(c: Char, q: Lexer) -> Maybe<&2, Lexer>:
-  Lexer{mode, word, root, nested, inside, literals} = q
-  match c:
-    case ' ':
-      Some{Lexer{Space{}, "", root, nested, inside, literals}}
-    case ')':
-      lexer_close(Lexer{mode, word, root, nested, inside, literals})
-    case '(':
-      lexer_open(inside, root, literals)
-    case '"':
-      Some{Lexer{Quoted{}, "", root, nested, inside, literals}}
-    case +c:
-      lexer_other(Char.is_eq(c, I.lit_mark()), c, root, nested, inside, literals)
+def lexer_plain(q: Lexer, c: Char) -> Maybe<&2, Lexer>:
+  match q:
+    case Lexer{mode, word, root, nested, inside, literals}:
+      match c:
+        case ' ':
+          Some{Lexer{Space{}, "", root, nested, inside, literals}}
+        case ')':
+          lexer_close(Lexer{mode, word, root, nested, inside, literals})
+        case '(':
+          lexer_open(inside, root, literals)
+        case '"':
+          Some{Lexer{Quoted{}, "", root, nested, inside, literals}}
+        case +c:
+          lexer_other(Char.is_eq(c, I.lit_mark()), c, root, nested, inside, literals)
 
-def lexer_step(+c: Char, q: Lexer) -> Maybe<&2, Lexer>:
+def lexer_step(q: Lexer, +c: Char) -> Maybe<&2, Lexer>:
   match q:
     case Lexer{Space{}, word, root, nested, inside, literals}:
-      lexer_plain(c, Lexer{Space{}, word, root, nested, inside, literals})
+      lexer_plain(Lexer{Space{}, word, root, nested, inside, literals}, c)
     case Lexer{End{}, word, root, nested, inside, literals}:
       match c:
         case ' ':
@@ -182,7 +183,7 @@ def lexer_go(s: String, q: Maybe<&2, Lexer>) -> Maybe<&2, List<&2, Value>>:
     case SNil{} Some{q}:
       lexer_finish(q)
     case SCon{c, t} Some{q}:
-      lexer_go(t, lexer_step(c, q))
+      lexer_go(t, lexer_step(q, c))
     case _ None{}:
       None{}
 
@@ -325,7 +326,7 @@ def has_name(fs: List<&2, I.Folder>, +name: String) -> Bool:
     case I.Folder{other, _, _} <> t:
       String.eq(other, name) || has_name(t, name)
 
-def listed_put(found: Maybe<&2, I.Folder>, fs: List<&2, I.Folder>, left: U32)
+def listed_put(found: Maybe<&2, I.Folder>, +fs: List<&2, I.Folder>, left: U32)
   -> Maybe<&2, List<&2, I.Folder>>:
   match found:
     case Some{+f}:
@@ -440,7 +441,7 @@ def name_prefix(s: String, q: Maybe<&2, Lexer>) -> Maybe<&2, String>:
     case SCon{' ', t} Some{Lexer{Atom{}, word, Nil{}, _, False{}, _}}:
       name_value(VAtom{String.reverse(word)})
     case SCon{c, t} Some{q}:
-      name_prefix(t, lexer_step(c, q))
+      name_prefix(t, lexer_step(q, c))
     case _ _:
       None{}
 

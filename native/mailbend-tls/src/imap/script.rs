@@ -230,9 +230,12 @@ mod tests {
             .expect("valid capability gate");
         let expect = commands[0].expect.as_ref().expect("gate");
         assert!(expect.met_by(b"* CAPABILITY IMAP4rev1 condstore list-status\r\n"));
+        assert!(
+            !expect.met_by(b"* CAPABILITY IMAP4rev1 LIST-STATUS\r\n"),
+            "missing CONDSTORE must reject the capability conjunction"
+        );
         for line in [
-            b"* CAPABILITY IMAP4rev1 LIST-STATUS\r\n".as_slice(),
-            b"* CAPABILITY IMAP4rev1 XLIST-STATUS CONDSTORE\r\n",
+            b"* CAPABILITY IMAP4rev1 XLIST-STATUS CONDSTORE\r\n".as_slice(),
             b"* OK [ALERT] LIST-STATUS CONDSTORE\r\n",
             b"* CAPABILITY \"LIST-STATUS\" CONDSTORE\r\n",
             b"* CAPABILITY LIST-STATUS CONDSTORE {3}\r\n",

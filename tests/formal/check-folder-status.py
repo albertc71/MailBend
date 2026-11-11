@@ -145,7 +145,8 @@ def native_control(root):
     try:
         code, output = run(root / "native", args, env)
         require(code != 0 and f"test {NATIVE_TEST} ... FAILED" in output
-                and "test result: FAILED" in output and "assertion failed" in output,
+                and "test result: FAILED" in output
+                and "missing CONDSTORE must reject the capability conjunction" in output,
                 ("native conjunction mutant did not fail its semantic assertion", output))
         print("PASS native conjunction mutation compiled and failed its missing-capability assertion")
     finally:
