@@ -88,6 +88,7 @@ python3 tests/formal/check-plan-coverage.py        # public plan references and 
 python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
 python3 tests/test-unit-runner.py                 # offline unit scheduling and cleanup contracts
 sh tests/run-unit.sh
+python3 tests/formal/check-folder-status.py       # fixed read plans, identity and failure-evidence mutations
 python3 tests/test-facts-extraction.py            # deterministic hostile inputs and exact spans
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
@@ -129,6 +130,7 @@ python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
+python3 tests/formal/check-folder-status.py --native  # capability conjunction mutation, after cargo test
 ```
 
 The offline fuzz-lock guard compares dependencies reachable from the local

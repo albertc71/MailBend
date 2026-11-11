@@ -137,6 +137,83 @@ def Laws.folders_write_nothing():
 def Laws.roles_write_nothing():
   {==}
 
+# Keep before folder_status_commands_write_nothing and image_reads_write_nothing: the effect-classifiers-negative-control mutant (docs/safety-claims.json) must first fail here.
+def Laws.any_writes_after_read():
+  {==}
+
+def Laws.folder_status_effects(name, modseq, required):
+  {==}
+
+def Laws.folder_status_roles_exact():
+  {==}
+
+def Laws.folder_status_empty_exact(fast, modseq):
+  {==}
+
+def Laws.folder_status_commands_empty(modseq):
+  {==}
+
+def Laws.folder_status_commands_exact(name, rest, modseq):
+  {==}
+
+def Laws.folder_status_fast_exact(name, rest, modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_status_fallback_exact(name, rest, modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_status_render_exact(name, modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_list_status_render_exact(modseq):
+  match modseq:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.folder_status_gate_render_exact():
+  {==}
+
+def folder_status_commands_write_nothing(names: List<&2, String>, +modseq: Bool)
+  -> {I.any_writes(Ops.folder_status_commands(names, modseq)) == False{} : Bool}:
+  match names:
+    case Nil{}:
+      {==}
+    case name <> rest:
+      folder_status_commands_write_nothing(rest, modseq)
+
+def folder_status_nonempty_write_nothing(name: String, rest: List<&2, String>, fast: Bool, modseq: Bool)
+  -> {I.any_writes(Ops.plan_folder_status(name <> rest, fast, modseq)) == False{} : Bool}:
+  match fast modseq:
+    case False{} False{}:
+      folder_status_commands_write_nothing(rest, False{})
+    case False{} True{}:
+      folder_status_commands_write_nothing(rest, True{})
+    case True{} False{}:
+      {==}
+    case True{} True{}:
+      {==}
+
+def Laws.folder_status_writes_nothing(names, fast, modseq):
+  match names:
+    case Nil{}:
+      {==}
+    case name <> rest:
+      folder_status_nonempty_write_nothing(name, rest, fast, modseq)
+
 def Laws.folder_scan_writes_nothing():
   {==}
 
@@ -165,10 +242,6 @@ def Laws.image_round_section_empty():
   {==}
 
 def Laws.image_round_section_exact(section, max, rest):
-  {==}
-
-# Keep before image_reads_write_nothing: the effect-classifiers-negative-control mutant (docs/safety-claims.json) must first fail here.
-def Laws.any_writes_after_read():
   {==}
 
 def image_reads_write_nothing(reads: List<&2, Ops.PartRead>)
@@ -341,6 +414,10 @@ def Laws.checked_read_preserves_writes(cs, ids):
       Laws.checked_read_preserves_writes(t, ids)
     case I.CListRoles{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
+    case I.CStatus{name, modseq} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
+    case I.CListStatus{modseq} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
     case I.CLsub{} <> t:
       Laws.checked_read_preserves_writes(t, ids)
     case I.CExamine{f} <> t:
@@ -378,6 +455,8 @@ def Laws.checked_read_preserves_writes(cs, ids):
       Laws.checked_read_preserves_writes(t, ids)
     case I.CExpectWord{word} <> t:
       Laws.checked_read_preserves_writes(t, ids)
+    case I.CExpectCapabilities{required} <> t:
+      Laws.checked_read_preserves_writes(t, ids)
 
 def Laws.checked_read_without_identities_unchanged(cs):
   match cs:
@@ -394,6 +473,12 @@ def Laws.checked_read_without_identities_unchanged(cs):
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CListRoles{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CListRoles{} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CStatus{name, modseq} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CStatus{name, modseq} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CListStatus{modseq} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CListStatus{modseq} <> x,
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CLsub{} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CLsub{} <> x,
@@ -442,6 +527,9 @@ def Laws.checked_read_without_identities_unchanged(cs):
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
     case I.CExpectWord{word} <> t:
       Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpectWord{word} <> x,
+        Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
+    case I.CExpectCapabilities{required} <> t:
+      Equal.cong(List<&2, I.Cmd>, List<&2, I.Cmd>, x => I.CExpectCapabilities{required} <> x,
         Ops.plan_read_checked(t, []), t, Laws.checked_read_without_identities_unchanged(t))
 
 def Laws.checked_headers_write_nothing(mbox, uids, uidv):
@@ -2699,3 +2787,4 @@ def hook_pretool_read_is_quiet()
     J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]))) ==
       None{} : Maybe<&2, String>}:
   {==}
+

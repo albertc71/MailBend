@@ -1064,6 +1064,7 @@ def run_all(work, *, tool_scenarios_only=False):
     finally:
         srv.stop()
     quota_reporting(work)
+    folder_status_overview(work)
     reply_marking(work)
     reply_marking_refusal(work)
     reply_marking_cases(work)
@@ -2111,6 +2112,251 @@ def reply_unicode_quoting(work):
               srv.st()["mailboxes"]["INBOX"] == original)
     finally:
         srv.stop()
+
+
+def folder_status_fixture(names=("INBOX",), script=None):
+    return {"user": FIX["user"], "password": PASSWORD,
+            "mailboxes": {name: {"uidvalidity": 7, "special": [], "messages": []}
+                          for name in names}, "folder_status_script": script or {}}
+
+
+def folder_status_case(work, label, fixture, caps="", args=None, **env):
+    srv = Server(work, caps=caps, fixture=fixture)
+    try:
+        before = srv.st()
+        code, value = tool(srv, "mail_list_folders", {"counts": True} if args is None else args, **env)
+        commands = [r["line"] for r in srv.log_records() if r["proto"] == "imap"]
+        check(f"folder status {label}: account unchanged", srv.st() == before)
+        check(f"folder status {label}: read-only bounded plans",
+              len(commands) <= 111 and sum(" LOGIN " in c for c in commands) <= 3
+              and all(not any(w in c for w in (" SELECT ", " EXAMINE ", " FETCH ", *MUTATING_COMMANDS))
+                      for c in commands), commands)
+        return code, value, commands
+    finally:
+        srv.stop()
+
+
+def folder_status_overview(work):
+    known = dict(state="known", messages=0, unseen=0, uidnext=1, uidvalidity=7,
+                 highest_modseq=None, modseq_state="unsupported")
+    base_items = "MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7"
+
+    def status(name="INBOX", items=base_items):
+        return f'* STATUS "{name}" ({items})\r\n'
+
+    def states(value):
+        return {f["name"]: f["status"] for f in value.get("folders", [])}
+
+    for caps, method, modseq in (("", "status", False), ("CONDSTORE", "status", True),
+                                  ("LIST-STATUS", "list_status", False),
+                                  ("LIST-STATUS,CONDSTORE,SPECIAL-USE", "list_status", True)):
+        code, value, commands = folder_status_case(work, caps, folder_status_fixture(("B", "INBOX", "A")), caps)
+        expected = {**known, "highest_modseq": "1", "modseq_state": "known"} if modseq else known
+        check(f"folder status {caps}: exact complete counts", code == 0 and value.get("complete") is True
+              and value.get("reason") == "" and value.get("method") == method
+              and [f["name"] for f in value.get("folders", [])] == ["A", "B", "INBOX"]
+              and all(f["status"] == expected for f in value["folders"]), value)
+        check(f"folder status {caps}: fixed items and no retry",
+              sum(" CAPABILITY" in c for c in commands) == (3 if "SPECIAL-USE" in caps else 2)
+              and (any(" RETURN (STATUS (" in c for c in commands) == (method == "list_status"))
+              and (any("HIGHESTMODSEQ" in c for c in commands) == modseq), commands)
+
+    for caps in ("", "SPECIAL-USE"):
+        absent = folder_status_case(work, "legacy absent", folder_status_fixture(), caps, args={})
+        false = folder_status_case(work, "legacy false", folder_status_fixture(), caps, args={"counts": False})
+        check("folder status: false preserves full legacy output and wire", absent == false, (absent, false))
+    for caps, command in (("", "LIST#1"), ("SPECIAL-USE", "LIST#2")):
+        fixture = folder_status_fixture(script={command: {"responses": "", "completion": "NO"}})
+        absent = folder_status_case(work, "legacy refused absent", fixture, caps, args={})
+        false = folder_status_case(work, "legacy refused false", fixture, caps, args={"counts": False})
+        check("folder status: false preserves legacy refusal and commands", absent == false
+              and absent[0] != 0, (absent, false))
+        code, value, commands = folder_status_case(work, "discovery refusal", fixture, caps)
+        check("folder status: A/B refusal is an ordinary bounded error", code != 0 and "error" in value
+              and not any(" STATUS " in c for c in commands), value)
+    for value in (0, 1, "true", None, [], {}):
+        code, result, commands = folder_status_case(work, "invalid Boolean", folder_status_fixture(), args={"counts": value})
+        check("folder status: invalid Boolean refuses before connection", code != 0 and not commands
+              and "error" in result, result)
+
+    fixture = folder_status_fixture(("INBOX", "Parent", "Gone"))
+    fixture["mailboxes"]["Parent"]["special"] = ["\\Noselect"]
+    fixture["mailboxes"]["Gone"]["special"] = ["\\NonExistent"]
+    code, value, commands = folder_status_case(work, "nonselectable", fixture)
+    check("folder status: noselect and nonexistent stay unknown", code == 0
+          and states(value) == {"INBOX": known, "Parent": {"state": "unknown", "reason": "not_selectable"},
+                                "Gone": {"state": "unknown", "reason": "not_selectable"}}
+          and sum(" STATUS " in c for c in commands) == 1, value)
+    del fixture["mailboxes"]["INBOX"]
+    code, value, commands = folder_status_case(work, "no count session", fixture, "LIST-STATUS,CONDSTORE")
+    check("folder status: zero selectable folders omits C", code == 0 and value.get("method") == "none"
+          and value.get("complete") is True and sum(" CAPABILITY" in c for c in commands) == 1, value)
+
+    for count in (100, 101):
+        code, value, commands = folder_status_case(work, f"{count} folders", folder_status_fixture(
+            tuple(f"F{n:03}" for n in range(count))))
+        check(f"folder status: {count} admission boundary", (code == 0) == (count == 100)
+              and (len(value.get("folders", [])) == 100 if count == 100 else
+                   "error" in value and not any(" STATUS " in c for c in commands)), value)
+    for size in (1024, 1025):
+        code, value, commands = folder_status_case(work, f"name {size}", folder_status_fixture(("x" * size,)))
+        check(f"folder status: {size} name byte boundary", (code == 0) == (size == 1024)
+              and (size == 1024 or not any(" STATUS " in c for c in commands)), value)
+    names = ('R&D', '日本', '😀', 'é', 'e\u0301', 'A"\\B')
+    code, value, _ = folder_status_case(work, "canonical unicode identities", folder_status_fixture(names))
+    check("folder status: canonical UTF7, escaping and distinct Unicode identities", code == 0
+          and [f["name"] for f in value.get("folders", [])] == sorted(names)
+          and all(f["status"] == known for f in value.get("folders", [])), value)
+    fixture = folder_status_fixture(("INBOX", "SentOnly"), {"LIST#1": {
+        "responses": '* LIST () "/" "INBOX"\r\n'}})
+    fixture["mailboxes"]["SentOnly"]["special"] = ["\\Sent"]
+    code, value, commands = folder_status_case(work, "role-only name", fixture, "SPECIAL-USE")
+    check("folder status: role-only names are admitted and counted", code == 0
+          and states(value) == {"INBOX": known, "SentOnly": known}
+          and value["folders"][1]["special_use"] == "sent"
+          and sum(" CAPABILITY" in c for c in commands) == 3, value)
+    code, value, commands = folder_status_case(work, "invalid override", folder_status_fixture(),
+        MAILBEND_DRAFTS_FOLDER="Missing")
+    check("folder status: local override refusal happens before C", code != 0 and "error" in value
+          and not any(" STATUS " in c for c in commands), value)
+    ordinary = ''.join(f'* LIST () "/" "A{n:03}"\r\n' for n in range(100))
+    fixture = folder_status_fixture(tuple(f"B{n:03}" for n in range(100)),
+                                   {"LIST#1": {"responses": ordinary}})
+    code, value, commands = folder_status_case(work, "role merge admission", fixture, "SPECIAL-USE")
+    check("folder status: A/B union cannot exceed 100", code != 0 and "error" in value
+          and not any(" STATUS " in c for c in commands), value)
+
+    for reply in ('* LIST (Noselect) "/" "INBOX"\r\n', '* LIST () {1}\r\n/ "INBOX"\r\n',
+                  '*LIST () "/" "INBOX"\r\n', '*\tLIST () "/" "INBOX"\r\n',
+                  '* LIST () "/" "INBOX"\r\n* LIST () "/" "inbox"\r\n',
+                  '* LIST () "/" "&AEk-NBOX"\r\n', '* LIST () "/" "bad&abc"\r\n'):
+        code, value, commands = folder_status_case(work, "invalid discovery", folder_status_fixture(
+            script={"LIST#1": {"responses": reply}}))
+        check("folder status: malformed discovery never becomes empty complete scope", code != 0
+              and "error" in value and not any(" STATUS " in c for c in commands), value)
+
+    invalid = ("MESSAGES 0 UNSEEN 1 UIDNEXT 1 UIDVALIDITY 7",
+               "MESSAGES 4294967296 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7",
+               "MESSAGES -1 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7",
+               'MESSAGES "0" UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7',
+               "MESSAGES 0 UNSEEN 0 UIDNEXT 0 UIDVALIDITY 7",
+               "MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 0",
+               "MESSAGES 0 UNSEEN 0 UIDNEXT 1", base_items + " MESSAGES 0", base_items + " SIZE 0")
+    for items in invalid:
+        code, value, _ = folder_status_case(work, "invalid numeric evidence", folder_status_fixture(
+            script={"STATUS#1": {"responses": status(items=items)}}))
+        check("folder status: invalid counters are unknown rather than zero", code != 0
+              and value.get("reason") == "incomplete_status"
+              and states(value).get("INBOX") == {"state": "unknown", "reason": "invalid_response"}, value)
+    for modseq, expected in (("0", None), ("00001", "1"), ("9007199254740993", "9007199254740993"),
+                              ("9223372036854775807", "9223372036854775807")):
+        code, value, _ = folder_status_case(work, "precise modseq", folder_status_fixture(script={
+            "STATUS#1": {"responses": status(items=base_items + " HIGHESTMODSEQ " + modseq)}}), "CONDSTORE")
+        check("folder status: modseq is exact decimal text", code == 0 and states(value).get("INBOX") == {
+            **known, "highest_modseq": expected, "modseq_state": "not_persistent" if expected is None else "known"}, value)
+    for suffix in ("", " HIGHESTMODSEQ 9223372036854775808", " HIGHESTMODSEQ " + "9" * 4096):
+        code, value, _ = folder_status_case(work, "invalid modseq", folder_status_fixture(script={
+            "STATUS#1": {"responses": status(items=base_items + suffix)}}), "CONDSTORE")
+        check("folder status: requested bad modseq invalidates whole count", code != 0
+              and states(value).get("INBOX", {}).get("reason") == "invalid_response", value)
+
+    for response, reason in (("", "not_returned"), (status() + status(), "invalid_response"),
+                              (status("Elsewhere"), "invalid_response")):
+        code, value, _ = folder_status_case(work, "missing or duplicate", folder_status_fixture(
+            script={"STATUS#1": {"responses": response}}))
+        check("folder status: tagged success requires unique matching data", code != 0
+              and states(value).get("INBOX") == {"state": "unknown", "reason": reason}, value)
+    for completion in ("NO", "BAD"):
+        code, value, commands = folder_status_case(work, "batch refusal", folder_status_fixture(("A", "B", "C"),
+            {"STATUS#2": {"responses": status("B"), "completion": completion}}))
+        check("folder status: refusal retains earlier completed evidence only", code != 0
+              and value.get("reason") == "command_failed" and states(value) == {"A": known,
+                  "B": {"state": "unknown", "reason": "command_failed"},
+                  "C": {"state": "unknown", "reason": "not_attempted"}}
+              and sum(" STATUS " in c for c in commands) == 2, value)
+    code, value, _ = folder_status_case(work, "wrong-name isolation", folder_status_fixture(("A", "B", "C"),
+        {"STATUS#2": {"responses": status("A")}}))
+    check("folder status: wrong-name response cannot contaminate another command", code != 0 and states(value) == {
+        "A": known, "B": {"state": "unknown", "reason": "invalid_response"}, "C": known}, value)
+
+    for response in ("* CAPABILITY IMAP4rev1\r\n", "* OK [ALERT] LIST-STATUS CONDSTORE\r\n",
+                     "* CAPABILITY LIST-STATUS\r\n* CAPABILITY CONDSTORE\r\n",
+                     "* CAPABILITY LIST-STATUS CONDSTORE\r\n*CAPABILITY CONDSTORE\r\n"):
+        code, value, commands = folder_status_case(work, "capability drift", folder_status_fixture(script={
+            "CAPABILITY#2": {"responses": response}}), "LIST-STATUS,CONDSTORE")
+        check("folder status: same-session conjunction prevents extension on drift", code != 0
+              and value.get("reason") in ("capability_changed", "helper_failure")
+              and not any(" RETURN (STATUS (" in c for c in commands)
+              and sum(" CAPABILITY" in c for c in commands) == 2, value)
+
+    for reply in ('', '* LIST () "/" "New"\r\n', '* LIST (\\Noselect) "/" "INBOX"\r\n',
+                  '* LIST () "/" "INBOX"\r\n* LIST () "/" "INBOX"\r\n'):
+        code, value, commands = folder_status_case(work, "scope drift", folder_status_fixture(script={
+            "LIST#2": {"responses": reply + status()}}), "LIST-STATUS")
+        check("folder status: fast scope drift invalidates all counts", code != 0
+              and value.get("reason") == "scope_changed"
+              and states(value) == {"INBOX": {"state": "unknown", "reason": "scope_changed"}}, value)
+    fixture = folder_status_fixture(("INBOX", "Parent"), {"LIST#2": {"responses":
+        '* LIST () "/" "INBOX"\r\n* LIST () "/" "Parent"\r\n' + status()}})
+    fixture["mailboxes"]["Parent"]["special"] = ["\\Noselect"]
+    code, value, _ = folder_status_case(work, "initially nonselectable drift", fixture, "LIST-STATUS")
+    check("folder status: nonselectable drift invalidates C without changing admitted metadata", code != 0
+          and value.get("reason") == "scope_changed" and states(value) == {
+              "INBOX": {"state": "unknown", "reason": "scope_changed"},
+              "Parent": {"state": "unknown", "reason": "not_selectable"}}, value)
+    scope = '* LIST () "/" "A"\r\n* LIST () "/" "INBOX"\r\n'
+    for response, expected in ((status("A", base_items + " SIZE 0") + status(),
+                               {"A": {"state": "unknown", "reason": "invalid_response"}, "INBOX": known}),
+                              (status("Elsewhere") + status(),
+                               {"A": {"state": "unknown", "reason": "invalid_response"},
+                                "INBOX": {"state": "unknown", "reason": "invalid_response"}})):
+        code, value, _ = folder_status_case(work, "fast evidence association", folder_status_fixture(("A", "INBOX"),
+            {"LIST#2": {"responses": scope + response}}), "LIST-STATUS")
+        check("folder status: fast malformed evidence has the specified scope", code != 0
+              and value.get("reason") == "incomplete_status" and states(value) == expected, value)
+    for fault in ({"responses": status("B"), "completion": None, "close": True},
+                  {"responses": "* OK " + "x" * 262144 + "\r\n"},
+                  {"responses": "", "delay_ms": 11000}):
+        code, value, commands = folder_status_case(work, "helper loss", folder_status_fixture(("A", "B"),
+            {"STATUS#2": fault}), MAILBEND_TIMEOUT_MS="20000")
+        check("folder status: helper loss discards even earlier C counts", code != 0
+              and value.get("reason") == "helper_failure" and all(
+                  x == {"state": "unknown", "reason": "helper_failure"} for x in states(value).values())
+              and sum(" CAPABILITY" in c for c in commands) == 2, value)
+
+    # Choose a fixed byte boundary from the public JSON contract, not from a
+    # first product run. The known result is too large; its unknown form fits.
+    names = tuple(f"F{n:03}" for n in range(100))
+    fields = [dict(name=name, delimiter="/", attributes=["\\HasNoChildren", "\\X"],
+                   special_use=None, selectable=True, status=known) for name in names]
+    expected = dict(folders=fields, complete=True, method="status", reason="")
+    wire_size = lambda value: len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
+    padding = (262144 - wire_size(expected)) // 100 + 1
+    attribute = "\\X" + "x" * padding
+    for folder in fields:
+        folder["attributes"][1] = attribute
+    fallback = copy.deepcopy(expected)
+    fallback.update(complete=False, reason="result_limit")
+    for folder in fallback["folders"]:
+        folder["status"] = dict(state="unknown", reason="result_limit")
+    assert wire_size(expected) > 262144 and wire_size(fallback) <= 262144
+    fixture = folder_status_fixture(names)
+    for box in fixture["mailboxes"].values():
+        box["special"] = [attribute]
+    code, value, _ = folder_status_case(work, "result byte boundary", fixture)
+    check("folder status: overflow keeps identities and explicit unknown counts", code != 0 and value == fallback
+          and wire_size(value) <= 262144, value.get("reason"))
+    extra = (262144 - wire_size(fallback)) // 100 + 1
+    attribute += "x" * extra
+    for folder in fallback["folders"]:
+        folder["attributes"][1] = attribute
+    assert wire_size(fallback) > 262144
+    for box in fixture["mailboxes"].values():
+        box["special"] = [attribute]
+    code, value, _ = folder_status_case(work, "fallback result still too large", fixture)
+    check("folder status: oversized fallback is an ordinary bounded error", code != 0
+          and value.get("error") == "folder overview exceeds the 262144-byte result limit"
+          and wire_size(value) < 1024, value)
 
 
 def mcp_headless():
@@ -7922,3 +8168,4 @@ def outgoing_hidden_unicode(work):
 
 if __name__ == "__main__":
     main()
+
