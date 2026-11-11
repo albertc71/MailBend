@@ -927,6 +927,10 @@
     }
   ],
   "unclaimed": {
+    "search_answered_renders_exactly": "Pins only the fixed ANSWERED search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
+    "search_unanswered_renders_exactly": "Pins only the fixed UNANSWERED search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
+    "search_draft_renders_exactly": "Pins only the fixed DRAFT search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
+    "search_undraft_renders_exactly": "Pins only the fixed UNDRAFT search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
     "awaiting_incomplete_is_unknown": "Awaiting-reply classification keeps incomplete evidence without a positive reply unknown; this is an evidence-status contract, not a mailbox-effect or send/delete safety claim.",
     "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim."
   }

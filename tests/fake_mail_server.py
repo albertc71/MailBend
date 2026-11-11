@@ -541,6 +541,14 @@ def parse_search_key(args, i, uids_sorted):
         return (lambda m: '\\Flagged' in m['flags']), i + 1
     if word == 'UNFLAGGED':
         return (lambda m: '\\Flagged' not in m['flags']), i + 1
+    if word == 'ANSWERED':
+        return (lambda m: '\\Answered' in m['flags']), i + 1
+    if word == 'UNANSWERED':
+        return (lambda m: '\\Answered' not in m['flags']), i + 1
+    if word == 'DRAFT':
+        return (lambda m: '\\Draft' in m['flags']), i + 1
+    if word == 'UNDRAFT':
+        return (lambda m: '\\Draft' not in m['flags']), i + 1
     if word == 'DELETED':
         return (lambda m: '\\Deleted' in m['flags']), i + 1
     if word == 'UNDELETED':
