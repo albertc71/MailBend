@@ -38,7 +38,9 @@ mb_trust_root() (
     mode=$((0$2))
     if [ "$path" = "$root" ]; then
       [ "$1" = "$MB_OWNER" ] && [ $((mode & 07022)) = 0 ] ||
-        mb_fail "unsafe checkout permissions"
+        mb_fail "unsafe checkout permissions: $path (mode 0$2); root owner must be UID $MB_OWNER." \
+          "Group or world write and setuid, setgid or sticky bits are forbidden." \
+          "Only if local policy permits, the owner may remove unwanted bits (group-write/setgid only: chmod g-w,g-s); otherwise use a new private checkout. See README.md#checkout-permissions"
     elif [ $((mode & 0022)) != 0 ]; then
       [ "$1" = 0 ] && [ $((mode & 01000)) != 0 ] ||
         mb_fail "writable checkout ancestor"

@@ -78,7 +78,7 @@ MANAGED_SCRIPT_PATHS = ("scripts/install.sh", "scripts/mailbend", "scripts/insta
 MANAGED_SCRIPT_TUPLE = (
     "1e6021a670a6d26f2a68a27cd748c1b63238e816dd1dbcf677ba6e9d3b934326",
     "90d6cbca18d2ed0e24883a7417225b98657dd023fee8afe4686ba9c9fecb6aac",
-    "d2414f2f66c1a297d1d4330056d86f13a8456ce3053017d3c2209728593fd17f",
+    "3bd34c8bbe5d8d5d10359a378b9d7df154e63946a3117125f718696f7489b406",
 )
 GENERATION_MEMBERS = ("mailbend-core", "mailbend-tls", "mailbend-attach",
                       "mailbend-typesafe", "mailbend-stdio")

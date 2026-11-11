@@ -380,8 +380,11 @@ remain mutable: restart existing MCP servers after that mode's update. It has no
 generation consistency or rollback guarantee.
 
 Compiled installation refuses automatic conversion of any nonempty legacy
-`bin`, including an interpreter installation. Use a new clean checkout, install
-there, stop legacy sessions, then intentionally switch client configuration.
+`bin`, including an interpreter installation. Follow the
+[clean-checkout migration procedure](docs/OPERATIONS.md#migrate-or-recover-in-a-clean-checkout).
+It preserves the old checkout and send reservations, then changes the client's
+launcher path deliberately. The [cloud procedure](docs/CLOUD_AGENT.md#move-a-legacy-or-damaged-cloud-checkout)
+also updates the fixed command and setup paths.
 An empty real `bin` is converted only while its legacy lock is held. The installer
 never moves a nonempty directory aside to create a temporary path gap.
 
@@ -395,8 +398,9 @@ that install applies to the new slot, not an earlier operation.
 Completed generations and activation records are retained for live sessions;
 disk usage grows with upgrades. This version has no garbage collection or
 roll-forward command. Do not delete these files while sessions may use them.
-Keep the canonical checkout path and its trusted, non-writable-by-others
-ancestors stable. The installer requires the checkout owner. It does not widen
+Keep the canonical checkout path and its trusted ancestors stable. Group write,
+world write and special mode bits on the checkout root are refused. See
+[checkout permissions](#checkout-permissions). The installer requires the checkout owner. It does not widen
 private directory permissions. Staging starts at 0700 and can become readable
 at its explicit 0755 preparation step before activation.
 
@@ -409,8 +413,8 @@ straddle an update; callers needing one set must capture a generation first.
 
 A managed bootstrap or corrupt managed layout never falls back to mutable source.
 Interrupted bootstrap can resume only its recognized preparation states. Missing
-or damaged selected content requires separate recovery, not guessing a newest
-directory. If the final directory flush fails after activation, the diagnostic
+or damaged selected content requires [clean-checkout recovery](docs/OPERATIONS.md#migrate-or-recover-in-a-clean-checkout),
+not guessing a newest directory. If the final directory flush fails after activation, the diagnostic
 names the selected generation and reports uncertain durability. Do not infer
 that nothing changed or blindly reverse it. Process-kill and syscall-failure
 tests do not establish power-loss behavior on arbitrary filesystems.
@@ -421,6 +425,50 @@ retention cleanup remain separate work; #155 stays open.
 
 On a Grok Bot or Cursor cloud computer, follow
 [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md) instead.
+
+### Checkout permissions
+
+The installer, rollback and `setup-cloud.sh --check` reject a checkout root with
+group write, world write, setuid, setgid or sticky bits. The managed launcher uses
+the same guard, so changing those bits after installation prevents new managed
+sessions. The legacy launcher does not apply this managed-root guard.
+A clone created under `umask 002` commonly has mode `0775`, which is refused even
+when its group is a user-private group. Setgid inheritance can also affect a clone.
+Private roots such as `0700`, and roots such as `0750` or `0755`, are accepted
+when the remaining ownership and ancestor checks pass.
+
+The refusal names the checkout path and observed octal mode. Inspect that root's
+owner and mode before changing anything, for example with
+`stat -c 'owner=%u mode=%a path=%n' -- /absolute/path/to/checkout`.
+If this is your private checkout, local policy permits the change, and the only
+unwanted bits are group write or setgid, its owner can deliberately run
+`chmod g-w,g-s -- /absolute/path/to/checkout`. This example does not remove
+world write, setuid or sticky bits. Inspect those separately with the environment
+owner rather than applying a blanket or recursive permission change.
+Do not change a shared directory or an ancestor to make the check pass.
+If policy requires the refused bits, use a new private checkout under a suitable
+trusted parent. A private creation umask does not cancel a parent's setgid inheritance.
+
+Ancestors must belong to the checkout owner or root and must not be group- or
+world-writable, except for the existing root-owned sticky-ancestor rule used for
+paths such as `/tmp`. That exception does not allow sticky bits on the checkout
+root itself. MailBend does not repair ownership, modes or ancestor policy.
+
+### Recover a damaged generation
+
+A `manifest mismatch` in either the active or recorded previous generation blocks
+both install and rollback before mutation. Stop affected clients and scheduled
+callers. Preserve the checkout, its aliases, all generation directories and all
+activation records for investigation. Do not rewrite a manifest, remove the
+previous slot, select a newer directory or copy individual helpers to bypass the
+refusal. The launcher and readiness check validate structure, not full content
+hashes, so a successful `tools` or `--check` does not establish that suspect bytes
+are sound. Do not execute a suspect generation as a recovery test.
+
+Use the [clean-checkout recovery procedure](docs/OPERATIONS.md#migrate-or-recover-in-a-clean-checkout)
+to build reviewed source at its permanent new path. Keep the same approved safety
+settings, credential references and current send-state reservations. No in-place
+repair or automatic deletion is provided.
 
 ## Configure
 
