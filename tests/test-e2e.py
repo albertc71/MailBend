@@ -3743,12 +3743,46 @@ def allowlist_reply_all(work):
 
 
 def daily_limit(srv, work):
+    # Keep this same-day scenario deterministic; rollover is tested in test-clock.py.
+    clock = pathlib.Path(work, "daily-clock")
+    clock.mkdir()
+    guard = clock / "guard.so"
+    subprocess.run(["cc", "-shared", "-fPIC", "-Wall", "-Wextra", "-Werror",
+                    str(ROOT / "tests/clock-guard.c"), "-ldl", "-o", str(guard)],
+                   check=True, timeout=30)
+    date = clock / "date"
+    date.write_text("#!" + sys.executable + "\nprint(1700000000)\n")
+    date.chmod(0o700)
+    counts = clock / "counts.jsonl"
+    recorder = clock / "attach-recorder"
+    recorder.write_text("#!" + sys.executable + "\nimport json, os, sys\n"
+                        f"with open({str(counts)!r}, 'a') as out:\n"
+                        "    out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                        f"os.execv({str(ROOT / 'bin/mailbend-attach')!r}, "
+                        f"[{str(ROOT / 'bin/mailbend-attach')!r}, *sys.argv[1:]])\n")
+    recorder.chmod(0o700)
+
+    def call(name, args, **settings):
+        counts.write_text("")
+        result = tool(srv, name, args, **settings, LD_PRELOAD=str(guard),
+                      CLOCK_TEST_HELPER=str(date), CLOCK_TEST_MODE="valid",
+                      CLOCK_TEST_LOG=str(clock / "date.log"),
+                      MAILBEND_ATTACH_HELPER=str(recorder))
+        calls = [json.loads(line) for line in counts.read_text().splitlines()]
+        directory = settings.get("MAILBEND_STATE_DIR",
+                                 os.path.join(settings.get("XDG_STATE_HOME", ""), "mailbend"))
+        expected = [["count", directory, settings["MAILBEND_MAX_SENDS_PER_DAY"], "2023-11-14"]]
+        # Refusal twins remove the daily cap, so these are primary reservations only.
+        if name == "mail_save_draft":
+            expected = []
+        check("daily limit: primary reservation uses the pinned UTC day",
+              calls == expected, {"expected": expected, "observed": calls})
+        return result
+
     state = os.path.join(os.path.realpath(work), "send-state", "mailbend")
     limit = {"MAILBEND_MAX_SENDS_PER_DAY": "2", "MAILBEND_STATE_DIR": state}
     n = sent_count(srv)
-    days = {time.strftime("%Y-%m-%d", time.gmtime())}
-    answers = [tool(srv, "mail_send", SEND, **limit) for _ in range(3)]
-    days.add(time.strftime("%Y-%m-%d", time.gmtime()))
+    answers = [call("mail_send", SEND, **limit) for _ in range(3)]
     check("daily limit: sends below and at the limit go", [c for c, _ in answers[:2]] == [0, 0]
           and sent_count(srv) == n + 2, answers[:2])
     c, r = answers[2]
@@ -3759,17 +3793,17 @@ def daily_limit(srv, work):
           counter.is_file() and len(counter.read_text().splitlines()) == 2
           and (os.stat(state).st_mode & 0o777) == 0o700, state)
     check("daily limit: a send counts against the UTC day of its reservation",
-          set(counter.read_text().splitlines()) <= days, (counter.read_text(), days))
-    c, r = tool(srv, "mail_save_draft", SEND, **limit)
+          counter.read_text().splitlines() == ["2023-11-14", "2023-11-14"], counter.read_text())
+    c, r = call("mail_save_draft", SEND, **limit)
     check("daily limit: drafts are not counted", c == 0 and r.get("saved_to") == "Drafts"
           and len(counter.read_text().splitlines()) == 2, r)
-    c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="3", MAILBEND_STATE_DIR=state)
+    c, r = call("mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="3", MAILBEND_STATE_DIR=state)
     check("daily limit: a higher limit allows the next send", c == 0 and sent_count(srv) == n + 3, r)
 
     other = os.path.join(os.path.realpath(work), "send-state-failed")
-    c, r = tool(srv, "mail_send", {**SEND, "to": "reject@example.com"}, MAILBEND_MAX_SENDS_PER_DAY="1",
+    c, r = call("mail_send", {**SEND, "to": "reject@example.com"}, MAILBEND_MAX_SENDS_PER_DAY="1",
                 MAILBEND_STATE_DIR=other)
-    c2, r2 = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="1", MAILBEND_STATE_DIR=other)
+    c2, r2 = call("mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="1", MAILBEND_STATE_DIR=other)
     check("daily limit: a send the server refused still counts", c != 0 and "550" in r.get("error", "")
           and c2 != 0 and "daily send limit" in r2.get("error", "") and sent_count(srv) == n + 3, (r, r2))
 
@@ -3779,14 +3813,14 @@ def daily_limit(srv, work):
     os.makedirs(os.path.join(unusable, "sends"))
     refused = []
     for directory in (blocked, unusable):
-        c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", MAILBEND_STATE_DIR=directory)
+        c, r = call("mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", MAILBEND_STATE_DIR=directory)
         if not (c != 0 and "MAILBEND_MAX_SENDS_PER_DAY" in r.get("error", "")):
             refused.append((directory, r))
     check("daily limit: a state directory or counter that cannot be used refuses the send", not refused
           and sent_count(srv) == n + 3, refused)
 
     xdg = os.path.join(os.path.realpath(work), "xdg-state")
-    c, r = tool(srv, "mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", XDG_STATE_HOME=xdg)
+    c, r = call("mail_send", SEND, MAILBEND_MAX_SENDS_PER_DAY="5", XDG_STATE_HOME=xdg)
     check("daily limit: the counter defaults to $XDG_STATE_HOME/mailbend", c == 0
           and pathlib.Path(xdg, "mailbend", "sends").is_file(), r)
 

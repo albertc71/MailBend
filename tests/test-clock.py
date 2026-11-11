@@ -24,9 +24,9 @@ class ClockTestCase(unittest.TestCase):
         cls.work = Path(cls.tmp.name)
         cls.guard = cls.work / 'guard.so'
         subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror',
-                        str(ROOT / 'tests/clock-guard.c'), '-ldl', '-o', str(cls.guard)], check=True)
+                        str(ROOT / 'tests/clock-guard.c'), '-ldl', '-o', str(cls.guard)], check=True, timeout=30)
         subprocess.run(['sh', str(ROOT / 'tests/gen-test-certs.sh'), str(cls.work / 'certs')],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         cls.date = cls.work / 'date'
         cls.date.write_text('#!' + sys.executable + '\nimport os, sys, time\nfrom pathlib import Path\n'
                             'time.sleep(float(os.environ.get("CLOCK_TEST_DELAY", "0")))\n'
@@ -48,7 +48,7 @@ class ClockTestCase(unittest.TestCase):
                          'return WIFEXITED(code) ? WEXITSTATUS(code) : 98; }\n')
         cls.probe = cls.work / 'probe'
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', str(probe), '-o', str(cls.probe)],
-                       check=True)
+                       check=True, timeout=30)
 
     @classmethod
     def tearDownClass(cls):
@@ -275,6 +275,52 @@ class ClockTests(ClockTestCase):
         self.assertEqual('2023-11-15\n', (self.counter / 'sends').read_text())
         calls = [json.loads(line) for line in self.helper_log.read_text().splitlines()]
         self.assertEqual([['count', str(self.counter), '3', '2023-11-15']], calls)
+
+    def test_refused_send_reservation_counts_until_the_next_utc_day(self):
+        for wire in ("cli", "mcp"):
+            with self.subTest(wire=wire):
+                counter = self.cell / ("daily-" + wire)
+                settings = {"MAILBEND_MAX_SENDS_PER_DAY": "1",
+                            "MAILBEND_STATE_DIR": str(counter),
+                            "CLOCK_TEST_OUTPUT": "1700006399\n"}
+                before = len(self.srv.st().get("sent", []))
+
+                def assert_reservation(day, lines):
+                    calls = [json.loads(line) for line in self.helper_log.read_text().splitlines()]
+                    self.assertEqual([["count", str(counter), "1", day]], calls)
+                    self.assertEqual(lines, (counter / "sends").read_text().splitlines())
+                    self.assertEqual(["date", "date"], self.date_log.read_text().splitlines())
+
+                failed, result = self.call(args=SEND | {"to": "reject@example.com"},
+                                           settings=settings, wire=wire)
+                self.assertTrue(failed, result)
+                self.assertIn("550", result["error"])
+                self.assertEqual("not_sent", result["smtp_outcome"])
+                self.assertEqual(before, len(self.srv.st().get("sent", [])))
+                assert_reservation("2023-11-14", ["2023-11-14"])
+
+                failed, result = self.call(settings=settings, wire=wire)
+                self.assertTrue(failed, result)
+                self.assertIn("daily send limit", result["error"])
+                self.assertFalse(any(r["proto"] == "smtp"
+                                     for r in self.srv.log_records()[self.log_start:]))
+                self.assertEqual(before, len(self.srv.st().get("sent", [])))
+                assert_reservation("2023-11-14", ["2023-11-14"])
+
+                settings["CLOCK_TEST_OUTPUT"] = "1700006400\n"
+                failed, result = self.call(settings=settings, wire=wire)
+                self.assertFalse(failed, result)
+                self.assertTrue(result["sent"])
+                self.assertEqual(before + 1, len(self.srv.st()["sent"]))
+                assert_reservation("2023-11-15", ["2023-11-14", "2023-11-15"])
+
+                failed, result = self.call(settings=settings, wire=wire)
+                self.assertTrue(failed, result)
+                self.assertIn("daily send limit", result["error"])
+                self.assertFalse(any(r["proto"] == "smtp"
+                                     for r in self.srv.log_records()[self.log_start:]))
+                self.assertEqual(before + 1, len(self.srv.st()["sent"]))
+                assert_reservation("2023-11-15", ["2023-11-14", "2023-11-15"])
 
     def test_second_malformed_clock_refuses_before_counter_and_smtp(self):
         before = self.srv.st()
