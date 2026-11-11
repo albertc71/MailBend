@@ -800,7 +800,7 @@ class IMAPSession:
             self.logger.composition('append', tokens[-1].decode('latin-1'))
         self.state.seen[verb] = self.state.seen.get(verb, 0) + 1
         names = {verb, f'{verb}#{self.state.seen[verb]}'}
-        scripted = self.state.folder_status_script.get(f'{verb}#{self.state.seen[verb]}')
+        scripted = getattr(self.state, 'folder_status_script', {}).get(f'{verb}#{self.state.seen[verb]}')
         if scripted is not None:
             delay = scripted.get('delay_ms', 0)
             if not isinstance(delay, int) or not 0 <= delay <= 11000:
