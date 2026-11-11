@@ -339,6 +339,16 @@ def listed_put(found: Maybe<&2, I.Folder>, +fs: List<&2, I.Folder>, left: U32)
 type ListStep is Data:
   ListStep{folders: Maybe<&2, List<&2, I.Folder>>, left: U32}
 
+def list_step_folders(step: ListStep) -> Maybe<&2, List<&2, I.Folder>>:
+  match step:
+    case ListStep{folders, _}:
+      folders
+
+def list_step_left(step: ListStep) -> U32:
+  match step:
+    case ListStep{_, left}:
+      left
+
 def list_line(+text: String, lits: List<&2, String>) -> Maybe<&2, I.Folder>:
   Bool.pick(Maybe<&2, I.Folder>, I.upper_starts(text, "* LIST "),
     folder(tokens(String.drop(text, 7n), lits)), None{})
@@ -358,8 +368,8 @@ def listed_go(lines: List<&2, I.RLine>, fs: Maybe<&2, List<&2, I.Folder>>, left:
     case Nil{} Some{fs}:
       Some{List.reverse(&2, I.Folder, fs)}
     case I.RLine{+text, lits} <> t Some{fs}:
-      ListStep{next, left} = listed_step(String.eq(kind(text), "LIST"), text, lits, fs, left)
-      listed_go(t, next, left)
+      +step = listed_step(String.eq(kind(text), "LIST"), text, lits, fs, left)
+      listed_go(t, list_step_folders(step), list_step_left(step))
     case _ None{}:
       None{}
 
@@ -701,6 +711,16 @@ def single_count(status: String, +f: I.Folder, +rs: List<&2, Record>) -> Count:
 type BatchStep is Data:
   BatchStep{entry: Entry, next: U32}
 
+def batch_step_entry(step: BatchStep) -> Entry:
+  match step:
+    case BatchStep{entry, _}:
+      entry
+
+def batch_step_next(step: BatchStep) -> U32:
+  match step:
+    case BatchStep{_, next}:
+      next
+
 def batch_step(selectable: Bool, f: I.Folder, +lines: List<&2, I.RLine>, +n: U32,
   modseq: Bool) -> BatchStep:
   match selectable:
@@ -718,8 +738,8 @@ def batch_entries(fs: List<&2, I.Folder>, +lines: List<&2, I.RLine>, n: U32, +mo
       []
     case +f <> t:
       I.Folder{_, _, attrs} = f
-      BatchStep{entry, next} = batch_step(Policy.selectable(attrs), f, lines, n, modseq)
-      entry <> batch_entries(t, lines, next, modseq)
+      +step = batch_step(Policy.selectable(attrs), f, lines, n, modseq)
+      batch_step_entry(step) <> batch_entries(t, lines, batch_step_next(step), modseq)
 
 def batch_result(refused: Bool, es: List<&2, Entry>) -> Overview:
   match refused:

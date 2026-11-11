@@ -48,12 +48,15 @@ def entries(es: List<&2, F.Entry>) -> String:
     case F.Entry{I.Folder{name, _, _}, c} <> t:
       name ++ ":" ++ count(c) ++ ";" ++ entries(t)
 
+def overview_evidence(result: F.Overview) -> String:
+  match result:
+    case F.Overview{es, _, reason}:
+      F.reason_name(reason) ++ " " ++ entries(es)
+
 def lost_evidence() -> String:
-  result = F.count_result(Policy.ProcOk{6,
+  overview_evidence(F.count_result(Policy.ProcOk{6,
     "* CAPABILITY IMAP4rev1\r\na1 OK done\r\n* STATUS A (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\na2 OK done\r\n", ""},
-    [I.Folder{"A", "/", []}, I.Folder{"B", "/", []}], False{}, False{})
-  F.Overview{es, _, reason} = result
-  F.reason_name(reason) ++ " " ++ entries(es)
+    [I.Folder{"A", "/", []}, I.Folder{"B", "/", []}], False{}, False{}))
 
 def main() -> IO(Unit):
   do IO<Unit>:
