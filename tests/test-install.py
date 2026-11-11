@@ -901,6 +901,7 @@ exec {shutil.which("sync")} "$@"
             with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
                 self.prepare(root, clang=True)
+                (root / "tools/sh").symlink_to("/bin/sh")
                 old = self.old_bin(root)
                 for name in ("mailbend", "setup-cloud.sh"):
                     shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
