@@ -102,8 +102,8 @@ bash tests/test-transport.sh
 python3 tests/test-cloud-network.py
 python3 tests/test-stdio.py
 python3 tests/test-demo.py                        # isolated loopback demo, MCP flow and cleanup
-python3 tests/test-install.py
-python3 tests/formal/check-install-swap.py
+python3 tests/test-install.py                    # generation, rollback, launcher and legacy boundaries
+python3 tests/formal/check-install-swap.py        # bounded synthetic crash/flush oracle, no power-loss claim
 python3 scripts/check-native-hardening.py         # installed native ELF metadata, after install.sh
 python3 tests/test-native-hardening.py             # real C-linked positive and negative controls
 python3 tests/test-posture-inventory.py           # native egress changes need an explicit audit
@@ -306,6 +306,28 @@ When the checkout is on a filesystem without Linux `O_TMPFILE` support
 filesystem: `MAILBEND_TEST_TMPDIR=/tmp python3 tests/test-e2e.py`. This changes
 only the temporary fixture directory; the attachment sandbox checks remain
 in force.
+
+### Compiled-generation changes
+
+Compiled-generation changes are one shipping unit: installer, sourced
+`scripts/install-layout.sh` validator, launcher, readiness and paired provenance.
+The install suite uses disposable files and synthetic toolchain commands. Its
+whole-set oracle rejects mixed members and incorrect active/previous pairings.
+The fault campaign has fixed event/case/deadline caps and never fills the host
+disk or accesses mail. Keep expected-failure logs and distinguish process-kill
+evidence from storage power-loss evidence. `tests/test-stdio.py` additionally
+uses the real built adapter with a synthetic core and helpers to check a session
+across A, B, C and a consuming rollback.
+
+Any change to the managed installer, launcher or sourced validator needs a
+separately reviewed literal three-file tuple in `tests/scale_pair.py`. Historical
+candidate pairs and the immutable reference remain flat-only. Do not weaken
+`regular()`, copy outputs to a flat directory, recapture identity drift, or route
+measurements directly to the core. The final combined head needs the actual paired
+scale pass plus the complete contributor checks and native x86_64/aarch64 CI.
+Green ordinary `checks` does not include scale. An earlier-head or policy-only
+result cannot validate later installer/launcher bytes. See the managed-generation
+migration record in [tests/SCALE.md](tests/SCALE.md).
 
 ### Native ELF checks
 

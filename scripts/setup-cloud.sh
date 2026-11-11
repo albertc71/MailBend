@@ -2,25 +2,40 @@
 # Re-runnable Debian/Ubuntu install recipe for a durable MailBend clone.
 # Run as the computer user; only apt needs root. No mail credentials needed.
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd -P)
 
 fail() { printf 'mailbend: %s\n' "$*" >&2; exit 1; }
 
 check_readiness() {
+  . "$root/scripts/install-layout.sh"
+  mb_root_open
+  flock -sn 8 || fail "installation is busy; retry the readiness check"
+  selected_bin=$root/bin
+  if mb_marker; then
+    mb_capture
+    [ "$MB_KIND" != bootstrap ] || fail "installation is incomplete; rerun setup-cloud.sh"
+    selected_bin=$MB_GENERATION
+  elif [ -d "$root/bin" ] && [ ! -L "$root/bin" ]; then
+    exec 9<"$root/bin"
+    flock -sn 9 || fail "legacy installation is busy; retry the readiness check"
+  fi
   # Run the binaries: surviving executables can lose their shared libraries
   # in an image rebuild. These local checks do not connect to mail.
-  "$root/bin/mailbend-tls" --check >/dev/null 2>&1 \
+  "$selected_bin/mailbend-tls" --check >/dev/null 2>&1 \
     || fail "TLS helper cannot run; rerun setup-cloud.sh"
-  [ -x "$root/bin/mailbend-attach" ] \
+  [ -x "$selected_bin/mailbend-attach" ] \
     || fail "attachment helper is missing; rerun setup-cloud.sh"
-  "$root/bin/mailbend-typesafe" --check >/dev/null 2>&1 \
+  "$selected_bin/mailbend-typesafe" --check >/dev/null 2>&1 \
     || fail "TypeSafe helper cannot run; rerun setup-cloud.sh"
-  "$root/bin/mailbend-stdio" --check >/dev/null 2>&1 \
+  "$selected_bin/mailbend-stdio" --check >/dev/null 2>&1 \
     || fail "stdio helper cannot run; rerun setup-cloud.sh"
-  [ -x "$root/bin/mailbend-core" ] \
+  [ -x "$selected_bin/mailbend-core" ] \
     || fail "compiled core is missing; rerun setup-cloud.sh"
   "$root/scripts/mailbend" tools >/dev/null 2>&1 \
     || fail "compiled core cannot run; rerun setup-cloud.sh"
+  mb_root_same
+  exec 8<&-
+  exec 9<&-
 }
 
 case "${1:-}" in

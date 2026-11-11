@@ -507,10 +507,10 @@ capture, including a switch between two admitted revisions. This does not prove
 which bytes an earlier build executed or detect a transient edit restored before
 the next check.
 
-The public preflight controls use this checkout's actual installer and the
-production digest policy. They accept original and reviewed candidate bytes,
-reject unknown candidate bytes, reference substitution, dirty source, missing
-files, symlinks and hardlinks, and reject approved-to-approved identity drift.
+At that revision, public preflight controls used the actual installer and the
+production digest policy. They accepted original and reviewed candidate bytes,
+rejected unknown candidate bytes, reference substitution, dirty source, missing
+files, symlinks and hardlinks, and rejected approved-to-approved identity drift.
 Git metadata uses synthetic fixtures in these controls. The literal digest
 assertion detects a pin change but does not replace independent source review.
 
@@ -519,3 +519,58 @@ ratio gates remain unchanged. The checker still comes from the candidate tree
 and requires independent review. The final combined head needs a fresh paired
 comparison and native CI. Fake-toolchain installer tests do not validate the
 real compiler or establish scale performance.
+
+### Compiled-generation layout migration (#155)
+
+The version 1 candidate migration treats the installer, launcher and sourced
+`scripts/install-layout.sh` as one indivisible reviewed tuple, in that path order.
+The literal tuple in `scale_pair.py` must match the exact reviewed source bytes;
+it is never derived from candidate content at runtime. The immutable reference
+remains `8ae04b1b3c773d14dea78e167e0047adab1e7cb5`, using its original flat
+outputs. Historical approved candidate installer/launcher combinations remain
+flat-only. New/old cross-pairs are refused. The new tuple must produce a managed
+version 1 layout; flat outputs are not a fallback. The new sourced file is not
+required at historical or reference revisions that never used it.
+
+Managed source tuple, submitted together for independent review:
+
+| Path | SHA256 |
+| --- | --- |
+| `scripts/install.sh` | `1e6021a670a6d26f2a68a27cd748c1b63238e816dd1dbcf677ba6e9d3b934326` |
+| `scripts/mailbend` | `90d6cbca18d2ed0e24883a7417225b98657dd023fee8afe4686ba9c9fecb6aac` |
+| `scripts/install-layout.sh` | `d2414f2f66c1a297d1d4330056d86f13a8456ce3053017d3c2209728593fd17f` |
+
+The final exact-source review and actual paired run remain required. No scale
+acceptance claim is made by this migration record alone.
+
+`regular()` is unchanged for source, scripts, apparatus and flat outputs. The
+narrow managed candidate validator checks exact root aliases, current/state links,
+bounded ASCII FORMAT and MANIFEST records, IDs, inventories, ownership, modes,
+real storage ancestors, single-link members and full executable hashes. It captures
+current once, checks the active and recorded previous generations, records raw
+record bytes/hashes and filesystem identities, then rejects any chain change
+during capture. Active executable records include their physical paths. Opened
+file identities are compared before and after hashing. The sourced validator's
+identity participates in the same saved-source drift check.
+
+Identity capture and measurement hold nonblocking shared root locks in canonical
+path order. Flat checkouts also take the compatible bin-directory lock. The run
+rechecks the saved identities under those locks before and after all samples.
+It refuses selector replacement even when target text or executable bytes are
+unchanged. It also refuses an approved-to-approved update rather than recapturing
+it. Locks are released on failure. Historical writers not yet participating in
+the bin lock remain excluded by the stable, isolated-checkout precondition.
+
+The real public launcher remains the cold-launch target. The fixed reference,
+frozen fixture/apparatus bytes, toolchain setup, profiles, sample order/counts,
+side/run budgets, absolute limits and ratio gates are unchanged. This check does
+not prove which source an earlier unobserved build executed or protect against
+hostile same-user mutation that bypasses locks and restores evidence.
+
+Public preflight and identity controls cover the exact pair/layout matrix,
+record/path/member rejection, identity-capture drift, identical-target replacement,
+shared-script drift and fail-fast locks. The full paired workload on the final
+combined head and native x86_64/aarch64 CI remain required. Synthetic controls or
+a policy-only pass cannot substitute for those results. This partial #155 work
+does not add native contract checking, release policy, legacy conversion or
+generation garbage collection, and does not close the issue.

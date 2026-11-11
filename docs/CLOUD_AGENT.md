@@ -51,7 +51,9 @@ Linux 5.6+ and glibc 2.34+. For a
 compiler-related rebuild failure, compare an existing Bend with that pinned
 version. Setup does not downgrade an installed Bend.
 
-Re-enable/restart the MCP server after setup so it uses the rebuilt binaries.
+Start a new MCP session after setup to use the rebuilt generation. An existing
+managed session deliberately keeps its original core and default helper set.
+Legacy interpreter sessions still need restarting after helper updates.
 Its command must be `/workspace/MailBend/scripts/mailbend-cloud`. Ensure the
 platform still supplies the two credential variables below. Setup does not
 recreate secrets or client configuration. A successful `mail_probe` verifies
@@ -69,12 +71,26 @@ Keep credentials in the platform's secret environment; never print them.
 ```
 
 `--check` performs a local, credential-free readiness check, including running
-the TLS and TypeSafe helpers and the core to detect missing shared libraries. On failure it
+the TLS and TypeSafe helpers and the core to detect missing shared libraries.
+It takes a nonblocking shared checkout lock, captures one managed generation,
+and keeps activation blocked while it checks the helpers and public launcher.
+Lock contention fails promptly with a retry diagnostic. On failure it
 names the component that needs rebuilding, without exposing process output.
 It neither installs packages nor checks DNS, connectivity, authentication,
 or source freshness. After updating MailBend source, run full setup again. This routine
 is on-demand recovery, not a guaranteed boot hook. No personal post-rebuild
 setup hook is documented in the sources checked on 2026-10-04.
+
+Compiled setup refuses a nonempty legacy `bin` rather than migrating it in place.
+Install into a new clean checkout, stop legacy sessions, and intentionally switch
+the client's launcher path. Keep a managed checkout at its canonical location;
+moving it breaks retained session paths. `scripts/install.sh --rollback` restores
+the previous complete managed set without builds and consumes that rollback slot.
+Retrying without an intervening install revalidates and reflushes the selected
+state. A later install creates a new slot. Corrupt content is refused rather than
+repaired by selecting a directory. Completed generations are not automatically
+deleted, so upgrades increase disk usage. See the installation section of the
+[README](../README.md#install-linux) for scope and durability limits.
 
 ## Redacted setup diagnostics
 

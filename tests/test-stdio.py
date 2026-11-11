@@ -1136,12 +1136,75 @@ class StdioTests(unittest.TestCase):
                 self.assertEqual(session.proc.wait(timeout=30), 0)
                 self.assertEqual(session.proc.stderr.read(), b"")
 
+    def test_managed_session_keeps_real_stdio_core_and_helpers_across_updates(self):
+        # Real adapter, synthetic core/toolchains, and no mailbox or credential access.
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "scripts").mkdir()
+            (root / "tools").mkdir()
+            (root / "native/target/release").mkdir(parents=True)
+            for name in ("install.sh", "install-layout.sh", "mailbend"):
+                shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
+            def executable(path, text):
+                path.write_text(text)
+                path.chmod(0o755)
+            for name, text in {
+                "clang": "exit 0", "cc": "exit 0", "getconf": "echo 'glibc 2.34'",
+                "rustc": "echo 'rustc 1.99.0'",
+                "cargo": 'if [ "$1" = --version ]; then echo "cargo 1.99.0"; fi',
+                "bend": 'if [ "$1" = main.bend ]; then /bin/cp "$HOME/synthetic-core" "$3"; /bin/chmod 755 "$3"; fi',
+            }.items():
+                executable(root / "tools" / name, "#!/bin/sh\n" + text + "\n")
+            shutil.copy2(STDIO_BINARY, root / "native/target/release/mailbend-stdio")
+            env = {**ENV, "HOME": str(root), "PATH": str(root / "tools") + ":/usr/bin:/bin"}
+            for name in ("MAILBEND_TLS_HELPER", "MAILBEND_ATTACH_HELPER", "MAILBEND_TYPESAFE_HELPER"):
+                env.pop(name, None)
+            def install(label):
+                for member in ("tls", "attach", "typesafe"):
+                    executable(root / "native/target/release" / ("mailbend-" + member),
+                               f"#!/bin/sh\necho {label}-{member}\n")
+                executable(root / "synthetic-core", f"#!{sys.executable}\n" +
+                    "import json, os, subprocess, sys\n" +
+                    "if sys.argv[1:] == ['tools']:\n    print('[]'); sys.exit(0)\n" +
+                    "for line in sys.stdin:\n" +
+                    "    values = [subprocess.check_output([os.environ[name]], text=True).strip()\n" +
+                    "              for name in ('MAILBEND_TLS_HELPER', 'MAILBEND_ATTACH_HELPER', 'MAILBEND_TYPESAFE_HELPER')]\n" +
+                    f"    print(json.dumps({{'core': {label!r}, 'helpers': values}}), flush=True)\n")
+                proc = subprocess.run(["/bin/sh", str(root / "scripts/install.sh")],
+                                      env=env, capture_output=True, timeout=15)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+            def reply(session, label):
+                session.peer.sendall(b"request\n")
+                self.assertEqual(session.line(timeout=10),
+                                 {"core": label, "helpers": [label + "-tls", label + "-attach",
+                                                              label + "-typesafe"]})
+            install("A")
+            original = (root / "bin").resolve()
+            with Session(root / "scripts/mailbend", env=env) as a:
+                reply(a, "A")
+                for label in ("B", "C"):
+                    install(label)
+                    reply(a, "A")
+                    with Session(root / "scripts/mailbend", env=env) as fresh:
+                        reply(fresh, label)
+                proc = subprocess.run(["/bin/sh", str(root / "scripts/install.sh"), "--rollback"],
+                                      env=env, capture_output=True, timeout=15)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                reply(a, "A")
+                with Session(root / "scripts/mailbend", env=env) as fresh:
+                    reply(fresh, "B")
+                self.assertTrue(original.is_dir())
+                for name in ("mailbend-core", "mailbend-tls", "mailbend-attach",
+                             "mailbend-typesafe", "mailbend-stdio"):
+                    self.assertTrue((original / name).is_file())
+
     def test_cli_stdin_interpreter_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "scripts").mkdir()
             launcher = root / "scripts/mailbend"
             shutil.copy2(ROOT / "scripts/mailbend", launcher)
+            shutil.copy2(ROOT / "scripts/install-layout.sh", root / "scripts/install-layout.sh")
             for name in ("main.bend", "src"):
                 (root / name).symlink_to(ROOT / name)
             payload = json.dumps({"body": "x" * (1024 * 1024),
