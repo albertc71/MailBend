@@ -1,0 +1,257 @@
+# Private proposed validation overlay. No publication or run is admitted.
+name: Markdown core finite observation
+
+on:
+  push:
+    branches:
+      - validation/markdown-core-r3-20261111-1642
+
+permissions:
+  contents: read
+
+concurrency:
+  group: markdown-core-r3-20261111-1642
+  cancel-in-progress: false
+
+env:
+  BEND_NO_TELEMETRY: '1'
+  MB_HARNESS_SHA: 52db5bc2b08b816366adf73709f66fb654c7ad1e6bc4613c4252873c84471359
+
+jobs:
+  x64:
+    if: ${{ github.event_name == 'push' && github.event.created == true && github.event.deleted == false && github.event.forced == false && github.run_attempt == 1 && github.repository == 'albertc71/MailBend' && github.event.repository.private == false && github.ref == 'refs/heads/validation/markdown-core-r3-20261111-1642' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      finite: ${{ steps.observe.outputs.finite }}
+    env:
+      MB_EXPECTED_ARCH: X64
+    steps:
+      - name: Observe the exact frozen finite packet once
+        id: observe
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          exec /usr/bin/python3 -I - <<'PY'
+          import time
+          started = time.monotonic()
+          import hashlib, json, math, os, re, resource, signal, stat, sys
+          import urllib.parse, urllib.request
+          from pathlib import Path
+          
+          root = None
+          root_identity = None
+          setup_end = started + 300
+          def stop(*_):
+              raise RuntimeError('SETUP_BLOCKED: bootstrap deadline or cancellation')
+          for number in (signal.SIGALRM, signal.SIGINT, signal.SIGTERM):
+              signal.signal(number, stop)
+          try:
+              if os.getuid() == 0:
+                  raise RuntimeError('SETUP_BLOCKED: non-root runner required')
+              with os.scandir('/proc/self/task') as entries:
+                  tids = []
+                  for entry in entries:
+                      if len(tids) >= 2:
+                          raise RuntimeError('SETUP_BLOCKED: bootstrap is not single-threaded')
+                      tids.append(entry.name)
+              if tids != [str(os.getpid())]:
+                  raise RuntimeError('SETUP_BLOCKED: bootstrap thread identity unavailable')
+              cpu = min(os.sched_getaffinity(0))
+              os.sched_setaffinity(0, {cpu})
+              if os.sched_getaffinity(0) != {cpu}:
+                  raise RuntimeError('SETUP_BLOCKED: common affinity unavailable')
+              anchor = time.monotonic()
+              usage = resource.getrusage(resource.RUSAGE_SELF)
+              initial_cpu = usage.ru_utime + usage.ru_stime
+              setup_end = min(started + 300, anchor + 180 - initial_cpu)
+              os.environ.update(MB_STARTED=repr(started), MB_CPU_ANCHOR=repr(anchor),
+                                MB_INITIAL_CPU=repr(initial_cpu), MB_CPU_ID=str(cpu))
+              signal.setitimer(signal.ITIMER_REAL, max(0.001, setup_end - 4 - time.monotonic()))
+              resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+              resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
+              resource.setrlimit(resource.RLIMIT_FSIZE, (1073741824, 1073741824))
+              os.umask(0o077)
+              run_id = os.environ['GITHUB_RUN_ID']
+              arch = os.environ['MB_EXPECTED_ARCH']
+              head = os.environ['GITHUB_SHA']
+              if (not re.fullmatch('[0-9]+', run_id) or arch not in ('X64', 'ARM64')
+                  or not re.fullmatch('[0-9a-f]{40}', head)
+                  or os.environ.get('GITHUB_RUN_ATTEMPT') != '1'
+                  or os.environ.get('GITHUB_EVENT_NAME') != 'push'
+                  or os.environ.get('GITHUB_REPOSITORY') != 'albertc71/MailBend'
+                  or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'):
+                  raise RuntimeError('SETUP_BLOCKED: bootstrap event/runner identity')
+              temporary = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              info = temporary.stat()
+              if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                  raise RuntimeError('SETUP_BLOCKED: owned runner temporary directory unavailable')
+              path = temporary / ('mailbend-md-' + run_id + '-' + arch.lower())
+              path.mkdir(mode=0o700)
+              root = path
+              info = root.lstat()
+              root_identity = (info.st_dev, info.st_ino)
+              if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                  raise RuntimeError('SETUP_BLOCKED: exclusive private directory mismatch')
+              os.environ.update(MB_ROOT=str(root), MB_ROOT_DEV=str(info.st_dev),
+                                MB_ROOT_INO=str(info.st_ino))
+              url = 'https://raw.githubusercontent.com/albertc71/MailBend/' + head + '/tests/validation/markdown-core-observe.py'
+              with urllib.request.urlopen(url, timeout=10) as response:
+                  final = urllib.parse.urlsplit(response.url)
+                  if final.scheme != 'https' or final.hostname != 'raw.githubusercontent.com':
+                      raise RuntimeError('SETUP_BLOCKED: unexpected source redirect')
+                  data = response.read(131073)
+              if len(data) > 131072 or hashlib.sha256(data).hexdigest() != os.environ['MB_HARNESS_SHA']:
+                  raise RuntimeError('SETUP_BLOCKED: harness identity mismatch')
+              target = root / 'bootstrap.py'
+              fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+              with os.fdopen(fd, 'wb') as output:
+                  output.write(data)
+              if time.monotonic() >= setup_end - 4:
+                  raise RuntimeError('SETUP_BLOCKED: no setup allowance remaining')
+              os.execv('/usr/bin/python3', ['/usr/bin/python3', '-I', str(target)])
+          except BaseException as error:
+              try:
+                  signal.setitimer(signal.ITIMER_REAL, max(0.001, setup_end - time.monotonic()))
+                  if root is not None and (root.lstat().st_dev, root.lstat().st_ino) == root_identity:
+                      with os.scandir(root) as entries:
+                          names = []
+                          for entry in entries:
+                              if len(names) >= 1:
+                                  raise RuntimeError('unexpected bootstrap directory contents')
+                              names.append(entry.name)
+                      if names == ['bootstrap.py']:
+                          (root / 'bootstrap.py').unlink()
+                      elif names:
+                          raise RuntimeError('unexpected bootstrap directory contents')
+                      root.rmdir()
+              except BaseException:
+                  pass
+              try:
+                  os.set_blocking(2, False)
+                  data = json.dumps({'outcome': 'SETUP_BLOCKED', 'reason': str(error)[:1024],
+                                     'universal_obligations_open': 14, 'proof_pass': False}).encode() + b'\n'
+                  os.write(2, data[:2048])
+              except BaseException:
+                  pass
+              os._exit(1)
+          PY
+
+  arm64:
+    needs: x64
+    if: ${{ needs.x64.result == 'success' && needs.x64.outputs.finite == 'true' && github.event_name == 'push' && github.event.created == true && github.event.deleted == false && github.event.forced == false && github.run_attempt == 1 && github.repository == 'albertc71/MailBend' && github.event.repository.private == false && github.ref == 'refs/heads/validation/markdown-core-r3-20261111-1642' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    env:
+      MB_EXPECTED_ARCH: ARM64
+    steps:
+      - name: Observe the exact frozen finite packet once
+        id: observe
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          exec /usr/bin/python3 -I - <<'PY'
+          import time
+          started = time.monotonic()
+          import hashlib, json, math, os, re, resource, signal, stat, sys
+          import urllib.parse, urllib.request
+          from pathlib import Path
+          
+          root = None
+          root_identity = None
+          setup_end = started + 300
+          def stop(*_):
+              raise RuntimeError('SETUP_BLOCKED: bootstrap deadline or cancellation')
+          for number in (signal.SIGALRM, signal.SIGINT, signal.SIGTERM):
+              signal.signal(number, stop)
+          try:
+              if os.getuid() == 0:
+                  raise RuntimeError('SETUP_BLOCKED: non-root runner required')
+              with os.scandir('/proc/self/task') as entries:
+                  tids = []
+                  for entry in entries:
+                      if len(tids) >= 2:
+                          raise RuntimeError('SETUP_BLOCKED: bootstrap is not single-threaded')
+                      tids.append(entry.name)
+              if tids != [str(os.getpid())]:
+                  raise RuntimeError('SETUP_BLOCKED: bootstrap thread identity unavailable')
+              cpu = min(os.sched_getaffinity(0))
+              os.sched_setaffinity(0, {cpu})
+              if os.sched_getaffinity(0) != {cpu}:
+                  raise RuntimeError('SETUP_BLOCKED: common affinity unavailable')
+              anchor = time.monotonic()
+              usage = resource.getrusage(resource.RUSAGE_SELF)
+              initial_cpu = usage.ru_utime + usage.ru_stime
+              setup_end = min(started + 300, anchor + 180 - initial_cpu)
+              os.environ.update(MB_STARTED=repr(started), MB_CPU_ANCHOR=repr(anchor),
+                                MB_INITIAL_CPU=repr(initial_cpu), MB_CPU_ID=str(cpu))
+              signal.setitimer(signal.ITIMER_REAL, max(0.001, setup_end - 4 - time.monotonic()))
+              resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+              resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
+              resource.setrlimit(resource.RLIMIT_FSIZE, (1073741824, 1073741824))
+              os.umask(0o077)
+              run_id = os.environ['GITHUB_RUN_ID']
+              arch = os.environ['MB_EXPECTED_ARCH']
+              head = os.environ['GITHUB_SHA']
+              if (not re.fullmatch('[0-9]+', run_id) or arch not in ('X64', 'ARM64')
+                  or not re.fullmatch('[0-9a-f]{40}', head)
+                  or os.environ.get('GITHUB_RUN_ATTEMPT') != '1'
+                  or os.environ.get('GITHUB_EVENT_NAME') != 'push'
+                  or os.environ.get('GITHUB_REPOSITORY') != 'albertc71/MailBend'
+                  or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'):
+                  raise RuntimeError('SETUP_BLOCKED: bootstrap event/runner identity')
+              temporary = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              info = temporary.stat()
+              if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                  raise RuntimeError('SETUP_BLOCKED: owned runner temporary directory unavailable')
+              path = temporary / ('mailbend-md-' + run_id + '-' + arch.lower())
+              path.mkdir(mode=0o700)
+              root = path
+              info = root.lstat()
+              root_identity = (info.st_dev, info.st_ino)
+              if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                  raise RuntimeError('SETUP_BLOCKED: exclusive private directory mismatch')
+              os.environ.update(MB_ROOT=str(root), MB_ROOT_DEV=str(info.st_dev),
+                                MB_ROOT_INO=str(info.st_ino))
+              url = 'https://raw.githubusercontent.com/albertc71/MailBend/' + head + '/tests/validation/markdown-core-observe.py'
+              with urllib.request.urlopen(url, timeout=10) as response:
+                  final = urllib.parse.urlsplit(response.url)
+                  if final.scheme != 'https' or final.hostname != 'raw.githubusercontent.com':
+                      raise RuntimeError('SETUP_BLOCKED: unexpected source redirect')
+                  data = response.read(131073)
+              if len(data) > 131072 or hashlib.sha256(data).hexdigest() != os.environ['MB_HARNESS_SHA']:
+                  raise RuntimeError('SETUP_BLOCKED: harness identity mismatch')
+              target = root / 'bootstrap.py'
+              fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+              with os.fdopen(fd, 'wb') as output:
+                  output.write(data)
+              if time.monotonic() >= setup_end - 4:
+                  raise RuntimeError('SETUP_BLOCKED: no setup allowance remaining')
+              os.execv('/usr/bin/python3', ['/usr/bin/python3', '-I', str(target)])
+          except BaseException as error:
+              try:
+                  signal.setitimer(signal.ITIMER_REAL, max(0.001, setup_end - time.monotonic()))
+                  if root is not None and (root.lstat().st_dev, root.lstat().st_ino) == root_identity:
+                      with os.scandir(root) as entries:
+                          names = []
+                          for entry in entries:
+                              if len(names) >= 1:
+                                  raise RuntimeError('unexpected bootstrap directory contents')
+                              names.append(entry.name)
+                      if names == ['bootstrap.py']:
+                          (root / 'bootstrap.py').unlink()
+                      elif names:
+                          raise RuntimeError('unexpected bootstrap directory contents')
+                      root.rmdir()
+              except BaseException:
+                  pass
+              try:
+                  os.set_blocking(2, False)
+                  data = json.dumps({'outcome': 'SETUP_BLOCKED', 'reason': str(error)[:1024],
+                                     'universal_obligations_open': 14, 'proof_pass': False}).encode() + b'\n'
+                  os.write(2, data[:2048])
+              except BaseException:
+                  pass
+              os._exit(1)
+          PY
+
