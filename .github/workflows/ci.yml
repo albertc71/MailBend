@@ -152,7 +152,7 @@ jobs:
       - name: Unit tests
         run: |
           sh tests/run-unit.sh
-          python3 tests/test-facts-extraction.py
+          python3 tests/test-meet-removal.py --controls-only
       - name: Accepted-reply marking transition mutations
         run: python3 tests/formal/check-reply-marking.py
       - name: Client-side prompt proof mutations
@@ -231,8 +231,6 @@ jobs:
         run: python3 tests/formal/check-policy.py
       - name: Response and image budget proof mutation checks
         run: python3 tests/formal/check-response-image-budgets.py
-      - name: Literal facts proof mutation checks
-        run: python3 tests/formal/check-facts.py
       - name: Change-plan and UID wire mutation checks
         run: python3 tests/formal/check-plan-wire-mutations.py
   claim-mutations:
@@ -335,7 +333,7 @@ jobs:
         run: |
           python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
-          python3 tests/test-facts.py
+          python3 tests/test-meet-removal.py
           python3 tests/test-search-flags.py
           python3 tests/test-e2e.py
       - name: Short synthetic MCP soak
@@ -346,7 +344,7 @@ jobs:
         if: matrix.suite == 'mcp'
         run: |
           python3 tests/test-plugin.py --runtime
-          MAILBEND_TEST_MCP=1 python3 tests/test-facts.py
+          MAILBEND_TEST_MCP=1 python3 tests/test-meet-removal.py
           MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py
           MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
       - name: Integrated results and scheduled recipes
