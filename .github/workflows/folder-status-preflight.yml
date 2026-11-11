@@ -1,0 +1,28 @@
+name: Folder status compiler preflight
+on:
+  push:
+    branches:
+      - validation/64-folder-status-preflight-fcab8d8d25a1
+permissions:
+  contents: read
+concurrency:
+  group: folder-status-preflight-fcab8d8d25a1
+  cancel-in-progress: false
+jobs:
+  compiler-unit:
+    if: ${{ github.repository == 'albertc71/MailBend' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Check exact candidate compiler and folder unit
+        timeout-minutes: 12
+        env:
+          BEND_NO_TELEMETRY: '1'
+          EXPECTED_VALIDATION_SHA: ${{ github.sha }}
+        run: python3 -I .github/preflight/folder-status.py
