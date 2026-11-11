@@ -1087,7 +1087,9 @@ def flag_keys(+args: J.Json) -> Keys():
     seen : List<&2, I.Key> <- seen_keys(J.as_bool(J.get(args, "seen")),
       J.as_bool(J.get(args, "unseen")))
     return List.concat(&2, I.Key, [seen,
-      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{})])
+      flag_key(J.as_bool(J.get(args, "flagged")), I.KFlagged{}, I.KUnflagged{}),
+      flag_key(J.as_bool(J.get(args, "answered")), I.KAnswered{}, I.KUnanswered{}),
+      flag_key(J.as_bool(J.get(args, "draft")), I.KDraft{}, I.KUndraft{})])
 
 def date_key_of(m: Maybe<&2, String>, name: String) -> Keys():
   match m:

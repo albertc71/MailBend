@@ -498,6 +498,18 @@ def Laws.search_headers_render_exactly():
 def Laws.full_fetch_renders_exactly(max):
   {==}
 
+def Laws.search_answered_renders_exactly():
+  {==}
+
+def Laws.search_unanswered_renders_exactly():
+  {==}
+
+def Laws.search_draft_renders_exactly():
+  {==}
+
+def Laws.search_undraft_renders_exactly():
+  {==}
+
 # Marking and flagging
 # --------------------
 

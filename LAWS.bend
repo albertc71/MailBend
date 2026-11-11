@@ -482,6 +482,22 @@ law full_fetch_renders_exactly:
   for max: U32
   {I.item_str(I.IFull{max}) == "BODY.PEEK[]<0." ++ U32.show(max) ++ ">" : String}
 
+# LAW: the ANSWERED search key renders exactly its fixed IMAP atom.
+law search_answered_renders_exactly:
+  {I.key_str(I.KAnswered{}) == "ANSWERED" : String}
+
+# LAW: the UNANSWERED search key renders exactly its fixed IMAP atom.
+law search_unanswered_renders_exactly:
+  {I.key_str(I.KUnanswered{}) == "UNANSWERED" : String}
+
+# LAW: the DRAFT search key renders exactly its fixed IMAP atom.
+law search_draft_renders_exactly:
+  {I.key_str(I.KDraft{}) == "DRAFT" : String}
+
+# LAW: the UNDRAFT search key renders exactly its fixed IMAP atom.
+law search_undraft_renders_exactly:
+  {I.key_str(I.KUndraft{}) == "UNDRAFT" : String}
+
 # Marking and flagging
 # --------------------
 

@@ -336,6 +336,7 @@ jobs:
           python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
           python3 tests/test-facts.py
+          python3 tests/test-search-flags.py
           python3 tests/test-e2e.py
       - name: Short synthetic MCP soak
         if: matrix.suite == 'soak'
@@ -346,6 +347,7 @@ jobs:
         run: |
           python3 tests/test-plugin.py --runtime
           MAILBEND_TEST_MCP=1 python3 tests/test-facts.py
+          MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py
           MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
       - name: Integrated results and scheduled recipes
         if: matrix.suite == 'support'

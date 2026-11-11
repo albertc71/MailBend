@@ -123,6 +123,8 @@ python3 tests/test-mime-corpus.py --nested-resources  # also the 16 MiB nested p
 python3 tests/test-harness-output.py               # test-harness transport diagnostics and redaction
 python3 tests/test-facts.py                       # literal facts, fake loopback mail, CLI
 MAILBEND_TEST_MCP=1 python3 tests/test-facts.py   # the same facts through structured MCP
+python3 tests/test-search-flags.py                # bounded structured flag truth tables, CLI
+MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py  # same flags through structured MCP
 python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
