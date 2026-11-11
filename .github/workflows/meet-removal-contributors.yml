@@ -1,0 +1,149 @@
+name: Meet removal contributor checks
+on:
+  push:
+    branches: [validation/meet-removal-contributors-20261111]
+permissions:
+  contents: read
+jobs:
+  contributor-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CANDIDATE_SHA: 954b2d4045e4c31400b783e4bad57e4e470ddf38
+      CANDIDATE_TREE: 1c17e5af4802904d27719ed63129a70b4d424504
+      VALIDATOR_SHA: 83021e2be457a9b6679148719c1f6074f0ad975e
+      BEND_NO_TELEMETRY: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      PIP_NO_INPUT: '1'
+      PIP_RETRIES: '0'
+      PIP_DEFAULT_TIMEOUT: '30'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: 2
+        with:
+          path: validation
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the single-file validation overlay
+        timeout-minutes: 3
+        working-directory: validation
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git show -s --format=%P HEAD)" = "$CANDIDATE_SHA"
+          test "$(git diff --name-only "$CANDIDATE_SHA" HEAD)" = '.github/workflows/meet-removal-contributors.yml'
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          sha256sum .github/workflows/meet-removal-contributors.yml
+          timeout --kill-after=5s 150s sh scripts/scan-secrets.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: 2
+        with:
+          ref: 954b2d4045e4c31400b783e4bad57e4e470ddf38
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: 2
+        with:
+          repository: agentskills/agentskills
+          ref: 83021e2be457a9b6679148719c1f6074f0ad975e
+          path: validator-source
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        timeout-minutes: 2
+        with:
+          python-version: '3.13.18'
+      - name: Verify exact product and validator inputs
+        timeout-minutes: 1
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git -C source rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          test -z "$(git -C source status --porcelain)"
+          test "$(git -C validator-source rev-parse HEAD)" = "$VALIDATOR_SHA"
+          test -z "$(git -C validator-source status --porcelain)"
+          git -C source log -1 --format='%H %T %P'
+          git -C validator-source log -1 --format='%H %T %P'
+          sha256sum source/skills/mailbend/SKILL.md source/skills/mailbend/references/tools.md
+          sha256sum source/tests/test-mcp-schema-comparison.py source/tests/test-mime-corpus.py source/tests/nested_reads.py
+          sha256sum validator-source/skills-ref/pyproject.toml validator-source/skills-ref/uv.lock
+          sha256sum validator-source/skills-ref/src/skills_ref/*.py
+      - name: Install standard build and test dependencies
+        timeout-minutes: 5
+        run: |
+          sudo apt-get -o Acquire::Retries=0 update
+          sudo apt-get -o Acquire::Retries=0 install -y --no-install-recommends build-essential clang openssl jq
+          python3 -m pip --isolated install --index-url https://pypi.org/simple --retries 0 --timeout 30 --disable-pip-version-check --no-input --only-binary=:all: jsonschema==4.26.0
+      - name: Install the pinned reference validator runtime
+        timeout-minutes: 3
+        run: |
+          cat > "$RUNNER_TEMP/skills-ref-requirements.txt" <<'REQUIREMENTS'
+          click==8.3.1 --hash=sha256:981153a64e25f12d547d3426c367a4857371575ee7ad18df2a6183ab0545b2a6
+          strictyaml==1.7.3 --hash=sha256:fb5c8a4edb43bebb765959e420f9b3978d7f1af88c80606c03fb420888f5d1c7
+          python-dateutil==2.9.0.post0 --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
+          six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+          REQUIREMENTS
+          python3 -m venv "$RUNNER_TEMP/skills-ref-venv"
+          "$RUNNER_TEMP/skills-ref-venv/bin/python" -m pip --isolated install --index-url https://pypi.org/simple --retries 0 --timeout 30 --disable-pip-version-check --no-input --only-binary=:all: --no-deps --require-hashes -r "$RUNNER_TEMP/skills-ref-requirements.txt"
+          mkdir -p "$RUNNER_TEMP/skills-ref-bin"
+          cat > "$RUNNER_TEMP/skills-ref-bin/skills-ref" <<'SCRIPT'
+          #!/bin/sh
+          export PYTHONPATH="$GITHUB_WORKSPACE/validator-source/skills-ref/src"
+          exec "$RUNNER_TEMP/skills-ref-venv/bin/python" -m skills_ref.cli "$@"
+          SCRIPT
+          chmod 0755 "$RUNNER_TEMP/skills-ref-bin/skills-ref"
+          echo "$RUNNER_TEMP/skills-ref-bin" >> "$GITHUB_PATH"
+          sha256sum "$RUNNER_TEMP/skills-ref-requirements.txt" "$RUNNER_TEMP/skills-ref-bin/skills-ref"
+      - name: Validate the shipped skill and rejection control
+        timeout-minutes: 2
+        working-directory: source
+        run: |
+          timeout --kill-after=5s 30s skills-ref validate skills/mailbend
+          mkdir "$RUNNER_TEMP/invalid-skill"
+          printf '%s\n' '---' 'name: invalid-skill' '---' > "$RUNNER_TEMP/invalid-skill/SKILL.md"
+          status=0
+          timeout --kill-after=5s 30s skills-ref validate "$RUNNER_TEMP/invalid-skill" > "$RUNNER_TEMP/skill-rejection.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/skill-rejection.log"
+          test "$status" -eq 1
+          grep -Fx '  - Missing required field in frontmatter: description' "$RUNNER_TEMP/skill-rejection.log"
+          echo 'PASS pinned reference validator accepts the shipped skill and rejects a missing description'
+      - name: MCP comparison lifecycle controls
+        timeout-minutes: 3
+        working-directory: source
+        run: timeout --kill-after=10s 150s python3 -B tests/test-mcp-schema-comparison.py
+      - name: Install unchanged pinned toolchains
+        timeout-minutes: 5
+        working-directory: source
+        run: |
+          sh scripts/install-rust.sh
+          sh scripts/install-bend.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
+      - name: Build exact product and record identities
+        timeout-minutes: 13
+        working-directory: source
+        run: |
+          python3 --version
+          bend version
+          cargo --version
+          rustc --version
+          clang --version
+          sha256sum scripts/install.sh scripts/install-bend.sh scripts/install-rust.sh
+          timeout --kill-after=10s 720s scripts/install.sh
+          sha256sum bin/mailbend-core bin/mailbend-tls bin/mailbend-attach bin/mailbend-typesafe bin/mailbend-stdio
+      - name: Full MIME corpus including nested resource limits
+        timeout-minutes: 11
+        working-directory: source
+        run: timeout --kill-after=10s 600s python3 -B tests/test-mime-corpus.py --nested-resources
+      - name: Verify unchanged tracked inputs
+        if: always()
+        timeout-minutes: 1
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git -C source rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          git -C source diff --exit-code
+          git -C source diff --cached --exit-code
+          test -z "$(git -C validation status --porcelain)"
+          test -z "$(git -C validator-source status --porcelain)"
+          echo 'PASS tracked product, validation and validator inputs unchanged'
