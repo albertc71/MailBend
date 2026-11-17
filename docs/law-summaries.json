@@ -44,9 +44,5 @@
   "image_round_writes_nothing": "An image round changes no mailbox for every folder, identity and list of selected reads.",
   "image_round_fetch_empty": "An empty selected-read tail adds no message fetch or other command.",
   "image_round_section_empty": "An empty selected-range tail adds no MIME section or other fetch item.",
-  "any_writes_after_read": "The concrete EXAMINE-then-SELECT command list is classified as writing, witnessing a write after a read.",
-  "meeting_facts_spans_within_text": "Actual extracted spans are nonempty, exactly 36 scalars wide and contained in the supplied text.",
-  "meeting_facts_emitted_values": "Production facts fields render each extracted source substring and its corresponding coordinates, text source and untrusted marker.",
-  "meeting_facts_complete_source_witness": "A complete canonical link produces the concrete span from scalar 0 to 36 on line 1.",
-  "meeting_facts_unicode_source_witness": "A canonical link after Unicode and LF produces the concrete span from scalar 4 to 40 on line 2."
+  "any_writes_after_read": "The concrete EXAMINE-then-SELECT command list is classified as writing, witnessing a write after a read."
 }

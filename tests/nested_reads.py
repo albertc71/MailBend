@@ -93,8 +93,7 @@ def public_reads(test, work):
                           '"content_type":"message/rfc822","complete":true,"scope":"selected_part",'
                           '"message_complete":false,"content":"U3ViamVjdDogaW5uZXINCg0KaGVsbG8=",'
                           '"content_encoding":"base64"}')
-                for option in ({}, {"nested_message": False}, {"facts": False},
-                           {"facts": False, "nested_message": False}):
+                for option in ({}, {"nested_message": False}):
                     status, rendered = wire(test, server, {"uid": uid, "uidvalidity": 9, "section": "1", **option})
                     test.check("nested absent/false preserves literal legacy bytes", status == 0 and rendered == golden, rendered)
         test.check("nested corpus preserves mailbox state", server.st()["mailboxes"]["INBOX"] == initial)
@@ -122,8 +121,7 @@ def legacy_reads(test, work):
                       '"content_type":' + json.dumps(media) + ',"complete":true,"scope":"selected_part",'
                       '"message_complete":false,"content":' + json.dumps(content) + ',"content_encoding":' +
                       json.dumps(encoding) + '}')
-            for option in ({}, {"nested_message": False}, {"facts": False},
-                           {"facts": False, "nested_message": False}):
+            for option in ({}, {"nested_message": False}):
                 status, rendered = wire(test, server, {"uid": 1, "uidvalidity": 9, "section": "1", **option})
                 test.check("ordinary selected literal bytes " + media, status == 0 and rendered == golden, rendered)
             start = len(server.log_records())
@@ -142,15 +140,13 @@ def legacy_reads(test, work):
               '"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false}')
     server = test.Server(work, fixture=fixture(test, [ordinary]))
     try:
-        for option in ({}, {"nested_message": False}, {"facts": False},
-                           {"facts": False, "nested_message": False}):
+        for option in ({}, {"nested_message": False}):
             status, rendered = wire(test, server, {"uid": 1, "uidvalidity": 9, **option})
             test.check("ordinary whole literal bytes", status == 0 and rendered == golden, rendered)
     finally:
         server.stop()
 
-def facts_compatibility(test, work):
-    # Literal current-main whole/facts bytes, independently specified from this wire message.
+def retired_facts_compatibility(test, work):
     whole = {"uid": 1, "flags": [], "internaldate": "08-Nov-2026 12:00:00 +0000",
              "raw": "Subject: simple\r\n\r\nhttps://meet.google.com/abc-defg-hij"}
     golden = ('{"folder":"INBOX","uid":1,"uidvalidity":9,"flags":[],"seen":false,'
@@ -160,27 +156,21 @@ def facts_compatibility(test, work):
               '"text":"https://meet.google.com/abc-defg-hij","html":"",'
               '"html_available":false,"attachments":[],"list_id":null,"auto_submitted":null,"bulk":null,'
               '"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false}')
-    facts = (',"facts":[{"kind":"meeting_link","value":"https://meet.google.com/abc-defg-hij",'
-             '"source":"text","start":0,"end":36,"line":1,"untrusted":true}],'
-             '"facts_scan":{"scope":"returned_text","limited":false}}')
     server = test.Server(work, fixture=fixture(test, [whole, message(b"Subject: inner\r\n\r\nhello", 2)]))
     try:
         initial = copy.deepcopy(server.st()["mailboxes"])
         expected_commands = ['EXAMINE "INBOX"',
             'UID FETCH 1 (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC REPLY-TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES LIST-ID LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED PRECEDENCE)] BODY.PEEK[]<0.262144>)']
-        for fact_option in ({}, {"facts": False}, {"facts": True}):
-            for nested_option in ({}, {"nested_message": False}):
-                start = len(server.log_records())
-                status, rendered = wire(test, server, {"uid": 1, "uidvalidity": 9,
-                                                       **fact_option, **nested_option})
-                expected = golden[:-1] + facts if fact_option.get("facts") else golden
-                test.check("facts and absent/false nested preserve literal whole bytes",
-                           status == 0 and rendered == expected, rendered)
-                observed = commands(server, start)
-                test.check("facts/nested compatibility preserves whole read commands",
-                           observed == expected_commands, observed)
-        code, actual = test.tool(server, "mail_get", args(uid=2, facts=False))
-        test.check("false facts preserves nested-only result without facts fields",
+        for nested_option in ({}, {"nested_message": False}):
+            start = len(server.log_records())
+            status, rendered = wire(test, server, {"uid": 1, "uidvalidity": 9, **nested_option})
+            test.check("Meet URL and absent/false nested preserve literal whole bytes",
+                       status == 0 and rendered == golden, rendered)
+            observed = commands(server, start)
+            test.check("Meet removal preserves whole read commands",
+                       observed == expected_commands, observed)
+        code, actual = test.tool(server, "mail_get", args(uid=2))
+        test.check("nested-only result stays unchanged",
                    code == 0 and actual == result(node("inner", "hello"), uid=2), actual)
         ts = test.TypeSafe(work)
         try:
@@ -190,15 +180,16 @@ def facts_compatibility(test, work):
                        for extra in ({}, {"section": ""}, {"section": "1"},
                                      {"section": "1", "projection": "text"},
                                      {"projection": "html"}, {"projection": "metadata"})]
-            invalid += [args(uid=2, facts="true"), args(uid=2, facts=None),
+            invalid += [{"uid": 1, "facts": False}, args(uid=2, facts=False),
+                        args(uid=2, facts="true"), args(uid=2, facts=None),
                         {"uid": 1, "facts": True, "nested_message": "true"},
                         {"uid": 1, "facts": True, "nested_message": None}]
             for request in invalid:
-                start, asked = len(server.log_records()), len(ts.requests())
+                start, recorded = len(server.log_records()), len(ts.records())
                 code, actual = test.tool(server, "mail_get", request, **env)
-                test.check("unsupported combined opt-ins refuse before mail or TypeSafe IO",
+                test.check("unsupported combined opt-ins refuse with no recorded mail or TypeSafe traffic",
                            code != 0 and set(actual) == {"error"} and
-                           len(server.log_records()) == start and len(ts.requests()) == asked, actual)
+                           len(server.log_records()) == start and len(ts.records()) == recorded, actual)
         finally:
             ts.stop()
         test.check("facts/nested compatibility leaves mailbox state unchanged",
@@ -239,7 +230,7 @@ def attached_summaries(test, work):
                    rendered == legacy.replace(plain_entries, summarized), rendered)
         test.check("attached_message_headers keeps the whole-read commands",
                    commands(server, start) == legacy_commands, commands(server, start))
-        for extra in ({"projection": "metadata"}, {"projection": "text", "facts": True},
+        for extra in ({"projection": "metadata"}, {"projection": "text"},
                       {"max_response_bytes": 100000}):
             code, actual = test.tool(server, "mail_get", {"uid": 1, "uidvalidity": 9,
                                      "attached_message_headers": True, **extra})
@@ -405,7 +396,7 @@ def run(test, work, resources=False):
         os.environ["MAILBEND_TEST_MCP"] = "1" if mode == "mcp" else "0"
         public_reads(test, work)
         legacy_reads(test, work)
-        facts_compatibility(test, work)
+        retired_facts_compatibility(test, work)
         attached_summaries(test, work)
         annotations(test, work)
         response_budget(test, work)

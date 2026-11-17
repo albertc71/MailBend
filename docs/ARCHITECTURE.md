@@ -138,18 +138,6 @@ sequenceDiagram
   C-->>A: JSON result with uidvalidity
 ```
 
-Opted-in whole-message `facts` run after Jev annotation and the existing
-projection. The wrapper retains a private source-end signal from the raw
-whole-message fetch. A full fetch window or a reported/observed size mismatch
-marks a prefix without changing existing output fields. `src/facts.bend` scans
-only the returned `text`, with a typed
-complete-or-prefix source end, bounded scalar lookahead, and a 16-fact cap.
-The OGet finalizer appends source spans and an extraction notice, then checks
-`Response.bytes` against `max_response_bytes`. Overflow returns an error.
-It does not change `Response.apply`, repeat a fetch, or open a link.
-The facts wrapper remains the `OGet` entry point. Its whole-message guard and
-the nested numeric-section guard reject simultaneous true opt-ins before IO.
-
 ### A change (mail_trash)
 
 Changes to existing messages are pinned to the caller's UIDVALIDITY inside
@@ -265,7 +253,6 @@ notes; a TypeSafe failure leaves the read working, marked `unchecked`.
 | A missing or malformed Jev answer reads as the cautious one; a refused request is split once, any other failure stops the call; a refused `mail_classify` request that carried images is first asked again without them, built from the entries before images were bound, and its images are reported `refused` | `src/jev.bend` (bands, picks), `ask_batch` and `image_answer` in `src/tools.bend` | laws `missing_answer_is_cautious`, `cargo_of_without_images`, unit tests, e2e against `tests/fake_typesafe.py` (401, 422, 429, 529, timeout, malformed, split, later-batch failure, an image TypeSafe cannot decode, a refused request with images, its retry refused too) |
 | With Jev or `MAILBEND_SECRET_SCAN` on, a send passes a local secret scan (private-key blocks, well-known token prefixes, password lines, also when quoted; header fields, text parts and the header sections of attached or forwarded messages, decoded, then every other part's bytes best effort; at most 1 MB of text, 3 levels of forwarded messages, 8 of multipart nesting and 10,000 parts, any text it cannot read, a NUL included, blocking), followed by Jev's veto questions only when Jev is on; a delete needs UIDPLUS, passes the keep questions and plans only the UIDs Jev was asked about; a gate only takes the action away (the allowlist's envelope or the delete plan unchanged, or none), and TypeSafe failing blocks it; drafts are never gated | `Secrets.secret_scan` in `src/secrets.bend`; `Jev.outbound_checked`, `Jev.delete_checked` in `src/jev.bend`; `send_gated`, `delete_gated` in `src/tools.bend` | laws `send_veto_only_subtracts`, `delete_veto_only_subtracts`, `failure_blocks_outbound`, `secret_scan_blocks`, `outgoing_headers_state_has_no_body` (the pure wrappers only); CI check, on the code flattened to one line, that `S.outbound` is called only in `src/jev.bend`, `smtp_run` only once, `plan_delete` only through `delete_checked`, and no expunge is made outside `src/ops.bend` and `src/imap.bend`; unit tests (true and false positives, encodings, nesting, binary parts, the 1 MB bound); e2e (scan cases, recorded headers-mode requests, vetoes, TypeSafe down, dry runs, a UID taken during a delete) |
 | With Jev on, the four reads add a `jev` object to each message (`suspected_injection` only when suspected), asking TypeSafe once without retries; TypeSafe failing leaves the read working, each message `unchecked` | `annotated` in `src/tools.bend`, `Jev.annotation_jsons` | unit tests, e2e (every read, headers-mode requests, TypeSafe down) |
-| Opted-in meeting facts describe exact substrings of returned text, with nonempty 36-scalar spans inside the source | `src/facts.bend`, OGet finalizer in `src/tools.bend` | laws `meeting_facts_spans_within_text` and `meeting_facts_emitted_values` follow actual extraction and production fields; concrete positive witnesses and three rejected mutations; grammar, line counts, bounds, completeness and CLI/MCP integration are tested |
 | Read projections select only text/HTML/selected-part content after Jev; budgeting preserves non-body fields, every selected summary and cursor, or rejects an impossible budget | `projected` in `src/tools.bend`, `src/response.bend` | laws `projection_keeps_nonbody`, `response_body_fields_are_exact`, `response_preserves_nonbody` cover per-field selection and preservation; `prefix_is_prefix`, `prefix_fits_allowance`, `prefix_whole_when_room` prove prefix structure and exact UTF-8 JSON-escape bounds through production escaping and U32 arithmetic; `json_serialized_bytes` proves actual JSON serializer/counter correspondence modulo 2^32, not nonoverflow or a whole-response allowance; list/result assembly, UTF-8 result bounds, CLI/MCP parity, Jev input equality and cross-page retries are unit/e2e tested |
 | With an allowlist, a message goes only when every envelope recipient is allowed; the envelope has no other source | `S.outbound` in `src/smtp.bend`, `send_with` in `src/tools.bend` | laws `allowlist_refuses_unlisted`, `no_allowlist_is_unchanged`, CI grep for other envelope callers, unit and e2e allowlist cases |
 | The daily send limit is reserved before SMTP and fails closed; no tool reads or changes the count | `mailbend-attach count` (`flock`, openat2), `reserve` in `src/tools.bend` | Rust tests (two concurrent processes), e2e at, below and over the limit |
@@ -311,7 +298,6 @@ src/codec.bend       UTF-8, base64, quoted-printable, charsets
 src/json.bend        JSON values, parser and serialiser
 src/schema.bend      MCP tool schemas (generated by tools/gen-schema.py)
 src/message-metadata.bend  pure automation, list and unsubscribe header signals
-src/facts.bend       bounded literal meeting-link extraction and source-span rendering
 src/response.bend    body projections and shared-result UTF-8 budgeting after annotation
 LAWS.bend / PROOF.bend safety laws and their proofs
 native/              the Rust helpers (native/README.md):

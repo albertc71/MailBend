@@ -33,8 +33,6 @@ import ./src/thread.bend as AwaitThread
 
 import ./src/response.bend as Response
 import ./src/hook.bend as Hook
-import ./src/facts.bend as Facts
-import ./tests/formal/facts-observers.bend as FactObserve
 
 # Tool classes
 # ------------
@@ -2129,34 +2127,6 @@ law brief_unseen_filter_interval:
   for uid: U32
   {Brief.window_contains(Brief.UnseenWindow{after, high}, uid) ==
     (U32.is_gt(uid, after) && U32.is_le(uid, high)) : Bool}
-
-# Literal meeting-link facts
-# --------------------------
-
-# Every span emitted by the production extractor is nonempty, 36 scalars wide,
-# and contained in the supplied text. Recognition and line numbers remain tested.
-law meeting_facts_spans_within_text:
-  for source: String
-  for ending: Facts.SourceEnd
-  FactObserve.spans_within(String.length(source),
-    FactObserve.spans(Facts.extract(source, ending)))
-
-# Production fields keep each extracted value equal to its advertised source
-# substring, with the corresponding start/end and untrusted text marker.
-law meeting_facts_emitted_values:
-  for source: String
-  for ending: Facts.SourceEnd
-  FactObserve.rendered(source, FactObserve.spans(Facts.extract(source, ending)),
-    J.get(J.obj(Facts.fields(source, ending)), "facts"))
-
-# Inhabited examples prevent an always-empty extractor from satisfying the contract.
-law meeting_facts_complete_source_witness:
-  {FactObserve.spans(Facts.extract("https://meet.google.com/abc-defg-hij", Facts.Complete{})) ==
-    [Facts.Span{0n, 36n, 1n}] : List<&2, Facts.Span>}
-
-law meeting_facts_unicode_source_witness:
-  {FactObserve.spans(Facts.extract("é😀 \nhttps://meet.google.com/abc-defg-hij", Facts.Complete{})) ==
-    [Facts.Span{4n, 40n, 2n}] : List<&2, Facts.Span>}
 
 # Client-side prompts
 # -------------------

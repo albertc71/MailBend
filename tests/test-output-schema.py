@@ -249,13 +249,13 @@ whole = dict(folder="INBOX", uid=1, uidvalidity=7, internal_date="", **{"from": 
 with_facts = {**whole, "facts": [meeting_fact],
               "facts_scan": {"scope": "returned_text", "limited": False}}
 check("mail_get", whole)
-check("mail_get", with_facts)
+check("mail_get", with_facts, False)
 # attached_message_headers adds a sanitized summary only to attached messages.
 summary = {"from": "a <a@example.invalid>", "to": "", "subject": "inner", "date": "", "message_id": ""}
 attached_entry = {"filename": "", "content_type": "message/rfc822", "size": 9, "message": summary}
 check("mail_get", {**whole, "attachments": [attached_entry]})
 check("mail_get", {**whole, "attachments": [{**attached_entry, "content_type": "message/global"}]})
-check("mail_get", {**with_facts, "attachments": [attached_entry]})
+check("mail_get", {**with_facts, "attachments": [attached_entry]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "content_type": "application/pdf"}]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {**summary, "cc": ""}}]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {
@@ -271,7 +271,7 @@ for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
                  "reasons": []}
     jev = {**plain_jev, "reasons": [summary_reason], "coverage": coverage}
     check("mail_get", {**summarized, "jev": jev})
-    check("mail_get", {**with_facts, "attachments": [attached_entry], "jev": jev})
+    check("mail_get", {**with_facts, "attachments": [attached_entry], "jev": jev}, False)
     check("mail_get", {**summarized, "jev": plain_jev}, False)
     check("mail_get", {**summarized, "jev": {**plain_jev, "coverage": coverage}}, False)
     check("mail_get", {**summarized, "jev": {**jev, "coverage": "complete"}}, False)
@@ -285,6 +285,8 @@ for invalid in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u061c", "\u2
         check("mail_get", {**whole, "attachments": [{**attached_entry,
             "message": {**summary, key: "safe" + invalid}}]}, False)
 check("mail_get", {**whole, "facts": []}, False)
+check("mail_get", {**whole, "facts_scan": {"scope": "returned_text", "limited": False}}, False)
+check("mail_get", {**whole, "facts": [], "facts_scan": {"scope": "returned_text", "limited": False}}, False)
 check("mail_get", {**with_facts, "facts": [meeting_fact] * 17}, False)
 for change in ({"value": literal_link + "\n"}, {"value": literal_link + "?x"},
                {"source": "html"}, {"untrusted": False}, {"start": -1}, {"end": 65537},
