@@ -1,6 +1,6 @@
 # Grok Bot / Cursor cloud setup and recovery
 
-Keep MailBend's clone in `/workspace/MailBend` (or your durable home folder),
+The examples keep MailBend's clone in `/workspace/MailBend` (or your durable home folder),
 run `sh scripts/setup-cloud.sh`, and register `scripts/mailbend-cloud` as the
 MCP command. This opts into fresh DNS-over-HTTPS (DoH) for each mail session
 without editing `/etc/hosts`. After a computer rebuild, rerun setup from that
@@ -54,7 +54,9 @@ version. Setup does not downgrade an installed Bend.
 Start a new MCP session after setup to use the rebuilt generation. An existing
 managed session deliberately keeps its original core and default helper set.
 Legacy interpreter sessions still need restarting after helper updates.
-Its command must be `/workspace/MailBend/scripts/mailbend-cloud`. Ensure the
+For that example checkout, its command is `/workspace/MailBend/scripts/mailbend-cloud`.
+After a deliberate checkout migration, use the new permanent absolute path in
+the client and every setup or check routine. Ensure the
 platform still supplies the two credential variables below. Setup does not
 recreate secrets or client configuration. A successful `mail_probe` verifies
 **IMAP**, not SMTP delivery. Do not test SMTP by sending real mail until you
@@ -65,8 +67,11 @@ For a personal Bot instruction or routine, use:
 ```text
 Before using MailBend, run:
 sh /workspace/MailBend/scripts/setup-cloud.sh --check
-If it fails, run sh /workspace/MailBend/scripts/setup-cloud.sh, then restart
-the MailBend MCP server and run mail_probe with read-only mode enabled.
+For a diagnosed missing system dependency or incomplete fresh build, run:
+sh /workspace/MailBend/scripts/setup-cloud.sh
+Then restart the MailBend MCP server and run mail_probe with read-only mode enabled.
+For permission, legacy-bin, manifest or layout refusals, follow the documented
+operator recovery procedure instead of repeatedly rerunning setup.
 Keep credentials in the platform's secret environment; never print them.
 ```
 
@@ -82,15 +87,59 @@ is on-demand recovery, not a guaranteed boot hook. No personal post-rebuild
 setup hook is documented in the sources checked on 2026-10-04.
 
 Compiled setup refuses a nonempty legacy `bin` rather than migrating it in place.
-Install into a new clean checkout, stop legacy sessions, and intentionally switch
-the client's launcher path. Keep a managed checkout at its canonical location;
-moving it breaks retained session paths. `scripts/install.sh --rollback` restores
+Use the [cloud checkout migration procedure](#move-a-legacy-or-damaged-cloud-checkout)
+below. Keep a managed checkout at its canonical location; moving it breaks
+retained session paths. `scripts/install.sh --rollback` restores
 the previous complete managed set without builds and consumes that rollback slot.
 Retrying without an intervening install revalidates and reflushes the selected
 state. A later install creates a new slot. Corrupt content is refused rather than
 repaired by selecting a directory. Completed generations are not automatically
 deleted, so upgrades increase disk usage. See the installation section of the
 [README](../README.md#install-linux) for scope and durability limits.
+
+### Check checkout permissions before rebuilding
+
+Install, rollback, readiness and new managed sessions refuse group-writable or
+world-writable checkout roots, including `0775` clones made under `umask 002`.
+Setuid, setgid and sticky bits on the root are also refused. The refusal reports
+the path and octal mode. The legacy launcher does not use this managed-root guard.
+Follow [checkout permissions](../README.md#checkout-permissions) to inspect the
+owner, mode and local sharing policy before a narrowly targeted owner action.
+Do not run recursive chmod, change system ancestors or weaken a shared directory's
+policy. If that location requires the refused bits, use a new private checkout.
+
+### Move a legacy or damaged cloud checkout
+
+Use this path when `/workspace/MailBend` has a nonempty legacy `bin` or an invalid
+managed generation. For damaged content, stop affected clients before further
+execution. A successful `tools` or `setup-cloud.sh --check` checks structure and
+runnability, not all manifest hashes, and is not a repair of suspect content.
+
+1. Follow the [operator migration and recovery procedure](OPERATIONS.md#migrate-or-recover-in-a-clean-checkout)
+   to pause callers, reconcile uncertain writes and preserve the old checkout.
+   Record the current approved configuration and the actual send-state directory.
+   Keep existing reservations and the same `MAILBEND_MAX_SENDS_PER_DAY` cap.
+2. Choose a different permanent path, for example `/workspace/MailBend-next`, under
+   a trusted parent. Create a clean checkout of reviewed source there. Run
+   `sh /workspace/MailBend-next/scripts/setup-cloud.sh` without mail credentials
+   in its environment, then require its credential-free `--check` to pass.
+   Do not copy old `bin`, `.mailbend-install` or native build outputs into it.
+3. Deliberately change the MCP command to
+   `/workspace/MailBend-next/scripts/mailbend-cloud`, keeping `args: ["mcp"]`.
+   Change every personal routine, scheduler and Team Setup/Check Script that still
+   names `/workspace/MailBend`. Keep approved secret references, safety switches,
+   helper overrides and the same current send-state reservations. Review any
+   override that points at the old checkout instead of carrying that path forward.
+4. Restart affected clients and validate the new checkout as the runbook describes.
+   Run network diagnostics only when authorized. Do not send a test message.
+   Leave the old checkout and retained generations intact at their original path.
+
+Do not rename a live managed checkout, replace the old directory with a symlink,
+edit `current` or `MANIFEST`, or delete a previous generation to bypass refusal.
+This procedure changes client registration; setup does not perform that change.
+If registration cannot be changed, keep the affected clients stopped and ask the
+environment owner to plan the move. No automatic legacy migration, repair or
+garbage collection is provided.
 
 ## Redacted setup diagnostics
 
