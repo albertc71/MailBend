@@ -14,6 +14,8 @@ const SCRIPT: &str = "command script";
 const HELPER_VERBS: [&[u8]; 4] = [b"LOGIN", b"AUTHENTICATE", b"STARTTLS", b"LOGOUT"];
 const EXPECT: &[u8] = b"=EXPECT ";
 const EXPECT_WORD: &[u8] = b"=EXPECT-WORD ";
+const EXPECT_CAPABILITIES: &[u8] = b"=EXPECT-CAPABILITIES ";
+const CAPABILITIES: [&[u8]; 3] = [b"LIST-STATUS", b"CONDSTORE", b"SPECIAL-USE"];
 
 /// A directive after a command: one of its untagged responses must meet it,
 /// or the run stops as if the command had been rejected.
@@ -23,12 +25,13 @@ pub enum Expect<'a> {
     Prefix(&'a [u8]),
     /// `=EXPECT-WORD <word>`: a response holds the word (any case).
     Word(&'a [u8]),
+    Capabilities(&'a [u8]),
 }
 
 impl Expect<'_> {
     pub fn text(&self) -> &[u8] {
         match self {
-            Expect::Prefix(text) | Expect::Word(text) => text,
+            Expect::Prefix(text) | Expect::Word(text) | Expect::Capabilities(text) => text,
         }
     }
 
@@ -39,8 +42,40 @@ impl Expect<'_> {
             && match self {
                 Expect::Prefix(text) => starts_with_ignore_case(line, text),
                 Expect::Word(word) => has_word(line, word),
+                Expect::Capabilities(required) => capability_matches(line, required),
             }
     }
+}
+
+pub fn is_capability_response(line: &[u8]) -> bool {
+    line.strip_prefix(b"*")
+        .and_then(|body| {
+            body.split(u8::is_ascii_whitespace)
+                .find(|word| !word.is_empty())
+        })
+        .is_some_and(|word| word.eq_ignore_ascii_case(b"CAPABILITY"))
+}
+
+fn capability_matches(line: &[u8], required: &[u8]) -> bool {
+    let Some(body) = line.strip_suffix(b"\r\n") else {
+        return false;
+    };
+    if !body
+        .get(..13)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"* CAPABILITY "))
+    {
+        return false;
+    }
+    body[13..].split(|&b| b == b' ').all(|token| {
+        !token.is_empty()
+            && token
+                .iter()
+                .all(|b| (0x21..=0x7e).contains(b) && !b"(){}%*\"\\[]".contains(b))
+    }) && required.split(|&b| b == b' ').all(|want| {
+        body[13..]
+            .split(|&b| b == b' ')
+            .any(|token| token.eq_ignore_ascii_case(want))
+    })
 }
 
 /// A command line ending in `{N}`, and the N bytes the server must ask for
@@ -83,6 +118,12 @@ fn parse_command(script: &[u8], mut p: usize) -> Result<(Command<'_>, usize), Ex
         p += line.len();
         let Some(len) = literal_len(line)? else {
             let (expect, next) = parse_expect(script, p)?;
+            if matches!(expect, Some(Expect::Capabilities(_)))
+                && (!literals.is_empty()
+                    || !line[tag.len() + 1..].eq_ignore_ascii_case(b"CAPABILITY\r\n"))
+            {
+                return Err(Exit::usage("=EXPECT-CAPABILITIES must follow CAPABILITY"));
+            }
             let command = Command {
                 tag,
                 literals,
@@ -125,7 +166,9 @@ fn parse_tag(first_line: &[u8]) -> Result<&[u8], Exit> {
 /// starts.
 fn parse_expect(script: &[u8], p: usize) -> Result<(Option<Expect<'_>>, usize), Exit> {
     let rest = &script[p..];
-    let directive = if rest.starts_with(EXPECT_WORD) {
+    let directive = if rest.starts_with(EXPECT_CAPABILITIES) {
+        EXPECT_CAPABILITIES
+    } else if rest.starts_with(EXPECT_WORD) {
         EXPECT_WORD
     } else if rest.starts_with(EXPECT) {
         EXPECT
@@ -140,7 +183,32 @@ fn parse_expect(script: &[u8], p: usize) -> Result<(Option<Expect<'_>>, usize), 
     if !text.iter().all(|b| (0x20..=0x7E).contains(b)) {
         return Err(Exit::usage("=EXPECT text must be printable ASCII"));
     }
-    let expect = if directive == EXPECT_WORD {
+    let expect = if directive == EXPECT_CAPABILITIES {
+        if text.len() > 33 {
+            return Err(Exit::usage(
+                "=EXPECT-CAPABILITIES needs distinct supported capabilities",
+            ));
+        }
+        let mut seen = 0u8;
+        for token in text.split(|&b| b == b' ') {
+            let Some(index) = CAPABILITIES
+                .iter()
+                .position(|known| token.eq_ignore_ascii_case(known))
+            else {
+                return Err(Exit::usage(
+                    "=EXPECT-CAPABILITIES needs distinct supported capabilities",
+                ));
+            };
+            let bit = 1 << index;
+            if seen & bit != 0 {
+                return Err(Exit::usage(
+                    "=EXPECT-CAPABILITIES needs distinct supported capabilities",
+                ));
+            }
+            seen |= bit;
+        }
+        Expect::Capabilities(text)
+    } else if directive == EXPECT_WORD {
         if text.contains(&b' ') {
             return Err(Exit::usage("=EXPECT-WORD takes one word"));
         }
@@ -155,6 +223,47 @@ fn parse_expect(script: &[u8], p: usize) -> Result<(Option<Expect<'_>>, usize), 
 mod tests {
     use super::*;
     use crate::Failure;
+
+    #[test]
+    fn capabilities_are_a_finite_conjunction_after_capability_only() {
+        let commands = parse(b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE\r\n")
+            .expect("valid capability gate");
+        let expect = commands[0].expect.as_ref().expect("gate");
+        assert!(expect.met_by(b"* CAPABILITY IMAP4rev1 condstore list-status\r\n"));
+        assert!(
+            !expect.met_by(b"* CAPABILITY IMAP4rev1 LIST-STATUS\r\n"),
+            "missing CONDSTORE must reject the capability conjunction"
+        );
+        for line in [
+            b"* CAPABILITY IMAP4rev1 XLIST-STATUS CONDSTORE\r\n".as_slice(),
+            b"* OK [ALERT] LIST-STATUS CONDSTORE\r\n",
+            b"* CAPABILITY \"LIST-STATUS\" CONDSTORE\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE {3}\r\n",
+            b"* CAPABILITY LIST-STATUS CONDSTORE\r\nextra",
+            b"* CAPABILITY LIST-STATUS  CONDSTORE\r\n",
+            b"*CAPABILITY LIST-STATUS CONDSTORE\r\n",
+            b"*\tCAPABILITY LIST-STATUS CONDSTORE\r\n",
+        ] {
+            assert!(!expect.met_by(line), "{line:?}");
+        }
+        for script in [
+            b"a1 NOOP\r\n=EXPECT-CAPABILITIES LIST-STATUS\r\n".as_slice(),
+            b"a1 CAPABILITY extra\r\n=EXPECT-CAPABILITIES LIST-STATUS\r\n",
+            b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES UIDPLUS\r\n",
+            b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS LIST-STATUS\r\n",
+            b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES \r\n",
+            b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS  CONDSTORE\r\n",
+            b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE SPECIAL-USE X\r\n",
+        ] {
+            assert!(parse(script).is_err(), "{script:?}");
+        }
+        assert!(
+            parse(b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS CONDSTORE SPECIAL-USE\r\n")
+                .is_ok()
+        );
+        assert!(is_capability_response(b"*CAPABILITY CONDSTORE\r\n"));
+        assert!(is_capability_response(b"*\tCAPABILITY CONDSTORE\r\n"));
+    }
 
     #[test]
     fn commands_split_at_literals_and_carry_their_directives() {

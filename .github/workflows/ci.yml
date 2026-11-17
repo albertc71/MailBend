@@ -153,6 +153,8 @@ jobs:
         run: |
           sh tests/run-unit.sh
           python3 tests/test-facts-extraction.py
+      - name: Folder-status plan and evidence mutation controls
+        run: python3 tests/formal/check-folder-status.py
       - name: Accepted-reply marking transition mutations
         run: python3 tests/formal/check-reply-marking.py
       - name: Client-side prompt proof mutations
@@ -379,6 +381,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --locked
+      - name: Folder-status capability conjunction mutation
+        run: python3 ../tests/formal/check-folder-status.py --native
       - name: No way around TLS verification
         run: |
           if grep -rnE 'dangerous\(|client::danger|ServerCertVerifier' --include='*.rs' .; then
@@ -563,3 +567,4 @@ jobs:
             fi
           done
           exit "$log_error"
+

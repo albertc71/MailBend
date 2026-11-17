@@ -9,6 +9,7 @@ import ../../src/json.bend as J
 import ../../src/imap.bend as I
 import ../../src/ops.bend as Ops
 import ../../src/jev.bend as Jev
+import ../../src/folder-status.bend as FolderStatus
 
 # Outgoing checks
 # ---------------
@@ -546,3 +547,68 @@ law search_flags_omitted:
 
 def search_flags_omitted():
   {==}
+
+# Opt-in folder overview: dispatch and public evidence shape.
+# These laws do not prove native resource enforcement or server behavior.
+law folder_counts_absent_keeps_legacy:
+  for args: J.Json
+  {Tools.t_folders.choice(None{}, args) == Tools.t_folders_legacy(args) : IO(Policy.Out)}
+
+def folder_counts_absent_keeps_legacy(args):
+  {==}
+
+law folder_counts_false_keeps_legacy:
+  for args: J.Json
+  {Tools.t_folders.choice(Some{J.JBool{False{}}}, args) ==
+    Tools.t_folders_legacy(args) : IO(Policy.Out)}
+
+def folder_counts_false_keeps_legacy(args):
+  {==}
+
+law folder_counts_true_uses_overview:
+  for args: J.Json
+  {Tools.t_folders.choice(Some{J.JBool{True{}}}, args) == Tools.t_folder_status() : IO(Policy.Out)}
+
+def folder_counts_true_uses_overview(args):
+  {==}
+
+law folder_counts_null_refuses:
+  for args: J.Json
+  {Tools.t_folders.choice(Some{J.JNull{}}, args) ==
+    Tools.pure_out(Policy.Err{"counts must be a Boolean"}) : IO(Policy.Out)}
+
+def folder_counts_null_refuses(args):
+  {==}
+
+law folder_unknown_has_no_numeric_fields:
+  for reason: FolderStatus.UnknownReason
+  {Tools.folder_status_count(FolderStatus.Unknown{reason}) ==
+    J.obj([J.kv("state", J.str("unknown")), J.kv("reason", J.str(FolderStatus.unknown_name(reason)))]) : J.Json}
+
+def folder_unknown_has_no_numeric_fields(reason):
+  {==}
+
+law folder_highest_modseq_stays_text:
+  for decimal: String
+  {Tools.folder_status_modseq(FolderStatus.Highest{decimal}) ==
+    [J.kv("highest_modseq", J.str(decimal)), J.kv("modseq_state", J.str("known"))] : List<&2, J.Json>}
+
+def folder_highest_modseq_stays_text(decimal):
+  {==}
+
+law folder_oversized_fallback_refuses:
+  for complete: Bool
+  for json: J.Json
+  {Tools.folder_status_out.bounded(False{}, complete, json) ==
+    Policy.Err{"folder overview exceeds the 262144-byte result limit"} : Policy.Out}
+
+def folder_oversized_fallback_refuses(complete, json):
+  {==}
+
+law folder_incomplete_result_is_partial:
+  for json: J.Json
+  {Tools.folder_status_out.bounded(True{}, False{}, json) == Policy.Partial{json} : Policy.Out}
+
+def folder_incomplete_result_is_partial(json):
+  {==}
+

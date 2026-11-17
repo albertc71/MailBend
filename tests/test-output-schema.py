@@ -127,6 +127,42 @@ for storage in ({}, None, "unsupported", dict(used_kib=-1, limit_kib=100, percen
     check("mail_probe", {**probe, "storage": storage}, False)
 check("mail_probe", probe, False)
 
+folder_metadata = dict(name="INBOX", delimiter="/", attributes=[], special_use=None, selectable=True)
+folder_known = dict(state="known", messages=0, unseen=0, uidnext=1, uidvalidity=1,
+                    highest_modseq=None, modseq_state="unsupported")
+
+
+def folder_overview(status, complete=True, reason="", selectable=True):
+    return dict(folders=[{**folder_metadata, "selectable": selectable, "status": status}],
+                complete=complete, method="status", reason=reason)
+
+
+check("mail_list_folders", dict(folders=[folder_metadata]))
+check("mail_list_folders", folder_overview(folder_known))
+for value in ("1", "9007199254740993", "9223372036854775807"):
+    check("mail_list_folders", folder_overview({**folder_known, "highest_modseq": value, "modseq_state": "known"}))
+for value in ("0", "01", "9223372036854775808", "9999999999999999999", "1\n", 1, None):
+    check("mail_list_folders", folder_overview({**folder_known, "highest_modseq": value, "modseq_state": "known"}), False)
+for state in ("unsupported", "not_persistent"):
+    check("mail_list_folders", folder_overview({**folder_known, "modseq_state": state}))
+    check("mail_list_folders", folder_overview({**folder_known, "modseq_state": state, "highest_modseq": "1"}), False)
+for field in ("messages", "unseen", "uidnext", "uidvalidity"):
+    check("mail_list_folders", folder_overview({**folder_known, "messages": 4294967295, field: 4294967295}))
+    check("mail_list_folders", folder_overview({**folder_known, field: 4294967296}), False)
+    check("mail_list_folders", folder_overview({**folder_known, field: -1}), False)
+for field in ("uidnext", "uidvalidity"):
+    check("mail_list_folders", folder_overview({**folder_known, field: 0}), False)
+for reason in schema.FOLDER_STATUS_REASONS[1:]:
+    unknown = dict(state="unknown", reason=reason)
+    check("mail_list_folders", folder_overview(unknown, False, "incomplete_status"))
+    check("mail_list_folders", folder_overview({**unknown, "messages": 0}, False, "incomplete_status"), False)
+    check("mail_list_folders", folder_overview(unknown), False)
+check("mail_list_folders", folder_overview(dict(state="unknown", reason="not_selectable"), selectable=False))
+check("mail_list_folders", folder_overview(folder_known, selectable=False), False)
+check("mail_list_folders", folder_overview(folder_known, False), False)
+check("mail_list_folders", folder_overview(folder_known, True, "incomplete_status"), False)
+check("mail_list_folders", {**folder_overview(folder_known), "unexpected": 1}, False)
+
 hidden_count = dict(tag=0, bidi=0, zero_width=0)
 hidden = dict(subject=hidden_count, body=hidden_count, **{"from": hidden_count},
               to=[hidden_count], cc=[], bcc=[], attachment_filenames=[])
@@ -383,3 +419,4 @@ check("mail_get", {**nested, "content": {**nested_node, "facts": [],
                    "facts_scan": {"scope": "returned_text", "limited": False}}}, False)
 
 print(f'output schemas: {checks} checks passed')
+

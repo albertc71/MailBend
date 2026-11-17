@@ -77,6 +77,34 @@ def union(*variants):
     return {"anyOf": list(variants)}
 
 
+def positive_decimal(maximum):
+    """Canonical positive decimal strings no greater than this fixed bound."""
+    alternatives = [rf"[1-9][0-9]{{0,{len(maximum) - 2}}}"]
+    for index, digit in enumerate(maximum):
+        lower = 1 if index == 0 else 0
+        upper = int(digit) - 1
+        if upper >= lower:
+            alternatives.append(maximum[:index] + f"[{lower}-{upper}]"
+                                + rf"[0-9]{{{len(maximum) - index - 1}}}")
+    alternatives.append(maximum)
+    return param("string", maxLength=len(maximum),
+                 pattern="^(?:" + "|".join(alternatives) + ")$(?![\\s\\S])")
+
+
+FOLDER_STATUS_REASONS = ["not_selectable", "not_returned", "invalid_response", "command_failed",
+                       "not_attempted", "capability_changed", "helper_failure", "scope_changed", "result_limit"]
+FOLDER_STATUS_BASE = {"state": {"const": "known"},
+                      "messages": param("integer", minimum=0, maximum=4294967295),
+                      "unseen": param("integer", minimum=0, maximum=4294967295),
+                      "uidnext": param("integer", minimum=1, maximum=4294967295),
+                      "uidvalidity": param("integer", minimum=1, maximum=4294967295)}
+FOLDER_STATUS_KNOWN = union(
+    record({**FOLDER_STATUS_BASE, "highest_modseq": positive_decimal("9223372036854775807"),
+            "modseq_state": {"const": "known"}}),
+    record({**FOLDER_STATUS_BASE, "highest_modseq": {"const": None},
+            "modseq_state": param("string", enum=["unsupported", "not_persistent"])}))
+
+
 BRIEF_CONTINUATION = record({
     "version": param("integer", enum=[1]), "mode": param("string", enum=["unseen"]),
     "folder": param("string", minLength=1, maxLength=4000),
@@ -346,6 +374,21 @@ def output_schema(name):
     elif name == "mail_list_folders":
         variants += [record({"folders": array(record({"name": S, "delimiter": S,
                          "attributes": STRINGS, "special_use": NS, "selectable": B}))})]
+        metadata = {"name": S, "delimiter": S, "attributes": STRINGS, "special_use": NS}
+        not_selectable = record({**metadata, "selectable": NO,
+                                 "status": record({"state": {"const": "unknown"},
+                                                   "reason": {"const": "not_selectable"}})})
+        known = record({**metadata, "selectable": YES, "status": FOLDER_STATUS_KNOWN})
+        unknown = record({**metadata, "selectable": YES,
+                          "status": record({"state": {"const": "unknown"},
+                                            "reason": param("string", enum=FOLDER_STATUS_REASONS[1:])})})
+        method = param("string", enum=["list_status", "status", "none"])
+        variants += [record({"folders": param("array", maxItems=100, items=union(known, not_selectable)),
+                             "complete": YES, "method": method, "reason": {"const": ""}}),
+                     record({"folders": param("array", maxItems=100, items=union(known, unknown, not_selectable)),
+                             "complete": NO, "method": method,
+                             "reason": param("string", enum=["capability_changed", "scope_changed",
+                                 "incomplete_status", "command_failed", "helper_failure", "result_limit"])})]
     elif name == "mail_search":
         search = record({"folder": S, "uidvalidity": NN, "total": N,
                          "messages": array(SUMMARY)})
@@ -678,8 +721,11 @@ TOOLS = [
          READS),
     tool("mail_list_folders", "List mail folders",
          "List all IMAP folders with their advertised special use (drafts, "
-         "sent, trash, junk, archive). Changes nothing.",
-         READS),
+         "sent, trash, junk, archive). Changes nothing. Optional counts returns a bounded "
+         "overview for at most 100 folders, with explicit unknown counts and completeness. "
+         "It is not an atomic snapshot or a refresh checkpoint.",
+         READS, {"counts": param("boolean", "Include bounded read-only folder status. "
+                                "Missing or false keeps the existing folder listing.")}),
     tool("mail_search", "Search mail",
          "Search a folder, newest first. Opens the folder read-only, so "
          "nothing is marked read. All criteria are combined with AND. Pass next_cursor "
@@ -1227,3 +1273,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

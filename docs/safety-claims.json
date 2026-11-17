@@ -927,6 +927,17 @@
     }
   ],
   "unclaimed": {
+    "folder_status_effects": "Pins the three new read-only constructors; native behavior and tool wiring require their independent tests.",
+    "folder_status_roles_exact": "Pins same-session role capability ordering for the opt-in overview only.",
+    "folder_status_empty_exact": "Pins omission of a count plan for an empty selectable scope.",
+    "folder_status_commands_empty": "Pins the empty base case of the per-mailbox STATUS batch.",
+    "folder_status_commands_exact": "Pins each STATUS mailbox and batch order; admission bounds and response evidence are tested separately.",
+    "folder_status_fast_exact": "Pins the exact LIST-STATUS plan and finite capability conjunction, not native transport or atomicity.",
+    "folder_status_fallback_exact": "Pins the exact optional CONDSTORE guard and STATUS fallback shape.",
+    "folder_status_render_exact": "Pins the STATUS mailbox encoder and fixed item rendering; server behavior is outside the proof.",
+    "folder_list_status_render_exact": "Pins the fixed LIST-STATUS wildcard and item rendering.",
+    "folder_status_gate_render_exact": "Pins one nonempty conjunction and unchanged wire-tag allocation.",
+    "folder_status_writes_nothing": "Pins pure overview plan effects; strict parsing, helper bounds and public partial results need runtime validation.",
     "search_answered_renders_exactly": "Pins only the fixed ANSWERED search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
     "search_unanswered_renders_exactly": "Pins only the fixed UNANSWERED search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
     "search_draft_renders_exactly": "Pins only the fixed DRAFT search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
@@ -935,3 +946,4 @@
     "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim."
   }
 }
+

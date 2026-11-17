@@ -75,11 +75,18 @@ type Item is Data:
   IFull{max: U32}
   IPart{section: List<&2, U32>, max: U32}
 
+type Capability is Data:
+  CapListStatus{}
+  CapCondstore{}
+  CapSpecialUse{}
+
 type Cmd is Data:
   CCapability{}
   CGetQuotaRoot{mbox: String}
   CList{}
   CListRoles{}
+  CStatus{mbox: String, modseq: Bool}
+  CListStatus{modseq: Bool}
   CLsub{}
   CExamine{mbox: String}
   CSelect{mbox: String}
@@ -96,6 +103,7 @@ type Cmd is Data:
   CAppend{mbox: String, flags: List<&2, Flag>, msg: String}
   CExpect{text: String}
   CExpectWord{word: String}
+  CExpectCapabilities{required: List<&2, Capability>}
 
 # Effects
 # -------
@@ -124,6 +132,10 @@ def effect(c: Cmd) -> Effect:
     case CList{}:
       ENone{}
     case CListRoles{}:
+      ENone{}
+    case CStatus{m, modseq}:
+      ENone{}
+    case CListStatus{modseq}:
       ENone{}
     case CLsub{}:
       ENone{}
@@ -156,6 +168,8 @@ def effect(c: Cmd) -> Effect:
     case CExpect{e}:
       ENone{}
     case CExpectWord{w}:
+      ENone{}
+    case CExpectCapabilities{required}:
       ENone{}
 
 # Whether an effect can change the mailbox: EXAMINE, SEARCH and FETCH cannot.
@@ -680,6 +694,28 @@ def append_head(m: String, fs: List<&2, Flag>) -> String:
   "APPEND " ++ mailbox(m) ++ " (" ++ flag_list(fs) ++ ") "
 
 # The wire form of one command, without tag and CRLF.
+def capability_name(c: Capability) -> String:
+  match c:
+    case CapListStatus{}:
+      "LIST-STATUS"
+    case CapCondstore{}:
+      "CONDSTORE"
+    case CapSpecialUse{}:
+      "SPECIAL-USE"
+
+def capability_names(cs: List<&2, Capability>) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case c <> Nil{}:
+      capability_name(c)
+    case c <> t:
+      capability_name(c) ++ " " ++ capability_names(t)
+
+def status_items(modseq: Bool) -> String:
+  "MESSAGES UNSEEN UIDNEXT UIDVALIDITY" ++
+    Bool.pick(String, modseq, " HIGHESTMODSEQ", "")
+
 def cmd_str(+c: Cmd) -> String:
   match c:
     case CCapability{}:
@@ -690,6 +726,10 @@ def cmd_str(+c: Cmd) -> String:
       "LIST \"\" \"*\""
     case CListRoles{}:
       "LIST \"\" \"*\" RETURN (SPECIAL-USE)"
+    case CStatus{m, modseq}:
+      "STATUS " ++ mailbox(m) ++ " (" ++ status_items(modseq) ++ ")"
+    case CListStatus{modseq}:
+      "LIST \"\" \"*\" RETURN (STATUS (" ++ status_items(modseq) ++ "))"
     case CLsub{}:
       "LSUB \"\" \"*\""
     case CExamine{m}:
@@ -722,6 +762,8 @@ def cmd_str(+c: Cmd) -> String:
       e
     case CExpectWord{w}:
       w
+    case CExpectCapabilities{required}:
+      capability_names(required)
 
 # Scripts
 # -------
@@ -737,6 +779,8 @@ def is_expect(c: Cmd) -> Bool:
       True{}
     case CExpectWord{w}:
       True{}
+    case CExpectCapabilities{required}:
+      True{}
     case _:
       False{}
 
@@ -751,6 +795,8 @@ def script.line(c: Cmd, n: U32) -> String:
       "=EXPECT " ++ e
     case CExpectWord{w}:
       "=EXPECT-WORD " ++ w
+    case CExpectCapabilities{required}:
+      "=EXPECT-CAPABILITIES " ++ capability_names(required)
     case _:
       tag(n) ++ " " ++ cmd_str(c)
 
@@ -2189,3 +2235,4 @@ def storage_level(s: Storage) -> String:
 def overquota(lines: List<&2, RLine>) -> Bool:
   +text = String.to_upper(after_space(after_space(first_failure(lines))))
   String.eq(text, "[OVERQUOTA]") || String.starts_with(text, "[OVERQUOTA] ")
+
