@@ -267,8 +267,11 @@ def compare():
         if output != b"equivalence cases=3770 failures=0\n":
             raise RuntimeError(f"equivalence failed: {output!r}")
         REPORT["equivalence_cases"] = 3770
-        for size, shape in ((10, "chain"), (100, "chain"), (1000, "chain"),
-                            (1000, "cycle"), (1000, "prefix")):
+        # The retained baseline grows roughly cubically, so it is paired only at
+        # sizes it finishes within the per-run limit. Larger inputs run the
+        # candidate alone and must produce identical output on every run.
+        for size, shape in ((10, "chain"), (100, "chain"), (100, "cycle"), (100, "prefix"),
+                            (200, "chain"), (200, "cycle")):
             rows = {"baseline": [], "candidate": []}
             for pair in range(5):
                 outputs = {}
@@ -278,13 +281,25 @@ def compare():
                 if (not outputs["baseline"] or b"EXHAUSTED" in outputs["baseline"] or
                         outputs["baseline"] != outputs["candidate"]):
                     raise RuntimeError(f"paired output mismatch: {size} {shape} pair {pair}")
-            REPORT["cases"].append({"size": size, "shape": shape, "pairs": 5, "samples": rows,
-                "median_seconds": {side: statistics.median(r["wall_seconds"] for r in samples)
-                                   for side, samples in rows.items()},
-                "range_seconds": {side: [min(r["wall_seconds"] for r in samples),
-                                          max(r["wall_seconds"] for r in samples)]
-                                  for side, samples in rows.items()}})
+            REPORT["cases"].append(summary(size, shape, rows, pairs=5))
+        for size, shape in ((1000, "chain"), (1000, "cycle"), (1000, "prefix")):
+            rows, outputs = {"candidate": []}, set()
+            for _ in range(3):
+                output, sample = run([str(binary), "candidate", str(size), shape], seconds=90)
+                rows["candidate"].append(sample)
+                outputs.add(output)
+            if len(outputs) != 1 or not output or b"EXHAUSTED" in output:
+                raise RuntimeError(f"candidate scale output unstable: {size} {shape}")
+            REPORT["cases"].append(summary(size, shape, rows, pairs=0))
 
+
+def summary(size, shape, rows, pairs):
+    return {"size": size, "shape": shape, "pairs": pairs, "samples": rows,
+            "median_seconds": {side: statistics.median(r["wall_seconds"] for r in samples)
+                               for side, samples in rows.items()},
+            "range_seconds": {side: [min(r["wall_seconds"] for r in samples),
+                                      max(r["wall_seconds"] for r in samples)]
+                              for side, samples in rows.items()}}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
