@@ -38,6 +38,7 @@ type Charset is Data:
   Utf8{}
   SingleByte{index: Index}
   MultiByte{}
+  Iso2022Jp{}
   Replacement{}
 
 type Label is Data:
@@ -566,8 +567,8 @@ def labels() -> List<&2, Label>:
    Label{"cseucpkdfmtjapanese", MultiByte{}},
    Label{"euc-jp", MultiByte{}},
    Label{"x-euc-jp", MultiByte{}},
-   Label{"csiso2022jp", MultiByte{}},
-   Label{"iso-2022-jp", MultiByte{}},
+   Label{"csiso2022jp", Iso2022Jp{}},
+   Label{"iso-2022-jp", Iso2022Jp{}},
    Label{"csshiftjis", MultiByte{}},
    Label{"ms932", MultiByte{}},
    Label{"ms_kanji", MultiByte{}},

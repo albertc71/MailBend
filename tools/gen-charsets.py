@@ -17,9 +17,16 @@ GROUPS = {
     "Legacy multi-byte Japanese encodings": "MultiByte{}",
     "Legacy multi-byte Korean encodings": "MultiByte{}",
 }
-# Recognised encodings that are not decoded, so their text reads as one
+# Encodings read by name instead of by group. ISO-2022-JP is the one
+# multi-byte encoding whose decoder rejects the shift bytes ESC, SO and SI.
+# The others are recognised but not decoded, so their text reads as one
 # U+FFFD. x-user-defined is left out, so its labels keep the UTF-8 fallback.
-REPLACED = ("replacement", "UTF-16BE", "UTF-16LE")
+BY_NAME = {
+    "ISO-2022-JP": "Iso2022Jp{}",
+    "replacement": "Replacement{}",
+    "UTF-16BE": "Replacement{}",
+    "UTF-16LE": "Replacement{}",
+}
 
 
 # An explicit check, because python3 -O strips assert statements.
@@ -67,14 +74,15 @@ def pointers(text):
 
 
 def tables(texts):
-    labels, indexes = [], {}
+    labels, indexes, named = [], {}, set()
     for group in json.loads(texts["encodings.json"]):
         heading = group["heading"]
         for encoding in group["encodings"]:
-            if heading in GROUPS:
+            if encoding["name"] in BY_NAME:
+                charset = BY_NAME[encoding["name"]]
+                named.add(encoding["name"])
+            elif heading in GROUPS:
                 charset = GROUPS[heading]
-            elif encoding["name"] in REPLACED:
-                charset = "Replacement{}"
             else:
                 continue
             if charset is None:
@@ -84,6 +92,7 @@ def tables(texts):
             labels += [(label, charset) for label in encoding["labels"]]
     require(len({label for label, _ in labels}) == len(labels),
             "a label names more than one encoding")
+    require(named == set(BY_NAME), "an encoding in BY_NAME is not in encodings.json")
     return labels, indexes
 
 
@@ -96,7 +105,8 @@ def render():
              "type Index is Data:"]
     lines += [f"  {constructor(index)}{{}}" for index in indexes]
     lines += ["", "# How text in a labelled charset is read.", "type Charset is Data:",
-              "  Utf8{}", "  SingleByte{index: Index}", "  MultiByte{}", "  Replacement{}",
+              "  Utf8{}", "  SingleByte{index: Index}", "  MultiByte{}", "  Iso2022Jp{}",
+              "  Replacement{}",
               "", "type Label is Data:", "  Label{name: String, charset: Charset}"]
     for index, table in indexes.items():
         escaped = [f"\\u{{{table.get(pointer, 0xFFFD):X}}}" for pointer in range(128)]

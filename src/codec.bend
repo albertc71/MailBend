@@ -317,19 +317,20 @@ def cp1252_code(+n: U32) -> U32:
   cp1252_code.if(between(n, 128, 159), n)
 
 # A byte of a multi-byte charset, which is not decoded: ASCII stays, and any
-# other byte, or an ISO-2022 shift byte (ESC, SO or SI), reads as U+FFFD, so
-# the text never passes as completely read.
-def multi_byte_decode.char(+c: Char) -> Char:
+# other byte reads as U+FFFD, so the text never passes as completely read.
+# With `shifts`, as in ISO-2022-JP, the shift bytes ESC, SO and SI read as
+# U+FFFD too.
+def multi_byte_decode.char(shifts: Bool, +c: Char) -> Char:
   +b = u(c)
-  shift = U32.is_eq(b, 27) || between(b, 14, 15)
+  shift = shifts && (U32.is_eq(b, 27) || between(b, 14, 15))
   Bool.pick(Char, U32.is_lt(b, 128) && Bool.not(shift), c, repl())
 
-def multi_byte_decode.go(bytes: String, out: String) -> String:
+def multi_byte_decode.go(bytes: String, +shifts: Bool, out: String) -> String:
   match bytes:
     case SNil{}:
       String.reverse(out)
     case SCon{c, t}:
-      multi_byte_decode.go(t, SCon{multi_byte_decode.char(c), out})
+      multi_byte_decode.go(t, shifts, SCon{multi_byte_decode.char(shifts, c), out})
 
 # Text in a charset that is not decoded at all, such as ISO-2022-KR or
 # UTF-16, reads as one U+FFFD.
@@ -379,7 +380,9 @@ def charset_decode.as(cs: CS.Charset, bytes: String) -> String:
     case CS.SingleByte{i}:
       single_byte_decode(i, bytes)
     case CS.MultiByte{}:
-      multi_byte_decode.go(bytes, "")
+      multi_byte_decode.go(bytes, False{}, "")
+    case CS.Iso2022Jp{}:
+      multi_byte_decode.go(bytes, True{}, "")
     case CS.Replacement{}:
       replacement_decode(bytes)
 
