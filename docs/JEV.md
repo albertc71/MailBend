@@ -264,8 +264,9 @@ well-known prefix (AWS, Google, GitHub, GitLab, Slack, Stripe, Anthropic,
 OpenAI, npm) and password lines (`Password: ...` with a digit, also when
 quoted with `>`). It reads the header fields, the body, attachment names,
 every text part of the attachments and of a forwarded original, the headers
-of attached or forwarded messages, and, best effort, every other part's
-bytes; compressed formats are not inspected.
+of attached or forwarded messages, and, best effort, the first 1 MB of the
+bytes of every other part taken together; compressed formats are not
+inspected.
 
 An attached message, including an implicit `multipart/digest` child, must use
 a supported Content-Transfer-Encoding before the scan opens it. An unsupported

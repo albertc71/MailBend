@@ -33,9 +33,14 @@ def scan_name(s: Scan) -> String:
 # Limits
 # ------
 
-# The most text the scan reads, in characters: 1 MB. The bytes of parts
-# that are not text are read in what is left of it.
+# The most text the scan reads, in characters: 1 MB.
 def scan_limit() -> Nat:
+  1048576n
+
+# The most bytes the scan reads of the parts that are not text, all of them
+# together in the order they come: 1 MB, whatever the length of the text, so
+# that a long text cannot hide the end of an attachment.
+def bytes_limit() -> Nat:
   1048576n
 
 # The most parts the scan opens or reads; a message with more is
@@ -509,9 +514,9 @@ def secret_scan.fin(missed: String) -> Scan:
     case SCon{h, t}:
       Incomplete{SCon{h, t}}
 
-# The bytes of the parts that are not text, read last in what is left of
-# the budget, `r` being what reading the previous ones (in `part`) gave. A
-# find is Found, but bytes past the budget are not missed: most such parts
+# The bytes of the parts that are not text, read last within bytes_limit,
+# `r` being what reading the previous ones (in `part`) gave. A find is
+# Found, but bytes past bytes_limit are not missed: most such parts
 # (PDF, images, archives) are compressed, so their text cannot be read
 # anyway. Only Bytes pieces are kept for last.
 def secret_scan.last(ps: List<&2, Piece>, r: Reading, part: String, missed: String) -> Scan:
@@ -531,7 +536,7 @@ def secret_scan.go(fuel: Nat, s: Scanning) -> Scan:
     case _ Hit{part}:
       Found{part}
     case _ Next{Nil{}, later, left, missed}:
-      secret_scan.last(List.reverse(&2, Piece, later), Read{left}, "", missed)
+      secret_scan.last(List.reverse(&2, Piece, later), Read{bytes_limit()}, "", missed)
     case 0n Next{p <> t, later, left, missed}:
       Incomplete{"it has too many parts"}
     case 1n+f Next{p <> t, later, left, missed}:
