@@ -1304,9 +1304,9 @@ When a message has no plain text part, `text` is read from the HTML in two
 ways. Up to the first `<svg>`, `<math>`, `<select>` or `<noscript>` start tag
 or `<![CDATA[` section, it is read as a browser's HTML tokenizer reads it, so
 it holds the text a browser parses from the markup. The content of `<title>`,
-`<style>`, `<script>` and `<iframe>`, comments and attribute values are left
-out, block elements and `<br>` start new lines, and `<pre>` keeps its
-whitespace. CSS is not applied, so text that styles hide is kept. Character
+`<style>`, `<script>`, `<iframe>`, `<noembed>` and `<noframes>`, comments and
+attribute values are left out, block elements and `<br>` start new lines, and
+`<pre>` keeps its whitespace. CSS is not applied, so text that styles hide is kept. Character
 references are decoded when they are numeric or one of the common names (such
 as `&amp;`, `&nbsp;` and `&mdash;`) and end with `;`; others stay as written.
 From there on, what a browser shows depends on the element tree, so `text` is
