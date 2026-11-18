@@ -1737,10 +1737,23 @@ def complete_text_is_whole.if(
               Empty.absurd({False{} == False{} : Bool} & {False{} == True{} : Bool},
                 partial_is_not_complete(e))
 
+# text_of.fin's cut is false only when no part or fetch was cut (`lost`)
+# and the HTML part held no U+FFFD (`undecoded`).
+def complete_text_is_whole.fin(+lost: Bool, undecoded: Bool, same: Bool,
+  e: {Bool.or(lost, undecoded) == False{} : Bool} & {same == True{} : Bool}
+) -> {lost == False{} : Bool} & {undecoded == False{} : Bool} & {same == True{} : Bool}:
+  (+kept, fits) = e
+  (or_false_left(lost, undecoded, kept), or_false_right(lost, undecoded, kept), fits)
+
 def Laws.complete_text_is_whole(text, html, atts, left_out, cut, complete):
-  +shown = Jev.seen_text(M.Parts{text, html, atts})
-  complete_text_is_whole.if(cut || left_out, String.contains(shown, SCon{C.repl(), SNil{}}),
-    String.eq(M.utf8_prefix(shown, Jev.max_text()), shown), complete)
+  +parts : M.Parts = M.Parts{text, html, atts}
+  +shown = Jev.seen_text(parts)
+  +lost = cut || left_out
+  +undecoded = Jev.html_undecodable(parts)
+  +same = String.eq(M.utf8_prefix(shown, Jev.max_text()), shown)
+  complete_text_is_whole.fin(lost, undecoded, same,
+    complete_text_is_whole.if(lost || undecoded, String.contains(shown, SCon{C.repl(), SNil{}}), same,
+      complete))
 
 def Laws.partial_text_annotation_says_so(uid, fields, flags, date, size, atts, a, none):
   ({==}, {==})

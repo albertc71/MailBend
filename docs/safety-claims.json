@@ -903,7 +903,7 @@
     "search_undraft_renders_exactly": "Pins only the fixed UNDRAFT search atom; it does not prove tool validation, provider matching, or runtime read-only behavior.",
     "awaiting_incomplete_is_unknown": "Awaiting-reply classification keeps incomplete evidence without a positive reply unknown; this is an evidence-status contract, not a mailbox-effect or send/delete safety claim.",
     "awaiting_disabled_filters_keep_candidate": "Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim.",
-    "complete_text_is_whole": "Body-mode Jev text is Complete only when nothing was cut or left out and it holds the whole text part and the HTML part as text; this annotation-coverage contract has no public README claim, and it does not prove what the native helper sends.",
+    "complete_text_is_whole": "Body-mode Jev text is Complete only when nothing was cut or left out and the HTML part, markup included, holds no U+FFFD, and then it holds the whole text part and the HTML part as text; this annotation-coverage contract has no public README claim, and it does not prove what the native helper sends.",
     "partial_text_annotation_says_so": "A body-mode read annotation of an answered message whose Jev text is Partial reports partial coverage with the text reason alone; this annotation-coverage contract has no public README claim, and it covers neither the HTML markup reason, the delete report nor what the native helper sends."
   }
 }

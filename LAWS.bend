@@ -1442,9 +1442,9 @@ law headers_state_has_no_body:
     : J.Json}
 
 # LAW: for every message content, Jev's text is Complete only when no part
-# was left out and the fetch was whole, and then it is the whole text/plain
-# part, quoted and post-signature lines included, followed by the whole
-# HTML part as text
+# was left out, the fetch was whole and the HTML part, markup included,
+# holds no U+FFFD, and then it is the whole text/plain part, quoted and
+# post-signature lines included, followed by the whole HTML part as text
 law complete_text_is_whole:
   for text: String
   for html: String
@@ -1454,6 +1454,7 @@ law complete_text_is_whole:
   for complete: {Jev.text_whole(Jev.text_of.fin((M.Parts{text, html, atts}, left_out), cut)) ==
     Jev.Complete{} : Jev.Completeness}
   ({cut || left_out == False{} : Bool} &
+   {String.contains(html, SCon{C.repl(), SNil{}}) == False{} : Bool} &
    {String.eq(Jev.text_shown(Jev.text_of.fin((M.Parts{text, html, atts}, left_out), cut)),
       text ++ Jev.html_heading(text, html) ++ M.html_text(html)) == True{} : Bool})
 

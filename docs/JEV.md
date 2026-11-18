@@ -65,8 +65,8 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   are not sent, nor are comments, nor any text after a stray `<` up to the
   next `>`. Runs of spaces and tabs become one space, and the common
   entities are decoded. A message whose text is longer, holds an
-  undecodable byte, or had a second text or HTML part left out counts as
-  only partly seen; see [what `checked` covers](#what-checked-covers).
+  undecodable byte (even one only in HTML markup that is not sent), or had
+  a second text or HTML part left out counts as only partly seen; see [what `checked` covers](#what-checked-covers).
 - With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` also sends PNG and JPEG
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools
@@ -151,9 +151,10 @@ a `mail_delete` result add `coverage: "partial"` when Jev was sent less of
 the message text than the result shows, with a reason for each gap:
 
 - "Not all of the message text was included in the Jev request." Jev's
-  text stopped at the 16 KB cap or at the request budget, holds an
-  undecodable byte (shown as U+FFFD), or left out a second text or HTML
-  part, parts nested too deep, or the rest of a cut fetch. A message Jev
+  text stopped at the 16 KB cap or at the request budget, the text or
+  HTML part holds an undecodable byte (shown as U+FFFD; in the HTML part,
+  markup included), or Jev's text left out a second text or HTML part,
+  parts nested too deep, or the rest of a cut fetch. A message Jev
   did not answer about is `unchecked` with its own reason instead. A
   checked selected part always gives this reason: Jev was sent only that
   part's readable text, or a placeholder for a part that is not text.

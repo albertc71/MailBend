@@ -201,9 +201,16 @@ def text_of.put(+shown: String, cut: Bool) -> Text:
   partial = cut || undecodable || Bool.not(String.eq(capped, shown))
   MessageText{capped, Bool.pick(Completeness, partial, Partial{}, Complete{})}
 
+# Whether the HTML part held a character that did not decode. M.html_text
+# drops markup, and with it a U+FFFD inside a tag or a comment, so this
+# asks the part itself.
+def html_undecodable(p: M.Parts) -> Bool:
+  M.Parts{_, html, _} = p
+  String.contains(html, SCon{C.repl(), SNil{}})
+
 def text_of.fin(kept: M.Parts & Bool, cut: Bool) -> Text:
-  (p, left_out) = kept
-  text_of.put(seen_text(p), cut || left_out)
+  (+p, left_out) = kept
+  text_of.put(seen_text(p), (cut || left_out) || html_undecodable(p))
 
 def text_of.go(walk: List<&2, M.Leaf> & Bool, fetch_cut: Bool) -> Text:
   (ls, nest_cut) = walk

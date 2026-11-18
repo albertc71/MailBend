@@ -36,6 +36,10 @@ def headers() -> String:
 def full(text: String) -> String:
   "Content-Type: text/plain; charset=utf-8\r\n\r\n" ++ text
 
+# A whole message whose only part is the HTML `markup`.
+def html(markup: String) -> String:
+  "Content-Type: text/html; charset=utf-8\r\n\r\n" ++ markup
+
 # A multipart message of the subtype `sub`: a text/plain part, then a part
 # of type `second`.
 def two_parts(sub: String, second: String) -> String:
@@ -98,6 +102,8 @@ def check_facts() -> IO(Unit):
       1000)))
     IO.print(show_text(Jev.text_of(msg(8, 300, alternative_related(), I.VNil{}), 1000)))
     IO.print(show_text(Jev.text_of(msg(8, 300, nested(8n), I.VNil{}), 1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 60, html("<p title=\"caf�\">OK</p>\r\n"), I.VNil{}), 1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 60, html("<p>OK</p><!-- caf� -->\r\n"), I.VNil{}), 1000)))
     IO.print(Nat.show(String.length(Jev.escaped_prefix("aé\"b", 4))) ++ " " ++
       Jev.escaped_prefix("aé\"b", 3) ++ " [" ++ Jev.escaped_prefix("\"x", 1) ++ "] " ++
       Jev.escaped_prefix("abc", 99))
@@ -624,6 +630,10 @@ def main() -> IO(Unit):
 #|[HTML part as text]
 #| first ] complete
 #|[] partial
+#|[ OK 
+#|] partial
+#|[ OK 
+#|] partial
 #|2 aé [] abc
 #|10
 #|none___ none

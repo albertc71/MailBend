@@ -186,101 +186,101 @@ the mail provider, or the agent. See [proof limits](../README.md#what-the-proofs
 ## Jev
 
 - [`headers_state_has_no_body`](../LAWS.bend#L1429). for every message and text, the headers-mode state is the header facts alone
-- [`complete_text_is_whole`](../LAWS.bend#L1448). for every message content, Jev's text is Complete only when no part was left out and the fetch was whole, and then it is the whole text/plain part, quoted and post-signature lines included, followed by the whole HTML part as text
-- [`partial_text_annotation_says_so`](../LAWS.bend#L1463). for every message whose text Jev saw only in part and every answer, its body-mode read annotation says coverage is partial, with the text reason as its only reason
-- [`state_images_on_headers_is_state`](../LAWS.bend#L1481). for every ref list, adding images to a headers-mode state leaves it equal to state_of on headers
-- [`state_images_body_without_refs_is_state`](../LAWS.bend#L1498). a body-mode state with no image refs is state_of on body
-- [`cargo_of_without_images`](../LAWS.bend#L1515). entries whose used lists are empty build the plain request and no danger-zone header
-- [`entry_at_sends_no_images`](../LAWS.bend#L1523). an entry as the requests are built sends no still, for every content mode, message, text, question set and reserve; only Jev.entry_images, which classify alone calls, gives an entry stills
-- [`missing_answer_is_cautious`](../LAWS.bend#L1534). a missing answer reads as Missing, which the injection screen flags (Jev.suspects), suggests nothing and files it nowhere, whatever the key, candidates and none key
-- [`only_the_pinned_model_answers`](../LAWS.bend#L1549). only the pinned model's name counts as the model that answered: a reply with no model, with a model that is not a string, or with any other string does not, whatever that string is
-- [`unpinned_reply_is_no_answer`](../LAWS.bend#L1568). for every reply that the pinned model did not answer, and every entry list, category list and question count, the answers of mail_classify, mail_triage, deletes and reads (reply_of) and those of the send gate (outgoing_answers.put) are none, so each takes its cautious path
+- [`complete_text_is_whole`](../LAWS.bend#L1448). for every message content, Jev's text is Complete only when no part was left out, the fetch was whole and the HTML part, markup included, holds no U+FFFD, and then it is the whole text/plain part, quoted and post-signature lines included, followed by the whole HTML part as text
+- [`partial_text_annotation_says_so`](../LAWS.bend#L1464). for every message whose text Jev saw only in part and every answer, its body-mode read annotation says coverage is partial, with the text reason as its only reason
+- [`state_images_on_headers_is_state`](../LAWS.bend#L1482). for every ref list, adding images to a headers-mode state leaves it equal to state_of on headers
+- [`state_images_body_without_refs_is_state`](../LAWS.bend#L1499). a body-mode state with no image refs is state_of on body
+- [`cargo_of_without_images`](../LAWS.bend#L1516). entries whose used lists are empty build the plain request and no danger-zone header
+- [`entry_at_sends_no_images`](../LAWS.bend#L1524). an entry as the requests are built sends no still, for every content mode, message, text, question set and reserve; only Jev.entry_images, which classify alone calls, gives an entry stills
+- [`missing_answer_is_cautious`](../LAWS.bend#L1535). a missing answer reads as Missing, which the injection screen flags (Jev.suspects), suggests nothing and files it nowhere, whatever the key, candidates and none key
+- [`only_the_pinned_model_answers`](../LAWS.bend#L1550). only the pinned model's name counts as the model that answered: a reply with no model, with a model that is not a string, or with any other string does not, whatever that string is
+- [`unpinned_reply_is_no_answer`](../LAWS.bend#L1569). for every reply that the pinned model did not answer, and every entry list, category list and question count, the answers of mail_classify, mail_triage, deletes and reads (reply_of) and those of the send gate (outgoing_answers.put) are none, so each takes its cautious path
 
 ## Gates
 
-- [`send_veto_only_subtracts`](../LAWS.bend#L1590). for every allowlist, recipient list, sender and message, a send the secret scan found clean gets the allowlist's envelope unchanged when Jev is off or vetoed nothing, and no envelope when Jev vetoed it
-- [`delete_veto_only_subtracts`](../LAWS.bend#L1605). for every plan, a delete keeps its plan unchanged when Jev is off or vetoed nothing, and runs no command when Jev vetoed it
-- [`failure_blocks_outbound`](../LAWS.bend#L1615). when Jev could not decide, for every scan result, allowlist, recipient list, sender, message and plan, a send gets no envelope and a delete runs no command
-- [`secret_scan_blocks`](../LAWS.bend#L1631). a send in which the secret scan found a secret, or which it could not read in full, gets no envelope, whatever Jev decided and for every allowlist, recipient list, sender and message: only a clean scan can give one
-- [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1647). in headers mode, the request about an outgoing message is the same whatever its text, for every header field, attachment name, original and list of veto questions: TypeSafe never sees the body
+- [`send_veto_only_subtracts`](../LAWS.bend#L1591). for every allowlist, recipient list, sender and message, a send the secret scan found clean gets the allowlist's envelope unchanged when Jev is off or vetoed nothing, and no envelope when Jev vetoed it
+- [`delete_veto_only_subtracts`](../LAWS.bend#L1606). for every plan, a delete keeps its plan unchanged when Jev is off or vetoed nothing, and runs no command when Jev vetoed it
+- [`failure_blocks_outbound`](../LAWS.bend#L1616). when Jev could not decide, for every scan result, allowlist, recipient list, sender, message and plan, a send gets no envelope and a delete runs no command
+- [`secret_scan_blocks`](../LAWS.bend#L1632). a send in which the secret scan found a secret, or which it could not read in full, gets no envelope, whatever Jev decided and for every allowlist, recipient list, sender and message: only a clean scan can give one
+- [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1648). in headers mode, the request about an outgoing message is the same whatever its text, for every header field, attachment name, original and list of veto questions: TypeSafe never sees the body
 
 ## SMTP outcome evidence
 
-- [`smtp_unconfirmed_is_unknown`](../LAWS.bend#L1672). once DATA started without a final acknowledgement, or progress is missing, every exit code and server transcript remains unknown.
-- [`smtp_acceptance_survives_exit`](../LAWS.bend#L1681). a final DATA acceptance stays successful for every later process exit code; a failed QUIT or interruption cannot turn it into a refusal.
+- [`smtp_unconfirmed_is_unknown`](../LAWS.bend#L1673). once DATA started without a final acknowledgement, or progress is missing, every exit code and server transcript remains unknown.
+- [`smtp_acceptance_survives_exit`](../LAWS.bend#L1682). a final DATA acceptance stays successful for every later process exit code; a failed QUIT or interruption cannot turn it into a refusal.
 
 ## Read response projections
 
-- [`projection_keeps_nonbody`](../LAWS.bend#L1692). projection cannot omit a field other than body text, HTML or selected content.
-- [`response_body_fields_are_exact`](../LAWS.bend#L1701). the budget's body classifier cannot expand to safety or identity fields.
-- [`response_preserves_nonbody`](../LAWS.bend#L1708). fitting a non-body field preserves its complete value, consumes no allowance and never claims it was shortened. This includes Jev and cursor data.
-- [`prefix_is_prefix`](../LAWS.bend#L1717). every cut is an initial segment of the original scalar string.
-- [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1725). the actual cut conserves its allowance as natural numbers. This bounds the sum of each emitted scalar's JSON-escaped UTF-8 byte cost.
-- [`prefix_whole_when_scalar_room`](../LAWS.bend#L1734). enough room for all scalar escapes preserves the entire text and leaves exactly the unused natural-number allowance. Intermediate scalar-cost contract; see prefix_whole_when_room for wire weight.
+- [`projection_keeps_nonbody`](../LAWS.bend#L1693). projection cannot omit a field other than body text, HTML or selected content.
+- [`response_body_fields_are_exact`](../LAWS.bend#L1702). the budget's body classifier cannot expand to safety or identity fields.
+- [`response_preserves_nonbody`](../LAWS.bend#L1709). fitting a non-body field preserves its complete value, consumes no allowance and never claims it was shortened. This includes Jev and cursor data.
+- [`prefix_is_prefix`](../LAWS.bend#L1718). every cut is an initial segment of the original scalar string.
+- [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1726). the actual cut conserves its allowance as natural numbers. This bounds the sum of each emitted scalar's JSON-escaped UTF-8 byte cost.
+- [`prefix_whole_when_scalar_room`](../LAWS.bend#L1735). enough room for all scalar escapes preserves the entire text and leaves exactly the unused natural-number allowance. Intermediate scalar-cost contract; see prefix_whole_when_room for wire weight.
 
 ## Image admission budgets
 
-- [`image_used_only_with_clear_ref`](../LAWS.bend#L1747). binding a token either records it in both the corpus and Used fate, when absent from the corpus, or retries without changing either value.
-- [`image_admission_count_cap`](../LAWS.bend#L1762). a pure fold of the real admission step takes no more than four stills.
-- [`image_admission_byte_cap`](../LAWS.bend#L1769). the taken byte strings fit the request cap when their lengths are represented exactly by the U32 byte counter. The premise is explicit.
+- [`image_used_only_with_clear_ref`](../LAWS.bend#L1748). binding a token either records it in both the corpus and Used fate, when absent from the corpus, or retries without changing either value.
+- [`image_admission_count_cap`](../LAWS.bend#L1763). a pure fold of the real admission step takes no more than four stills.
+- [`image_admission_byte_cap`](../LAWS.bend#L1770). the taken byte strings fit the request cap when their lengths are represented exactly by the U32 byte counter. The premise is explicit.
 
 ## Policy and classifier soundness
 
-- [`store_classifies_as_writing`](../LAWS.bend#L1778). STORE has its exact mutating effect and is always classified as writing
-- [`copy_classifies_as_writing`](../LAWS.bend#L1787). COPY has its exact mutating effect and is always classified as writing
-- [`move_classifies_as_writing`](../LAWS.bend#L1795). MOVE has its exact mutating effect and is always classified as writing
-- [`expunge_classifies_as_writing`](../LAWS.bend#L1803). EXPUNGE has its exact mutating effect and is always classified as writing
-- [`append_classifies_as_writing`](../LAWS.bend#L1810). APPEND has its exact mutating effect and is always classified as writing
-- [`create_classifies_as_writing`](../LAWS.bend#L1819). CREATE has its exact mutating effect and is always classified as writing
-- [`rename_classifies_as_writing`](../LAWS.bend#L1826). RENAME has its exact mutating effect and is always classified as writing
-- [`subscribe_classifies_as_writing`](../LAWS.bend#L1834). SUBSCRIBE has its exact mutating effect and is always classified as writing
-- [`unsubscribe_classifies_as_writing`](../LAWS.bend#L1841). UNSUBSCRIBE has its exact mutating effect and is always classified as writing
-- [`select_classifies_as_writing`](../LAWS.bend#L1848). SELECT has its exact mutating effect and is always classified as writing
-- [`any_writes_checks_each_command`](../LAWS.bend#L1855). the plan classifier checks every command, not only the first one
-- [`draft_is_exact_append`](../LAWS.bend#L1863). saving a draft is exactly one APPEND of its message, marked Draft and Seen
-- [`refused_helper_is_not_lost`](../LAWS.bend#L1870). a helper that never started is not an uncertain mailbox change
-- [`sending_calls_are_exact`](../LAWS.bend#L1886). only Send and non-draft Reply or Forward calls send over SMTP
-- [`read_only_refuses_writes`](../LAWS.bend#L1892). read-only refuses every call whose operation is not read-only
-- [`drafts_only_refuses_sends`](../LAWS.bend#L1901). drafts-only refuses every call that sends over SMTP
-- [`jev_off_refuses_jev_calls`](../LAWS.bend#L1910). Jev-off refuses every operation that needs Jev
-- [`malformed_switch_is_bad`](../LAWS.bend#L1919). a Boolean switch outside the documented on and off values is bad
-- [`bad_read_only_rejects_config`](../LAWS.bend#L1931). a bad read-only switch rejects config, whatever the other settings are
-- [`bad_drafts_only_rejects_config`](../LAWS.bend#L1945). a bad drafts-only switch rejects config, whatever the other settings are
-- [`bad_typesafe_rejects_config`](../LAWS.bend#L1959). a bad typesafe switch rejects config, whatever the other settings are
-- [`bad_zero_retention_rejects_config`](../LAWS.bend#L1973). a bad zero-retention switch rejects config, whatever the other settings are
-- [`bad_images_rejects_config`](../LAWS.bend#L1987). a bad images switch rejects config, whatever the other settings are
-- [`resolved_role_names_selectable_folder`](../LAWS.bend#L2018). every resolved role names a selectable folder in the original listing
-- [`awaiting_incomplete_is_unknown`](../LAWS.bend#L2028). incomplete evidence without a positive reply never confirms absence.
-- [`contact_plans`](../LAWS.bend#L2033). contact scans read only, and header fetches pin the discovered generation.
+- [`store_classifies_as_writing`](../LAWS.bend#L1779). STORE has its exact mutating effect and is always classified as writing
+- [`copy_classifies_as_writing`](../LAWS.bend#L1788). COPY has its exact mutating effect and is always classified as writing
+- [`move_classifies_as_writing`](../LAWS.bend#L1796). MOVE has its exact mutating effect and is always classified as writing
+- [`expunge_classifies_as_writing`](../LAWS.bend#L1804). EXPUNGE has its exact mutating effect and is always classified as writing
+- [`append_classifies_as_writing`](../LAWS.bend#L1811). APPEND has its exact mutating effect and is always classified as writing
+- [`create_classifies_as_writing`](../LAWS.bend#L1820). CREATE has its exact mutating effect and is always classified as writing
+- [`rename_classifies_as_writing`](../LAWS.bend#L1827). RENAME has its exact mutating effect and is always classified as writing
+- [`subscribe_classifies_as_writing`](../LAWS.bend#L1835). SUBSCRIBE has its exact mutating effect and is always classified as writing
+- [`unsubscribe_classifies_as_writing`](../LAWS.bend#L1842). UNSUBSCRIBE has its exact mutating effect and is always classified as writing
+- [`select_classifies_as_writing`](../LAWS.bend#L1849). SELECT has its exact mutating effect and is always classified as writing
+- [`any_writes_checks_each_command`](../LAWS.bend#L1856). the plan classifier checks every command, not only the first one
+- [`draft_is_exact_append`](../LAWS.bend#L1864). saving a draft is exactly one APPEND of its message, marked Draft and Seen
+- [`refused_helper_is_not_lost`](../LAWS.bend#L1871). a helper that never started is not an uncertain mailbox change
+- [`sending_calls_are_exact`](../LAWS.bend#L1887). only Send and non-draft Reply or Forward calls send over SMTP
+- [`read_only_refuses_writes`](../LAWS.bend#L1893). read-only refuses every call whose operation is not read-only
+- [`drafts_only_refuses_sends`](../LAWS.bend#L1902). drafts-only refuses every call that sends over SMTP
+- [`jev_off_refuses_jev_calls`](../LAWS.bend#L1911). Jev-off refuses every operation that needs Jev
+- [`malformed_switch_is_bad`](../LAWS.bend#L1920). a Boolean switch outside the documented on and off values is bad
+- [`bad_read_only_rejects_config`](../LAWS.bend#L1932). a bad read-only switch rejects config, whatever the other settings are
+- [`bad_drafts_only_rejects_config`](../LAWS.bend#L1946). a bad drafts-only switch rejects config, whatever the other settings are
+- [`bad_typesafe_rejects_config`](../LAWS.bend#L1960). a bad typesafe switch rejects config, whatever the other settings are
+- [`bad_zero_retention_rejects_config`](../LAWS.bend#L1974). a bad zero-retention switch rejects config, whatever the other settings are
+- [`bad_images_rejects_config`](../LAWS.bend#L1988). a bad images switch rejects config, whatever the other settings are
+- [`resolved_role_names_selectable_folder`](../LAWS.bend#L2019). every resolved role names a selectable folder in the original listing
+- [`awaiting_incomplete_is_unknown`](../LAWS.bend#L2029). incomplete evidence without a positive reply never confirms absence.
+- [`contact_plans`](../LAWS.bend#L2034). contact scans read only, and header fetches pin the discovered generation.
 
 ## Scalar wire bytes, and production image state-machine budgets
 
-- [`prefix_fits_allowance`](../LAWS.bend#L2050). The serialized escaped prefix fits its natural-number byte allowance without a counter-overflow premise.
-- [`image_bind_count_cap`](../LAWS.bend#L2057). The production image-binding transitions preserve the four-image cap from their empty seed.
-- [`image_bind_byte_cap`](../LAWS.bend#L2065). The production image-binding transitions preserve the stripped-byte cap under the explicit byte-counter premise.
-- [`prefix_whole_when_room`](../LAWS.bend#L2078). Enough unbounded wire-byte allowance preserves the whole string and exact remainder.
-- [`brief_preserves_selected_uids`](../LAWS.bend#L2088). Brief classification retains the selected UID sequence and its multiplicity.
-- [`brief_partitions_selected_uids`](../LAWS.bend#L2095). Brief classification assigns each selected item to exactly one group.
-- [`brief_plans_write_nothing`](../LAWS.bend#L2104). Brief header plans change no mailbox.
-- [`awaiting_disabled_filters_keep_candidate`](../LAWS.bend#L2110). Disabled awaiting-reply filters never remove a sampled candidate.
-- [`brief_complete_unseen_highwater`](../LAWS.bend#L2115). A complete unseen snapshot advances to its high-water boundary only after all selected items fit.
-- [`brief_partial_unseen_prefix`](../LAWS.bend#L2121). A partial unseen snapshot advances only through its retained prefix.
-- [`brief_arrivals_keep_prefix`](../LAWS.bend#L2127). An arrivals brief keeps its retained prefix and corresponding continuation.
-- [`json_serialized_bytes`](../LAWS.bend#L2135). The serializer and response-size counter agree modulo 2^32 for every JSON value.
-- [`brief_range_writes_nothing`](../LAWS.bend#L2140). A brief range-search plan changes no mailbox.
-- [`brief_range_wire`](../LAWS.bend#L2147). A brief range-search plan renders its exact UID interval and search mode.
-- [`brief_completed_has_no_continuation`](../LAWS.bend#L2152). A completed brief range has no continuation cursor.
-- [`brief_unseen_filter_interval`](../LAWS.bend#L2159). Unseen filtering keeps only UIDs in the requested interval.
+- [`prefix_fits_allowance`](../LAWS.bend#L2051). The serialized escaped prefix fits its natural-number byte allowance without a counter-overflow premise.
+- [`image_bind_count_cap`](../LAWS.bend#L2058). The production image-binding transitions preserve the four-image cap from their empty seed.
+- [`image_bind_byte_cap`](../LAWS.bend#L2066). The production image-binding transitions preserve the stripped-byte cap under the explicit byte-counter premise.
+- [`prefix_whole_when_room`](../LAWS.bend#L2079). Enough unbounded wire-byte allowance preserves the whole string and exact remainder.
+- [`brief_preserves_selected_uids`](../LAWS.bend#L2089). Brief classification retains the selected UID sequence and its multiplicity.
+- [`brief_partitions_selected_uids`](../LAWS.bend#L2096). Brief classification assigns each selected item to exactly one group.
+- [`brief_plans_write_nothing`](../LAWS.bend#L2105). Brief header plans change no mailbox.
+- [`awaiting_disabled_filters_keep_candidate`](../LAWS.bend#L2111). Disabled awaiting-reply filters never remove a sampled candidate.
+- [`brief_complete_unseen_highwater`](../LAWS.bend#L2116). A complete unseen snapshot advances to its high-water boundary only after all selected items fit.
+- [`brief_partial_unseen_prefix`](../LAWS.bend#L2122). A partial unseen snapshot advances only through its retained prefix.
+- [`brief_arrivals_keep_prefix`](../LAWS.bend#L2128). An arrivals brief keeps its retained prefix and corresponding continuation.
+- [`json_serialized_bytes`](../LAWS.bend#L2136). The serializer and response-size counter agree modulo 2^32 for every JSON value.
+- [`brief_range_writes_nothing`](../LAWS.bend#L2141). A brief range-search plan changes no mailbox.
+- [`brief_range_wire`](../LAWS.bend#L2148). A brief range-search plan renders its exact UID interval and search mode.
+- [`brief_completed_has_no_continuation`](../LAWS.bend#L2153). A completed brief range has no continuation cursor.
+- [`brief_unseen_filter_interval`](../LAWS.bend#L2160). Unseen filtering keeps only UIDs in the requested interval.
 
 ## Client-side prompts
 
-- [`hook_never_allows_or_denies`](../LAWS.bend#L2182). every bounded event produces either an ask decision or no decision
-- [`hook_real_send_asks`](../LAWS.bend#L2187). every real send that is not an exact Boolean dry run asks
-- [`hook_real_delete_asks`](../LAWS.bend#L2195). every permanent delete that is not an exact Boolean dry run asks
-- [`hook_printed_output_contract`](../LAWS.bend#L2217). actual printed output is empty or exactly the specified ask envelope
-- [`hook_unparseable_input_asks`](../LAWS.bend#L2222). unparseable input prints an ask decision, whether within or over the cap
-- [`hook_oversized_input_asks`](../LAWS.bend#L2228). input over the byte cap prints an ask decision regardless of its contents
-- [`hook_unknown_tool_asks`](../LAWS.bend#L2234). an unrecognized operation prints an ask decision regardless of its arguments
-- [`hook_missing_name_asks`](../LAWS.bend#L2242). a missing or non-string tool name prints an ask decision for any input
-- [`hook_wrong_kind_asks`](../LAWS.bend#L2263). every missing or non-PreToolUse kind prints ask for any event payload
-- [`hook_nonobject_input_asks`](../LAWS.bend#L2270). a present tool name with missing or non-object input prints ask
+- [`hook_never_allows_or_denies`](../LAWS.bend#L2183). every bounded event produces either an ask decision or no decision
+- [`hook_real_send_asks`](../LAWS.bend#L2188). every real send that is not an exact Boolean dry run asks
+- [`hook_real_delete_asks`](../LAWS.bend#L2196). every permanent delete that is not an exact Boolean dry run asks
+- [`hook_printed_output_contract`](../LAWS.bend#L2218). actual printed output is empty or exactly the specified ask envelope
+- [`hook_unparseable_input_asks`](../LAWS.bend#L2223). unparseable input prints an ask decision, whether within or over the cap
+- [`hook_oversized_input_asks`](../LAWS.bend#L2229). input over the byte cap prints an ask decision regardless of its contents
+- [`hook_unknown_tool_asks`](../LAWS.bend#L2235). an unrecognized operation prints an ask decision regardless of its arguments
+- [`hook_missing_name_asks`](../LAWS.bend#L2243). a missing or non-string tool name prints an ask decision for any input
+- [`hook_wrong_kind_asks`](../LAWS.bend#L2264). every missing or non-PreToolUse kind prints ask for any event payload
+- [`hook_nonobject_input_asks`](../LAWS.bend#L2271). a present tool name with missing or non-object input prints ask
