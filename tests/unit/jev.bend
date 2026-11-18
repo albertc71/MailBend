@@ -601,15 +601,28 @@ def main() -> IO(Unit):
 #|{"uid":7,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":"unknown"}
 #|{"uid":7,"from":"Ann <a@x.com>","to":"me@x.com","cc":"","subject":"Café","date":"","list-id":"<news.x.com>","list-unsubscribe":"","auto-submitted":"","precedence":"bulk","attachments":"unknown","text":"the text"}
 #|[Hi
-#|there] complete
+#|> quoted
+#|there
+#|--
+#|Ann
+#|] complete
 #|[Hi
 #|] partial
 #|[Caf�
 #|] partial
 #|[first] partial
-#|[first] complete
-#|[first] partial
-#|[first] complete
+#|[first
+#|
+#|[HTML part as text]
+#|second] complete
+#|[first
+#|
+#|[HTML part as text]
+#|second] complete
+#|[first
+#|
+#|[HTML part as text]
+#| first ] complete
 #|[] partial
 #|2 aé [] abc
 #|10

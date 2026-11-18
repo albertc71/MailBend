@@ -196,8 +196,14 @@ def main() -> IO(Unit):
 #||message/rfc822|exact=True
 #|Jev [] complete
 #|Jev [outer] complete
-#|Jev [outer] complete
-#|Jev [outer] partial
+#|Jev [outer
+#|
+#|[HTML part as text]
+#| outer ] complete
+#|Jev [outer
+#|
+#|[HTML part as text]
+#| other ] complete
 #|Jev [] complete
 #|Jev [] partial
 #|encoded inner header found
