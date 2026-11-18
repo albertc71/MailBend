@@ -435,13 +435,13 @@ def unreadable_if(missed: Bool, reason: String) -> List<&2, Piece>:
       []
 
 # Each header field's value with its RFC 2047 encoded words decoded, one
-# per line; with `raw`, each word gives its bytes before charset decoding.
-def decoded_values(fs: List<&2, M.Hdr>, +raw: Bool) -> String:
+# per line; with `as_utf8`, each word is read as UTF-8 whatever its charset.
+def decoded_values(fs: List<&2, M.Hdr>, +as_utf8: Bool) -> String:
   match fs:
     case Nil{}:
       ""
     case M.Hdr{name, value} <> t:
-      M.decode_words(value, raw) ++ "\n" ++ decoded_values(t, raw)
+      M.decode_words(value, as_utf8) ++ "\n" ++ decoded_values(t, as_utf8)
 
 # Whether a field holds an encoded word in a charset that is not decoded.
 def replaced_fields(fs: List<&2, M.Hdr>) -> Bool:
@@ -464,16 +464,17 @@ def message_pieces.put(
       Plain{"the decoded header of " ++ part, decoded_values(hs, False{})}],
     unreadable_if(replaced_fields(hs),
       "an encoded word in the header of " ++ part ++ " cannot be decoded"),
-    [Plain{"the encoded words in the header of " ++ part, decoded_values(hs, True{})}],
+    [Plain{"the encoded words read as UTF-8 in the header of " ++ part,
+      decoded_values(hs, True{})}],
     leaves_pieces(ls, forwards, part),
     unreadable_if(cut, part ++ " nests its parts more than " ++ Nat.show(M.multipart_limit()) ++
       " levels deep")])
 
 # A forwarded message: its header section, read as text (so a message with
 # no blank line is read whole), with its values decoded and with its encoded
-# words' bytes, so that no charset hides a word from the rules; then its
-# single parts. An encoded word in a charset that is not decoded, or a part
-# nested past M.multipart_limit, is missed.
+# words read as UTF-8, so that no charset label hides a word from the rules;
+# then its single parts. An encoded word in a charset that is not decoded, or
+# a part nested past M.multipart_limit, is missed.
 def message_pieces(part: String, +raw: String, forwards: Nat) -> List<&2, Piece>:
   message_pieces.put(part, M.head_of(M.split(raw)), forwards, M.message_leaves.cut(raw))
 

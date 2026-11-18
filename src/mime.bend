@@ -339,20 +339,20 @@ def ew_charset(ps: List<&2, String>, original: String) -> String:
     case _:
       original
 
-# An encoded word's bytes read in `charset`, or kept as they are when `raw`.
-def ew_text(raw: Bool, charset: String, bytes: String) -> String:
-  match raw:
+# An encoded word's bytes read in `charset`, or as UTF-8 when `as_utf8`.
+def ew_text(as_utf8: Bool, charset: String, bytes: String) -> String:
+  match as_utf8:
     case True{}:
-      bytes
+      C.utf8_decode(bytes)
     case False{}:
       C.charset_decode(charset, bytes)
 
 # "=?charset?enc?text?=" split at '?' to text (see ew_text); anything else
 # is the raw word read as UTF-8.
-def ew_parts(ps: List<&2, String>, word: String, raw: Bool) -> String:
+def ew_parts(ps: List<&2, String>, word: String, as_utf8: Bool) -> String:
   match ps:
     case "=" <> +cs <> +enc <> text <> "=" <> Nil{}:
-      ew_text(raw, ew_charset(header_split(cs, '*'), cs),
+      ew_text(as_utf8, ew_charset(header_split(cs, '*'), cs),
         ew_bytes(String.eq(enc, "B") || String.eq(enc, "b"), text))
     case _:
       C.utf8_decode(word)
@@ -361,15 +361,15 @@ def is_ew(+w: String) -> Bool:
   String.starts_with(w, "=?") && String.ends_with(w, "?=")
 
 # A word to text; `encoded` says whether it looks like an encoded word.
-def ew_word(+w: String, encoded: Bool, raw: Bool) -> String:
+def ew_word(+w: String, encoded: Bool, as_utf8: Bool) -> String:
   match encoded:
     case True{}:
-      ew_parts(header_split(w, '?'), w, raw)
+      ew_parts(header_split(w, '?'), w, as_utf8)
     case False{}:
       C.utf8_decode(w)
 
 def decode_words.go(
-  ws: List<&2, String>, prev_ew: Bool, first: Bool, +raw: Bool, +out: String
+  ws: List<&2, String>, prev_ew: Bool, first: Bool, +as_utf8: Bool, +out: String
 ) -> String:
   match ws:
     case Nil{}:
@@ -377,7 +377,8 @@ def decode_words.go(
     case +w <> t:
       +encoded = is_ew(w)
       out = Bool.pick(String, first || (prev_ew && encoded), out, SCon{' ', out})
-      decode_words.go(t, encoded, False{}, raw, String.reverse.go(ew_word(w, encoded, raw), out))
+      decode_words.go(t, encoded, False{}, as_utf8,
+        String.reverse.go(ew_word(w, encoded, as_utf8), out))
 
 def tab_to_space.go(s: String, out: String) -> String:
   match s:
@@ -392,11 +393,11 @@ def tab_to_space(s: String) -> String:
 def header_words(v: String) -> List<&2, String>:
   header_split(tab_to_space(v), ' ')
 
-# A raw header value with its encoded words decoded, to text or, with `raw`,
-# only to their bytes; raw 8-bit is read as UTF-8. Space and tab are both
-# linear whitespace between words.
-def decode_words(v: String, raw: Bool) -> String:
-  decode_words.go(header_words(v), False{}, True{}, raw, "")
+# A raw header value with its encoded words decoded in their charsets or,
+# with `as_utf8`, read as UTF-8 whatever their charsets; raw 8-bit is read
+# as UTF-8. Space and tab are both linear whitespace between words.
+def decode_words(v: String, as_utf8: Bool) -> String:
+  decode_words.go(header_words(v), False{}, True{}, as_utf8, "")
 
 def decode_header(v: String) -> String:
   decode_words(v, False{})
