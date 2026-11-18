@@ -10,10 +10,10 @@ REPLACED_REASON = ("The message holds a replacement character (U+FFFD), so MailB
 MARKUP_REASON = "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
 
 
-def message(uid, content_type, body):
+def message(uid, content_type, body, subject=None):
     return {"uid": uid, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000",
             "raw": f"Message-ID: <coverage{uid}@example.com>\r\nFrom: dana@example.com\r\n"
-                   f"To: tester@example.com\r\nSubject: Coverage {uid}\r\nMIME-Version: 1.0\r\n"
+                   f"To: tester@example.com\r\nSubject: {subject or f'Coverage {uid}'}\r\nMIME-Version: 1.0\r\n"
                    f"Content-Type: {content_type}\r\n\r\n{body}"}
 
 
@@ -48,6 +48,14 @@ UNDECODED_MARKUP = {
 # Markup whose ">" inside an attribute value or a comment a converter may
 # take for the end of the tag or comment.
 STRAY_CLOSE = message(10, HTML, '<p title="a > PRIVATE">OK</p><!-- x > COMMENT -->\r\n')
+# Plain text that fills Jev's 16 KB text cap before its HTML alternative.
+HTML_PAST_CAP = message(11, 'multipart/alternative; boundary="a"',
+                        "--a\r\nContent-Type: text/plain\r\n\r\n" + "x" * 16384 + "\r\n"
+                        "--a\r\nContent-Type: text/html\r\n\r\n<p>HTMLONLY</p>\r\n--a--\r\n")
+# Header facts too large for any request, so Jev is never asked about it.
+UNASKED_UNDECODABLE = message(12, "text/plain; charset=utf-8", "Caf\xff au lait\r\n", subject="x" * 40000)
+# An open deadline, which Jev would keep.
+DEADLINE = message(13, PLAIN, "Please return the signed form before the deadline on Friday.\r\n")
 
 
 def partial(jev, reason):
@@ -65,7 +73,8 @@ def sent_text(states):
 def run(t, work):
     fixture = copy.deepcopy(t.FIX)
     fixture["mailboxes"]["INBOX"]["messages"] = (list(HIDDEN.values()) + [m for m, _, _ in UNSEEN.values()]
-                                                 + [UNDECODABLE] + list(UNDECODED_MARKUP.values()) + [STRAY_CLOSE])
+                                                 + [UNDECODABLE] + list(UNDECODED_MARKUP.values())
+                                                 + [STRAY_CLOSE, HTML_PAST_CAP, UNASKED_UNDECODABLE, DEADLINE])
     key_file = t.typesafe_key_file(work)
     srv, ts = t.Server(work, fixture=fixture), t.TypeSafe(work)
 
@@ -136,6 +145,13 @@ def run(t, work):
         t.check("jev body coverage: a read of markup with a stray \">\" says Jev was sent converted text, "
                 "not the raw HTML", c == 0 and "PRIVATE" in got.get("html", "") and "COMMENT" in got.get("html", "")
                 and partial(got.get("jev", {}), MARKUP_REASON) and len(got["jev"]["reasons"]) == 1, (got, states))
+        c, got, states = asked("mail_get", {"uid": HTML_PAST_CAP["uid"]}, **t.BODY_MODE)
+        reasons = got.get("jev", {}).get("reasons", [])
+        t.check("jev body coverage: a read whose plain text fills Jev's text cap before the HTML claims nothing "
+                "about the HTML reaching Jev", c == 0 and "HTMLONLY" in got.get("html", "") and states
+                and "HTMLONLY" not in json.dumps(states) and partial(got.get("jev", {}), TEXT_REASON)
+                and MARKUP_REASON in reasons and not any("was sent" in r for r in reasons),
+                (got.get("jev"), got.get("html"), "HTMLONLY" in json.dumps(states)))
         cut = UNSEEN["a line past Jev's 16 KB text cap"][0]["uid"]
         delete = {"uids": [cut], "uidvalidity": fixture["mailboxes"]["INBOX"]["uidvalidity"],
                   "confirm": "permanently-delete", "dry_run": True}
@@ -144,6 +160,14 @@ def run(t, work):
         t.check("jev body coverage: a delete of a message Jev saw only part of says so in its report",
                 states and "END" not in sent_text(states) and partial(r.get("jev", {}), TEXT_REASON)
                 and srv.st() == before, (r, states))
+        c, r, states = asked("mail_delete", {**delete, "uids": [DEADLINE["uid"], UNASKED_UNDECODABLE["uid"]]},
+                             **t.BODY_MODE)
+        jev = r.get("jev", {})
+        t.check("jev body coverage: a delete Jev vetoes reports text coverage only for the messages it answered "
+                "about", [e.get("uid") for state in states for e in state["emails"]] == [DEADLINE["uid"]]
+                and f"UID {DEADLINE['uid']} carries an open action" in r.get("error", "")
+                and jev.get("status") == "checked" and jev.get("decision") == "blocked" and "coverage" not in jev
+                and srv.st() == before, (jev, r.get("error")))
         c, got = t.tool(srv, "mail_get", {"uid": UNSEEN["an HTML comment"][0]["uid"]})
         t.check("jev off: mail_get returns the HTML and no annotation",
                 c == 0 and "NOTE" in got.get("html", "") and "jev" not in got, got)
