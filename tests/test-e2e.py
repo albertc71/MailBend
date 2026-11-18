@@ -7,6 +7,8 @@ never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 Use --tool-scenarios-only for the second transport run after a complete run.
+After the shared-server checks, the remaining scenario groups run in two
+halves at once; a child process runs the second half.
 """
 import argparse
 import base64
@@ -1008,6 +1010,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool-scenarios-only", action="store_true",
                         help="skip transport-fixed front-end checks already covered by a complete run")
+    parser.add_argument("--second-half", action="store_true",
+                        help="run only the second half of the scenario groups, as a run's child process does")
     args = parser.parse_args()
     work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
                             (str(ROOT / "build") if (ROOT / "build").exists() else None))
@@ -1015,7 +1019,10 @@ def main():
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
         try:
-            run_all(work, tool_scenarios_only=args.tool_scenarios_only)
+            if args.second_half:
+                second_half(work)
+            else:
+                run_all(work, tool_scenarios_only=args.tool_scenarios_only)
         finally:
             try:
                 mime_oracle.check_captured(composed_messages, check)
@@ -1035,94 +1042,127 @@ def main():
     leaked = [o for o in outputs if PASSWORD in o]
     check("password never appears in any tool output", not leaked, f"{len(leaked)} matching outputs")
     failed = [n for n, ok in results if not ok]
-    print(f"e2e: {len(results) - len(failed)} passed, {len(failed)} failed")
+    print(f"e2e{' second half' if args.second_half else ''}: {len(results) - len(failed)} passed, "
+          f"{len(failed)} failed")
     sys.exit(1 if failed else 0)
+
+
+def timed(group, *args, **kwargs):
+    """Runs one scenario group, then prints how long it took."""
+    started = time.monotonic()
+    group(*args, **kwargs)
+    print(f"group {group.__name__}: {time.monotonic() - started:.1f} s", flush=True)
+
+
+def case_file(name):
+    """The scenario group in tests/<name>, run against this module."""
+    def group(work):
+        spec = importlib.util.spec_from_file_location(name.removesuffix(".py").replace("-", "_"),
+                                                      ROOT / "tests" / name)
+        cases = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cases)
+        cases.run(sys.modules[__name__], work)
+    group.__name__ = name
+    return group
+
+
+def run_halves(work):
+    """Runs the second half of the scenario groups in a child process, with
+    its own work directory, fake servers and end-of-run checks, while this
+    process runs the first half. A failure in either fails this run."""
+    with tempfile.TemporaryFile("w+") as log:
+        child = subprocess.Popen([sys.executable, str(ROOT / "tests/test-e2e.py"), "--second-half"],
+                                 stdout=log, stderr=subprocess.STDOUT, text=True)
+        try:
+            first_half(work)
+        finally:
+            code = child.wait()
+            log.seek(0)
+            sys.stdout.write(log.read())
+    check("second half of the scenario groups passed", code == 0, f"exit status {code}")
+
+
+def offline_posture():
+    posture = subprocess.run([sys.executable, str(ROOT / "tests/test-posture.py")],
+                             text=True, capture_output=True)
+    check("offline posture: gate matrix, redaction and denied IO boundaries", posture.returncode == 0,
+          posture.stdout + posture.stderr)
 
 
 def run_all(work, *, tool_scenarios_only=False):
     if not tool_scenarios_only:
-        mcp_headless()
-        posture = subprocess.run([sys.executable, str(ROOT / "tests/test-posture.py")],
-                                 text=True, capture_output=True)
-        check("offline posture: gate matrix, redaction and denied IO boundaries", posture.returncode == 0,
-              posture.stdout + posture.stderr)
-        setup_profiles(work)
-        setup_folder_suggestions(work)
-        setup_diagnostics(work)
-        provider_reports(work)
-    authentication_refusals(work, tool_scenarios_only=tool_scenarios_only)
+        timed(mcp_headless)
+        timed(offline_posture)
+        timed(setup_profiles, work)
+        timed(setup_folder_suggestions, work)
+        timed(setup_diagnostics, work)
+        timed(provider_reports, work)
+    timed(authentication_refusals, work, tool_scenarios_only=tool_scenarios_only)
     srv = Server(work)
     try:
-        reads(srv)
-        mutations(srv)
-        compose(srv)
+        timed(reads, srv)
+        timed(mutations, srv)
+        timed(compose, srv)
         if not tool_scenarios_only:
-            mcp(srv)
-            cli_front_end(srv)
-        read_only(srv)
-        failures(srv, work)
+            timed(mcp, srv)
+            timed(cli_front_end, srv)
+        timed(read_only, srv)
+        timed(failures, srv, work)
     finally:
         srv.stop()
-    quota_reporting(work)
-    reply_marking(work)
-    reply_marking_refusal(work)
-    reply_marking_cases(work)
-    reply_quoting(work)
-    reply_unicode_quoting(work)
-    authentication_login(work)
-    latin1_quotes(work)
-    outgoing_hidden_unicode(work)
-    fallback(work)
-    generic_folders(work)
-    important_folders(work)
-    folder_tools(work)
-    flag_tools(work)
-    send_safety(work)
-    smtp_outcomes(work)
-    implicit_smtp(work)
-    downloads(work)
-    whole_read_identity(work)
-    thread_classify_identity(work)
-    threads(work)
-    thread_discovery(work)
-    thread_discovery_failures(work)
-    thread_discovery_literals(work)
-    thread_discovery_reply_scope(work)
-    archive_threads(work)
-    awaiting_replies(work)
-    live_contacts(work)
-    flags_first_reads(work)
-    new_fetch_coverage(work)
-    dry_runs(work)
-    jev(work)
-    triage(work)
-    gates(work)
-    sign_in_html(work)
-    selected_parts(work)
-    selected_parts_errors(work)
+    run_halves(work)
 
-    search_flags(work)
-    search_pagination(work)
-    get_new_start_now(work)
-    refresh_known(work)
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("response_projection_cases",
-                                                  ROOT / "tests" / "response-projection-cases.py")
-    cases = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cases)
-    cases.run(sys.modules[__name__], work)
-    spec = importlib.util.spec_from_file_location("metadata_cases", ROOT / "tests/metadata-cases.py")
-    cases = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cases)
-    cases.run(sys.modules[__name__], work)
-    spec = importlib.util.spec_from_file_location("brief_cases", ROOT / "tests/brief-cases.py")
-    cases = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cases)
-    cases.run(sys.modules[__name__], work)
-    spec = importlib.util.spec_from_file_location("jev_coverage_cases", ROOT / "tests/jev-coverage-cases.py")
-    cases = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cases)
-    cases.run(sys.modules[__name__], work)
+
+# The halves take about the same time; add a new group to the shorter one.
+def first_half(work):
+    timed(quota_reporting, work)
+    timed(reply_marking, work)
+    timed(reply_marking_refusal, work)
+    timed(reply_marking_cases, work)
+    timed(reply_quoting, work)
+    timed(reply_unicode_quoting, work)
+    timed(authentication_login, work)
+    timed(latin1_quotes, work)
+    timed(outgoing_hidden_unicode, work)
+    timed(fallback, work)
+    timed(generic_folders, work)
+    timed(important_folders, work)
+    timed(folder_tools, work)
+    timed(flag_tools, work)
+    timed(send_safety, work)
+    timed(smtp_outcomes, work)
+    timed(implicit_smtp, work)
+    timed(downloads, work)
+    timed(whole_read_identity, work)
+    timed(thread_classify_identity, work)
+    timed(threads, work)
+    timed(thread_discovery, work)
+    timed(thread_discovery_failures, work)
+    timed(thread_discovery_literals, work)
+    timed(thread_discovery_reply_scope, work)
+    timed(archive_threads, work)
+    timed(awaiting_replies, work)
+    timed(live_contacts, work)
+    timed(flags_first_reads, work)
+    timed(new_fetch_coverage, work)
+    timed(dry_runs, work)
+
+
+def second_half(work):
+    timed(jev, work)
+    timed(triage, work)
+    timed(gates, work)
+    timed(sign_in_html, work)
+    timed(selected_parts, work)
+    timed(selected_parts_errors, work)
+    timed(search_flags, work)
+    timed(search_pagination, work)
+    timed(get_new_start_now, work)
+    timed(refresh_known, work)
+    timed(case_file("response-projection-cases.py"), work)
+    timed(case_file("metadata-cases.py"), work)
+    timed(case_file("brief-cases.py"), work)
+    timed(case_file("jev-coverage-cases.py"), work)
 
 
 def quota_reporting(work):

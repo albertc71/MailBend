@@ -155,7 +155,7 @@ jobs:
           fi
       - name: Unit tests
         run: |
-          sh tests/run-unit.sh
+          sh tests/run-unit.sh --jobs 2
           python3 tests/test-meet-removal.py --controls-only
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
@@ -332,11 +332,13 @@ jobs:
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Build
         run: scripts/install.sh
-      - name: Installed native ELF hardening and negative controls
+      # One test script per step, so each step's time is that script's time.
+      - name: Installed native ELF hardening
         if: matrix.suite == 'support'
-        run: |
-          python3 scripts/check-native-hardening.py
-          python3 tests/test-native-hardening.py
+        run: python3 scripts/check-native-hardening.py
+      - name: Native ELF hardening negative controls
+        if: matrix.suite == 'support'
+        run: python3 tests/test-native-hardening.py
       - name: MIME and internationalisation corpus
         if: matrix.suite == 'support'
         run: python3 tests/test-mime-corpus.py
@@ -355,32 +357,45 @@ jobs:
       - name: Credential-free demo boundaries and MCP flow
         run: python3 tests/test-demo.py
         if: matrix.suite == 'support'
+      - name: Credential-free filtered CLI discovery
+        if: matrix.suite == 'cli'
+        run: python3 tests/test-cli-tools.py
+      - name: Offline Claude hook input and prompt contract
+        if: matrix.suite == 'cli'
+        run: python3 tests/test-hook.py
+      - name: Retired meeting extraction, CLI
+        if: matrix.suite == 'cli'
+        run: python3 tests/test-meet-removal.py
+      - name: Structured search flags, CLI
+        if: matrix.suite == 'cli'
+        run: python3 tests/test-search-flags.py
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
-        run: |
-          python3 tests/test-cli-tools.py
-          python3 tests/test-hook.py
-          python3 tests/test-meet-removal.py
-          python3 tests/test-search-flags.py
-          python3 tests/test-e2e.py
+        run: python3 tests/test-e2e.py
       # Straight after the build, as in its former job, so its latency and
       # memory bounds see the same fresh runner.
       - name: Short synthetic MCP soak
         if: matrix.suite == 'mcp'
         timeout-minutes: 6
         run: python3 tests/test-soak.py --profile short
+      - name: Plugin-resolved hook and synthetic MCP
+        if: matrix.suite == 'mcp'
+        run: python3 tests/test-plugin.py --runtime
+      - name: Retired meeting extraction, structured MCP
+        if: matrix.suite == 'mcp'
+        run: MAILBEND_TEST_MCP=1 python3 tests/test-meet-removal.py
+      - name: Structured search flags, structured MCP
+        if: matrix.suite == 'mcp'
+        run: MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py
       - name: Structured MCP tool scenarios
         if: matrix.suite == 'mcp'
-        run: |
-          python3 tests/test-plugin.py --runtime
-          MAILBEND_TEST_MCP=1 python3 tests/test-meet-removal.py
-          MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py
-          MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
-      - name: Integrated results and scheduled recipes
+        run: MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
+      - name: Integrated results
         if: matrix.suite == 'support'
-        run: |-
-          python3 tests/test-integrated-results.py
-          python3 tests/test-scheduled-recipes.py
+        run: python3 tests/test-integrated-results.py
+      - name: Scheduled recipes
+        if: matrix.suite == 'support'
+        run: python3 tests/test-scheduled-recipes.py
   rust:
     if: ${{ !inputs.scale }}
     runs-on: ${{ matrix.runner }}
