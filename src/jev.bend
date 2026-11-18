@@ -1675,6 +1675,10 @@ def scoped_fields(kvs: List<&2, J.Json>, +c: Content, +why: String) -> List<&2, 
 def text_reason() -> String:
   "Not all of the message text was included in the Jev request."
 
+# Jev reads an HTML part as text, without its markup (see seen_text).
+def markup_reason() -> String:
+  "Raw HTML markup was not included in the Jev request, only its readable text."
+
 # A jev object, with text_reason when in body mode Jev saw only part of
 # the text.
 def covered(j: J.Json, c: Content, b: Completeness) -> J.Json:

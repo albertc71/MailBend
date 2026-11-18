@@ -9228,11 +9228,37 @@ def nested_coverage(o: Policy.Out, jev: Jev.Switch) -> Policy.Out:
     case _ _:
       o
 
+# Whether a result, once projected by `mode`, shows raw HTML: its html, or
+# the content of a selected text/html part.
+def raw_html(+j: J.Json, +mode: String) -> Bool:
+  +media = M.main_value(Response.text(j, "content_type"))
+  (Response.keep(mode, "html") && Bool.not(String.is_empty(Response.text(j, "html")))) ||
+    (Response.selected(j) && String.eq(media, "text/html") &&
+      Response.content_allowed(mode, media) &&
+      Bool.not(String.is_empty(Response.text(j, "content"))))
+
+def markup_coverage.if(raw: Bool, j: J.Json) -> J.Json:
+  match raw:
+    case True{}:
+      scoped_result(j, Jev.Body{}, Jev.markup_reason())
+    case False{}:
+      j
+
+# In body mode Jev reads an HTML part only as text, so a read that shows
+# raw HTML says its markup went unchecked.
+def markup_coverage(o: Policy.Out, jev: Jev.Switch, +mode: String) -> Policy.Out:
+  match o jev:
+    case Policy.Ok{+j} Jev.On{Jev.Body{}}:
+      Policy.Ok{markup_coverage.if(raw_html(j, mode), j)}
+    case _ _:
+      o
+
 def projected(+args: J.Json, +jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out):
   do IO<Policy.Out>:
     o : Policy.Out <- annotated(jev, read)
+    m : Policy.Out = markup_coverage(o, jev, Policy.str_arg(args, "projection", "full"))
     return projected.if(Maybe.is_some(&2, J.Json, J.get(args, "projection")) ||
-      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), nested_coverage(o, jev), args)
+      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), nested_coverage(m, jev), args)
 
 # Dispatch
 # ========

@@ -839,466 +839,466 @@ def schema_piece.p0276() -> String:
   "onal_readable_part\"}}}}}]}]},"
 
 def schema_piece.p0277() -> String:
-  "\"minItems\":1,\"contains\":{\"const\":\"Not all of the message text was "
-
-def schema_piece.p0278() -> String:
   "\"minItems\":1,\"contains\":{\"const\":\"Attached-message summaries were "
 
-def schema_piece.p0279() -> String:
+def schema_piece.p0278() -> String:
   "not included in the Jev request.\"}},\"signals\":{\"type\":\"object\","
 
-def schema_piece.p0280() -> String:
+def schema_piece.p0279() -> String:
   "\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,"
 
-def schema_piece.p0281() -> String:
+def schema_piece.p0280() -> String:
   "\"idempotentHint\":true,\"openWorldHint\":true}}"
 
-def schema_piece.p0282() -> String:
+def schema_piece.p0281() -> String:
   "With MAILBEND_TYPESAFE on, each message also has a jev object with Jev's "
 
-def schema_piece.p0283() -> String:
+def schema_piece.p0282() -> String:
   "notes (reply_needed, action_required, priority, category, "
 
-def schema_piece.p0284() -> String:
+def schema_piece.p0283() -> String:
   "\"uidvalidity\":{\"type\":\"integer\",\"minimum\":0,"
 
-def schema_piece.p0285() -> String:
+def schema_piece.p0284() -> String:
   "\"uidvalidity_changed\":{\"type\":\"boolean\"},"
 
-def schema_piece.p0286() -> String:
+def schema_piece.p0285() -> String:
   "\"next_since_uid\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0287() -> String:
+def schema_piece.p0286() -> String:
   "\"has_more\":{\"type\":\"boolean\"},\"messages\":{\"type\":\"array\","
 
-def schema_piece.p0288() -> String:
+def schema_piece.p0287() -> String:
   "\"uidvalidity\",\"uidvalidity_changed\",\"next_since_uid\",\"has_more\","
 
-def schema_piece.p0289() -> String:
+def schema_piece.p0288() -> String:
   "\"messages\",\"response\"],\"additionalProperties\":false},"
 
-def schema_piece.p0290() -> String:
+def schema_piece.p0289() -> String:
   "\"properties\":{\"version\":{\"type\":\"integer\",\"enum\":[1]},"
 
-def schema_piece.p0291() -> String:
+def schema_piece.p0290() -> String:
   "\"mode\":{\"type\":\"string\",\"enum\":[\"unseen\"]},"
 
-def schema_piece.p0292() -> String:
+def schema_piece.p0291() -> String:
   "\"folder\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":4000},"
 
-def schema_piece.p0293() -> String:
+def schema_piece.p0292() -> String:
   "\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1,"
 
-def schema_piece.p0294() -> String:
+def schema_piece.p0293() -> String:
   "\"maximum\":4294967295},\"after_uid\":{\"type\":\"integer\","
 
-def schema_piece.p0295() -> String:
+def schema_piece.p0294() -> String:
   "\"minimum\":0,\"maximum\":4294967295},\"high_uid\":{\"type\":\"integer\","
 
-def schema_piece.p0296() -> String:
+def schema_piece.p0295() -> String:
   "\"minimum\":0,\"maximum\":4294967295}},\"required\":[\"version\","
 
-def schema_piece.p0297() -> String:
+def schema_piece.p0296() -> String:
   "\"mode\",\"folder\",\"uidvalidity\",\"after_uid\",\"high_uid\"],"
 
-def schema_piece.p0298() -> String:
+def schema_piece.p0297() -> String:
   "\"mode\":{\"type\":\"string\",\"enum\":[\"arrivals\",\"unseen\"]},"
 
-def schema_piece.p0299() -> String:
+def schema_piece.p0298() -> String:
   "\"has_more\":{\"type\":\"boolean\"},"
 
-def schema_piece.p0300() -> String:
+def schema_piece.p0299() -> String:
   "\"selected_complete\":{\"const\":true},"
 
-def schema_piece.p0301() -> String:
+def schema_piece.p0300() -> String:
   "\"checkpoint_basis\":{\"type\":\"string\",\"enum\":[\"high_water\","
 
-def schema_piece.p0302() -> String:
+def schema_piece.p0301() -> String:
   "\"selected_prefix\"]},"
 
-def schema_piece.p0303() -> String:
+def schema_piece.p0302() -> String:
   "\"next_continuation\":{\"anyOf\":[{\"type\":\"object\","
 
-def schema_piece.p0304() -> String:
+def schema_piece.p0303() -> String:
   "\"additionalProperties\":false},{\"type\":\"null\"}]},"
 
-def schema_piece.p0305() -> String:
+def schema_piece.p0304() -> String:
   "\"group\":{\"type\":\"string\",\"enum\":[\"people\",\"lists\","
 
-def schema_piece.p0306() -> String:
+def schema_piece.p0305() -> String:
   "\"automated\",\"unknown_people\"]},\"group_key\":{\"type\":[\"string\","
 
-def schema_piece.p0307() -> String:
+def schema_piece.p0306() -> String:
   "\"null\"]},\"delivery\":{\"type\":\"string\",\"enum\":[\"direct\","
 
-def schema_piece.p0308() -> String:
+def schema_piece.p0307() -> String:
   "\"cc_only\",\"other_or_unknown\"]},\"jev\":{\"type\":\"object\","
 
-def schema_piece.p0309() -> String:
+def schema_piece.p0308() -> String:
   "\"internal_date\",\"uid\",\"size\",\"flags\",\"seen\",\"flagged\","
 
-def schema_piece.p0310() -> String:
+def schema_piece.p0309() -> String:
   "\"group\",\"group_key\",\"delivery\"],\"additionalProperties\":false}},"
 
-def schema_piece.p0311() -> String:
+def schema_piece.p0310() -> String:
   "\"groups\":{\"type\":\"array\",\"items\":{\"type\":\"object\","
 
-def schema_piece.p0312() -> String:
+def schema_piece.p0311() -> String:
   "\"properties\":{\"group\":{\"type\":\"string\",\"enum\":[\"people\","
 
-def schema_piece.p0313() -> String:
+def schema_piece.p0312() -> String:
   "\"lists\",\"automated\",\"unknown_people\"]},"
 
-def schema_piece.p0314() -> String:
+def schema_piece.p0313() -> String:
   "\"group_key\":{\"type\":[\"string\",\"null\"]},"
 
-def schema_piece.p0315() -> String:
+def schema_piece.p0314() -> String:
   "\"count\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"group\","
 
-def schema_piece.p0316() -> String:
+def schema_piece.p0315() -> String:
   "\"group_key\",\"count\"],\"additionalProperties\":false}},"
 
-def schema_piece.p0317() -> String:
+def schema_piece.p0316() -> String:
   "\"correspondence\":{\"type\":\"object\","
 
-def schema_piece.p0318() -> String:
+def schema_piece.p0317() -> String:
   "\"properties\":{\"scope\":{\"const\":\"stored_sent_headers_window\"},"
 
-def schema_piece.p0319() -> String:
+def schema_piece.p0318() -> String:
   "\"since\":{\"type\":\"string\"},\"window_days\":{\"const\":30},"
 
-def schema_piece.p0320() -> String:
+def schema_piece.p0319() -> String:
   "\"header_limit\":{\"const\":100},\"sender_limit\":{\"const\":50},"
 
-def schema_piece.p0321() -> String:
+def schema_piece.p0320() -> String:
   "\"selected_senders\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0322() -> String:
+def schema_piece.p0321() -> String:
   "\"total_senders\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0323() -> String:
+def schema_piece.p0322() -> String:
   "\"coverage\":{\"type\":\"object\","
 
-def schema_piece.p0324() -> String:
+def schema_piece.p0323() -> String:
   "\"sampled_headers\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0325() -> String:
+def schema_piece.p0324() -> String:
   "\"complete\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},"
 
-def schema_piece.p0326() -> String:
+def schema_piece.p0325() -> String:
   "\"required\":[\"folder\",\"uidvalidity\",\"sampled_headers\","
 
-def schema_piece.p0327() -> String:
+def schema_piece.p0326() -> String:
   "\"complete\",\"reason\"],\"additionalProperties\":false}},"
 
-def schema_piece.p0328() -> String:
+def schema_piece.p0327() -> String:
   "\"required\":[\"scope\",\"since\",\"window_days\",\"header_limit\","
 
-def schema_piece.p0329() -> String:
+def schema_piece.p0328() -> String:
   "\"sender_limit\",\"selected_senders\",\"total_senders\",\"coverage\"],"
 
-def schema_piece.p0330() -> String:
+def schema_piece.p0329() -> String:
   "\"uidvalidity\",\"mode\",\"next_since_uid\",\"has_more\","
 
-def schema_piece.p0331() -> String:
+def schema_piece.p0330() -> String:
   "\"selected_complete\",\"checkpoint_basis\",\"next_continuation\","
 
-def schema_piece.p0332() -> String:
+def schema_piece.p0331() -> String:
   "\"additionalProperties\":false},\"response\":{\"type\":\"object\","
 
-def schema_piece.p0333() -> String:
+def schema_piece.p0332() -> String:
   "\"messages\",\"groups\",\"correspondence\",\"response\"],"
 
-def schema_piece.p0334() -> String:
+def schema_piece.p0333() -> String:
   "\"properties\":{\"uid\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0335() -> String:
+def schema_piece.p0334() -> String:
   "\"items\":{\"type\":\"integer\",\"minimum\":0}},"
 
-def schema_piece.p0336() -> String:
+def schema_piece.p0335() -> String:
   "\"maximum\":4294967295,\"description\":\"Optional UIDVALIDITY of the "
 
-def schema_piece.p0337() -> String:
+def schema_piece.p0336() -> String:
   "\"searched\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
 
-def schema_piece.p0338() -> String:
+def schema_piece.p0337() -> String:
   "\"folder\":{\"type\":\"string\"},\"uidvalidity\":{\"type\":[\"integer\","
 
-def schema_piece.p0339() -> String:
+def schema_piece.p0338() -> String:
   "\"null\"],\"minimum\":0},\"parent\":{\"type\":[\"string\",\"null\"]},"
 
-def schema_piece.p0340() -> String:
+def schema_piece.p0339() -> String:
   "\"folder\",\"uidvalidity\",\"parent\"],\"additionalProperties\":false}},"
 
-def schema_piece.p0341() -> String:
+def schema_piece.p0340() -> String:
   "\"searched\",\"messages\",\"response\"],\"additionalProperties\":false},"
 
-def schema_piece.p0342() -> String:
+def schema_piece.p0341() -> String:
   "{\"type\":\"object\",\"properties\":{\"complete\":{\"type\":\"boolean\"},"
 
-def schema_piece.p0343() -> String:
+def schema_piece.p0342() -> String:
   "\"archive_resolved\":{\"type\":\"boolean\"},"
 
-def schema_piece.p0344() -> String:
+def schema_piece.p0343() -> String:
   "\"as_of\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0345() -> String:
+def schema_piece.p0344() -> String:
   "\"since\":{\"type\":\"string\"},"
 
-def schema_piece.p0346() -> String:
+def schema_piece.p0345() -> String:
   "\"coverage\":{\"type\":\"array\",\"items\":{\"type\":\"object\","
 
-def schema_piece.p0347() -> String:
+def schema_piece.p0346() -> String:
   "\"properties\":{\"address\":{\"type\":\"string\"},"
 
-def schema_piece.p0348() -> String:
+def schema_piece.p0347() -> String:
   "\"observed_count\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0349() -> String:
+def schema_piece.p0348() -> String:
   "\"latest_internaldate\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}},"
 
-def schema_piece.p0350() -> String:
+def schema_piece.p0349() -> String:
   "\"required\":[\"complete\",\"as_of\",\"since\",\"archive_resolved\","
 
-def schema_piece.p0351() -> String:
+def schema_piece.p0350() -> String:
   "(IMAP mailbox) name. Default: INBOX.\"},\"uids\":{\"type\":\"array\","
 
-def schema_piece.p0352() -> String:
+def schema_piece.p0351() -> String:
   "\"items\":{\"type\":\"integer\",\"minimum\":1},\"minItems\":1,"
 
-def schema_piece.p0353() -> String:
+def schema_piece.p0352() -> String:
   "\"maxItems\":50,\"description\":\"Message UIDs in the folder, at most "
 
-def schema_piece.p0354() -> String:
+def schema_piece.p0353() -> String:
   "50.\"},\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1,"
 
-def schema_piece.p0355() -> String:
+def schema_piece.p0354() -> String:
   "\"categories\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
 
-def schema_piece.p0356() -> String:
+def schema_piece.p0355() -> String:
   "\"needs_new_category\":{\"const\":true},"
 
-def schema_piece.p0357() -> String:
+def schema_piece.p0356() -> String:
   "\"additionalProperties\":false}},\"not_found\":{\"type\":\"array\","
 
-def schema_piece.p0358() -> String:
+def schema_piece.p0357() -> String:
   "\"requests\":{\"type\":\"array\",\"items\":{\"type\":\"object\","
 
-def schema_piece.p0359() -> String:
+def schema_piece.p0358() -> String:
   "\"properties\":{\"messages\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0360() -> String:
+def schema_piece.p0359() -> String:
   "\"bytes\":{\"type\":\"integer\",\"minimum\":0},"
 
-def schema_piece.p0361() -> String:
+def schema_piece.p0360() -> String:
   "\"input_tokens\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}},"
 
-def schema_piece.p0362() -> String:
+def schema_piece.p0361() -> String:
   "\"required\":[\"messages\",\"bytes\",\"input_tokens\"],"
 
-def schema_piece.p0363() -> String:
+def schema_piece.p0362() -> String:
   "\"idempotentHint\":false,\"openWorldHint\":true}}"
 
-def schema_piece.p0364() -> String:
+def schema_piece.p0363() -> String:
   "retrying.\",\"inputSchema\":{\"type\":\"object\","
 
-def schema_piece.p0365() -> String:
+def schema_piece.p0364() -> String:
   "\"description\":\"The folder's UIDVALIDITY returned with the UIDs "
 
-def schema_piece.p0366() -> String:
+def schema_piece.p0365() -> String:
   "(mail_search, mail_get, mail_get_new). Checked in the same session as "
 
-def schema_piece.p0367() -> String:
+def schema_piece.p0366() -> String:
   "the change; if the folder changed since, nothing is changed.\"},"
 
-def schema_piece.p0368() -> String:
+def schema_piece.p0367() -> String:
   "\"dry_run\":{\"type\":\"boolean\",\"description\":\"Only show what this "
 
-def schema_piece.p0369() -> String:
+def schema_piece.p0368() -> String:
   "call would do: return the IMAP commands, the SMTP sender and recipients "
 
-def schema_piece.p0370() -> String:
+def schema_piece.p0369() -> String:
   "with sent_copy (whether MAILBEND_SAVE_SENT would save a Sent copy), or "
 
-def schema_piece.p0371() -> String:
+def schema_piece.p0370() -> String:
   "the file it would use, with message and file contents as <N bytes>. "
 
-def schema_piece.p0372() -> String:
+def schema_piece.p0371() -> String:
   "Nothing is changed, sent or saved. It is not a full pre-check: marking "
 
-def schema_piece.p0373() -> String:
+def schema_piece.p0372() -> String:
   "and flagging make no connection, so a stale uidvalidity fails only the "
 
-def schema_piece.p0374() -> String:
+def schema_piece.p0373() -> String:
   "real call, and a send does not check the daily limit. With "
 
-def schema_piece.p0375() -> String:
+def schema_piece.p0374() -> String:
   "MAILBEND_TYPESAFE on, a send or delete still passes Jev's checks and "
 
-def schema_piece.p0376() -> String:
+def schema_piece.p0375() -> String:
   "shows their verdict. Default false.\"}},\"required\":[\"uids\","
 
-def schema_piece.p0377() -> String:
+def schema_piece.p0376() -> String:
   "\"uidvalidity\"],\"additionalProperties\":false},"
 
-def schema_piece.p0378() -> String:
+def schema_piece.p0377() -> String:
   "\"additionalProperties\":false},\"verdict\":{\"type\":\"string\"},"
 
-def schema_piece.p0379() -> String:
+def schema_piece.p0378() -> String:
   "\"vetoes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
 
-def schema_piece.p0380() -> String:
+def schema_piece.p0379() -> String:
   "\"destination\":{\"type\":[\"string\",\"null\"]},"
 
-def schema_piece.p0381() -> String:
+def schema_piece.p0380() -> String:
   "\"body_truncated\":{\"const\":true}},\"required\":[\"uid\",\"category\","
 
-def schema_piece.p0382() -> String:
+def schema_piece.p0381() -> String:
   "\"jev\",\"verdict\",\"vetoes\",\"destination\"],"
 
-def schema_piece.p0383() -> String:
+def schema_piece.p0382() -> String:
   "\"properties\":{\"ok\":{\"const\":true},\"folder\":{\"type\":\"string\"},"
 
-def schema_piece.p0384() -> String:
+def schema_piece.p0383() -> String:
   "\"changed\":{\"type\":\"array\",\"items\":{\"type\":\"integer\","
 
-def schema_piece.p0385() -> String:
+def schema_piece.p0384() -> String:
   "\"minimum\":0}},\"missing\":{\"type\":\"array\","
 
-def schema_piece.p0386() -> String:
+def schema_piece.p0385() -> String:
   "\"destination\":{\"type\":\"string\"},\"method\":{\"type\":\"string\","
 
-def schema_piece.p0387() -> String:
+def schema_piece.p0386() -> String:
   "\"enum\":[\"UID MOVE\",\"UID COPY + UID EXPUNGE\"]}},"
 
-def schema_piece.p0388() -> String:
+def schema_piece.p0387() -> String:
   "\"required\":[\"ok\",\"folder\",\"changed\",\"missing\",\"destination\","
 
-def schema_piece.p0389() -> String:
+def schema_piece.p0388() -> String:
   "\"method\"],\"additionalProperties\":false},{\"type\":\"object\","
 
-def schema_piece.p0390() -> String:
+def schema_piece.p0389() -> String:
   "\"enum\":[\"UID MOVE\",\"UID COPY + UID EXPUNGE\"]},"
 
-def schema_piece.p0391() -> String:
+def schema_piece.p0390() -> String:
   "\"ok\":{\"const\":false},\"partial\":{\"const\":true},"
 
-def schema_piece.p0392() -> String:
+def schema_piece.p0391() -> String:
   "\"message\":{\"type\":\"string\"}},\"required\":[\"folder\","
 
-def schema_piece.p0393() -> String:
+def schema_piece.p0392() -> String:
   "\"destination\",\"method\",\"ok\",\"partial\",\"message\"],"
 
-def schema_piece.p0394() -> String:
+def schema_piece.p0393() -> String:
   "\"properties\":{\"ok\":{\"const\":false},"
 
-def schema_piece.p0395() -> String:
+def schema_piece.p0394() -> String:
   "\"destination\":{\"type\":\"string\"},\"error\":{\"type\":\"string\"}},"
 
-def schema_piece.p0396() -> String:
+def schema_piece.p0395() -> String:
   "\"required\":[\"ok\",\"destination\",\"error\"],"
 
-def schema_piece.p0397() -> String:
+def schema_piece.p0396() -> String:
   "\"additionalProperties\":false}]}}},\"required\":[\"folder\","
 
-def schema_piece.p0398() -> String:
+def schema_piece.p0397() -> String:
   "\"uidvalidity\",\"content\",\"categories\",\"messages\",\"not_found\","
 
-def schema_piece.p0399() -> String:
+def schema_piece.p0398() -> String:
   "\"additionalProperties\":false}},\"ok\":{\"const\":false},"
 
-def schema_piece.p0400() -> String:
+def schema_piece.p0399() -> String:
   "\"imap\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},"
 
-def schema_piece.p0401() -> String:
+def schema_piece.p0400() -> String:
   "\"additionalProperties\":false}]},"
 
-def schema_piece.p0402() -> String:
+def schema_piece.p0401() -> String:
   "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":true,"
 
-def schema_piece.p0403() -> String:
+def schema_piece.p0402() -> String:
   "\"properties\":{\"dry_run\":{\"const\":true},"
 
-def schema_piece.p0404() -> String:
+def schema_piece.p0403() -> String:
   "\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,"
 
-def schema_piece.p0405() -> String:
+def schema_piece.p0404() -> String:
   "\"description\":\"Message UIDs in the folder (from mail_search or "
 
-def schema_piece.p0406() -> String:
+def schema_piece.p0405() -> String:
   "mail_get_new).\"},\"uidvalidity\":{\"type\":\"integer\",\"minimum\":1,"
 
-def schema_piece.p0407() -> String:
+def schema_piece.p0406() -> String:
   "\"folder\":{\"type\":\"string\"},\"changed\":{\"type\":\"array\","
 
-def schema_piece.p0408() -> String:
+def schema_piece.p0407() -> String:
   "\"missing\":{\"type\":\"array\",\"items\":{\"type\":\"integer\","
 
-def schema_piece.p0409() -> String:
+def schema_piece.p0408() -> String:
   "\"folder\",\"changed\",\"missing\",\"seen\"],"
 
-def schema_piece.p0410() -> String:
+def schema_piece.p0409() -> String:
   "\"required\":[\"dry_run\",\"imap\"],\"additionalProperties\":false}]},"
 
-def schema_piece.p0411() -> String:
+def schema_piece.p0410() -> String:
   "\"description\":\"Only show what this call would do: return the IMAP "
 
-def schema_piece.p0412() -> String:
+def schema_piece.p0411() -> String:
   "commands, the SMTP sender and recipients with sent_copy (whether "
 
-def schema_piece.p0413() -> String:
+def schema_piece.p0412() -> String:
   "MAILBEND_SAVE_SENT would save a Sent copy), or the file it would use, "
 
-def schema_piece.p0414() -> String:
+def schema_piece.p0413() -> String:
   "with message and file contents as <N bytes>. Nothing is changed, sent or "
 
-def schema_piece.p0415() -> String:
+def schema_piece.p0414() -> String:
   "saved. It is not a full pre-check: marking and flagging make no "
 
-def schema_piece.p0416() -> String:
+def schema_piece.p0415() -> String:
   "connection, so a stale uidvalidity fails only the real call, and a send "
 
-def schema_piece.p0417() -> String:
+def schema_piece.p0416() -> String:
   "does not check the daily limit. With MAILBEND_TYPESAFE on, a send or "
 
-def schema_piece.p0418() -> String:
+def schema_piece.p0417() -> String:
   "delete still passes Jev's checks and shows their verdict. Default "
 
-def schema_piece.p0419() -> String:
+def schema_piece.p0418() -> String:
   "{\"type\":\"object\",\"properties\":{\"ok\":{\"const\":false},"
 
-def schema_piece.p0420() -> String:
+def schema_piece.p0419() -> String:
   "\"partial\":{\"const\":true},\"folder\":{\"type\":\"string\"},"
 
-def schema_piece.p0421() -> String:
+def schema_piece.p0420() -> String:
   "\"acknowledged\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
 
-def schema_piece.p0422() -> String:
+def schema_piece.p0421() -> String:
   "\"unconfirmed\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
 
-def schema_piece.p0423() -> String:
+def schema_piece.p0422() -> String:
   "\"message\":{\"type\":\"string\"}},\"required\":[\"ok\",\"partial\","
 
-def schema_piece.p0424() -> String:
+def schema_piece.p0423() -> String:
   "\"folder\",\"acknowledged\",\"unconfirmed\",\"message\"],"
 
-def schema_piece.p0425() -> String:
+def schema_piece.p0424() -> String:
   "\"flags\":{\"type\":[\"array\",\"null\"],"
 
-def schema_piece.p0426() -> String:
+def schema_piece.p0425() -> String:
   "\"items\":{\"type\":\"string\"}}},\"required\":[\"uid\",\"flags\"],"
 
-def schema_piece.p0427() -> String:
+def schema_piece.p0426() -> String:
   "\"minimum\":0}},\"destination\":{\"type\":\"string\"},"
 
-def schema_piece.p0428() -> String:
+def schema_piece.p0427() -> String:
   "\"method\":{\"type\":\"string\",\"enum\":[\"UID MOVE\",\"UID COPY + UID "
 
-def schema_piece.p0429() -> String:
+def schema_piece.p0428() -> String:
   "EXPUNGE\"]}},\"required\":[\"ok\",\"folder\",\"changed\",\"missing\","
 
-def schema_piece.p0430() -> String:
+def schema_piece.p0429() -> String:
   "\"destination\",\"method\"],\"additionalProperties\":false},"
+
+def schema_piece.p0430() -> String:
+  "\"minItems\":1,\"contains\":{\"const\":\"Not all of the message text was "
 
 def schema_piece.p0431() -> String:
   "\"coverage\"],\"additionalProperties\":false}]}},\"required\":[\"ok\","
@@ -4125,8 +4125,10 @@ def tool_defs.mail_get() -> String:
     schema_piece.p0062(),
     schema_piece.p0063(),
     schema_piece.p0231(),
-    schema_piece.p0277(),
-    schema_piece.p0233(),
+    "\"minItems\":1,\"contains\":{\"enum\":[\"Not all of the message text was ",
+    "included in the Jev request.\",\"Raw HTML markup was not included in the ",
+    "Jev request, only its readable text.\"]}},",
+    schema_piece.p0065(),
     schema_piece.p0066(),
     schema_piece.p0067(),
     schema_piece.p0068(),
@@ -4161,8 +4163,8 @@ def tool_defs.mail_get() -> String:
     schema_piece.p0062(),
     schema_piece.p0063(),
     schema_piece.p0231(),
+    schema_piece.p0277(),
     schema_piece.p0278(),
-    schema_piece.p0279(),
     schema_piece.p0066(),
     schema_piece.p0067(),
     schema_piece.p0068(),
@@ -4196,8 +4198,8 @@ def tool_defs.mail_get() -> String:
     schema_piece.p0062(),
     schema_piece.p0063(),
     schema_piece.p0231(),
+    schema_piece.p0277(),
     schema_piece.p0278(),
-    schema_piece.p0279(),
     schema_piece.p0066(),
     schema_piece.p0067(),
     schema_piece.p0068(),
@@ -4225,8 +4227,8 @@ def tool_defs.mail_get() -> String:
     schema_piece.p0235(),
     schema_piece.p0236(),
     "\"coverage\"],\"additionalProperties\":false}]}}},",
-    schema_piece.p0280(),
-    schema_piece.p0281()])
+    schema_piece.p0279(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_get_new() -> String:
   String.concat([
@@ -4236,8 +4238,8 @@ def tool_defs.mail_get_new() -> String:
     "lists the oldest mail. Use start=\\\"now\\\" to take a checkpoint at the ",
     "current end without returning messages. Pass back next_since_uid and ",
     "uidvalidity on the next call. Does not use or change read/unread state. ",
+    schema_piece.p0281(),
     schema_piece.p0282(),
-    schema_piece.p0283(),
     schema_piece.p0120(),
     schema_piece.p0121(),
     schema_piece.p0011(),
@@ -4248,7 +4250,7 @@ def tool_defs.mail_get_new() -> String:
     "not report valid UIDNEXT and UIDVALIDITY.\"},",
     "\"since_uid\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Last ",
     "UID already processed. Default 0 lists the oldest mail first.\"},",
-    schema_piece.p0284(),
+    schema_piece.p0283(),
     "\"description\":\"UIDVALIDITY from the previous call; required when ",
     "since_uid is set. If it changed, the checkpoint restarts at 0.\"},",
     "\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":500,",
@@ -4276,9 +4278,9 @@ def tool_defs.mail_get_new() -> String:
     schema_piece.p0003(),
     schema_piece.p0032(),
     schema_piece.p0194(),
+    schema_piece.p0284(),
     schema_piece.p0285(),
     schema_piece.p0286(),
-    schema_piece.p0287(),
     schema_piece.p0010(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4341,13 +4343,13 @@ def tool_defs.mail_get_new() -> String:
     schema_piece.p0091(),
     schema_piece.p0092(),
     schema_piece.p0093(),
-    schema_piece.p0288(),
+    schema_piece.p0287(),
     "\"messages\"],\"additionalProperties\":false},{\"type\":\"object\",",
     schema_piece.p0099(),
     schema_piece.p0194(),
+    schema_piece.p0284(),
     schema_piece.p0285(),
     schema_piece.p0286(),
-    schema_piece.p0287(),
     schema_piece.p0010(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4417,13 +4419,13 @@ def tool_defs.mail_get_new() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0287(),
     schema_piece.p0288(),
-    schema_piece.p0289(),
     schema_piece.p0032(),
     schema_piece.p0194(),
+    schema_piece.p0284(),
     schema_piece.p0285(),
     schema_piece.p0286(),
-    schema_piece.p0287(),
     schema_piece.p0010(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4493,13 +4495,13 @@ def tool_defs.mail_get_new() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0287(),
     schema_piece.p0288(),
-    schema_piece.p0289(),
     schema_piece.p0032(),
     schema_piece.p0194(),
+    schema_piece.p0284(),
     schema_piece.p0285(),
     schema_piece.p0286(),
-    schema_piece.p0287(),
     schema_piece.p0010(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4569,13 +4571,13 @@ def tool_defs.mail_get_new() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0287(),
     schema_piece.p0288(),
-    schema_piece.p0289(),
     schema_piece.p0032(),
     schema_piece.p0194(),
+    schema_piece.p0284(),
     schema_piece.p0285(),
     schema_piece.p0286(),
-    schema_piece.p0287(),
     schema_piece.p0010(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4645,10 +4647,10 @@ def tool_defs.mail_get_new() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
-    schema_piece.p0288(),
+    schema_piece.p0287(),
     "\"messages\",\"response\"],\"additionalProperties\":false}]},",
-    schema_piece.p0280(),
-    schema_piece.p0281()])
+    schema_piece.p0279(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_brief() -> String:
   String.concat([
@@ -4669,14 +4671,15 @@ def tool_defs.mail_brief() -> String:
     "UIDs fails closed; arbitrary larger unseen backlogs are unsupported. ",
     "Missing FETCH or changed UIDVALIDITY fails without a checkpoint. A ",
     "too-small response budget fails the whole result, never omits a message. ",
+    schema_piece.p0281(),
     schema_piece.p0282(),
-    schema_piece.p0283(),
     schema_piece.p0120(),
     schema_piece.p0121(),
     schema_piece.p0011(),
     schema_piece.p0012(),
     "(IMAP mailbox) name. Default: INBOX.\"},",
     "\"continuation\":{\"type\":\"object\",",
+    schema_piece.p0289(),
     schema_piece.p0290(),
     schema_piece.p0291(),
     schema_piece.p0292(),
@@ -4684,14 +4687,13 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0294(),
     schema_piece.p0295(),
     schema_piece.p0296(),
-    schema_piece.p0297(),
     "\"additionalProperties\":false,\"description\":\"Use next_continuation ",
     "unchanged to finish unseen pages. Mutually exclusive with since_uid; ",
     "explicit folder/uidvalidity must match. Not a frozen flag snapshot.\"},",
     "\"since_uid\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":4294967295,",
     "\"description\":\"Arrival checkpoint UID. Omit for unseen mail; 0 starts ",
     "arrivals from the oldest message.\"},",
-    schema_piece.p0284(),
+    schema_piece.p0283(),
     "\"maximum\":4294967295,\"description\":\"Required with nonzero ",
     "since_uid. A changed identity fails; discard the old checkpoint and ",
     "restart.\"},\"limit\":{\"type\":\"integer\",\"minimum\":1,",
@@ -4720,13 +4722,14 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0003(),
     schema_piece.p0032(),
     schema_piece.p0194(),
+    schema_piece.p0297(),
+    schema_piece.p0285(),
     schema_piece.p0298(),
-    schema_piece.p0286(),
     schema_piece.p0299(),
     schema_piece.p0300(),
     schema_piece.p0301(),
     schema_piece.p0302(),
-    schema_piece.p0303(),
+    schema_piece.p0289(),
     schema_piece.p0290(),
     schema_piece.p0291(),
     schema_piece.p0292(),
@@ -4734,8 +4737,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0294(),
     schema_piece.p0295(),
     schema_piece.p0296(),
-    schema_piece.p0297(),
-    schema_piece.p0304(),
+    schema_piece.p0303(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4760,10 +4762,10 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0304(),
     schema_piece.p0305(),
     schema_piece.p0306(),
     schema_piece.p0307(),
-    schema_piece.p0308(),
     schema_piece.p0059(),
     schema_piece.p0060(),
     schema_piece.p0061(),
@@ -4799,6 +4801,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
+    schema_piece.p0308(),
     schema_piece.p0309(),
     schema_piece.p0310(),
     schema_piece.p0311(),
@@ -4813,29 +4816,29 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0320(),
     schema_piece.p0321(),
     schema_piece.p0322(),
-    schema_piece.p0323(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
     schema_piece.p0327(),
     schema_piece.p0328(),
-    schema_piece.p0329(),
     schema_piece.p0107(),
+    schema_piece.p0329(),
     schema_piece.p0330(),
-    schema_piece.p0331(),
     "\"messages\",\"groups\",\"correspondence\"],",
     schema_piece.p0098(),
     schema_piece.p0099(),
     schema_piece.p0194(),
+    schema_piece.p0297(),
+    schema_piece.p0285(),
     schema_piece.p0298(),
-    schema_piece.p0286(),
     schema_piece.p0299(),
     schema_piece.p0300(),
     schema_piece.p0301(),
     schema_piece.p0302(),
-    schema_piece.p0303(),
+    schema_piece.p0289(),
     schema_piece.p0290(),
     schema_piece.p0291(),
     schema_piece.p0292(),
@@ -4843,8 +4846,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0294(),
     schema_piece.p0295(),
     schema_piece.p0296(),
-    schema_piece.p0297(),
-    schema_piece.p0304(),
+    schema_piece.p0303(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4869,10 +4871,10 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0304(),
     schema_piece.p0305(),
     schema_piece.p0306(),
     schema_piece.p0307(),
-    schema_piece.p0308(),
     schema_piece.p0059(),
     schema_piece.p0060(),
     schema_piece.p0061(),
@@ -4908,6 +4910,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
+    schema_piece.p0308(),
     schema_piece.p0309(),
     schema_piece.p0310(),
     schema_piece.p0311(),
@@ -4922,16 +4925,15 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0320(),
     schema_piece.p0321(),
     schema_piece.p0322(),
-    schema_piece.p0323(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
     schema_piece.p0327(),
     schema_piece.p0328(),
-    schema_piece.p0329(),
-    schema_piece.p0332(),
+    schema_piece.p0331(),
     schema_piece.p0101(),
     schema_piece.p0102(),
     schema_piece.p0103(),
@@ -4939,19 +4941,20 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0329(),
     schema_piece.p0330(),
-    schema_piece.p0331(),
-    schema_piece.p0333(),
+    schema_piece.p0332(),
     schema_piece.p0098(),
     schema_piece.p0099(),
     schema_piece.p0194(),
+    schema_piece.p0297(),
+    schema_piece.p0285(),
     schema_piece.p0298(),
-    schema_piece.p0286(),
     schema_piece.p0299(),
     schema_piece.p0300(),
     schema_piece.p0301(),
     schema_piece.p0302(),
-    schema_piece.p0303(),
+    schema_piece.p0289(),
     schema_piece.p0290(),
     schema_piece.p0291(),
     schema_piece.p0292(),
@@ -4959,8 +4962,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0294(),
     schema_piece.p0295(),
     schema_piece.p0296(),
-    schema_piece.p0297(),
-    schema_piece.p0304(),
+    schema_piece.p0303(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -4985,10 +4987,10 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0304(),
     schema_piece.p0305(),
     schema_piece.p0306(),
     schema_piece.p0307(),
-    schema_piece.p0308(),
     schema_piece.p0059(),
     schema_piece.p0060(),
     schema_piece.p0061(),
@@ -5024,6 +5026,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
+    schema_piece.p0308(),
     schema_piece.p0309(),
     schema_piece.p0310(),
     schema_piece.p0311(),
@@ -5038,16 +5041,15 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0320(),
     schema_piece.p0321(),
     schema_piece.p0322(),
-    schema_piece.p0323(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
     schema_piece.p0327(),
     schema_piece.p0328(),
-    schema_piece.p0329(),
-    schema_piece.p0332(),
+    schema_piece.p0331(),
     schema_piece.p0109(),
     schema_piece.p0102(),
     schema_piece.p0103(),
@@ -5055,19 +5057,20 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0329(),
     schema_piece.p0330(),
-    schema_piece.p0331(),
-    schema_piece.p0333(),
+    schema_piece.p0332(),
     schema_piece.p0098(),
     schema_piece.p0099(),
     schema_piece.p0194(),
+    schema_piece.p0297(),
+    schema_piece.p0285(),
     schema_piece.p0298(),
-    schema_piece.p0286(),
     schema_piece.p0299(),
     schema_piece.p0300(),
     schema_piece.p0301(),
     schema_piece.p0302(),
-    schema_piece.p0303(),
+    schema_piece.p0289(),
     schema_piece.p0290(),
     schema_piece.p0291(),
     schema_piece.p0292(),
@@ -5075,8 +5078,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0294(),
     schema_piece.p0295(),
     schema_piece.p0296(),
-    schema_piece.p0297(),
-    schema_piece.p0304(),
+    schema_piece.p0303(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5101,10 +5103,10 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0304(),
     schema_piece.p0305(),
     schema_piece.p0306(),
     schema_piece.p0307(),
-    schema_piece.p0308(),
     schema_piece.p0059(),
     schema_piece.p0060(),
     schema_piece.p0061(),
@@ -5140,6 +5142,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
+    schema_piece.p0308(),
     schema_piece.p0309(),
     schema_piece.p0310(),
     schema_piece.p0311(),
@@ -5154,16 +5157,15 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0320(),
     schema_piece.p0321(),
     schema_piece.p0322(),
-    schema_piece.p0323(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
     schema_piece.p0327(),
     schema_piece.p0328(),
-    schema_piece.p0329(),
-    schema_piece.p0332(),
+    schema_piece.p0331(),
     schema_piece.p0110(),
     schema_piece.p0102(),
     schema_piece.p0103(),
@@ -5171,19 +5173,20 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0329(),
     schema_piece.p0330(),
-    schema_piece.p0331(),
-    schema_piece.p0333(),
+    schema_piece.p0332(),
     schema_piece.p0098(),
     schema_piece.p0099(),
     schema_piece.p0194(),
+    schema_piece.p0297(),
+    schema_piece.p0285(),
     schema_piece.p0298(),
-    schema_piece.p0286(),
     schema_piece.p0299(),
     schema_piece.p0300(),
     schema_piece.p0301(),
     schema_piece.p0302(),
-    schema_piece.p0303(),
+    schema_piece.p0289(),
     schema_piece.p0290(),
     schema_piece.p0291(),
     schema_piece.p0292(),
@@ -5191,8 +5194,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0294(),
     schema_piece.p0295(),
     schema_piece.p0296(),
-    schema_piece.p0297(),
-    schema_piece.p0304(),
+    schema_piece.p0303(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5217,10 +5219,10 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0304(),
     schema_piece.p0305(),
     schema_piece.p0306(),
     schema_piece.p0307(),
-    schema_piece.p0308(),
     schema_piece.p0059(),
     schema_piece.p0060(),
     schema_piece.p0061(),
@@ -5256,6 +5258,7 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
+    schema_piece.p0308(),
     schema_piece.p0309(),
     schema_piece.p0310(),
     schema_piece.p0311(),
@@ -5270,16 +5273,15 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0320(),
     schema_piece.p0321(),
     schema_piece.p0322(),
-    schema_piece.p0323(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
     schema_piece.p0327(),
     schema_piece.p0328(),
-    schema_piece.p0329(),
-    schema_piece.p0332(),
+    schema_piece.p0331(),
     schema_piece.p0111(),
     schema_piece.p0102(),
     schema_piece.p0103(),
@@ -5287,9 +5289,9 @@ def tool_defs.mail_brief() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0107(),
+    schema_piece.p0329(),
     schema_piece.p0330(),
-    schema_piece.p0331(),
-    schema_piece.p0333(),
+    schema_piece.p0332(),
     schema_piece.p0005(),
     schema_piece.p0006(),
     schema_piece.p0007()])
@@ -5312,7 +5314,7 @@ def tool_defs.mail_refresh() -> String:
     "\"description\":\"Mailbox name; at most 1024 UTF-8 bytes. Default ",
     "INBOX.\"},\"uids\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",",
     "\"minimum\":1,\"maximum\":4294967295},\"minItems\":1,\"maxItems\":100},",
-    schema_piece.p0293(),
+    schema_piece.p0292(),
     "\"maximum\":4294967295,\"description\":\"Expected mailbox identity from ",
     "earlier reads.\"}},\"required\":[\"uids\",\"uidvalidity\"],",
     schema_piece.p0008(),
@@ -5324,17 +5326,17 @@ def tool_defs.mail_refresh() -> String:
     "\"reset_required\":{\"type\":\"boolean\"},",
     "\"complete\":{\"type\":\"boolean\"},\"present\":{\"type\":\"array\",",
     schema_piece.p0010(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
     "\"flags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},",
     "\"required\":[\"uid\",\"flags\"],\"additionalProperties\":false}},",
     "\"absent\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",",
     "\"minimum\":0}},\"unknown\":{\"type\":\"array\",",
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     "\"reason\":{\"type\":\"string\"}},\"required\":[\"folder\",",
     "\"uidvalidity\",\"reset_required\",\"complete\",\"present\",\"absent\",",
     "\"unknown\",\"reason\"],\"additionalProperties\":false}]},",
-    schema_piece.p0280(),
-    schema_piece.p0281()])
+    schema_piece.p0279(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_get_thread() -> String:
   String.concat([
@@ -5355,7 +5357,7 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0012(),
     schema_piece.p0122(),
     schema_piece.p0123(),
-    schema_piece.p0336(),
+    schema_piece.p0335(),
     "seed folder returned with its UID. Checked in the seed read session ",
     "before any message fetch; mismatch returns no content and makes no Jev ",
     "request. Later thread sessions pin each folder's own discovered ",
@@ -5384,7 +5386,7 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0003(),
     schema_piece.p0032(),
     schema_piece.p0185(),
-    schema_piece.p0337(),
+    schema_piece.p0336(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5409,8 +5411,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0337(),
     schema_piece.p0338(),
-    schema_piece.p0339(),
     schema_piece.p0058(),
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -5447,13 +5449,13 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
-    schema_piece.p0309(),
+    schema_piece.p0308(),
     "\"folder\",\"uidvalidity\",\"parent\"],\"additionalProperties\":false}}},",
     "\"required\":[\"folder\",\"uid\",\"searched\",\"messages\"],",
     schema_piece.p0098(),
     schema_piece.p0099(),
     schema_piece.p0185(),
-    schema_piece.p0337(),
+    schema_piece.p0336(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5478,8 +5480,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0337(),
     schema_piece.p0338(),
-    schema_piece.p0339(),
     schema_piece.p0058(),
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -5516,8 +5518,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
-    schema_piece.p0309(),
-    schema_piece.p0340(),
+    schema_piece.p0308(),
+    schema_piece.p0339(),
     schema_piece.p0113(),
     schema_piece.p0101(),
     schema_piece.p0102(),
@@ -5526,10 +5528,10 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0207(),
-    schema_piece.p0341(),
+    schema_piece.p0340(),
     schema_piece.p0032(),
     schema_piece.p0185(),
-    schema_piece.p0337(),
+    schema_piece.p0336(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5554,8 +5556,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0337(),
     schema_piece.p0338(),
-    schema_piece.p0339(),
     schema_piece.p0058(),
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -5592,8 +5594,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
-    schema_piece.p0309(),
-    schema_piece.p0340(),
+    schema_piece.p0308(),
+    schema_piece.p0339(),
     schema_piece.p0113(),
     schema_piece.p0109(),
     schema_piece.p0102(),
@@ -5602,10 +5604,10 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0207(),
-    schema_piece.p0341(),
+    schema_piece.p0340(),
     schema_piece.p0032(),
     schema_piece.p0185(),
-    schema_piece.p0337(),
+    schema_piece.p0336(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5630,8 +5632,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0337(),
     schema_piece.p0338(),
-    schema_piece.p0339(),
     schema_piece.p0058(),
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -5668,8 +5670,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
-    schema_piece.p0309(),
-    schema_piece.p0340(),
+    schema_piece.p0308(),
+    schema_piece.p0339(),
     schema_piece.p0113(),
     schema_piece.p0110(),
     schema_piece.p0102(),
@@ -5678,10 +5680,10 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0105(),
     schema_piece.p0106(),
     schema_piece.p0207(),
-    schema_piece.p0341(),
+    schema_piece.p0340(),
     schema_piece.p0032(),
     schema_piece.p0185(),
-    schema_piece.p0337(),
+    schema_piece.p0336(),
     schema_piece.p0035(),
     schema_piece.p0036(),
     schema_piece.p0037(),
@@ -5706,8 +5708,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0055(),
     schema_piece.p0056(),
     schema_piece.p0057(),
+    schema_piece.p0337(),
     schema_piece.p0338(),
-    schema_piece.p0339(),
     schema_piece.p0058(),
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -5744,8 +5746,8 @@ def tool_defs.mail_get_thread() -> String:
     schema_piece.p0089(),
     schema_piece.p0090(),
     schema_piece.p0091(),
-    schema_piece.p0309(),
-    schema_piece.p0340(),
+    schema_piece.p0308(),
+    schema_piece.p0339(),
     schema_piece.p0113(),
     schema_piece.p0111(),
     schema_piece.p0102(),
@@ -5795,11 +5797,11 @@ def tool_defs.mail_awaiting_reply() -> String:
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
-    schema_piece.p0342(),
+    schema_piece.p0341(),
     "\"reason\":{\"type\":\"string\"},\"searched\":{\"type\":\"array\",",
     "\"items\":{\"type\":\"string\"}},",
+    schema_piece.p0342(),
     schema_piece.p0343(),
-    schema_piece.p0344(),
     schema_piece.p0035(),
     "\"properties\":{\"status\":{\"type\":\"string\",\"enum\":[\"awaiting\",",
     "\"replied\",\"unknown\"]},\"age_days\":{\"type\":[\"integer\",\"null\"],",
@@ -5814,8 +5816,8 @@ def tool_defs.mail_awaiting_reply() -> String:
     "\"to\",\"cc\",\"subject\",\"anchor\"],\"additionalProperties\":false}}},",
     "\"required\":[\"complete\",\"reason\",\"searched\",\"archive_resolved\",",
     "\"as_of\",\"messages\"],\"additionalProperties\":false}]},",
-    schema_piece.p0280(),
-    schema_piece.p0281()])
+    schema_piece.p0279(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_contacts() -> String:
   String.concat([
@@ -5839,26 +5841,26 @@ def tool_defs.mail_contacts() -> String:
     schema_piece.p0009(),
     schema_piece.p0002(),
     schema_piece.p0003(),
-    schema_piece.p0342(),
-    schema_piece.p0344(),
-    schema_piece.p0345(),
+    schema_piece.p0341(),
     schema_piece.p0343(),
-    schema_piece.p0346(),
+    schema_piece.p0344(),
+    schema_piece.p0342(),
+    schema_piece.p0345(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
-    schema_piece.p0327(),
     "\"contacts\":{\"type\":\"array\",\"items\":{\"type\":\"object\",",
-    schema_piece.p0347(),
+    schema_piece.p0346(),
     "\"display_name\":{\"type\":\"string\"},",
+    schema_piece.p0347(),
     schema_piece.p0348(),
-    schema_piece.p0349(),
     "\"required\":[\"address\",\"display_name\",\"observed_count\",",
     "\"latest_internaldate\"],\"additionalProperties\":false}},",
     "\"allowlist_suggestion\":{\"type\":\"string\"}},",
-    schema_piece.p0350(),
+    schema_piece.p0349(),
     "\"coverage\",\"contacts\",\"allowlist_suggestion\"],",
     schema_piece.p0005(),
     schema_piece.p0006(),
@@ -5886,35 +5888,35 @@ def tool_defs.mail_correspondents() -> String:
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
-    schema_piece.p0342(),
-    schema_piece.p0344(),
-    schema_piece.p0345(),
+    schema_piece.p0341(),
     schema_piece.p0343(),
-    schema_piece.p0346(),
+    schema_piece.p0344(),
+    schema_piece.p0342(),
+    schema_piece.p0345(),
     schema_piece.p0099(),
     schema_piece.p0033(),
+    schema_piece.p0323(),
     schema_piece.p0324(),
     schema_piece.p0325(),
     schema_piece.p0326(),
-    schema_piece.p0327(),
     "\"correspondents\":{\"type\":\"array\",\"items\":{\"type\":\"object\",",
-    schema_piece.p0347(),
+    schema_piece.p0346(),
     "\"sent\":{\"type\":\"object\",",
     "\"properties\":{\"observed_count\":{\"type\":\"integer\",\"minimum\":0},",
-    schema_piece.p0349(),
+    schema_piece.p0348(),
     "\"required\":[\"observed_count\",\"latest_internaldate\"],",
     "\"additionalProperties\":false},\"received\":{\"type\":\"array\",",
     schema_piece.p0010(),
     schema_piece.p0099(),
+    schema_piece.p0347(),
     schema_piece.p0348(),
-    schema_piece.p0349(),
     "\"required\":[\"folder\",\"observed_count\",\"latest_internaldate\"],",
     "\"additionalProperties\":false}}},\"required\":[\"address\",\"sent\",",
     "\"received\"],\"additionalProperties\":false}}},",
-    schema_piece.p0350(),
+    schema_piece.p0349(),
     "\"coverage\",\"correspondents\"],\"additionalProperties\":false}]},",
-    schema_piece.p0280(),
-    schema_piece.p0281()])
+    schema_piece.p0279(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_classify() -> String:
   String.concat([
@@ -5935,11 +5937,11 @@ def tool_defs.mail_classify() -> String:
     "message has a jev object with the answers, which come from untrusted ",
     "mail content.\",\"inputSchema\":{\"type\":\"object\",",
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
     schema_piece.p0352(),
     schema_piece.p0353(),
-    schema_piece.p0354(),
-    schema_piece.p0336(),
+    schema_piece.p0335(),
     "folder returned with these UIDs. Checked in the same session before ",
     "fetching any message or asking Jev; mismatch returns no content. Omit to ",
     "preserve legacy behavior.\"},\"candidates\":{\"type\":\"array\",",
@@ -5952,10 +5954,10 @@ def tool_defs.mail_classify() -> String:
     schema_piece.p0032(),
     schema_piece.p0033(),
     schema_piece.p0061(),
-    schema_piece.p0355(),
+    schema_piece.p0354(),
     "\"candidates\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},",
     schema_piece.p0035(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
     schema_piece.p0083(),
     schema_piece.p0058(),
     schema_piece.p0059(),
@@ -5991,7 +5993,7 @@ def tool_defs.mail_classify() -> String:
     schema_piece.p0087(),
     schema_piece.p0088(),
     "\"additionalProperties\":false},\"new_category\":{\"type\":\"string\"},",
-    schema_piece.p0356(),
+    schema_piece.p0355(),
     "\"body_truncated\":{\"const\":true},\"images\":{\"type\":\"array\",",
     schema_piece.p0157(),
     schema_piece.p0187(),
@@ -6013,20 +6015,20 @@ def tool_defs.mail_classify() -> String:
     "\"unreadable\",\"ref\",\"refused\"]}},\"required\":[\"section\",\"name\",",
     "\"fate\",\"reason\"],\"additionalProperties\":false}]}}},",
     "\"required\":[\"uid\",\"category\",\"jev\"],",
+    schema_piece.p0356(),
+    schema_piece.p0334(),
     schema_piece.p0357(),
-    schema_piece.p0335(),
     schema_piece.p0358(),
     schema_piece.p0359(),
     schema_piece.p0360(),
     schema_piece.p0361(),
-    schema_piece.p0362(),
     "\"additionalProperties\":false}},\"image_notice\":{\"const\":\"Image ",
     "classification is experimental. Jev's answers on a message with a used ",
     "image may depend on that image.\"}},\"required\":[\"folder\",",
     "\"uidvalidity\",\"content\",\"categories\",\"candidates\",\"messages\",",
     "\"not_found\",\"requests\"],\"additionalProperties\":false}]},",
-    schema_piece.p0280(),
-    schema_piece.p0363()])
+    schema_piece.p0279(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_triage() -> String:
   String.concat([
@@ -6042,12 +6044,13 @@ def tool_defs.mail_triage() -> String:
     "error lists every verdict. Each result has verdict, vetoes, destination ",
     "and jev; the answers come from untrusted mail. A move cut off fails with ",
     "partial: true and later moves are not made; check the destination before ",
-    schema_piece.p0364(),
+    schema_piece.p0363(),
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
     schema_piece.p0352(),
     schema_piece.p0353(),
-    schema_piece.p0354(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6060,16 +6063,15 @@ def tool_defs.mail_triage() -> String:
     schema_piece.p0374(),
     schema_piece.p0375(),
     schema_piece.p0376(),
-    schema_piece.p0377(),
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0032(),
     schema_piece.p0194(),
     schema_piece.p0061(),
-    schema_piece.p0355(),
+    schema_piece.p0354(),
     schema_piece.p0035(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
     schema_piece.p0083(),
     schema_piece.p0058(),
     schema_piece.p0059(),
@@ -6104,49 +6106,49 @@ def tool_defs.mail_triage() -> String:
     schema_piece.p0086(),
     schema_piece.p0087(),
     schema_piece.p0088(),
+    schema_piece.p0377(),
     schema_piece.p0378(),
     schema_piece.p0379(),
-    schema_piece.p0380(),
     schema_piece.p0084(),
-    schema_piece.p0356(),
+    schema_piece.p0355(),
+    schema_piece.p0380(),
     schema_piece.p0381(),
-    schema_piece.p0382(),
+    schema_piece.p0356(),
+    schema_piece.p0334(),
     schema_piece.p0357(),
-    schema_piece.p0335(),
     schema_piece.p0358(),
     schema_piece.p0359(),
     schema_piece.p0360(),
     schema_piece.p0361(),
-    schema_piece.p0362(),
     "\"additionalProperties\":false}},\"moves\":{\"type\":\"array\",",
     schema_piece.p0157(),
+    schema_piece.p0382(),
     schema_piece.p0383(),
     schema_piece.p0384(),
+    schema_piece.p0334(),
     schema_piece.p0385(),
-    schema_piece.p0335(),
     schema_piece.p0386(),
     schema_piece.p0387(),
     schema_piece.p0388(),
-    schema_piece.p0389(),
     schema_piece.p0099(),
-    schema_piece.p0386(),
+    schema_piece.p0385(),
+    schema_piece.p0389(),
     schema_piece.p0390(),
     schema_piece.p0391(),
     schema_piece.p0392(),
-    schema_piece.p0393(),
     schema_piece.p0098(),
+    schema_piece.p0393(),
     schema_piece.p0394(),
     schema_piece.p0395(),
     schema_piece.p0396(),
     schema_piece.p0397(),
-    schema_piece.p0398(),
     "\"requests\",\"moves\"],\"additionalProperties\":false},",
     schema_piece.p0032(),
     schema_piece.p0194(),
     schema_piece.p0061(),
-    schema_piece.p0355(),
+    schema_piece.p0354(),
     schema_piece.p0035(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
     schema_piece.p0083(),
     schema_piece.p0058(),
     schema_piece.p0059(),
@@ -6181,51 +6183,51 @@ def tool_defs.mail_triage() -> String:
     schema_piece.p0086(),
     schema_piece.p0087(),
     schema_piece.p0088(),
+    schema_piece.p0377(),
     schema_piece.p0378(),
     schema_piece.p0379(),
-    schema_piece.p0380(),
     schema_piece.p0084(),
-    schema_piece.p0356(),
+    schema_piece.p0355(),
+    schema_piece.p0380(),
     schema_piece.p0381(),
-    schema_piece.p0382(),
+    schema_piece.p0356(),
+    schema_piece.p0334(),
     schema_piece.p0357(),
-    schema_piece.p0335(),
     schema_piece.p0358(),
     schema_piece.p0359(),
     schema_piece.p0360(),
     schema_piece.p0361(),
-    schema_piece.p0362(),
-    schema_piece.p0399(),
+    schema_piece.p0398(),
     "\"partial\":{\"const\":true},\"message\":{\"type\":\"string\"},",
     "\"moves\":{\"type\":\"array\",\"items\":{\"anyOf\":[{\"type\":\"object\",",
+    schema_piece.p0382(),
     schema_piece.p0383(),
     schema_piece.p0384(),
+    schema_piece.p0334(),
     schema_piece.p0385(),
-    schema_piece.p0335(),
     schema_piece.p0386(),
     schema_piece.p0387(),
     schema_piece.p0388(),
-    schema_piece.p0389(),
     schema_piece.p0099(),
-    schema_piece.p0386(),
+    schema_piece.p0385(),
+    schema_piece.p0389(),
     schema_piece.p0390(),
     schema_piece.p0391(),
     schema_piece.p0392(),
-    schema_piece.p0393(),
     schema_piece.p0098(),
+    schema_piece.p0393(),
     schema_piece.p0394(),
     schema_piece.p0395(),
     schema_piece.p0396(),
     schema_piece.p0397(),
-    schema_piece.p0398(),
     "\"requests\",\"ok\",\"partial\",\"message\",\"moves\"],",
     schema_piece.p0098(),
     schema_piece.p0099(),
     schema_piece.p0194(),
     schema_piece.p0061(),
-    schema_piece.p0355(),
+    schema_piece.p0354(),
     schema_piece.p0035(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
     schema_piece.p0083(),
     schema_piece.p0058(),
     schema_piece.p0059(),
@@ -6260,30 +6262,30 @@ def tool_defs.mail_triage() -> String:
     schema_piece.p0086(),
     schema_piece.p0087(),
     schema_piece.p0088(),
+    schema_piece.p0377(),
     schema_piece.p0378(),
     schema_piece.p0379(),
-    schema_piece.p0380(),
     schema_piece.p0084(),
-    schema_piece.p0356(),
+    schema_piece.p0355(),
+    schema_piece.p0380(),
     schema_piece.p0381(),
-    schema_piece.p0382(),
+    schema_piece.p0356(),
+    schema_piece.p0334(),
     schema_piece.p0357(),
-    schema_piece.p0335(),
     schema_piece.p0358(),
     schema_piece.p0359(),
     schema_piece.p0360(),
     schema_piece.p0361(),
-    schema_piece.p0362(),
-    schema_piece.p0399(),
-    "\"error\":{\"type\":\"string\"}},\"required\":[\"folder\",",
     schema_piece.p0398(),
+    "\"error\":{\"type\":\"string\"}},\"required\":[\"folder\",",
+    schema_piece.p0397(),
     "\"requests\",\"ok\",\"error\"],\"additionalProperties\":false},",
     schema_piece.p0032(),
     schema_piece.p0194(),
     schema_piece.p0061(),
-    schema_piece.p0355(),
+    schema_piece.p0354(),
     schema_piece.p0035(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
     schema_piece.p0083(),
     schema_piece.p0058(),
     schema_piece.p0059(),
@@ -6318,27 +6320,27 @@ def tool_defs.mail_triage() -> String:
     schema_piece.p0086(),
     schema_piece.p0087(),
     schema_piece.p0088(),
+    schema_piece.p0377(),
     schema_piece.p0378(),
     schema_piece.p0379(),
-    schema_piece.p0380(),
     schema_piece.p0084(),
-    schema_piece.p0356(),
+    schema_piece.p0355(),
+    schema_piece.p0380(),
     schema_piece.p0381(),
-    schema_piece.p0382(),
+    schema_piece.p0356(),
+    schema_piece.p0334(),
     schema_piece.p0357(),
-    schema_piece.p0335(),
     schema_piece.p0358(),
     schema_piece.p0359(),
     schema_piece.p0360(),
     schema_piece.p0361(),
-    schema_piece.p0362(),
     "\"additionalProperties\":false}},\"dry_run\":{\"const\":true},",
-    schema_piece.p0400(),
+    schema_piece.p0399(),
     "\"required\":[\"folder\",\"uidvalidity\",\"content\",\"categories\",",
     "\"messages\",\"not_found\",\"requests\",\"dry_run\",\"imap\"],",
+    schema_piece.p0400(),
     schema_piece.p0401(),
-    schema_piece.p0402(),
-    schema_piece.p0363()])
+    schema_piece.p0362()])
 
 def tool_defs.mail_get_attachment() -> String:
   String.concat([
@@ -6386,14 +6388,14 @@ def tool_defs.mail_get_attachment() -> String:
     "\"minimum\":0},\"path\":{\"type\":\"string\"}},\"required\":[\"folder\",",
     "\"uid\",\"filename\",\"content_type\",\"size\",\"path\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     "\"file\":{\"type\":\"object\",",
     "\"properties\":{\"path\":{\"type\":\"string\"},",
     "\"data\":{\"type\":\"string\"}},\"required\":[\"path\",\"data\"],",
     "\"additionalProperties\":false}},\"required\":[\"dry_run\",\"file\"],",
-    schema_piece.p0401(),
-    schema_piece.p0404(),
-    schema_piece.p0363()])
+    schema_piece.p0400(),
+    schema_piece.p0403(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_mark_read() -> String:
   String.concat([
@@ -6401,10 +6403,11 @@ def tool_defs.mail_mark_read() -> String:
     "\"description\":\"Mark messages as read (add the \\\\Seen flag).\",",
     schema_piece.p0011(),
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
+    schema_piece.p0404(),
     schema_piece.p0405(),
-    schema_piece.p0406(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6417,22 +6420,21 @@ def tool_defs.mail_mark_read() -> String:
     schema_piece.p0374(),
     schema_piece.p0375(),
     schema_piece.p0376(),
-    schema_piece.p0377(),
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0004(),
+    schema_piece.p0406(),
+    schema_piece.p0334(),
     schema_piece.p0407(),
-    schema_piece.p0335(),
-    schema_piece.p0408(),
     "\"minimum\":0}},\"seen\":{\"const\":true}},\"required\":[\"ok\",",
-    schema_piece.p0409(),
+    schema_piece.p0408(),
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0281()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_mark_unread() -> String:
   String.concat([
@@ -6440,10 +6442,11 @@ def tool_defs.mail_mark_unread() -> String:
     "\"description\":\"Mark messages as unread (remove the \\\\Seen flag).\",",
     schema_piece.p0011(),
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
+    schema_piece.p0404(),
     schema_piece.p0405(),
-    schema_piece.p0406(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6456,22 +6459,21 @@ def tool_defs.mail_mark_unread() -> String:
     schema_piece.p0374(),
     schema_piece.p0375(),
     schema_piece.p0376(),
-    schema_piece.p0377(),
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0004(),
+    schema_piece.p0406(),
+    schema_piece.p0334(),
     schema_piece.p0407(),
-    schema_piece.p0335(),
-    schema_piece.p0408(),
     "\"minimum\":0}},\"seen\":{\"const\":false}},\"required\":[\"ok\",",
-    schema_piece.p0409(),
+    schema_piece.p0408(),
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0281()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_flag() -> String:
   String.concat([
@@ -6492,16 +6494,17 @@ def tool_defs.mail_flag() -> String:
     "change that stopped before any store could run, or whose UIDs none ",
     "exist, is a plain error.\",\"inputSchema\":{\"type\":\"object\",",
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
+    schema_piece.p0404(),
     schema_piece.p0405(),
-    schema_piece.p0406(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
-    schema_piece.p0367(),
     "\"colour\":{\"type\":\"string\",\"enum\":[\"red\",\"orange\",\"yellow\",",
     "\"green\",\"blue\",\"purple\",\"grey\"],\"description\":\"Flag colour. ",
     "Omit it to keep the current colour.\"},\"dry_run\":{\"type\":\"boolean\",",
+    schema_piece.p0410(),
     schema_piece.p0411(),
     schema_piece.p0412(),
     schema_piece.p0413(),
@@ -6509,39 +6512,38 @@ def tool_defs.mail_flag() -> String:
     schema_piece.p0415(),
     schema_piece.p0416(),
     schema_piece.p0417(),
-    schema_piece.p0418(),
     "false.\"}},\"required\":[\"uids\",\"uidvalidity\"],",
     schema_piece.p0008(),
     schema_piece.p0009(),
     schema_piece.p0002(),
     schema_piece.p0003(),
+    schema_piece.p0418(),
     schema_piece.p0419(),
     schema_piece.p0420(),
     schema_piece.p0421(),
     schema_piece.p0422(),
     schema_piece.p0423(),
-    schema_piece.p0424(),
     schema_piece.p0098(),
+    schema_piece.p0382(),
     schema_piece.p0383(),
     schema_piece.p0384(),
-    schema_piece.p0385(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     "\"flagged\":{\"const\":true},\"flags\":{\"type\":\"array\",",
     schema_piece.p0010(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
+    schema_piece.p0424(),
     schema_piece.p0425(),
-    schema_piece.p0426(),
     "\"additionalProperties\":false}},\"colour\":{\"type\":\"string\"},",
     "\"colour_kept\":{\"anyOf\":[{\"type\":\"boolean\"},",
     "{\"const\":\"unverified\"}]},\"colour_not_kept\":{\"type\":\"array\",",
     "\"items\":{\"type\":\"integer\",\"minimum\":0}}},\"required\":[\"ok\",",
     "\"folder\",\"changed\",\"missing\",\"flagged\",\"flags\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0281()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_unflag() -> String:
   String.concat([
@@ -6557,10 +6559,11 @@ def tool_defs.mail_unflag() -> String:
     "whose UIDs none exist, is a plain error.\",",
     schema_piece.p0011(),
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
+    schema_piece.p0404(),
     schema_piece.p0405(),
-    schema_piece.p0406(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6573,34 +6576,33 @@ def tool_defs.mail_unflag() -> String:
     schema_piece.p0374(),
     schema_piece.p0375(),
     schema_piece.p0376(),
-    schema_piece.p0377(),
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
+    schema_piece.p0418(),
     schema_piece.p0419(),
     schema_piece.p0420(),
     schema_piece.p0421(),
     schema_piece.p0422(),
     schema_piece.p0423(),
-    schema_piece.p0424(),
     schema_piece.p0098(),
+    schema_piece.p0382(),
     schema_piece.p0383(),
     schema_piece.p0384(),
-    schema_piece.p0385(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     "\"flagged\":{\"const\":false},\"flags\":{\"type\":\"array\",",
     schema_piece.p0010(),
-    schema_piece.p0334(),
+    schema_piece.p0333(),
+    schema_piece.p0424(),
     schema_piece.p0425(),
-    schema_piece.p0426(),
     "\"additionalProperties\":false}}},\"required\":[\"ok\",\"folder\",",
     "\"changed\",\"missing\",\"flagged\",\"flags\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0281()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0280()])
 
 def tool_defs.mail_move() -> String:
   String.concat([
@@ -6612,12 +6614,13 @@ def tool_defs.mail_move() -> String:
     "partial: true and the messages may be in both folders, so check the ",
     "destination before retrying.\",\"inputSchema\":{\"type\":\"object\",",
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
-    schema_piece.p0405(),
+    schema_piece.p0404(),
     "mail_get_new).\"},\"destination\":{\"type\":\"string\",",
     "\"description\":\"Target folder name.\"},",
-    schema_piece.p0293(),
+    schema_piece.p0292(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6629,31 +6632,30 @@ def tool_defs.mail_move() -> String:
     schema_piece.p0373(),
     schema_piece.p0374(),
     schema_piece.p0375(),
-    schema_piece.p0376(),
     "\"destination\",\"uidvalidity\"],\"additionalProperties\":false},",
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0004(),
+    schema_piece.p0406(),
+    schema_piece.p0334(),
     schema_piece.p0407(),
-    schema_piece.p0335(),
-    schema_piece.p0408(),
+    schema_piece.p0426(),
     schema_piece.p0427(),
     schema_piece.p0428(),
     schema_piece.p0429(),
-    schema_piece.p0430(),
     schema_piece.p0032(),
-    schema_piece.p0386(),
+    schema_piece.p0385(),
+    schema_piece.p0389(),
     schema_piece.p0390(),
     schema_piece.p0391(),
     schema_piece.p0392(),
-    schema_piece.p0393(),
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0363()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_label() -> String:
   String.concat([
@@ -6667,12 +6669,13 @@ def tool_defs.mail_label() -> String:
     "folders, so check the destination before retrying.\",",
     schema_piece.p0011(),
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
-    schema_piece.p0405(),
+    schema_piece.p0404(),
     "mail_get_new).\"},\"label\":{\"type\":\"string\",\"description\":\"Name ",
     "of an existing folder to use as the label.\"},",
-    schema_piece.p0293(),
+    schema_piece.p0292(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6683,32 +6686,31 @@ def tool_defs.mail_label() -> String:
     schema_piece.p0372(),
     schema_piece.p0373(),
     schema_piece.p0374(),
-    schema_piece.p0375(),
     "shows their verdict. Default false.\"}},\"required\":[\"uids\",\"label\",",
-    schema_piece.p0377(),
+    schema_piece.p0376(),
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0004(),
+    schema_piece.p0406(),
+    schema_piece.p0334(),
     schema_piece.p0407(),
-    schema_piece.p0335(),
-    schema_piece.p0408(),
+    schema_piece.p0426(),
     schema_piece.p0427(),
     schema_piece.p0428(),
     schema_piece.p0429(),
-    schema_piece.p0430(),
     schema_piece.p0032(),
-    schema_piece.p0386(),
+    schema_piece.p0385(),
+    schema_piece.p0389(),
     schema_piece.p0390(),
     schema_piece.p0391(),
     schema_piece.p0392(),
-    schema_piece.p0393(),
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0363()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_trash() -> String:
   String.concat([
@@ -6719,12 +6721,13 @@ def tool_defs.mail_trash() -> String:
     "Delete\\\" (use mail_move or mail_delete there). If the move is cut off ",
     "after the copy may have run, the call fails with partial: true and the ",
     "messages may be in both folders, so check the destination before ",
-    schema_piece.p0364(),
+    schema_piece.p0363(),
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
+    schema_piece.p0404(),
     schema_piece.p0405(),
-    schema_piece.p0406(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
     schema_piece.p0367(),
@@ -6737,30 +6740,29 @@ def tool_defs.mail_trash() -> String:
     schema_piece.p0374(),
     schema_piece.p0375(),
     schema_piece.p0376(),
-    schema_piece.p0377(),
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0004(),
+    schema_piece.p0406(),
+    schema_piece.p0334(),
     schema_piece.p0407(),
-    schema_piece.p0335(),
-    schema_piece.p0408(),
+    schema_piece.p0426(),
     schema_piece.p0427(),
     schema_piece.p0428(),
     schema_piece.p0429(),
-    schema_piece.p0430(),
     schema_piece.p0032(),
-    schema_piece.p0386(),
+    schema_piece.p0385(),
+    schema_piece.p0389(),
     schema_piece.p0390(),
     schema_piece.p0391(),
     schema_piece.p0392(),
-    schema_piece.p0393(),
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0363()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_delete() -> String:
   String.concat([
@@ -6776,14 +6778,15 @@ def tool_defs.mail_delete() -> String:
     "asked is reported in missing, not deleted. Jev can only block; it never ",
     "approves a delete.\",\"inputSchema\":{\"type\":\"object\",",
     schema_piece.p0012(),
+    schema_piece.p0350(),
     schema_piece.p0351(),
-    schema_piece.p0352(),
+    schema_piece.p0404(),
     schema_piece.p0405(),
-    schema_piece.p0406(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
-    schema_piece.p0367(),
     "\"confirm\":{\"type\":\"string\",\"enum\":[\"permanently-delete\"]},",
+    schema_piece.p0367(),
     schema_piece.p0368(),
     schema_piece.p0369(),
     schema_piece.p0370(),
@@ -6792,15 +6795,14 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0373(),
     schema_piece.p0374(),
     schema_piece.p0375(),
-    schema_piece.p0376(),
     "\"uidvalidity\",\"confirm\"],\"additionalProperties\":false},",
     schema_piece.p0001(),
     schema_piece.p0002(),
     schema_piece.p0003(),
     schema_piece.p0004(),
+    schema_piece.p0406(),
+    schema_piece.p0334(),
     schema_piece.p0407(),
-    schema_piece.p0335(),
-    schema_piece.p0408(),
     "\"minimum\":0}},\"permanently_deleted\":{\"const\":true},",
     schema_piece.p0229(),
     schema_piece.p0059(),
@@ -6842,7 +6844,7 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0062(),
     schema_piece.p0063(),
     schema_piece.p0231(),
-    schema_piece.p0277(),
+    schema_piece.p0430(),
     schema_piece.p0233(),
     schema_piece.p0066(),
     schema_piece.p0067(),
@@ -6873,7 +6875,7 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0431(),
     "\"folder\",\"changed\",\"missing\",\"permanently_deleted\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     schema_piece.p0432(),
     schema_piece.p0229(),
     schema_piece.p0059(),
@@ -6915,7 +6917,7 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0062(),
     schema_piece.p0063(),
     schema_piece.p0231(),
-    schema_piece.p0277(),
+    schema_piece.p0430(),
     schema_piece.p0233(),
     schema_piece.p0066(),
     schema_piece.p0067(),
@@ -6945,7 +6947,7 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0236(),
     schema_piece.p0242(),
     "\"required\":[\"dry_run\",\"imap\"],\"additionalProperties\":false},",
-    schema_piece.p0419(),
+    schema_piece.p0418(),
     "\"error\":{\"type\":\"string\"},\"jev\":{\"anyOf\":[{\"type\":\"object\",",
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -6986,7 +6988,7 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0062(),
     schema_piece.p0063(),
     schema_piece.p0231(),
-    schema_piece.p0277(),
+    schema_piece.p0430(),
     schema_piece.p0233(),
     schema_piece.p0066(),
     schema_piece.p0067(),
@@ -7016,7 +7018,7 @@ def tool_defs.mail_delete() -> String:
     schema_piece.p0236(),
     schema_piece.p0431(),
     "\"error\"],\"additionalProperties\":false}]},",
-    schema_piece.p0402(),
+    schema_piece.p0401(),
     schema_piece.p0433(),
     schema_piece.p0434()])
 
@@ -7035,6 +7037,7 @@ def tool_defs.mail_create_folder() -> String:
     "\"properties\":{\"name\":{\"type\":\"string\",\"description\":\"The new ",
     "folder's full name, levels separated by the server's delimiter (see ",
     "mail_list_folders).\"},\"dry_run\":{\"type\":\"boolean\",",
+    schema_piece.p0410(),
     schema_piece.p0411(),
     schema_piece.p0412(),
     schema_piece.p0413(),
@@ -7042,7 +7045,6 @@ def tool_defs.mail_create_folder() -> String:
     schema_piece.p0415(),
     schema_piece.p0416(),
     schema_piece.p0417(),
-    schema_piece.p0418(),
     "false.\"}},\"required\":[\"name\"],\"additionalProperties\":false},",
     schema_piece.p0001(),
     schema_piece.p0002(),
@@ -7051,11 +7053,11 @@ def tool_defs.mail_create_folder() -> String:
     "\"folder\":{\"type\":\"string\"},\"subscribed\":{\"type\":\"boolean\"},",
     "\"note\":{\"type\":\"string\"}},\"required\":[\"ok\",\"folder\",",
     "\"subscribed\"],\"additionalProperties\":false},{\"type\":\"object\",",
+    schema_piece.p0402(),
+    schema_piece.p0399(),
+    schema_piece.p0409(),
     schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
-    schema_piece.p0404(),
-    schema_piece.p0363()])
+    schema_piece.p0362()])
 
 def tool_defs.mail_rename_folder() -> String:
   String.concat([
@@ -7072,6 +7074,7 @@ def tool_defs.mail_rename_folder() -> String:
     "\"properties\":{\"from\":{\"type\":\"string\",\"description\":\"Current ",
     "full folder name.\"},\"to\":{\"type\":\"string\",\"description\":\"New ",
     "full folder name; its parent must already exist.\"},",
+    schema_piece.p0367(),
     schema_piece.p0368(),
     schema_piece.p0369(),
     schema_piece.p0370(),
@@ -7079,7 +7082,6 @@ def tool_defs.mail_rename_folder() -> String:
     schema_piece.p0372(),
     schema_piece.p0373(),
     schema_piece.p0374(),
-    schema_piece.p0375(),
     "shows their verdict. Default false.\"}},\"required\":[\"from\",\"to\"],",
     schema_piece.p0008(),
     schema_piece.p0009(),
@@ -7090,11 +7092,11 @@ def tool_defs.mail_rename_folder() -> String:
     "\"subscribed\":{\"type\":\"boolean\"},\"note\":{\"type\":\"string\"}},",
     "\"required\":[\"ok\",\"from\",\"to\",\"subscribed\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
-    schema_piece.p0400(),
-    schema_piece.p0410(),
     schema_piece.p0402(),
-    schema_piece.p0363()])
+    schema_piece.p0399(),
+    schema_piece.p0409(),
+    schema_piece.p0401(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_save_draft() -> String:
   String.concat([
@@ -7136,6 +7138,7 @@ def tool_defs.mail_save_draft() -> String:
     schema_piece.p0462(),
     schema_piece.p0463(),
     schema_piece.p0464(),
+    schema_piece.p0367(),
     schema_piece.p0368(),
     schema_piece.p0369(),
     schema_piece.p0370(),
@@ -7143,7 +7146,6 @@ def tool_defs.mail_save_draft() -> String:
     schema_piece.p0372(),
     schema_piece.p0373(),
     schema_piece.p0374(),
-    schema_piece.p0375(),
     schema_piece.p0465(),
     schema_piece.p0008(),
     schema_piece.p0009(),
@@ -7242,7 +7244,7 @@ def tool_defs.mail_save_draft() -> String:
     schema_piece.p0485(),
     "\"uid\",\"message_id\",\"hidden_unicode\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     schema_piece.p0432(),
     schema_piece.p0467(),
     schema_piece.p0468(),
@@ -7289,8 +7291,8 @@ def tool_defs.mail_save_draft() -> String:
     schema_piece.p0481(),
     schema_piece.p0486(),
     "\"hidden_unicode\"],\"additionalProperties\":false}]},",
-    schema_piece.p0404(),
-    schema_piece.p0363()])
+    schema_piece.p0403(),
+    schema_piece.p0362()])
 
 def tool_defs.mail_send() -> String:
   String.concat([
@@ -7344,6 +7346,7 @@ def tool_defs.mail_send() -> String:
     schema_piece.p0462(),
     schema_piece.p0463(),
     schema_piece.p0464(),
+    schema_piece.p0367(),
     schema_piece.p0368(),
     schema_piece.p0369(),
     schema_piece.p0370(),
@@ -7351,7 +7354,6 @@ def tool_defs.mail_send() -> String:
     schema_piece.p0372(),
     schema_piece.p0373(),
     schema_piece.p0374(),
-    schema_piece.p0375(),
     schema_piece.p0465(),
     schema_piece.p0008(),
     schema_piece.p0009(),
@@ -7576,7 +7578,7 @@ def tool_defs.mail_send() -> String:
     schema_piece.p0513(),
     "\"smtp_phase\",\"smtp_reason\",\"next_action\",\"hidden_unicode\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     schema_piece.p0514(),
     schema_piece.p0515(),
     schema_piece.p0516(),
@@ -8774,8 +8776,8 @@ def tool_defs.mail_send() -> String:
     schema_piece.p0481(),
     schema_piece.p0529(),
     schema_piece.p0528(),
-    schema_piece.p0401(),
-    schema_piece.p0404(),
+    schema_piece.p0400(),
+    schema_piece.p0403(),
     schema_piece.p0433(),
     schema_piece.p0434()])
 
@@ -8814,9 +8816,9 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0012(),
     schema_piece.p0122(),
     schema_piece.p0123(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
-    schema_piece.p0367(),
     "\"body\":{\"type\":\"string\"},\"reply_all\":{\"type\":\"boolean\",",
     "\"description\":\"Also answer the original To and Cc. Default false.\"},",
     "\"mark_answered\":{\"type\":\"boolean\",\"description\":\"Default false. ",
@@ -8841,6 +8843,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0464(),
     schema_piece.p0539(),
     schema_piece.p0540(),
+    schema_piece.p0367(),
     schema_piece.p0368(),
     schema_piece.p0369(),
     schema_piece.p0370(),
@@ -8848,7 +8851,6 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0372(),
     schema_piece.p0373(),
     schema_piece.p0374(),
-    schema_piece.p0375(),
     schema_piece.p0541(),
     "\"uidvalidity\",\"body\"],\"additionalProperties\":false},",
     schema_piece.p0001(),
@@ -8899,7 +8901,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0482(),
@@ -8992,7 +8994,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0508(),
@@ -9091,7 +9093,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0508(),
@@ -9189,7 +9191,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0521(),
@@ -9247,14 +9249,14 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0485(),
     "\"uid\",\"message_id\",\"quoted_original_truncated\",\"quoted_bytes\",",
     schema_piece.p0553(),
     schema_piece.p0098(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     schema_piece.p0432(),
     schema_piece.p0547(),
     schema_piece.p0548(),
@@ -9305,7 +9307,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0486(),
@@ -9406,7 +9408,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0508(),
@@ -9497,7 +9499,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0523(),
@@ -9588,7 +9590,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -9680,7 +9682,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -9772,7 +9774,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -9864,7 +9866,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -9956,7 +9958,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -10048,7 +10050,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -10140,7 +10142,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -10232,7 +10234,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -10324,7 +10326,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -10416,7 +10418,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -10508,7 +10510,7 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -10600,13 +10602,13 @@ def tool_defs.mail_reply() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
     schema_piece.p0528(),
-    schema_piece.p0401(),
-    schema_piece.p0404(),
+    schema_piece.p0400(),
+    schema_piece.p0403(),
     schema_piece.p0433(),
     schema_piece.p0434()])
 
@@ -10642,9 +10644,9 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0012(),
     schema_piece.p0122(),
     schema_piece.p0123(),
+    schema_piece.p0364(),
     schema_piece.p0365(),
     schema_piece.p0366(),
-    schema_piece.p0367(),
     "\"to\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},",
     schema_piece.p0446(),
     "<name@example.com>\\\".\"},\"cc\":{\"type\":\"array\",",
@@ -10666,6 +10668,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0464(),
     schema_piece.p0539(),
     schema_piece.p0540(),
+    schema_piece.p0367(),
     schema_piece.p0368(),
     schema_piece.p0369(),
     schema_piece.p0370(),
@@ -10673,7 +10676,6 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0372(),
     schema_piece.p0373(),
     schema_piece.p0374(),
-    schema_piece.p0375(),
     schema_piece.p0541(),
     "\"uidvalidity\",\"to\"],\"additionalProperties\":false},",
     schema_piece.p0001(),
@@ -10724,7 +10726,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0482(),
@@ -10814,7 +10816,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0508(),
@@ -10909,14 +10911,14 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0508(),
     schema_piece.p0513(),
     "\"smtp_phase\",\"smtp_reason\",\"next_action\",\"hidden_unicode\",",
     schema_piece.p0554(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     schema_piece.p0514(),
     schema_piece.p0515(),
     schema_piece.p0516(),
@@ -11003,7 +11005,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0521(),
@@ -11057,13 +11059,13 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0485(),
     "\"uid\",\"message_id\",\"hidden_unicode\",\"removed_tags\"],",
     schema_piece.p0098(),
-    schema_piece.p0403(),
+    schema_piece.p0402(),
     schema_piece.p0432(),
     schema_piece.p0467(),
     schema_piece.p0468(),
@@ -11111,12 +11113,12 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0486(),
     schema_piece.p0551(),
-    schema_piece.p0419(),
+    schema_piece.p0418(),
     "\"error\":{\"type\":\"string\"},\"jev\":{\"type\":\"object\",",
     schema_piece.p0059(),
     schema_piece.p0060(),
@@ -11198,7 +11200,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0523(),
@@ -11289,7 +11291,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -11381,7 +11383,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -11473,7 +11475,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -11565,7 +11567,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -11657,7 +11659,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -11749,7 +11751,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -11841,7 +11843,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -11933,7 +11935,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -12025,7 +12027,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -12117,7 +12119,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
@@ -12209,7 +12211,7 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0527(),
@@ -12301,13 +12303,13 @@ def tool_defs.mail_forward() -> String:
     schema_piece.p0542(),
     schema_piece.p0543(),
     schema_piece.p0544(),
-    schema_piece.p0335(),
+    schema_piece.p0334(),
     schema_piece.p0545(),
     schema_piece.p0546(),
     schema_piece.p0529(),
     schema_piece.p0528(),
-    schema_piece.p0401(),
-    schema_piece.p0404(),
+    schema_piece.p0400(),
+    schema_piece.p0403(),
     schema_piece.p0433(),
     schema_piece.p0434()])
 

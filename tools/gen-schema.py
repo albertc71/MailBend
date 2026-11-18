@@ -120,9 +120,11 @@ def scoped_jev(body_why, header_why):
 SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
 SUMMARY_JEV = scoped_jev(SUMMARY_REASON, SUMMARY_REASON)
 TEXT_REASON = "Not all of the message text was included in the Jev request."
-# In body mode a read or a delete says when Jev saw only part of the text.
-READ_JEV = union(JEV, jev_scope("body", "partial", {"const": TEXT_REASON}))
-DELETE_JEV = READ_JEV
+MARKUP_REASON = "Raw HTML markup was not included in the Jev request, only its readable text."
+# In body mode a read says when Jev saw only part of the text, or raw HTML
+# only as text; a delete, only the first.
+READ_JEV = union(JEV, jev_scope("body", "partial", {"enum": [TEXT_REASON, MARKUP_REASON]}))
+DELETE_JEV = union(JEV, jev_scope("body", "partial", {"const": TEXT_REASON}))
 
 ATTACHMENT = record({"filename": S, "content_type": S, "size": N})
 # One sanitizer line per displayed attached-message header value.
