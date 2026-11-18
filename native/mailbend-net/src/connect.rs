@@ -1,5 +1,5 @@
 //! TCP connections under one deadline: name resolution (bounded even for
-//! the system resolver) and sequential fallback across addresses.
+//! the system resolver) and connection attempts raced across addresses.
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
@@ -126,19 +126,75 @@ pub fn resolve(
     }
 }
 
-/// Connects to the first address that accepts, in order, giving each
-/// attempt an equal share of the time left.
+/// RFC 8305's recommended Connection Attempt Delay.
+const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// Races connections to `addrs` as RFC 8305 describes: the address families
+/// alternate, and each attempt starts `ATTEMPT_DELAY` after the previous one
+/// or as soon as an attempt fails. The first socket to connect wins, and
+/// every attempt ends by the deadline.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
+    let (report, results) = mpsc::channel();
     let mut last = NetError::Connect("no addresses".to_string());
-    for (i, addr) in addrs.iter().enumerate() {
-        let attempts_left = u32::try_from(addrs.len() - i).unwrap_or(u32::MAX);
-        let share = deadline.remaining()? / attempts_left;
-        match TcpStream::connect_timeout(addr, share.max(Duration::from_millis(1))) {
+    for addr in alternate_families(addrs) {
+        let Ok(timeout) = deadline.remaining() else {
+            last = NetError::TimedOut;
+            break;
+        };
+        if let Err(e) = start_attempt(addr, timeout, report.clone()) {
+            last = e;
+            continue;
+        }
+        match results.recv_timeout(ATTEMPT_DELAY) {
+            Ok(Ok(sock)) => return Ok(sock),
+            Ok(Err(e)) => last = e,
+            Err(_delay_passed) => {}
+        }
+    }
+    drop(report);
+    for result in results {
+        match result {
             Ok(sock) => return Ok(sock),
-            Err(e) => last = NetError::Connect(e.to_string()),
+            Err(e) => last = e,
         }
     }
     Err(last)
+}
+
+/// `addrs` with the address families alternating, starting with the family
+/// listed first.
+fn alternate_families(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let first_is_v4 = addrs.first().is_some_and(SocketAddr::is_ipv4);
+    let (first, other): (Vec<_>, Vec<_>) = addrs
+        .iter()
+        .copied()
+        .partition(|addr| addr.is_ipv4() == first_is_v4);
+    let mut other = other.into_iter();
+    let mut order: Vec<_> = first
+        .into_iter()
+        .flat_map(|addr| std::iter::once(addr).chain(other.next()))
+        .collect();
+    order.extend(other);
+    order
+}
+
+/// Connects to `addr` on its own thread and sends the result to `report`.
+/// Once `connect_any` has returned nobody receives, so a socket that
+/// connects too late is dropped, which closes it.
+fn start_attempt(
+    addr: SocketAddr,
+    timeout: Duration,
+    report: mpsc::Sender<Result<TcpStream, NetError>>,
+) -> Result<(), NetError> {
+    std::thread::Builder::new()
+        .name("connect".to_string())
+        .spawn(move || {
+            let result = TcpStream::connect_timeout(&addr, timeout)
+                .map_err(|e| NetError::Connect(e.to_string()));
+            let _too_late = report.send(result);
+        })
+        .map(drop)
+        .map_err(|_| NetError::Connect("cannot start a connection attempt".to_string()))
 }
 
 /// Bounds every later read and write on `sock` by `timeout`.
@@ -164,6 +220,77 @@ mod tests {
         let deadline = Deadline::after(Duration::from_secs(2));
         let sock = connect_any(&[closed, good], &deadline).expect("connect");
         assert_eq!(sock.peer_addr().expect("peer"), good);
+    }
+
+    /// A loopback listener that never answers, like a black-holed route:
+    /// Linux drops a SYN while the accept queue is full, so the queue is
+    /// filled first. Returns how many connections wait in the queue.
+    fn silent_listener() -> (TcpListener, SocketAddr, usize) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let mut queued = 0;
+        loop {
+            match TcpStream::connect_timeout(&addr, Duration::from_millis(250)) {
+                Ok(_closed_at_once) => queued += 1,
+                Err(e) => {
+                    assert_eq!(e.kind(), io::ErrorKind::TimedOut, "a full queue drops SYNs");
+                    return (listener, addr, queued);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn races_past_a_silent_address_and_closes_the_losing_socket() {
+        let (silent, silent_addr, queued) = silent_listener();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let good = listener.local_addr().expect("addr");
+        let started = Instant::now();
+        let deadline = Deadline::after(Duration::from_secs(5));
+        let sock = connect_any(&[silent_addr, good], &deadline).expect("connect");
+        assert_eq!(sock.peer_addr().expect("peer"), good);
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        // Once the queue drains, a connection that the losing attempt
+        // completes must arrive already closed, like the queued ones.
+        silent.set_nonblocking(true).expect("nonblocking");
+        let mut accepted = 0;
+        while accepted <= queued && deadline.remaining().is_ok() {
+            match silent.accept() {
+                Ok((mut peer, _)) => {
+                    accepted += 1;
+                    peer.set_read_timeout(Some(Duration::from_secs(1)))
+                        .expect("timeout");
+                    assert_eq!(peer.read(&mut [0; 1]).expect("closed, not kept open"), 0);
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+    }
+
+    #[test]
+    fn alternates_address_families() {
+        let (_silent, silent, _) = silent_listener();
+        let v4 = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let v6 = TcpListener::bind("[::1]:0").expect("bind the IPv6 loopback");
+        let addrs = [
+            silent,
+            v4.local_addr().expect("addr"),
+            v6.local_addr().expect("addr"),
+        ];
+        let deadline = Deadline::after(Duration::from_secs(5));
+        let sock = connect_any(&addrs, &deadline).expect("connect");
+        assert_eq!(sock.peer_addr().expect("peer"), addrs[2]);
+    }
+
+    #[test]
+    fn an_address_that_never_answers_fails_at_the_deadline() {
+        let (_silent, silent, _) = silent_listener();
+        let started = Instant::now();
+        let result = connect_any(&[silent], &Deadline::after(Duration::from_millis(300)));
+        assert!(matches!(result, Err(NetError::Connect(_))));
+        let waited = started.elapsed();
+        assert!((Duration::from_millis(300)..Duration::from_secs(1)).contains(&waited));
     }
 
     #[test]
