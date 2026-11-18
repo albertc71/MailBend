@@ -131,14 +131,18 @@ const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
 /// Races connections to `addrs` as RFC 8305 describes: the address families
 /// alternate, and each attempt starts `ATTEMPT_DELAY` after the previous one
-/// or as soon as an attempt fails. The first socket to connect wins, and
-/// every attempt ends by the deadline.
+/// or as soon as an attempt fails. The first socket to connect by the
+/// deadline wins. When none does, the error is the last address's, as when
+/// the addresses were tried in turn.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
     race(addrs, deadline, Arc::new(TcpStream::connect_timeout))
 }
 
 /// Opens a TCP connection to an address within a timeout.
 type Connector = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Send + Sync>;
+
+/// An address's position in the caller's list, and how its attempt ended.
+type Outcome = (usize, Result<TcpStream, NetError>);
 
 /// `connect_any` with the connecting step given, so tests can stand in for
 /// peers that answer late or never.
@@ -147,67 +151,88 @@ fn race(
     deadline: &Deadline,
     connect: Connector,
 ) -> Result<TcpStream, NetError> {
-    let (report, results) = mpsc::channel();
-    let mut last = NetError::Connect("no addresses".to_string());
-    for addr in alternate_families(addrs) {
-        let Ok(timeout) = deadline.remaining() else {
-            last = NetError::TimedOut;
-            break;
+    // An address never tried ran out of time, as with attempts in turn.
+    let mut errors = vec![NetError::TimedOut; addrs.len()];
+    let (report, outcomes) = mpsc::channel();
+    let mut unstarted = alternate_families(addrs).into_iter();
+    let mut running = 0;
+    while let Ok(left) = deadline.remaining() {
+        let wait = match unstarted.next() {
+            Some((index, addr)) => {
+                let connect = Arc::clone(&connect);
+                if let Err(e) = start_attempt(index, addr, *deadline, connect, report.clone()) {
+                    errors[index] = e;
+                    continue;
+                }
+                running += 1;
+                errors[index] = attempt_timed_out();
+                left.min(ATTEMPT_DELAY)
+            }
+            None if running > 0 => left,
+            None => break,
         };
-        if let Err(e) = start_attempt(addr, timeout, Arc::clone(&connect), report.clone()) {
-            last = e;
-            continue;
-        }
-        match results.recv_timeout(ATTEMPT_DELAY) {
-            Ok(Ok(sock)) => return Ok(sock),
-            Ok(Err(e)) => last = e,
+        match outcomes.recv_timeout(wait) {
+            Ok((_, Ok(sock))) if deadline.remaining().is_ok() => return Ok(sock),
+            Ok((index, outcome)) => {
+                running -= 1;
+                errors[index] = outcome.err().unwrap_or_else(attempt_timed_out);
+            }
             Err(_delay_passed) => {}
         }
     }
-    drop(report);
-    for result in results {
-        match result {
-            Ok(sock) => return Ok(sock),
-            Err(e) => last = e,
-        }
-    }
-    Err(last)
+    Err(errors
+        .pop()
+        .unwrap_or_else(|| NetError::Connect("no addresses".to_string())))
 }
 
-/// `addrs` with the address families alternating, starting with the family
-/// listed first.
-fn alternate_families(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+/// `addrs` with their positions, the address families alternating and
+/// starting with the family listed first.
+fn alternate_families(addrs: &[SocketAddr]) -> Vec<(usize, SocketAddr)> {
     let first_is_v4 = addrs.first().is_some_and(SocketAddr::is_ipv4);
     let (first, other): (Vec<_>, Vec<_>) = addrs
         .iter()
         .copied()
-        .partition(|addr| addr.is_ipv4() == first_is_v4);
+        .enumerate()
+        .partition(|(_, addr)| addr.is_ipv4() == first_is_v4);
     let mut other = other.into_iter();
     let mut order: Vec<_> = first
         .into_iter()
-        .flat_map(|addr| std::iter::once(addr).chain(other.next()))
+        .flat_map(|attempt| std::iter::once(attempt).chain(other.next()))
         .collect();
     order.extend(other);
     order
 }
 
-/// Connects to `addr` on its own thread and sends the result to `report`.
-/// Once `connect_any` has returned nobody receives, so a socket that
-/// connects too late is dropped, which closes it.
+/// Connects to `addr` on its own thread, within what is left of `deadline`,
+/// and sends the outcome to `report`. Once `connect_any` has returned
+/// nobody receives, so a socket that connects too late is dropped, which
+/// closes it.
 fn start_attempt(
+    index: usize,
     addr: SocketAddr,
-    timeout: Duration,
+    deadline: Deadline,
     connect: Connector,
-    report: mpsc::Sender<Result<TcpStream, NetError>>,
+    report: mpsc::Sender<Outcome>,
 ) -> Result<(), NetError> {
     std::thread::Builder::new()
         .name("connect".to_string())
         .spawn(move || {
-            let result = connect(&addr, timeout).map_err(|e| NetError::Connect(e.to_string()));
-            let _too_late = report.send(result);
+            let outcome = deadline
+                .remaining()
+                .map_err(|_| attempt_timed_out())
+                .and_then(|left| {
+                    connect(&addr, left).map_err(|e| NetError::Connect(e.to_string()))
+                });
+            let _too_late = report.send((index, outcome));
         })
         .map(drop)
         .map_err(|_| NetError::Connect("cannot start a connection attempt".to_string()))
+}
+
+/// How an attempt still unanswered at the deadline fails, in the words
+/// `TcpStream::connect_timeout` uses for its own timeout.
+fn attempt_timed_out() -> NetError {
+    NetError::Connect("connection timed out".to_string())
 }
 
 /// Bounds every later read and write on `sock` by `timeout`.
