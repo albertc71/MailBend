@@ -185,8 +185,8 @@ Google's setup and reference pages list different sets of tool names. This page 
 The checked reference lists draft, read and label operations, with no send or delete operation. That is a dated documentation observation, not a permanent API guarantee.
 [Setup, 2026-10-31](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server) [Reference, 2026-10-31](https://developers.google.com/workspace/gmail/api/reference/mcp)
 
-The incident matrix is tracked in [#130](https://github.com/albertc71/MailBend/issues/130).
-When that document exists, link it here rather than duplicate its incident analysis.
+See the [compromised-agent incident matrix](INCIDENTS.md) for synthetic tool-sequence outcomes after agent compromise.
+It measures connector permissions, not model susceptibility or Jev accuracy.
 
 Quarterly review checks each cell against its linked primary source, updates its date, and retains unknowns where the evidence is missing.
 A changed product name, release contract, approval mechanism, or TLS setting warrants an earlier review.
