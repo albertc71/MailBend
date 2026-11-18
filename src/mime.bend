@@ -37,36 +37,71 @@ type Parts is Data:
 type Cut is Data:
   Cut{cur: List<&2, String>, parts: List<&2, String>, inside: Bool, done: Bool}
 
-# What an HTML tag does to the text: widen the waiting gap to at least
-# `level` (see HtmlOut), add a line break, hide the text until </head> or
-# <body>, show it again, or skip the element's content up to `closer`.
-type HtmlTag is Data:
-  Gap{level: U32}
-  LineBreak{}
-  Head{}
-  Body{}
-  RawText{closer: String}
+# The text between tags: markup; the content of an element that holds no
+# markup and ends only at its end tag `closer` (as "</title"); or
+# plaintext, which runs to the end of the input.
+type HtmlMode is Data:
+  Markup{}
+  Raw{closer: String, keep: HtmlKeep}
+  Plain{}
 
-# Where the HTML scanner is: in text; after '<'; in a tag's name or
-# attributes (`close` marks an end tag, the name is lower case and
-# reversed, `eq` is just after '='); in a quoted attribute value; in a
-# comment after `dashes` '-'; in style or script content with `left` of
-# `closer` still to match; or in a character reference (name reversed).
+# What raw content shows: nothing (title, style and script), its text, or
+# its text with character references decoded (textarea).
+type HtmlKeep is Data:
+  Drop{}
+  Keep{}
+  KeepRefs{}
+
+# What a tag does besides the gap it leaves: nothing more, a line break,
+# line breaks kept until </pre>, or a new mode for the text after it.
+type HtmlTag is Data:
+  Other{}
+  LineBreak{}
+  Pre{}
+  Opens{mode: HtmlMode}
+
+# Where a tag is: in its name, before an attribute name, in one, before
+# its value, or in an unquoted or quoted value.
+type HtmlAttr is Data:
+  TagName{}
+  BeforeName{}
+  AttrName{}
+  BeforeValue{}
+  Unquoted{}
+  Quoted{quote: Char}
+
+# The comment states that decide where a comment ends.
+type HtmlComment is Data:
+  CommentStart{}
+  CommentStartDash{}
+  CommentText{}
+  CommentEndDash{}
+  CommentEnd{}
+  CommentEndBang{}
+
+# Where the HTML scanner is, after the tokenizer states that decide what
+# is text: in text of a mode, or in a character reference (name reversed)
+# that returns to it; after '<' or "</"; in a tag (`close` marks an end
+# tag; the name is lower case, reversed and cut short); in raw content's
+# end tag with `left` of `closer` still to match; after "<!" or "<!-"; in
+# a comment; or in a bogus comment. `tail` is the input from the tag's '<'.
 type HtmlScan is Data:
-  InText{}
-  TagOpen{}
-  TagName{close: Bool, name: String}
-  TagAttrs{close: Bool, name: String, eq: Bool}
-  TagQuoted{close: Bool, name: String, quote: Char}
-  InComment{dashes: U32}
-  InRaw{closer: String, left: String}
-  InRef{name: String}
+  InText{mode: HtmlMode}
+  InRef{name: String, mode: HtmlMode}
+  TagOpen{tail: String}
+  EndTagOpen{tail: String}
+  InTag{close: Bool, name: String, at: HtmlAttr, tail: String}
+  RawEnd{closer: String, keep: HtmlKeep, left: String, tail: String}
+  Bang{}
+  BangDash{}
+  InComment{at: HtmlComment}
+  Bogus{}
 
 # HTML read as text: the text so far (reversed), the gap waiting for the
 # next visible character (0 none, 1 a space, 2 a line break, 3 a blank
-# line), and whether text is hidden, as it is in <head>.
+# line), and whether a line feed is a line break, as in <pre>.
 type HtmlOut is Data:
-  HtmlOut{text: String, gap: U32, hidden: Bool}
+  HtmlOut{text: String, gap: U32, pre: Bool}
 
 # A single (non-multipart) part of a message: its header fields and body.
 type Leaf is Data:
@@ -1065,8 +1100,8 @@ def html_text.blocks() -> List<&2, String>:
     "section", "tr"]
 
 def html_text.paragraphs() -> List<&2, String>:
-  ["blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "ol", "p", "pre",
-    "table", "ul"]
+  ["blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "ol", "p",
+    "plaintext", "pre", "table", "ul", "xmp"]
 
 # The gap an element leaves around it: a blank line, a line break, a space
 # between table cells, or nothing for inline elements such as <b> and <a>.
@@ -1075,21 +1110,39 @@ def html_text.gap_of(+name: String) -> U32:
     Bool.pick(U32, List.contains(~String, ~String.eq, html_text.blocks(), name), 2,
       Bool.pick(U32, String.eq(name, "td") || String.eq(name, "th"), 1, 0)))
 
-# What a tag does, by its lower-case name.
+def html_text.raw(name: String, keep: HtmlKeep) -> HtmlTag:
+  Opens{Raw{"</" ++ name, keep}}
+
+# What a tag does besides its gap, by its lower-case name. The content of
+# title, style and script is dropped. The other elements whose content a
+# browser reads as raw text keep it, so a comment opened there cannot hide
+# what follows their end tag.
 def html_text.tag(+name: String) -> HtmlTag:
   match name:
     case "br":
       LineBreak{}
-    case "head":
-      Head{}
-    case "body":
-      Body{}
+    case "pre":
+      Pre{}
+    case "title":
+      html_text.raw("title", Drop{})
     case "style":
-      RawText{"</style"}
+      html_text.raw("style", Drop{})
     case "script":
-      RawText{"</script"}
+      html_text.raw("script", Drop{})
+    case "textarea":
+      html_text.raw("textarea", KeepRefs{})
+    case "xmp":
+      html_text.raw("xmp", Keep{})
+    case "iframe":
+      html_text.raw("iframe", Keep{})
+    case "noembed":
+      html_text.raw("noembed", Keep{})
+    case "noframes":
+      html_text.raw("noframes", Keep{})
+    case "plaintext":
+      Opens{Plain{}}
     case _:
-      Gap{html_text.gap_of(name)}
+      Other{}
 
 # The named references mail commonly uses, with their code points. &nbsp;
 # reads as an ordinary space, so it collapses like one.
@@ -1165,16 +1218,20 @@ def html_text.gap(text: String, gap: U32) -> String:
     case _:
       SCon{'\n', SCon{'\n', text}}
 
+# One more line break than is waiting, up to a blank line.
+def html_text.more_lines(+gap: U32) -> U32:
+  U32.min((U32.max(gap, 1) + 1 : U32), 3)
+
 # Writes a character of text. Whitespace, like the gaps tags leave, only
 # waits for the next visible character, so runs of it collapse and the
-# text neither starts nor ends with it. Hidden text is dropped.
+# text neither starts nor ends with it. In <pre> a line feed breaks a line.
 def html_text.put(+c: Char, out: HtmlOut) -> HtmlOut:
-  HtmlOut{+text, +gap, +hidden} = out
-  +blank = Char.is_space(c)
+  HtmlOut{+text, +gap, +pre} = out
+  wait = Bool.pick(U32, pre && Char.is_eq(c, '\n'), html_text.more_lines(gap),
+    U32.max(gap, 1))
   before = html_text.gap(text, Bool.pick(U32, String.is_empty(text), 0, gap))
-  Bool.pick(HtmlOut, hidden || blank,
-    HtmlOut{text, Bool.pick(U32, blank, U32.max(gap, 1), gap), hidden},
-    HtmlOut{SCon{c, before}, 0, hidden})
+  Bool.pick(HtmlOut, Char.is_space(c), HtmlOut{text, wait, pre},
+    HtmlOut{SCon{c, before}, 0, pre})
 
 def html_text.put_all(s: String, out: HtmlOut) -> HtmlOut:
   match s:
@@ -1187,128 +1244,191 @@ def html_text.put_all(s: String, out: HtmlOut) -> HtmlOut:
 def html_text.literal(name: String, out: HtmlOut) -> HtmlOut:
   html_text.put_all(String.reverse(name), html_text.put('&', out))
 
+# Writes raw content's characters, unless the content is dropped.
+def html_text.show(keep: HtmlKeep, s: String, out: HtmlOut) -> HtmlOut:
+  match keep:
+    case Drop{}:
+      out
+    case _:
+      html_text.put_all(s, out)
+
 def html_text.widen(level: U32, out: HtmlOut) -> HtmlOut:
-  HtmlOut{text, gap, hidden} = out
-  HtmlOut{text, U32.max(gap, level), hidden}
+  HtmlOut{text, gap, pre} = out
+  HtmlOut{text, U32.max(gap, level), pre}
 
-# <br> asks for one more line break than is waiting, up to a blank line.
 def html_text.line_break(out: HtmlOut) -> HtmlOut:
-  HtmlOut{text, gap, hidden} = out
-  HtmlOut{text, U32.min((U32.max(gap, 1) + 1 : U32), 3), hidden}
+  HtmlOut{text, gap, pre} = out
+  HtmlOut{text, html_text.more_lines(gap), pre}
 
-def html_text.hide(hidden: Bool, out: HtmlOut) -> HtmlOut:
+def html_text.keep_lines(pre: Bool, out: HtmlOut) -> HtmlOut:
   HtmlOut{text, gap, was} = out
-  HtmlOut{text, gap, hidden}
+  HtmlOut{text, gap, pre}
 
-# What a tag does at the '>' that ends it.
-def html_text.end(tag: HtmlTag, close: Bool, out: HtmlOut) -> HtmlScan & HtmlOut:
-  match tag close:
-    case Gap{level} _:
-      (InText{}, html_text.widen(level, out))
-    case LineBreak{} _:
-      (InText{}, html_text.line_break(out))
-    case Head{} False{}:
-      (InText{}, html_text.hide(True{}, out))
-    case Head{} True{}:
-      (InText{}, html_text.hide(False{}, out))
-    case Body{} _:
-      (InText{}, html_text.hide(False{}, out))
-    case RawText{+closer} False{}:
-      (InRaw{closer, closer}, out)
-    case RawText{closer} True{}:
-      (InText{}, out)
+# What a tag does at the '>' that ends it, after its gap. </br> breaks a
+# line too, as browsers read it.
+def html_text.act(tag: HtmlTag, close: Bool, out: HtmlOut) -> HtmlScan & HtmlOut:
+  match tag:
+    case Other{}:
+      (InText{Markup{}}, out)
+    case LineBreak{}:
+      (InText{Markup{}}, html_text.line_break(out))
+    case Pre{}:
+      (InText{Markup{}}, html_text.keep_lines(Bool.not(close), out))
+    case Opens{mode}:
+      (InText{Bool.pick(HtmlMode, close, Markup{}, mode)}, out)
 
-# A character of text: '<' may start a tag and '&' a reference.
-def html_text.plain(+c: Char, out: HtmlOut) -> HtmlScan & HtmlOut:
+def html_text.end(close: Bool, +name: String, out: HtmlOut) -> HtmlScan & HtmlOut:
+  html_text.act(html_text.tag(name), close, html_text.widen(html_text.gap_of(name), out))
+
+# HTML whitespace: tab, line feed, form feed, carriage return and space,
+# without the vertical tab that Char.is_space also accepts.
+def html_text.is_space(+c: Char) -> Bool:
+  Char.is_space(c) && Bool.not(Char.is_eq(c, C.chr(11)))
+
+def html_text.is_quote(+c: Char) -> Bool:
+  Char.is_eq(c, '"') || Char.is_eq(c, C.chr(39))
+
+# '>' ends a tag outside a quoted value.
+def html_text.attr.next(+c: Char, at: HtmlAttr) -> Maybe<&2, HtmlAttr>:
+  Bool.pick(Maybe<&2, HtmlAttr>, Char.is_eq(c, '>'), None{}, Some{at})
+
+# Whitespace and '/' lead to the next attribute name, anything else to
+# `other`.
+def html_text.attr.after(+c: Char, other: HtmlAttr) -> HtmlAttr:
+  Bool.pick(HtmlAttr, html_text.is_space(c) || Char.is_eq(c, '/'), BeforeName{}, other)
+
+# Where a tag is after `c`, or None when `c` ends it. A quote opens a value
+# only right after '=' and any whitespace, and only with `quotes`; an '='
+# anywhere else is part of a name or an unquoted value. The tokenizer's
+# after-name state reads every character as AttrName does, and its
+# self-closing and after-value states as BeforeName does.
+def html_text.attr(at: HtmlAttr, +c: Char, quotes: Bool) -> Maybe<&2, HtmlAttr>:
+  match at:
+    case TagName{}:
+      html_text.attr.next(c, html_text.attr.after(c, TagName{}))
+    case BeforeName{}:
+      html_text.attr.next(c, html_text.attr.after(c, AttrName{}))
+    case AttrName{}:
+      html_text.attr.next(c, Bool.pick(HtmlAttr, Char.is_eq(c, '/'), BeforeName{},
+        Bool.pick(HtmlAttr, Char.is_eq(c, '='), BeforeValue{}, AttrName{})))
+    case BeforeValue{}:
+      html_text.attr.next(c, Bool.pick(HtmlAttr, html_text.is_space(c), BeforeValue{},
+        Bool.pick(HtmlAttr, quotes && html_text.is_quote(c), Quoted{c}, Unquoted{})))
+    case Unquoted{}:
+      html_text.attr.next(c, Bool.pick(HtmlAttr, html_text.is_space(c), BeforeName{},
+        Unquoted{}))
+    case Quoted{+quote}:
+      Some{Bool.pick(HtmlAttr, Char.is_eq(c, quote), BeforeName{}, Quoted{quote})}
+
+# A tag name grows while the tag is in its name, to at most eleven letters:
+# one past the longest name that does anything, so a longer name costs
+# nothing more and matches none.
+def html_text.grow(+c: Char, +name: String, at: HtmlAttr) -> String:
+  match at:
+    case TagName{}:
+      Bool.pick(String, String.is_empty(String.drop(name, 10n)),
+        SCon{Char.to_lower(c), name}, name)
+    case _:
+      name
+
+def html_text.in_tag(next: Maybe<&2, HtmlAttr>, +c: Char, close: Bool, name: String,
+  tail: String, out: HtmlOut) -> HtmlScan & HtmlOut:
+  match next:
+    case None{}:
+      html_text.end(close, String.reverse(name), out)
+    case Some{+at}:
+      (InTag{close, html_text.grow(c, name, at), at, tail}, out)
+
+# A character of markup text: '<' may start a tag and '&' a reference.
+def html_text.markup(+c: Char, rest: String, out: HtmlOut) -> HtmlScan & HtmlOut:
   match c:
     case '<':
-      (TagOpen{}, out)
+      (TagOpen{SCon{'<', rest}}, out)
     case '&':
-      (InRef{""}, out)
+      (InRef{"", Markup{}}, out)
     case _:
-      (InText{}, html_text.put(c, out))
+      (InText{Markup{}}, html_text.put(c, out))
 
-def html_text.open.letter(letter: Bool, c: Char, out: HtmlOut) -> HtmlScan & HtmlOut:
-  match letter:
-    case True{}:
-      (TagName{False{}, SCon{Char.to_lower(c), SNil{}}}, out)
-    case False{}:
-      html_text.plain(c, html_text.put('<', out))
-
-# The character after '<': a letter starts a tag name, '/' an end tag, and
-# '!' or '?' a comment or declaration. Anything else shows the '<' as text.
-def html_text.open(+c: Char, out: HtmlOut) -> HtmlScan & HtmlOut:
-  match c:
-    case '/':
-      (TagName{True{}, ""}, out)
-    case '!':
-      (TagName{False{}, "!"}, out)
-    case '?':
-      (TagName{False{}, "?"}, out)
+# '&' starts a reference only in content whose references are decoded.
+def html_text.raw_ref(+closer: String, +keep: HtmlKeep, out: HtmlOut)
+  -> HtmlScan & HtmlOut:
+  match keep:
+    case KeepRefs{}:
+      (InRef{"", Raw{closer, keep}}, out)
     case _:
-      html_text.open.letter(Char.is_alpha(c), c, out)
+      (InText{Raw{closer, keep}}, html_text.show(keep, "&", out))
 
-# A tag name read so far; "<!--" starts a comment instead.
-def html_text.name.add(+name: String, close: Bool) -> HtmlScan:
-  Bool.pick(HtmlScan, String.eq(name, "--!"), InComment{0}, TagName{close, name})
-
-def html_text.name.more(space: Bool, c: Char, close: Bool, name: String) -> HtmlScan:
-  match space:
-    case True{}:
-      TagAttrs{close, name, False{}}
-    case False{}:
-      html_text.name.add(SCon{Char.to_lower(c), name}, close)
-
-# A character of a tag name, which ends at whitespace, '/' or '>'.
-def html_text.name(+c: Char, close: Bool, name: String, out: HtmlOut) -> HtmlScan & HtmlOut:
-  match c:
-    case '>':
-      html_text.end(html_text.tag(String.reverse(name)), close, out)
-    case '/':
-      (TagAttrs{close, name, False{}}, out)
-    case _:
-      (html_text.name.more(Char.is_space(c), c, close, name), out)
-
-# A character after a tag name. With `quotes`, a quote just after '='
-# starts a value, which may hold '<' and '>'.
-def html_text.attrs(+c: Char, +close: Bool, +name: String, +eq: Bool, quotes: Bool,
+# A character of raw content: '<' may start its end tag, and anything else
+# is content.
+def html_text.raw_char(+c: Char, rest: String, +closer: String, +keep: HtmlKeep,
   out: HtmlOut) -> HtmlScan & HtmlOut:
   match c:
-    case '>':
-      html_text.end(html_text.tag(String.reverse(name)), close, out)
-    case '=':
-      (TagAttrs{close, name, True{}}, out)
+    case '<':
+      (RawEnd{closer, keep, String.drop(closer, 1n), SCon{'<', rest}}, out)
+    case '&':
+      html_text.raw_ref(closer, keep, out)
     case _:
-      +quote = quotes && eq && (Char.is_eq(c, '"') || Char.is_eq(c, C.chr(39)))
-      (Bool.pick(HtmlScan, quote, TagQuoted{close, name, c},
-        TagAttrs{close, name, eq && Char.is_space(c)}), out)
+      (InText{Raw{closer, keep}}, html_text.show(keep, SCon{c, ""}, out))
 
-# A character of a comment, which ends at "-->".
-def html_text.comment(c: Char, dashes: U32) -> HtmlScan:
-  match c:
-    case '-':
-      InComment{U32.min((dashes + 1 : U32), 2)}
-    case '>':
-      Bool.pick(HtmlScan, U32.is_eq(dashes, 2), InText{}, InComment{0})
-    case _:
-      InComment{0}
+# A character of text in `mode`.
+def html_text.text(+c: Char, rest: String, mode: HtmlMode, out: HtmlOut)
+  -> HtmlScan & HtmlOut:
+  match mode:
+    case Markup{}:
+      html_text.markup(c, rest, out)
+    case Raw{closer, keep}:
+      html_text.raw_char(c, rest, closer, keep, out)
+    case Plain{}:
+      (InText{Plain{}}, html_text.put(c, out))
 
-def html_text.raw.next(hit: Bool, +c: Char, +closer: String, +rest: String) -> HtmlScan:
+# The start of `tail` that matches `closer` in any case: what an end tag
+# had read when it stopped matching.
+def html_text.matched(tail: String, closer: String) -> String:
+  match tail closer:
+    case SCon{+t, ts} SCon{k, ks}:
+      Bool.pick(String, Char.is_eq(Char.to_lower(t), k),
+        SCon{t, html_text.matched(ts, ks)}, "")
+    case _ _:
+      ""
+
+# An end tag that does not match leaves raw content as it was: what it read
+# is content, and `c` is read again as content.
+def html_text.raw_miss(+c: Char, rest: String, +closer: String, +keep: HtmlKeep,
+  tail: String, out: HtmlOut) -> HtmlScan & HtmlOut:
+  html_text.raw_char(c, rest, closer, keep,
+    html_text.show(keep, html_text.matched(tail, closer), out))
+
+# After the full name of raw content's end tag, the tag name state decides:
+# the tag ends or goes on to attributes, and a longer name is no end tag.
+def html_text.raw_close(next: Maybe<&2, HtmlAttr>, +c: Char, rest: String,
+  +closer: String, keep: HtmlKeep, tail: String, out: HtmlOut) -> HtmlScan & HtmlOut:
+  match next:
+    case None{}:
+      html_text.end(True{}, String.drop(closer, 2n), out)
+    case Some{TagName{}}:
+      html_text.raw_miss(c, rest, closer, keep, tail, out)
+    case Some{at}:
+      (InTag{True{}, String.reverse(String.drop(closer, 2n)), at, tail}, out)
+
+def html_text.raw_end.next(hit: Bool, +c: Char, rest: String, +closer: String,
+  +keep: HtmlKeep, more: String, tail: String, out: HtmlOut) -> HtmlScan & HtmlOut:
   match hit:
     case True{}:
-      Bool.pick(HtmlScan, String.is_empty(rest), TagAttrs{True{}, "", False{}},
-        InRaw{closer, rest})
+      (RawEnd{closer, keep, more, tail}, out)
     case False{}:
-      InRaw{closer, Bool.pick(String, Char.is_eq(c, '<'), String.drop(closer, 1n), closer)}
+      html_text.raw_miss(c, rest, closer, keep, tail, out)
 
-# A character of style or script content, which runs to the element's end
-# tag; `left` is the part of that tag still to match, in any case.
-def html_text.raw(+c: Char, closer: String, left: String) -> HtmlScan:
+# A character of raw content's end tag, matched in any case, with `left`
+# of `closer` still to match.
+def html_text.raw_end(+c: Char, rest: String, closer: String, keep: HtmlKeep,
+  left: String, tail: String, out: HtmlOut) -> HtmlScan & HtmlOut:
   match left:
     case SNil{}:
-      TagAttrs{True{}, "", False{}}
-    case SCon{d, rest}:
-      html_text.raw.next(Char.is_eq(Char.to_lower(c), d), c, closer, rest)
+      html_text.raw_close(html_text.attr(TagName{}, c, True{}), c, rest, closer, keep,
+        tail, out)
+    case SCon{d, more}:
+      html_text.raw_end.next(Char.is_eq(Char.to_lower(c), d), c, rest, closer, keep,
+        more, tail, out)
 
 def html_text.ref.end(m: Maybe<&2, Char>, name: String, out: HtmlOut) -> HtmlOut:
   match m:
@@ -1317,99 +1437,195 @@ def html_text.ref.end(m: Maybe<&2, Char>, name: String, out: HtmlOut) -> HtmlOut
     case None{}:
       html_text.put(';', html_text.literal(name, out))
 
-def html_text.ref.more(more: Bool, c: Char, name: String, out: HtmlOut)
-  -> HtmlScan & HtmlOut:
+def html_text.ref.more(more: Bool, +c: Char, rest: String, name: String,
+  mode: HtmlMode, out: HtmlOut) -> HtmlScan & HtmlOut:
   match more:
     case True{}:
-      (InRef{SCon{c, name}}, out)
+      (InRef{SCon{c, name}, mode}, out)
     case False{}:
-      html_text.plain(c, html_text.literal(name, out))
+      html_text.text(c, rest, mode, html_text.literal(name, out))
 
 # A character of a reference: letters, digits and '#' extend it and ';'
 # ends it. Anything else shows the '&' and the name as text.
-def html_text.ref(+c: Char, +name: String, out: HtmlOut) -> HtmlScan & HtmlOut:
+def html_text.ref(+c: Char, rest: String, +name: String, mode: HtmlMode, out: HtmlOut)
+  -> HtmlScan & HtmlOut:
   match c:
     case ';':
-      (InText{}, html_text.ref.end(html_text.decode(String.reverse(name)), name, out))
+      (InText{mode}, html_text.ref.end(html_text.decode(String.reverse(name)), name, out))
     case _:
       html_text.ref.more(Char.is_alpha(c) || Char.is_digit(c) || Char.is_eq(c, '#'),
-        c, name, out)
+        c, rest, name, mode, out)
 
-def html_text.step(+c: Char, quotes: Bool, scan: HtmlScan, out: HtmlOut)
+def html_text.open.letter(letter: Bool, +c: Char, rest: String, tail: String,
+  out: HtmlOut) -> HtmlScan & HtmlOut:
+  match letter:
+    case True{}:
+      (InTag{False{}, SCon{Char.to_lower(c), ""}, TagName{}, tail}, out)
+    case False{}:
+      html_text.markup(c, rest, html_text.put('<', out))
+
+# The character after '<': a letter starts a tag name, '/' an end tag, '!'
+# a comment or declaration and '?' a bogus comment. Anything else shows
+# the '<' as text.
+def html_text.open(+c: Char, rest: String, tail: String, out: HtmlOut)
+  -> HtmlScan & HtmlOut:
+  match c:
+    case '/':
+      (EndTagOpen{tail}, out)
+    case '!':
+      (Bang{}, out)
+    case '?':
+      (Bogus{}, out)
+    case _:
+      html_text.open.letter(Char.is_alpha(c), c, rest, tail, out)
+
+# A character of a bogus comment, which ends at '>'.
+def html_text.bogus(+c: Char) -> HtmlScan:
+  Bool.pick(HtmlScan, Char.is_eq(c, '>'), InText{Markup{}}, Bogus{})
+
+# The character after "</": a letter starts an end tag name and '>' ends
+# an empty one. Anything else starts a bogus comment.
+def html_text.end_open(+c: Char, tail: String, out: HtmlOut) -> HtmlScan & HtmlOut:
+  (Bool.pick(HtmlScan, Char.is_alpha(c),
+    InTag{True{}, SCon{Char.to_lower(c), ""}, TagName{}, tail}, html_text.bogus(c)), out)
+
+# The character after "<!": "--" starts a comment, and anything else a
+# bogus comment. That is how HTML reads a doctype, and a CDATA section
+# outside SVG and MathML.
+def html_text.bang(+c: Char) -> HtmlScan:
+  Bool.pick(HtmlScan, Char.is_eq(c, '-'), BangDash{}, html_text.bogus(c))
+
+def html_text.bang_dash(+c: Char) -> HtmlScan:
+  Bool.pick(HtmlScan, Char.is_eq(c, '-'), InComment{CommentStart{}}, html_text.bogus(c))
+
+# '-' moves a comment to `dash` and '>' ends it; anything else is comment
+# text.
+def html_text.comment.edge(+c: Char, dash: HtmlComment) -> Maybe<&2, HtmlComment>:
+  match c:
+    case '-':
+      Some{dash}
+    case '>':
+      None{}
+    case _:
+      Some{CommentText{}}
+
+def html_text.comment.end(+c: Char) -> Maybe<&2, HtmlComment>:
+  match c:
+    case '-':
+      Some{CommentEnd{}}
+    case '!':
+      Some{CommentEndBang{}}
+    case _:
+      html_text.comment.edge(c, CommentEnd{})
+
+# Where a comment is after `c`, or None when `c` ends it: at "-->" and
+# "--!>", and at once in "<!-->" and "<!--->".
+def html_text.comment(+c: Char, at: HtmlComment) -> Maybe<&2, HtmlComment>:
+  match at:
+    case CommentStart{}:
+      html_text.comment.edge(c, CommentStartDash{})
+    case CommentStartDash{}:
+      html_text.comment.edge(c, CommentEnd{})
+    case CommentText{}:
+      Some{Bool.pick(HtmlComment, Char.is_eq(c, '-'), CommentEndDash{}, CommentText{})}
+    case CommentEndDash{}:
+      Some{Bool.pick(HtmlComment, Char.is_eq(c, '-'), CommentEnd{}, CommentText{})}
+    case CommentEnd{}:
+      html_text.comment.end(c)
+    case CommentEndBang{}:
+      html_text.comment.edge(c, CommentEndDash{})
+
+def html_text.after_comment(m: Maybe<&2, HtmlComment>) -> HtmlScan:
+  match m:
+    case None{}:
+      InText{Markup{}}
+    case Some{at}:
+      InComment{at}
+
+# One character of HTML; `rest` is the input after it.
+def html_text.step(+c: Char, rest: String, quotes: Bool, scan: HtmlScan, out: HtmlOut)
   -> HtmlScan & HtmlOut:
   match scan:
-    case InText{}:
-      html_text.plain(c, out)
-    case TagOpen{}:
-      html_text.open(c, out)
-    case TagName{close, name}:
-      html_text.name(c, close, name, out)
-    case TagAttrs{close, name, eq}:
-      html_text.attrs(c, close, name, eq, quotes, out)
-    case TagQuoted{+close, +name, +quote}:
-      (Bool.pick(HtmlScan, Char.is_eq(c, quote), TagAttrs{close, name, False{}},
-        TagQuoted{close, name, quote}), out)
-    case InComment{dashes}:
-      (html_text.comment(c, dashes), out)
-    case InRaw{closer, left}:
-      (html_text.raw(c, closer, left), out)
-    case InRef{name}:
-      html_text.ref(c, name, out)
+    case InText{mode}:
+      html_text.text(c, rest, mode, out)
+    case InRef{name, mode}:
+      html_text.ref(c, rest, name, mode, out)
+    case TagOpen{tail}:
+      html_text.open(c, rest, tail, out)
+    case EndTagOpen{tail}:
+      html_text.end_open(c, tail, out)
+    case InTag{close, name, at, tail}:
+      html_text.in_tag(html_text.attr(at, c, quotes), c, close, name, tail, out)
+    case RawEnd{closer, keep, left, tail}:
+      html_text.raw_end(c, rest, closer, keep, left, tail, out)
+    case Bang{}:
+      (html_text.bang(c), out)
+    case BangDash{}:
+      (html_text.bang_dash(c), out)
+    case InComment{at}:
+      (html_text.after_comment(html_text.comment(c, at)), out)
+    case Bogus{}:
+      (html_text.bogus(c), out)
 
-def html_text.feed(+c: Char, quotes: Bool, st: HtmlScan & HtmlOut) -> HtmlScan & HtmlOut:
+def html_text.feed(+c: Char, rest: String, quotes: Bool, st: HtmlScan & HtmlOut)
+  -> HtmlScan & HtmlOut:
   (scan, out) = st
-  html_text.step(c, quotes, scan, out)
+  html_text.step(c, rest, quotes, scan, out)
 
 def html_text.go(s: String, +quotes: Bool, st: HtmlScan & HtmlOut) -> HtmlScan & HtmlOut:
   match s:
     case SNil{}:
       st
-    case SCon{c, t}:
-      html_text.go(t, quotes, html_text.feed(c, quotes, st))
+    case SCon{c, +t}:
+      html_text.go(t, quotes, html_text.feed(c, t, quotes, st))
 
-def html_text.start() -> HtmlScan & HtmlOut:
-  (InText{}, HtmlOut{"", 0, False{}})
-
-# At the end of the input, an open '<' or reference was text; other
-# unfinished markup is dropped.
+# At the end of the input, an open '<', "</" or reference is text, and so
+# is what kept raw content's end tag had read. Other unfinished markup is
+# dropped.
 def html_text.close(scan: HtmlScan, out: HtmlOut) -> HtmlOut:
   match scan:
-    case TagOpen{}:
+    case TagOpen{tail}:
       html_text.put('<', out)
-    case InRef{name}:
+    case EndTagOpen{tail}:
+      html_text.put_all("</", out)
+    case InRef{name, mode}:
       html_text.literal(name, out)
+    case RawEnd{closer, keep, left, tail}:
+      html_text.show(keep, html_text.matched(tail, closer), out)
     case _:
       out
 
+def html_text.close.st(st: HtmlScan & HtmlOut) -> HtmlOut:
+  (scan, out) = st
+  html_text.close(scan, out)
+
+# A tag still open at the end is dropped, as a browser drops it. So that
+# a quote that never closes cannot hide the words after it, the input from
+# the tag's '<' is read once more with quotes ignored, after the text
+# already written.
+def html_text.fin(+scan: HtmlScan, out: HtmlOut) -> HtmlOut:
+  match scan:
+    case InTag{close, name, at, tail}:
+      html_text.close.st(html_text.go(tail, False{}, (InText{Markup{}}, out)))
+    case _:
+      html_text.close(scan, out)
+
 def html_text.written(out: HtmlOut) -> String:
-  HtmlOut{text, gap, hidden} = out
+  HtmlOut{text, gap, pre} = out
   String.reverse(text)
 
-def html_text.text(st: HtmlScan & HtmlOut) -> String:
+def html_text.result(st: HtmlScan & HtmlOut) -> String:
   (scan, out) = st
-  html_text.written(html_text.close(scan, out))
+  html_text.written(html_text.fin(scan, out))
 
-# A quote still open at the end means a malformed attribute. A browser
-# drops the rest of the input; here the HTML is read again with quotes
-# ignored, so each tag ends at its first '>' and that text is shown.
-def html_text.fin.scan(+scan: HtmlScan, out: HtmlOut, html: String) -> String:
-  match scan:
-    case TagQuoted{close, name, quote}:
-      html_text.text(html_text.go(html, False{}, html_text.start()))
-    case _:
-      html_text.written(html_text.close(scan, out))
-
-def html_text.fin(st: HtmlScan & HtmlOut, html: String) -> String:
-  (scan, out) = st
-  html_text.fin.scan(scan, out, html)
-
-# HTML as plain text, in one pass (two if an attribute quote never closes):
-# <head>, <style>, <script>, comments and attribute values are left out,
-# block elements and <br> start new lines, character references are decoded
-# and runs of whitespace collapse. A '<' that cannot start a tag is text. An
-# unclosed tag, comment, <style> or <script> hides the rest of the input.
-def html_text(+html: String) -> String:
-  html_text.fin(html_text.go(html, True{}, html_text.start()), html)
+# HTML as plain text, read as a browser's tokenizer reads it, in one pass
+# (and once more over an unfinished last tag). The content of <title>,
+# <style> and <script>, comments and attribute values are left out, block
+# elements and <br> start new lines, <pre> keeps its line breaks, character
+# references are decoded and runs of whitespace collapse. Where the HTML is
+# broken, the text may hold more than a browser shows, never less.
+def html_text(html: String) -> String:
+  html_text.result(html_text.go(html, True{}, (InText{Markup{}}, HtmlOut{"", 0, False{}})))
 
 def is_blank(+c: Char) -> Bool:
   Char.is_eq(c, ' ') || Char.is_eq(c, '\t')
