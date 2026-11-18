@@ -1569,7 +1569,7 @@ def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
       parts = Bool.pick(M.Parts, String.eq(M.main_value(ct), "text/html"),
         M.Parts{"", text, []}, M.Parts{text, "", []})
       Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
-        "; message incomplete]\n" ++ Jev.seen_text(parts), True{})
+        "; message incomplete]\n" ++ Jev.seen_text(parts), True{}, False{})
     case False{} Part.Part{path, ct, cd, encoding, size}:
       Jev.MessageText{"[Selected MIME section " ++ I.section_str(path) ++
         "; no text body fetched]", Jev.Partial{}}
@@ -9244,12 +9244,18 @@ def markup_coverage.if(raw: Bool, j: J.Json) -> J.Json:
     case False{}:
       j
 
-# In body mode Jev reads an HTML part only as text, so a read that shows
-# raw HTML says its markup went unchecked.
+# Whether Jev answered about the read `j`; only then does its jev object
+# describe a request.
+def jev_checked(j: J.Json) -> Bool:
+  String.eq(Response.text(Maybe.default(&2, J.Json, J.get(j, "jev"), J.JNull{}), "status"),
+    Jev.status_name(Jev.Checked{}))
+
+# In body mode Jev reads an HTML part only as converted text, so a checked
+# read that shows raw HTML says so.
 def markup_coverage(o: Policy.Out, jev: Jev.Switch, +mode: String) -> Policy.Out:
   match o jev:
     case Policy.Ok{+j} Jev.On{Jev.Body{}}:
-      Policy.Ok{markup_coverage.if(raw_html(j, mode), j)}
+      Policy.Ok{markup_coverage.if(jev_checked(j) && raw_html(j, mode), j)}
     case _ _:
       o
 

@@ -170,7 +170,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`triage_moves_only_to_known_folders`](../LAWS.bend#L1291), [`triage_creates_no_mailbox`](../LAWS.bend#L1311), [`triage_one_move_per_message`](../LAWS.bend#L1323), [`triage_expunges_only_moved`](../LAWS.bend#L1338), [`filing_matches_table`](../LAWS.bend#L1355), [`uncertain_changes_nothing`](../LAWS.bend#L1370)
 - Tests: [`tests/test-e2e.py#triage_body`](../tests/test-e2e.py#L6494), [`tests/test-e2e.py#triage_protections`](../tests/test-e2e.py#L6757)
-- Code: [`src/ops.bend#plan_triage`](../src/ops.bend#L865), [`src/jev.bend#filing`](../src/jev.bend#L1450)
+- Code: [`src/ops.bend#plan_triage`](../src/ops.bend#L865), [`src/jev.bend#filing`](../src/jev.bend#L1456)
 - Seeded bug: `triage-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.triage_moves_only_to_known_folders`.
 - Observer relationship to [`triage_moves_only_to_known_folders`](../LAWS.bend#L1291): The observer is the root implementation of this cited law.
 
@@ -192,7 +192,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`headers_state_has_no_body`](../LAWS.bend#L1429), [`state_images_on_headers_is_state`](../LAWS.bend#L1482), [`state_images_body_without_refs_is_state`](../LAWS.bend#L1499), [`cargo_of_without_images`](../LAWS.bend#L1516), [`entry_at_sends_no_images`](../LAWS.bend#L1524), [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1648)
 - Tests: [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L6052), [`tests/test-e2e.py#triage_headers`](../tests/test-e2e.py#L6572)
-- Code: [`src/jev.bend#state_of`](../src/jev.bend#L290)
+- Code: [`src/jev.bend#state_of`](../src/jev.bend#L294)
 - Seeded bug: `jev-privacy-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.headers_state_has_no_body`.
 - Observer relationship to [`headers_state_has_no_body`](../LAWS.bend#L1429): The observer is the root implementation of this cited law.
 
@@ -204,7 +204,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`missing_answer_is_cautious`](../LAWS.bend#L1535), [`only_the_pinned_model_answers`](../LAWS.bend#L1550), [`unpinned_reply_is_no_answer`](../LAWS.bend#L1569)
 - Tests: [`tests/test-e2e.py#gates_unpinned`](../tests/test-e2e.py#L7366), [`tests/test-e2e.py#gates_failure`](../tests/test-e2e.py#L7336)
-- Code: [`src/jev.bend#answered_by_pin`](../src/jev.bend#L1148)
+- Code: [`src/jev.bend#answered_by_pin`](../src/jev.bend#L1152)
 
 ## jev-gates
 
@@ -214,7 +214,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`send_veto_only_subtracts`](../LAWS.bend#L1591), [`delete_veto_only_subtracts`](../LAWS.bend#L1606), [`failure_blocks_outbound`](../LAWS.bend#L1616), [`secret_scan_blocks`](../LAWS.bend#L1632)
 - Tests: [`tests/test-e2e.py#gates_vetoes`](../tests/test-e2e.py#L7188), [`tests/test-e2e.py#gates_delete_vetoes`](../tests/test-e2e.py#L7263), [`tests/test-e2e.py#gates_secret_scan`](../tests/test-e2e.py#L7107), [`tests/test-e2e.py#gates_local_scan`](../tests/test-e2e.py#L7025), [`tests/unit/local-secret-scan.bend#main`](../tests/unit/local-secret-scan.bend#L43)
-- Code: [`src/jev.bend#outbound_checked`](../src/jev.bend#L2039), [`src/jev.bend#delete_checked`](../src/jev.bend#L2057)
+- Code: [`src/jev.bend#outbound_checked`](../src/jev.bend#L2071), [`src/jev.bend#delete_checked`](../src/jev.bend#L2089)
 - Seeded bug: `jev-gates-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.delete_veto_only_subtracts`.
 - Observer relationship to [`delete_veto_only_subtracts`](../LAWS.bend#L1606): The observer is the root implementation of this cited law.
 
@@ -361,4 +361,4 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 - [`awaiting_incomplete_is_unknown`](../LAWS.bend#L2029). Awaiting-reply classification keeps incomplete evidence without a positive reply unknown; this is an evidence-status contract, not a mailbox-effect or send/delete safety claim.
 - [`awaiting_disabled_filters_keep_candidate`](../LAWS.bend#L2111). Disabling both awaiting-reply filters retains each sampled candidate; this candidate-selection contract is separate from the read-plans no-write claim.
 - [`complete_text_is_whole`](../LAWS.bend#L1448). Body-mode Jev text is Complete only when nothing was cut or left out and the HTML part, markup included, holds no U+FFFD, and then it holds the whole text part and the HTML part as text; this annotation-coverage contract has no public README claim, and it does not prove what the native helper sends.
-- [`partial_text_annotation_says_so`](../LAWS.bend#L1464). A body-mode read annotation of an answered message whose Jev text is Partial reports partial coverage with the text reason alone; this annotation-coverage contract has no public README claim, and it covers neither the HTML markup reason, the delete report nor what the native helper sends.
+- [`partial_text_annotation_says_so`](../LAWS.bend#L1464). A body-mode read annotation of an answered message whose Jev text is Partial reports partial coverage with the text reason alone; this annotation-coverage contract has no public README claim, and it covers neither the replacement-character reason, the HTML markup reason, the delete report nor what the native helper sends.

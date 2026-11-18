@@ -279,11 +279,14 @@ for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
         "Nested message text was not included in the Jev request."]}}, False)
     check("mail_get", {**whole, "jev": plain_jev})
     check("mail_get", {**whole, "jev": jev}, False)
-# In body mode a read says when Jev saw only part of its text, or raw HTML
-# only as text; a delete can say only the first.
+# In body mode a read says when Jev's text was not complete, or when Jev
+# was sent raw HTML only as converted text; a delete can say only the first.
 text_reason = "Not all of the message text was included in the Jev request."
-markup_reason = "Raw HTML markup was not included in the Jev request, only its readable text."
-for reasons in ([text_reason], [markup_reason], [text_reason, markup_reason, summary_reason]):
+replaced_reason = ("The message holds a replacement character (U+FFFD), so MailBend cannot confirm that "
+                   "every byte decoded.")
+markup_reason = "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
+for reasons in ([text_reason], [markup_reason], [replaced_reason, markup_reason],
+                [text_reason, markup_reason, summary_reason]):
     jev = {"status": "checked", "model": "fixture", "content": "body", "derived_from_untrusted_content": True,
            "decision": "proceeded", "signals": {}, "reasons": reasons, "coverage": "partial"}
     check("mail_get", {**whole, "jev": jev})
@@ -291,7 +294,8 @@ for reasons in ([text_reason], [markup_reason], [text_reason, markup_reason, sum
     check("mail_get", {**whole, "jev": {**jev, "content": "headers"}}, False)
     check("mail_get", {**whole, "jev": {**jev, "coverage": "headers_only"}}, False)
     check("mail_get", {**whole, "jev": {**jev, "reasons": []}}, False)
-    check("mail_delete", {"ok": False, "error": "blocked", "jev": jev}, text_reason in reasons)
+    check("mail_delete", {"ok": False, "error": "blocked", "jev": jev},
+          text_reason in reasons or replaced_reason in reasons)
     check("mail_search", {**search, "messages": [{**message, "jev": jev}]}, False)
 check("mail_get", {**whole, "jev": {**jev, "reasons": [summary_reason]}}, False)
 for invalid in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u061c", "\u200e",

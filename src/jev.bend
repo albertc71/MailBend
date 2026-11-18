@@ -74,12 +74,14 @@ type Attachments is Data:
   Unknown{}
 
 # Whether Jev saw the whole readable text. A fetch cut, a second text part
-# left out, the text cap, an undecodable part or the request budget make it
-# Partial. In headers mode Jev sees no text, and this records only whether
-# the fetch was cut.
+# left out, the text cap or the request budget make it Partial. Otherwise a
+# U+FFFD in the text, or in the HTML part's markup, makes it Unconfirmed: a
+# literal U+FFFD looks the same as one a failed decode put there. In headers
+# mode Jev sees no text, and this records only whether the fetch was cut.
 type Completeness is Data:
   Complete{}
   Partial{}
+  Unconfirmed{}
 
 # What MailBend knows about a message before asking Jev: its decoded fact
 # fields (see fact_names), flags, INTERNALDATE, size and attachments. It
@@ -195,22 +197,24 @@ def seen_text(p: M.Parts) -> String:
   M.Parts{+text, +html, _} = p
   text ++ html_heading(text, html) ++ M.html_text(html)
 
-def text_of.put(+shown: String, cut: Bool) -> Text:
+# The text `shown` capped; `marked` says a part holds a U+FFFD that
+# `shown` may lack.
+def text_of.put(+shown: String, cut: Bool, marked: Bool) -> Text:
   +capped = M.utf8_prefix(shown, max_text())
-  undecodable = String.contains(shown, SCon{C.repl(), SNil{}})
-  partial = cut || undecodable || Bool.not(String.eq(capped, shown))
-  MessageText{capped, Bool.pick(Completeness, partial, Partial{}, Complete{})}
+  partial = cut || Bool.not(String.eq(capped, shown))
+  replaced = marked || String.contains(shown, SCon{C.repl(), SNil{}})
+  MessageText{capped, Bool.pick(Completeness, partial, Partial{},
+    Bool.pick(Completeness, replaced, Unconfirmed{}, Complete{}))}
 
-# Whether the HTML part held a character that did not decode. M.html_text
-# drops markup, and with it a U+FFFD inside a tag or a comment, so this
-# asks the part itself.
-def html_undecodable(p: M.Parts) -> Bool:
+# Whether the HTML part holds a U+FFFD. M.html_text may drop markup, and
+# with it a U+FFFD inside a tag or a comment, so this asks the part itself.
+def html_replaced(p: M.Parts) -> Bool:
   M.Parts{_, html, _} = p
   String.contains(html, SCon{C.repl(), SNil{}})
 
 def text_of.fin(kept: M.Parts & Bool, cut: Bool) -> Text:
   (+p, left_out) = kept
-  text_of.put(seen_text(p), (cut || left_out) || html_undecodable(p))
+  text_of.put(seen_text(p), cut || left_out, html_replaced(p))
 
 def text_of.go(walk: List<&2, M.Leaf> & Bool, fetch_cut: Bool) -> Text:
   (ls, nest_cut) = walk
@@ -218,8 +222,8 @@ def text_of.go(walk: List<&2, M.Leaf> & Bool, fetch_cut: Bool) -> Text:
 
 # The text of a message fetched whole up to `max` bytes: Partial when the
 # fetch cut it, parts nested past M.multipart_limit or a second text or
-# HTML part (see M.parts_kept) were left out, the cap shortened it or a
-# part did not decode.
+# HTML part (see M.parts_kept) were left out or the cap shortened it, else
+# Unconfirmed when a part holds a U+FFFD.
 def text_of(m: I.Msg, max: U32) -> Text:
   I.Msg{uid, flags, date, size, headers, body, structure} = m
   text_of.go(M.message_leaves.cut(body), U32.is_gt(size, max))
@@ -1333,6 +1337,8 @@ def is_complete(w: Completeness) -> Bool:
       True{}
     case Partial{}:
       False{}
+    case Unconfirmed{}:
+      False{}
 
 # Whether a message can still be found safe to delete before Jev is asked:
 # in body mode, with all of its text and no code veto. Only such a message
@@ -1568,13 +1574,10 @@ def category_kvs(c: Category) -> List<&2, J.Json>:
     case Uncategorised{}:
       [J.kv("category", J.JNull{})]
 
-# body_truncated: in body mode, Jev saw only part of the text.
+# body_truncated: in body mode, Jev's text is not Complete.
 def truncated_kvs(c: Content, b: Completeness) -> List<&2, J.Json>:
-  match c b:
-    case Body{} Partial{}:
-      [J.kv("body_truncated", J.bool(True{}))]
-    case _ _:
-      []
+  List.filter.put(J.Json, J.kv("body_truncated", J.bool(True{})), [],
+    is_body(c) && Bool.not(is_complete(b)))
 
 # A classified message's fields, `extra` coming just before its jev object.
 def checked_kvs(
@@ -1682,18 +1685,35 @@ def scoped_fields(kvs: List<&2, J.Json>, +c: Content, +why: String) -> List<&2, 
 def text_reason() -> String:
   "Not all of the message text was included in the Jev request."
 
-# Jev reads an HTML part as text, without its markup (see seen_text).
-def markup_reason() -> String:
-  "Raw HTML markup was not included in the Jev request, only its readable text."
+def replaced_reason() -> String:
+  "The message holds a replacement character (U+FFFD), so MailBend cannot confirm that every " ++
+    "byte decoded."
 
-# A jev object, with text_reason when in body mode Jev saw only part of
-# the text.
-def covered(j: J.Json, c: Content, b: Completeness) -> J.Json:
+# Jev reads an HTML part as the text M.html_text converts it to (see
+# seen_text).
+def markup_reason() -> String:
+  "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
+
+# Why, in body mode, Jev's text `b` is not Complete.
+def text_gap(c: Content, b: Completeness) -> Maybe<&2, String>:
   match c b:
     case Body{} Partial{}:
-      scoped(j, Body{}, text_reason())
+      Some{text_reason()}
+    case Body{} Unconfirmed{}:
+      Some{replaced_reason()}
     case _ _:
+      None{}
+
+def covered.put(j: J.Json, gap: Maybe<&2, String>) -> J.Json:
+  match gap:
+    case Some{why}:
+      scoped(j, Body{}, why)
+    case None{}:
       j
+
+# A jev object, with the reason Jev's text `b` is not Complete.
+def covered(j: J.Json, c: Content, b: Completeness) -> J.Json:
+  covered.put(j, text_gap(c, b))
 
 # Annotations
 # -----------
@@ -1718,8 +1738,8 @@ def annotation_signals(a: Answers, none: String) -> J.Json:
     injection_kvs(injection)
   ]))
 
-# A read message's jev object; it says so when Jev saw only part of the
-# text.
+# A read message's jev object; it says so when Jev's text is not
+# Complete.
 def annotation_json(x: Answered, +c: Content, none: String) -> J.Json:
   match x:
     case Answered{f, a}:
@@ -1970,30 +1990,42 @@ def decided(c: Content, +cs: List<&2, Concern>, extra: List<&2, J.Json>) -> Deci
   +g = gate_of(cs)
   Decision{g, List.append(&2, J.Json, gate_kvs(g, c, J.obj(concern_kvs(cs))), extra)}
 
-# Whether Jev saw all the text of every message in `xs`.
-def all_whole(xs: List<&2, Answered>) -> Bool:
+# The completeness of two texts together: Partial when either is, else
+# Unconfirmed when either is.
+def least(a: Completeness, b: Completeness) -> Completeness:
+  match a b:
+    case Complete{} _:
+      b
+    case Partial{} _:
+      a
+    case Unconfirmed{} Partial{}:
+      b
+    case Unconfirmed{} _:
+      a
+
+# The completeness of the texts of `xs` together (see least).
+def texts_whole(xs: List<&2, Answered>) -> Completeness:
   match xs:
     case Nil{}:
-      True{}
+      Complete{}
     case x <> t:
-      is_complete(facts_body(answered_facts(x))) && all_whole(t)
+      least(facts_body(answered_facts(x)), texts_whole(t))
 
-def delete_report(whole: Bool, report: List<&2, J.Json>) -> List<&2, J.Json>:
-  match whole:
-    case True{}:
-      report
-    case False{}:
-      scoped_fields(report, Body{}, text_reason())
-
-def delete_decision.fin(d: Decision, whole: Bool) -> Decision:
-  Decision{g, report} = d
-  Decision{g, delete_report(whole, report)}
+# A decision with the reason `gap`, unless it failed: an unchecked jev
+# object says why, not what a request held.
+def delete_decision.fin(d: Decision, gap: Maybe<&2, String>) -> Decision:
+  match d gap:
+    case Decision{Failed{r}, report} _:
+      Decision{Failed{r}, report}
+    case Decision{g, report} Some{why}:
+      Decision{g, scoped_fields(report, Body{}, why)}
+    case Decision{g, report} None{}:
+      Decision{g, report}
 
 # The decision on the keep answers about `xs`; in body mode its jev object
-# says so when Jev saw only part of a message's text.
+# says when Jev's text of a message is not Complete.
 def delete_decision(+c: Content, +xs: List<&2, Answered>) -> Decision:
-  delete_decision.fin(decided(c, delete_concerns(xs), []),
-    Bool.not(is_body(c)) || all_whole(xs))
+  delete_decision.fin(decided(c, delete_concerns(xs), []), text_gap(c, texts_whole(xs)))
 
 # Jev could not decide, and why: the action is blocked.
 def undecided(c: Content, +reason: String) -> Decision:

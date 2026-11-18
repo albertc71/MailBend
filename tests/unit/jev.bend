@@ -78,6 +78,8 @@ def show_whole(c: Jev.Completeness) -> String:
       "complete"
     case Jev.Partial{}:
       "partial"
+    case Jev.Unconfirmed{}:
+      "unconfirmed"
 
 def show_text(t: Jev.Text) -> String:
   Jev.MessageText{text, whole} = t
@@ -94,6 +96,7 @@ def check_facts() -> IO(Unit):
       I.VNil{}), 1000)))
     IO.print(show_text(Jev.text_of(msg(8, 2000, full("Hi\r\n"), I.VNil{}), 1000)))
     IO.print(show_text(Jev.text_of(msg(8, 60, full("Caf�\r\n"), I.VNil{}), 1000)))
+    IO.print(show_text(Jev.text_of(msg(8, 2000, full("Caf�\r\n"), I.VNil{}), 1000)))
     IO.print(show_text(Jev.text_of(msg(8, 300, two_parts("mixed", "text/plain"), I.VNil{}),
       1000)))
     IO.print(show_text(Jev.text_of(msg(8, 300, two_parts("alternative", "text/html"), I.VNil{}),
@@ -615,6 +618,8 @@ def main() -> IO(Unit):
 #|[Hi
 #|] partial
 #|[Caf�
+#|] unconfirmed
+#|[Caf�
 #|] partial
 #|[first] partial
 #|[first
@@ -631,9 +636,9 @@ def main() -> IO(Unit):
 #| first ] complete
 #|[] partial
 #|[ OK 
-#|] partial
+#|] unconfirmed
 #|[ OK 
-#|] partial
+#|] unconfirmed
 #|2 aé [] abc
 #|10
 #|none___ none
