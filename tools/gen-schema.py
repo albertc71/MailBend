@@ -513,10 +513,12 @@ SENDS = hints(open_world=True)
 # Shared parameters
 
 FOLDER = param("string", "Folder (IMAP mailbox) name. Default: INBOX.")
-UID = param("integer", minimum=1)
+UID_ITEM = param("integer", minimum=1)
+UID = param("integer", "Message UID in the folder (from mail_search or mail_get_new).",
+            minimum=1)
 UIDS = param(
     "array", "Message UIDs in the folder (from mail_search or mail_get_new).",
-    items=UID, minItems=1)
+    items=UID_ITEM, minItems=1)
 UIDVALIDITY = param(
     "integer",
     "The folder's UIDVALIDITY returned with the UIDs (mail_search, mail_get, "
@@ -694,10 +696,12 @@ TOOLS = [
          READS),
     tool("mail_search", "Search mail",
          "Search a folder, newest first. Opens the folder read-only, so "
-         "nothing is marked read. All criteria are combined with AND. Pass next_cursor "
+         "nothing is marked read. All criteria are combined with AND. from, to, cc and "
+         "subject match as case-insensitive substrings. Pass next_cursor "
          "back as cursor with the same folder and criteria for older matches. "
          "has_more=false and next_cursor=null end traversal. Searches are re-evaluated; "
-         "new arrivals above the boundary are excluded. UID SEARCH still enumerates matches."
+         "new arrivals above the boundary are excluded. Each page reruns the full search, "
+         "so total counts every current match."
          + JEV_NOTES,
          READS,
          {"folder": FOLDER,
@@ -903,7 +907,7 @@ TOOLS = [
          {"folder": FOLDER,
           "uids": param(
               "array", "Message UIDs in the folder, at most 50.",
-              items=UID, minItems=1, maxItems=50),
+              items=UID_ITEM, minItems=1, maxItems=50),
           "uidvalidity": CLASSIFY_UIDVALIDITY,
           "candidates": param(
               "array",
@@ -927,7 +931,7 @@ TOOLS = [
          {"folder": FOLDER,
           "uids": param(
               "array", "Message UIDs in the folder, at most 50.",
-              items=UID, minItems=1, maxItems=50),
+              items=UID_ITEM, minItems=1, maxItems=50),
           "uidvalidity": UIDVALIDITY},
          ["uids", "uidvalidity"]),
     tool("mail_get_attachment", "Save an attachment",
