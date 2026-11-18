@@ -635,10 +635,8 @@ def main() -> IO(Unit):
 #|[HTML part as text]
 #|first] complete
 #|[] partial
-#|[ OK 
-#|] unconfirmed
-#|[ OK 
-#|] unconfirmed
+#|[OK] unconfirmed
+#|[OK] unconfirmed
 #|2 aé [] abc
 #|10
 #|none___ none
