@@ -7,6 +7,8 @@ never add \\Seen and never SELECT, deletion needs confirmation, trash is
 recoverable, mail is actually delivered, and the password never appears in
 any output. Run: python3 tests/test-e2e.py   (after scripts/install.sh)
 Use --tool-scenarios-only for the second transport run after a complete run.
+After the shared-server checks, the remaining scenario groups run in two
+halves at once; a child process runs the second half.
 """
 import argparse
 import base64
@@ -1008,6 +1010,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool-scenarios-only", action="store_true",
                         help="skip transport-fixed front-end checks already covered by a complete run")
+    parser.add_argument("--second-half", action="store_true",
+                        help="run only the second half of the scenario groups, as a run's child process does")
     args = parser.parse_args()
     work = tempfile.mkdtemp(prefix="e2e-", dir=os.environ.get("MAILBEND_TEST_TMPDIR") or
                             (str(ROOT / "build") if (ROOT / "build").exists() else None))
@@ -1015,7 +1019,10 @@ def main():
         subprocess.run(["sh", str(ROOT / "tests" / "gen-test-certs.sh"), os.path.join(work, "certs")],
                        check=True, capture_output=True)
         try:
-            run_all(work, tool_scenarios_only=args.tool_scenarios_only)
+            if args.second_half:
+                second_half(work)
+            else:
+                run_all(work, tool_scenarios_only=args.tool_scenarios_only)
         finally:
             try:
                 mime_oracle.check_captured(composed_messages, check)
@@ -1035,7 +1042,8 @@ def main():
     leaked = [o for o in outputs if PASSWORD in o]
     check("password never appears in any tool output", not leaked, f"{len(leaked)} matching outputs")
     failed = [n for n, ok in results if not ok]
-    print(f"e2e: {len(results) - len(failed)} passed, {len(failed)} failed")
+    print(f"e2e{' second half' if args.second_half else ''}: {len(results) - len(failed)} passed, "
+          f"{len(failed)} failed")
     sys.exit(1 if failed else 0)
 
 
@@ -1056,6 +1064,22 @@ def case_file(name):
         cases.run(sys.modules[__name__], work)
     group.__name__ = name
     return group
+
+
+def run_halves(work):
+    """Runs the second half of the scenario groups in a child process, with
+    its own work directory, fake servers and end-of-run checks, while this
+    process runs the first half. A failure in either fails this run."""
+    with tempfile.TemporaryFile("w+") as log:
+        child = subprocess.Popen([sys.executable, str(ROOT / "tests/test-e2e.py"), "--second-half"],
+                                 stdout=log, stderr=subprocess.STDOUT, text=True)
+        try:
+            first_half(work)
+        finally:
+            code = child.wait()
+            log.seek(0)
+            sys.stdout.write(log.read())
+    check("second half of the scenario groups passed", code == 0, f"exit status {code}")
 
 
 def offline_posture():
@@ -1086,6 +1110,11 @@ def run_all(work, *, tool_scenarios_only=False):
         timed(failures, srv, work)
     finally:
         srv.stop()
+    run_halves(work)
+
+
+# The halves take about the same time; add a new group to the shorter one.
+def first_half(work):
     timed(quota_reporting, work)
     timed(reply_marking, work)
     timed(reply_marking_refusal, work)
@@ -1117,6 +1146,9 @@ def run_all(work, *, tool_scenarios_only=False):
     timed(flags_first_reads, work)
     timed(new_fetch_coverage, work)
     timed(dry_runs, work)
+
+
+def second_half(work):
     timed(jev, work)
     timed(triage, work)
     timed(gates, work)
