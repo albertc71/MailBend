@@ -383,13 +383,29 @@ def charset_decode.as(cs: CS.Charset, bytes: String) -> String:
     case CS.Replacement{}:
       replacement_decode(bytes)
 
-# Bytes in a named charset to text, as the WHATWG Encoding Standard labels
-# them. Unknown labels decode as UTF-8, which keeps ASCII intact and marks
-# invalid bytes with U+FFFD.
-def charset_decode(cs: String, bytes: String) -> String:
+# The charset that the label `cs` names, as the WHATWG Encoding Standard
+# labels them.
+def charset_named(cs: String) -> CS.Charset:
   name = charset_decode.lower(String.reverse(charset_decode.trim_start(
     String.reverse(charset_decode.trim_start(cs)))), "")
-  charset_decode.as(charset_of(CS.labels(), name), bytes)
+  charset_of(CS.labels(), name)
+
+def charset_replaced.of(cs: CS.Charset) -> Bool:
+  match cs:
+    case CS.Replacement{}:
+      True{}
+    case _:
+      False{}
+
+# Whether text labelled `cs` is not decoded at all, so that charset_decode
+# reads it as one U+FFFD.
+def charset_replaced(cs: String) -> Bool:
+  charset_replaced.of(charset_named(cs))
+
+# Bytes in a named charset to text. Unknown labels decode as UTF-8, which
+# keeps ASCII intact and marks invalid bytes with U+FFFD.
+def charset_decode(cs: String, bytes: String) -> String:
+  charset_decode.as(charset_named(cs), bytes)
 
 # Base64
 # ------

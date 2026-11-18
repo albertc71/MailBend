@@ -427,22 +427,29 @@ def leaves_pieces(ls: List<&2, M.Leaf>, +forwards: Nat, +part: String) -> List<&
     case l <> t:
       List.append(&2, Piece, part_pieces(forwards, part, l), leaves_pieces(t, forwards, part))
 
-def cut_pieces(cut: Bool, part: String) -> List<&2, Piece>:
-  match cut:
+def unreadable_if(missed: Bool, reason: String) -> List<&2, Piece>:
+  match missed:
     case True{}:
-      [Unreadable{part ++ " nests its parts more than " ++ Nat.show(M.multipart_limit()) ++
-        " levels deep"}]
+      [Unreadable{reason}]
     case False{}:
       []
 
 # Each header field's value with its RFC 2047 encoded words decoded, one
-# per line.
-def decoded_values(fs: List<&2, M.Hdr>) -> String:
+# per line; with `raw`, each word gives its bytes before charset decoding.
+def decoded_values(fs: List<&2, M.Hdr>, +raw: Bool) -> String:
   match fs:
     case Nil{}:
       ""
     case M.Hdr{name, value} <> t:
-      M.decode_header(value) ++ "\n" ++ decoded_values(t)
+      M.decode_words(value, raw) ++ "\n" ++ decoded_values(t, raw)
+
+# Whether a field holds an encoded word in a charset that is not decoded.
+def replaced_fields(fs: List<&2, M.Hdr>) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case M.Hdr{name, value} <> t:
+      M.replaced_words(value) || replaced_fields(t)
 
 def message_pieces.put(
   +part: String,
@@ -451,13 +458,22 @@ def message_pieces.put(
   leaves: List<&2, M.Leaf> & Bool
 ) -> List<&2, Piece>:
   (ls, cut) = leaves
-  Plain{"the header of " ++ part, head} <>
-    Plain{"the decoded header of " ++ part, decoded_values(M.headers(head))} <>
-      List.append(&2, Piece, leaves_pieces(ls, forwards, part), cut_pieces(cut, part))
+  +hs = M.headers(head)
+  List.concat(&2, Piece, [
+    [Plain{"the header of " ++ part, head},
+      Plain{"the decoded header of " ++ part, decoded_values(hs, False{})}],
+    unreadable_if(replaced_fields(hs),
+      "an encoded word in the header of " ++ part ++ " cannot be decoded"),
+    [Plain{"the encoded words in the header of " ++ part, decoded_values(hs, True{})}],
+    leaves_pieces(ls, forwards, part),
+    unreadable_if(cut, part ++ " nests its parts more than " ++ Nat.show(M.multipart_limit()) ++
+      " levels deep")])
 
 # A forwarded message: its header section, read as text (so a message with
-# no blank line is read whole) and with its values decoded, then its single
-# parts. Parts nested past M.multipart_limit are missed.
+# no blank line is read whole), with its values decoded and with its encoded
+# words' bytes, so that no charset hides a word from the rules; then its
+# single parts. An encoded word in a charset that is not decoded, or a part
+# nested past M.multipart_limit, is missed.
 def message_pieces(part: String, +raw: String, forwards: Nat) -> List<&2, Piece>:
   message_pieces.put(part, M.head_of(M.split(raw)), forwards, M.message_leaves.cut(raw))
 

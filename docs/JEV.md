@@ -265,7 +265,10 @@ OpenAI, npm) and password lines (`Password: ...` with a digit, also when
 quoted with `>`). It reads the header fields, the body, attachment names,
 every text part of the attachments and of a forwarded original, the headers
 of attached or forwarded messages, and, best effort, every other part's
-bytes; compressed formats are not inspected.
+bytes; compressed formats are not inspected. It reads an encoded word in
+such a header as its bytes whatever its charset, and an encoded word in a
+charset MailBend does not decode (ISO-2022-KR or UTF-16, say) is text it
+cannot read.
 
 An attached message, including an implicit `multipart/digest` child, must use
 a supported Content-Transfer-Encoding before the scan opens it. An unsupported
