@@ -1063,6 +1063,7 @@ def run_all(work, *, tool_scenarios_only=False):
         failures(srv, work)
     finally:
         srv.stop()
+    understated_sizes(work)
     quota_reporting(work)
     reply_marking(work)
     reply_marking_refusal(work)
@@ -1668,6 +1669,34 @@ def reads(srv):
     check("reads use EXAMINE, never SELECT or STORE", not any(" SELECT " in l or " STORE " in l for l in log), [l for l in log if "SELECT" in l][:3])
     check("reads fetch bodies only with BODY.PEEK", not any("BODY[" in l for l in log) and any("BODY.PEEK[]" in l for l in log))
     check("server log redacts the login", any(l == "L LOGIN <redacted>" for l in log))
+
+
+def understated_sizes(work):
+    """A server may report an RFC822.SIZE smaller than the literal it sends.
+    A read keeps every byte it received and is not marked truncated."""
+    link = "https://example.com/meeting"
+    header = ("Message-ID: <size@example.com>\r\nFrom: alice@example.com\r\n"
+              "To: tester@example.com\r\nSubject: Size\r\n"
+              "Content-Type: text/plain; charset=us-ascii\r\n\r\n")
+    window = header + " " * (1024 - len(header) - len(link)) + link
+    fixture = copy.deepcopy(FIX)
+    first = fixture["mailboxes"]["INBOX"]["messages"][0]
+    fixture["mailboxes"]["INBOX"]["messages"] = [
+        {**first, "uid": 1, "raw": window + "/next", "reported_size": len(window)},
+        {**first, "uid": 2, "raw": header + link, "reported_size": 1},
+        {**first, "uid": 3, "raw": header + link},
+        {**first, "uid": 4, "raw": header + link + "\n", "reported_size": 1}]
+    srv = Server(work, fixture=fixture)
+    try:
+        c, r = tool(srv, "mail_get", {"uid": 1, "max_bytes": len(window)})
+        check("get: a size equal to max_bytes is not truncated and keeps the fetched prefix to its last byte",
+              c == 0 and r.get("truncated") is False and r.get("text", "").endswith(link), r)
+        for uid, text in ((2, link), (3, link), (4, link + "\n")):
+            c, r = tool(srv, "mail_get", {"uid": uid, "max_bytes": len(window)})
+            check(f"get: the whole literal is kept whatever RFC822.SIZE says (UID {uid})",
+                  c == 0 and r.get("truncated") is False and r.get("text") == text, r)
+    finally:
+        srv.stop()
 
 
 def mutations(srv):
@@ -7407,6 +7436,11 @@ def gates_annotations(srv, work, key_file):
         listed = {m["uid"]: m.get("jev", {}) for m in r.get("messages", [])}
         check("gates: every message mail_search lists carries a checked jev object",
               c == 0 and listed and all(j.get("status") == "checked" for j in listed.values()), r)
+        log_start, ts_start = len(srv.log_records()), len(ts.records())
+        c, r = tool(srv, "mail_search", {"form": "alice"}, **env)
+        check("gates: an unknown mail_search argument is refused before any IMAP or TypeSafe connection",
+              c != 0 and r == {"error": 'unknown argument "form" for mail_search'}
+              and srv.log_records()[log_start:] == [] and ts.records()[ts_start:] == [], r)
         c, page = tool(srv, "mail_search", {"limit": 1}, **env)
         c, page = tool(srv, "mail_search", {"limit": 1, "cursor": page.get("next_cursor")}, **env)
         check("gates: search continuation retains Jev annotations and pagination fields", c == 0
