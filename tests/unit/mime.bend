@@ -153,8 +153,34 @@ def parts_cases() -> IO(Unit):
     print_parts(nested(7n))
     print_parts(nested(8n))
 
+def html_case(label: String, html: String) -> IO(Unit):
+  IO.print(label ++ " [" ++ show_line_breaks(M.html_text(html)) ++ "]")
+
+# Each case expects the text a browser shows for the HTML.
+def html_browser_cases() -> IO(Unit):
+  do IO<Unit>:
+    html_case("head and title", "<HeAd><title>Sample</title><p>Hi</p>")
+    html_case("head without body", "<html><head><meta charset=utf-8><p>Body without body tag</p></html>")
+    html_case("misplaced head", "<div>Hello<head></div><p>Wire money now</p>")
+    html_case("empty comments", "A<!-->B A<!--->B")
+    html_case("text after empty comment", "Hi<!-->Wire money now<!-- x -->done")
+    html_case("comment closed by --!>", "A<!-- x --!>B")
+    html_case("comment opener in title", "<html><head><title><!--</title></head><body><p>Wire money now</p></body></html>")
+    html_case("textarea holds text", "<textarea>a<b>c</textarea>")
+    html_case("script end tag needs its full name", "<script>\"</scripture>\";</script>Hi")
+    html_case("quote after unquoted value", "<p x=a=\">one</p><p q=\"x\">two</p>")
+    html_case("quote after attribute equals", "<p =\">Wire money now</p><span title=\"x\">ok</span>")
+    html_case("quote inside unquoted value", "<a href=x?a=\">Wire money now</a><i title=\"\">ok</i>")
+    html_case("unclosed quote at the end", "<span title=\"a > b\">A</span><i title=\"")
+    html_case("pre keeps line breaks", "<pre>line1\nline2</pre>")
+    html_case("vertical tab in a tag name", "<p\u{B}x=\">Wire money now</p><i title=\"\">ok</i>")
+    html_case("xmp holds text", "<xmp><!-- Wire money now --></xmp>")
+    html_case("noembed holds text", "<noembed><!--</noembed>Wire money now-->")
+    html_case("plaintext holds text", "<plaintext><!-- Wire money now --></plaintext>")
+
 def html_cases() -> IO(Unit):
   do IO<Unit>:
+    html_browser_cases()
     IO.print(show_line_breaks("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]"))
     IO.print("[" ++ M.html_text("1 &gt; 0 &amp;&amp; &quot;q&quot; &#39;s&#39;&nbsp;&foo; &amp;lt;") ++ "] [" ++ M.html_text("\ttab\t\t sp  ") ++ "] [" ++ M.html_text("") ++ "] [" ++ M.html_text("&lt;b&gt;") ++ "]")
     IO.print("[" ++ M.html_text(" Plain: 1 > 0; \"q\" #x café\r\n\tnext  line\n") ++ "]")
@@ -413,6 +439,24 @@ def main() -> IO(Unit):
 #|text= html= atts=
 #|text=deep html= atts=
 #|text= html= atts=
+#|head and title [Hi]
+#|head without body [Body without body tag]
+#|misplaced head [Hello\n\nWire money now]
+#|empty comments [AB AB]
+#|text after empty comment [HiWire money nowdone]
+#|comment closed by --!> [AB]
+#|comment opener in title [Wire money now]
+#|textarea holds text [a<b>c]
+#|script end tag needs its full name [Hi]
+#|quote after unquoted value [one\n\ntwo]
+#|quote after attribute equals [Wire money now\n\nok]
+#|quote inside unquoted value [Wire money nowok]
+#|unclosed quote at the end [A]
+#|pre keeps line breaks [line1\nline2]
+#|vertical tab in a tag name [Wire money now\n\nok]
+#|xmp holds text [<!-- Wire money now -->]
+#|noembed holds text [<!--Wire money now-->]
+#|plaintext holds text [<!-- Wire money now --></plaintext>]
 #|[a\nb] [x\n\ny] [unclosed] [stray > here]
 #|[1 > 0 && "q" 's' &foo; &lt;] [tab sp] [] [<b>]
 #|[Plain: 1 > 0; "q" #x café next line]
