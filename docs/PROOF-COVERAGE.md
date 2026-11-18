@@ -214,7 +214,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`send_veto_only_subtracts`](../LAWS.bend#L1591), [`delete_veto_only_subtracts`](../LAWS.bend#L1606), [`failure_blocks_outbound`](../LAWS.bend#L1616), [`secret_scan_blocks`](../LAWS.bend#L1632)
 - Tests: [`tests/test-e2e.py#gates_vetoes`](../tests/test-e2e.py#L7188), [`tests/test-e2e.py#gates_delete_vetoes`](../tests/test-e2e.py#L7263), [`tests/test-e2e.py#gates_secret_scan`](../tests/test-e2e.py#L7107), [`tests/test-e2e.py#gates_local_scan`](../tests/test-e2e.py#L7025), [`tests/unit/local-secret-scan.bend#main`](../tests/unit/local-secret-scan.bend#L43)
-- Code: [`src/jev.bend#outbound_checked`](../src/jev.bend#L2071), [`src/jev.bend#delete_checked`](../src/jev.bend#L2089)
+- Code: [`src/jev.bend#outbound_checked`](../src/jev.bend#L2074), [`src/jev.bend#delete_checked`](../src/jev.bend#L2092)
 - Seeded bug: `jev-gates-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.delete_veto_only_subtracts`.
 - Observer relationship to [`delete_veto_only_subtracts`](../LAWS.bend#L1606): The observer is the root implementation of this cited law.
 

@@ -2003,13 +2003,16 @@ def least(a: Completeness, b: Completeness) -> Completeness:
     case Unconfirmed{} _:
       a
 
-# The completeness of the texts of `xs` together (see least).
+# The completeness of the texts Jev answered about in `xs` together (see
+# least); a skipped message's text was never sent.
 def texts_whole(xs: List<&2, Answered>) -> Completeness:
   match xs:
     case Nil{}:
       Complete{}
-    case x <> t:
-      least(facts_body(answered_facts(x)), texts_whole(t))
+    case Answered{f, a} <> t:
+      least(facts_body(f), texts_whole(t))
+    case Skipped{f} <> t:
+      texts_whole(t)
 
 # A decision with the reason `gap`, unless it failed: an unchecked jev
 # object says why, not what a request held.
@@ -2023,7 +2026,7 @@ def delete_decision.fin(d: Decision, gap: Maybe<&2, String>) -> Decision:
       Decision{g, report}
 
 # The decision on the keep answers about `xs`; in body mode its jev object
-# says when Jev's text of a message is not Complete.
+# says when the text of a message Jev answered about is not Complete.
 def delete_decision(+c: Content, +xs: List<&2, Answered>) -> Decision:
   delete_decision.fin(decided(c, delete_concerns(xs), []), text_gap(c, texts_whole(xs)))
 

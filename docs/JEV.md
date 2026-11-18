@@ -173,7 +173,8 @@ These reasons describe a request Jev answered, so only a `checked` result
 gives them. An `unchecked` result gives why it is unchecked instead: for
 example, folder discovery failed before TypeSafe was contacted, or
 TypeSafe gave no usable answer. A message Jev did not answer about is
-`unchecked` with its own reason in the same way.
+`unchecked` with its own reason in the same way, and a `mail_delete` result
+counts only the texts of the messages Jev answered about.
 
 Reasons add up, together with the nested-message and attached-message
 reasons above, and `coverage` appears once. A body-mode `mail_get` whose
