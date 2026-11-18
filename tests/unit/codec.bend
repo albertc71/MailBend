@@ -116,6 +116,9 @@ def main() -> IO(Unit):
     # Multi-byte charsets are not decoded: escape and non-ASCII bytes read as
     # U+FFFD, and a replacement charset reads as one U+FFFD.
     IO.print(codes(C.charset_decode("ISO-2022-JP", "\u{1B}$B$3\u{1B}(B")) ++ " | " ++ codes(C.charset_decode("Shift_JIS", "a\u{82}\u{B1}")) ++ " | " ++ codes(C.charset_decode("iso-2022-kr", "abc")))
+    # UTF-16 is not decoded either: it reads as one U+FFFD even when every
+    # byte is ASCII.
+    IO.print(codes(C.charset_decode("utf-16le", "S0s0k0")) ++ " | " ++ codes(C.charset_decode("UTF-16BE", "0S0s0k")))
     # Base64 encoding: both alphabets, every padding case.
     IO.print(bracket(C.b64_encode("", False{})) ++ bracket(C.b64_encode("", True{})))
     IO.print(C.b64_encode(ch(251) ++ ch(239) ++ ch(190), False{}) ++ " " ++ C.b64_encode(ch(255) ++ ch(255) ++ ch(255), False{}) ++ " " ++ C.b64_encode(ch(255) ++ ch(255) ++ ch(255), True{}))
@@ -203,6 +206,7 @@ def main() -> IO(Unit):
 #|233 | 65533
 #|Привет Привет 97 65533
 #|65533 36 66 36 51 65533 40 66 | 97 65533 65533 | 65533
+#|65533 | 65533
 #|[][]
 #|++++ //// ,,,,
 #|TQ TWE TWFu TWFueQ
