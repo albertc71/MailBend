@@ -1,6 +1,6 @@
 # MailBend
 
-[![CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main)](docs/LAWS.md)
+[![Weekly CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main&event=schedule)](docs/LAWS.md)
 
 MailBend gives AI agents a mailbox as MCP tools (stdio) and a CLI: a Linux
 IMAP/SMTP connector with iCloud Mail as the default, live-tested profile,
@@ -1126,10 +1126,10 @@ review boundaries, and build steps for a future independent audit.
 The [law catalogue](docs/LAWS.md) lists every root law with its source summary.
 The [claim coverage](docs/PROOF-COVERAGE.md) maps these statements to named laws,
 tests, code and seeded bugs. See [how to maintain the claims](docs/SAFETY-CLAIMS.md).
-The badge above reports the latest CI workflow run on `main`, not an individual
-proof job. The weekly run is a full run, including the kernel-verdict step. A
-manual dispatch on `main` also sets the badge, and a scale-only dispatch runs
-no proofs.
+The badge above reports the latest weekly CI run on `main`, not an individual
+proof job. Every weekly run is a full run, including the kernel-verdict job
+(`proofs`). Pull requests and manual dispatches do not set the badge, and a
+scale-only dispatch skips the kernel-verdict job.
 
 Mark and flag plans change only their documented flags. <!-- claim:flag-plans -->
 An APPEND dry-run preview shows the message size rather than its contents. <!-- claim:dry-run -->

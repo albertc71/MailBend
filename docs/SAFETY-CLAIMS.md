@@ -76,6 +76,9 @@ One mutation per proven claim is a diagnostic control, not a mutation score for
 all laws in that claim. These checks do not establish correctness of native IO,
 cryptography, model answers, or the mail provider.
 
-The README badge uses GitHub's own CI workflow status. That workflow runs the
-kernel verdict and requires the proof and mutation lanes to pass. GitHub's
-workflow badge is not a per-job badge; it also reflects unrelated CI failures.
+The README badge uses GitHub's own CI workflow status, filtered to the weekly
+scheduled run on `main`. Every weekly run is a full run: it runs the kernel
+verdict and requires the proof and mutation lanes to pass. Pull requests and
+manual dispatches do not set the badge, and a scale-only dispatch skips the
+kernel-verdict job. GitHub's workflow badge is not a per-job badge; it also
+reflects unrelated CI failures.
