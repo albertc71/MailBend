@@ -154,7 +154,9 @@ jobs:
             exit 1
           fi
       - name: Unit tests
-        run: sh tests/run-unit.sh
+        run: |
+          sh tests/run-unit.sh
+          python3 tests/test-meet-removal.py --controls-only
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
           python3 tests/test-image-budget.py
@@ -358,6 +360,7 @@ jobs:
         run: |
           python3 tests/test-cli-tools.py
           python3 tests/test-hook.py
+          python3 tests/test-meet-removal.py
           python3 tests/test-search-flags.py
           python3 tests/test-e2e.py
       # Straight after the build, as in its former job, so its latency and
@@ -370,6 +373,7 @@ jobs:
         if: matrix.suite == 'mcp'
         run: |
           python3 tests/test-plugin.py --runtime
+          MAILBEND_TEST_MCP=1 python3 tests/test-meet-removal.py
           MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py
           MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
       - name: Integrated results and scheduled recipes

@@ -90,6 +90,7 @@ python3 tests/formal/check-plan-coverage.py        # public plan references and 
 python3 tests/formal/test-plan-coverage.py         # source-gate negative controls; no Bend needed
 python3 tests/test-unit-runner.py                 # offline unit scheduling and cleanup contracts
 sh tests/run-unit.sh
+python3 tests/test-meet-removal.py --controls-only # independent removal-oracle controls
 python3 tests/test-soak-contract.py                # soak verdict, deadlines and cleanup controls
 python3 tests/test-soak.py --profile short         # synthetic session soak after build
 python3 tests/test-mcp-schema-comparison.py        # bounded comparison startup and descendant cleanup
@@ -122,6 +123,8 @@ python3 tests/formal/check-reply-marking.py        # post-acceptance marking tra
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-mime-corpus.py --nested-resources  # also the 16 MiB nested parse and view limits
 python3 tests/test-harness-output.py               # test-harness transport diagnostics and redaction
+python3 tests/test-meet-removal.py                # retired extraction, unchanged fake-mail reads, CLI
+MAILBEND_TEST_MCP=1 python3 tests/test-meet-removal.py # same contract through structured MCP
 python3 tests/test-search-flags.py                # bounded structured flag truth tables, CLI
 MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py  # same flags through structured MCP
 python3 tests/test-e2e.py
