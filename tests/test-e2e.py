@@ -1716,7 +1716,8 @@ def mutations(srv):
     check("trash moves to the special-use Trash", c == 0 and r.get("destination") == "Deleted Messages" and 1 not in msgs(s, "INBOX")
           and len(s["mailboxes"]["Deleted Messages"]["messages"]) == 1, r)
     c, r = tool(srv, "mail_trash", {"folder": "Deleted Messages", "uids": [1], "uidvalidity": 1700000003})
-    check("trash refuses to act inside Trash", c != 0 and "mail_delete" in r.get("error", ""), r)
+    check("trash refuses to act inside Trash, says so and changes nothing", c != 0 and "already in the trash folder" in r.get("error", "")
+          and len(srv.st()["mailboxes"]["Deleted Messages"]["messages"]) == 1, r)
 
     before = srv.st()
     c, r = tool(srv, "mail_move", {"uids": [5], "destination": "Archive", "uidvalidity": 42})
