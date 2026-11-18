@@ -1312,8 +1312,9 @@ as `&amp;`, `&nbsp;` and `&mdash;`) and end with `;`; others stay as written.
 From there on, what a browser shows depends on the element tree, so `text` is
 read simply: tags are dropped, each from a `<` before a letter, `/`, `!` or
 `?` to the next `>`, and so are the brackets around CDATA content. Every other
-character is kept, with references decoded, so that part may hold more than a
-browser shows, such as style or script content. Line breaks are kept, with at
+character is kept, with references decoded except inside CDATA content, where
+they stay as written, so that part may hold more than a browser shows, such as
+style or script content. Line breaks are kept, with at
 most one blank line in a row, and other whitespace collapses to one space,
 inside `<pre>` too. `text` holds no link targets, so read them from `html`.
 
