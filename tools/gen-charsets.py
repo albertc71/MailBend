@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,12 +21,19 @@ GROUPS = {
 }
 
 
+# An explicit check, because python3 -O strips assert statements.
+def require(ok, message):
+    if not ok:
+        sys.exit(f"gen-charsets: {message}")
+
+
 def sources():
     manifest = json.loads((DATA / "source.json").read_text())
     texts = {}
     for name, pin in manifest["files"].items():
         raw = (DATA / name).read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == pin["sha256"], name
+        require(hashlib.sha256(raw).hexdigest() == pin["sha256"],
+                f"{name} does not match its sha256 in source.json")
         texts[name] = raw.decode("utf-8")
     return texts
 
@@ -52,7 +60,8 @@ def pointers(text):
         if line.strip() and not line.startswith("#"):
             pointer, code = line.split("\t")[:2]
             table[int(pointer)] = int(code, 16)
-    assert table and set(table) <= set(range(128))
+    require(table and set(table) <= set(range(128)),
+            "a single-byte index is empty or has a pointer past 127")
     return table
 
 
@@ -72,7 +81,8 @@ def tables(texts):
                 indexes.setdefault(index, pointers(texts[f"index-{index}.txt"]))
                 charset = f"SingleByte{{{constructor(index)}{{}}}}"
             labels += [(label, charset) for label in encoding["labels"]]
-    assert len({label for label, _ in labels}) == len(labels)
+    require(len({label for label, _ in labels}) == len(labels),
+            "a label names more than one encoding")
     return labels, indexes
 
 
@@ -111,7 +121,8 @@ def main():
     args = parser.parse_args()
     expected = render()
     if args.check:
-        assert OUTPUT.read_text() == expected, "run python3 tools/gen-charsets.py"
+        require(OUTPUT.read_text() == expected,
+                "src/charsets.bend is out of date: run python3 tools/gen-charsets.py")
         print("Charset tables: pinned WHATWG labels and single-byte indexes match")
     else:
         OUTPUT.write_text(expected)
