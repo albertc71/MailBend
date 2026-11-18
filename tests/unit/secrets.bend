@@ -165,6 +165,14 @@ def words(n: Nat, acc: String) -> String:
     case 1n+k:
       words(k, "word " ++ acc)
 
+def binary(data: String) -> M.Attach:
+  M.Attach{"blob.bin", "application/octet-stream", data}
+
+# 1,048,555 bytes of words, then `tail`: a tail of 21 bytes ends exactly at
+# the 1 MB the scan reads of the parts that are not text.
+def fill(tail: String) -> String:
+  words(209711n, tail)
+
 def scan_atts(atts: List<&2, M.Attach>) -> String:
   show_scan(Secrets.secret_scan([M.Hdr{"subject", "Hello"}], "See the attachment.", atts))
 
@@ -278,6 +286,12 @@ def check_limits() -> IO(Unit):
       [M.Attach{"creds.env", "application/octet-stream", secret}])))
     IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209710n, ""),
       [M.Attach{"creds.env", "application/octet-stream", secret}])))
+    IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209716n, ""),
+      [M.Attach{"creds.env", "application/octet-stream", secret}])))
+    IO.print(scan_atts([binary(fill("x\n" ++ secret ++ "\n" ++ words(10n, "")))]))
+    IO.print(scan_atts([binary(fill("xx\n" ++ secret ++ "\n" ++ words(10n, "")))]))
+    IO.print(scan_atts([binary(fill("xxx")), binary(secret)]))
+    IO.print(scan_atts([binary(fill("xxxx")), binary(secret)]))
     IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209520n, ""),
       [M.Attach{"sample.eml", "message/rfc822", "Subject: " ++ words(80n, "") ++
         "\r\n\r\nHello"}])))
@@ -353,6 +367,11 @@ def main() -> IO(Unit):
 #|found in attachment 1 > text/plain
 #|incomplete: it holds more than 1 MB of text
 #|found in attachment 1 > application/octet-stream
+#|found in attachment 1 > application/octet-stream
+#|found in attachment 1 > application/octet-stream
+#|found in attachment 1 > application/octet-stream
+#|clean
+#|found in attachment 2 > application/octet-stream
 #|clean
 #|clean
 #|found in attachment 2 > application/octet-stream

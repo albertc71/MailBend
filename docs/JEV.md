@@ -265,9 +265,10 @@ OpenAI, npm) and password lines (`Password: ...` with a digit, also when
 quoted with `>`). It reads the header fields, the body, attachment names,
 every text part of the attachments and of a forwarded original, the headers
 of attached or forwarded messages, and, best effort, every other part's
-bytes; compressed formats are not inspected. Its patterns are ASCII, so it
-reads a text part as its bytes. In the header of an attached or forwarded
-message it reads an encoded word under a label that WHATWG gives to
+bytes; compressed data is read as it is and is not unpacked. Its patterns
+are ASCII, so it reads a text part as its bytes. In the header of an
+attached or forwarded message it reads an encoded word under a label that
+WHATWG gives to
 windows-1252, such as `iso-8859-1` or `us-ascii`, in Windows-1252, and a
 word under any other label as UTF-8. An encoded word in UTF-16 or in a
 WHATWG replacement encoding such as ISO-2022-KR or HZ-GB-2312, which
@@ -290,8 +291,11 @@ wrapper do not describe its enclosed parts; each inner text part keeps its own
 charset check.
 
 A secret found blocks the send, and so does text the scan cannot read in
-full (its limits are in the
-[enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced)).
+full. The scan checks up to 1,048,576 characters of text. It then checks up
+to 1,048,576 bytes shared by the parts it reads as bytes, in the order it
+reads them; bytes past that are not checked and do not block. Its other
+limits are in the
+[enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced).
 A block names the part by position (`attachment 1 > text/plain`), never by
 file name, and TypeSafe is not asked. The scan catches mistakes; it is not a
 boundary against an agent set on leaking.
