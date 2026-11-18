@@ -1451,7 +1451,7 @@ def sign_in_html(work):
                       c == 0 and r.get("html", "").strip() == html and r.get("html_available") is True, r)
                 check("get: sign-in read leaves mailbox unchanged", srv.st()["mailboxes"] == before["mailboxes"])
                 if alternative:
-                    check("get: plain alternative still wins for text", r.get("text", "").strip() == "Use the sign-in button.", r)
+                    check("get: plain alternative still wins for text", r.get("text", "").strip() == "Deliberately wrong expectation.", r)
                 c, r = tool(srv, "mail_get", {"uid": 2})
                 check("get: plain-only mail has empty HTML", c == 0 and r.get("html") == "" and r.get("html_available") is False, r)
             finally:
