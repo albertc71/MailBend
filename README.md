@@ -1126,7 +1126,7 @@ review boundaries, and build steps for a future independent audit.
 The [law catalogue](docs/LAWS.md) lists every root law with its source summary.
 The [claim coverage](docs/PROOF-COVERAGE.md) maps these statements to named laws,
 tests, code and seeded bugs. See [how to maintain the claims](docs/SAFETY-CLAIMS.md).
-The badge above reports the full CI workflow,
+The badge above reports the latest full CI run on `main`, weekly or manual,
 including its kernel-verdict step, rather than an individual proof job.
 
 Mark and flag plans change only their documented flags. <!-- claim:flag-plans -->
