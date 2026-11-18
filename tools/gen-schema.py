@@ -105,20 +105,6 @@ JEV = record({"status": param("string", enum=["checked", "unchecked"]),
 ANNOTATION = {"jev": JEV}
 
 
-def jev_scope(content, coverage, reason):
-    """An annotation naming, by coverage and a reason, what Jev was not sent."""
-    return record({**JEV["properties"], "content": {"const": content},
-        "coverage": {"const": coverage},
-        "reasons": param("array", items=S, minItems=1, contains=reason)})
-
-
-def scoped_jev(body_why, header_why):
-    return union(jev_scope("body", "partial", {"const": body_why}),
-                 jev_scope("headers", "headers_only", {"const": header_why}))
-
-
-SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
-SUMMARY_JEV = scoped_jev(SUMMARY_REASON, SUMMARY_REASON)
 TEXT_REASON = "Not all of the message text was included in the Jev request."
 REPLACED_REASON = ("Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot "
                    "confirm that every byte decoded.")
@@ -127,8 +113,33 @@ MARKUP_REASON = ("MailBend converts HTML to text before applying Jev's request l
 # In body mode a read says when Jev's text was not complete, or that the
 # request did not include the raw HTML it returns; a delete, only the first.
 TEXT_REASONS = [TEXT_REASON, REPLACED_REASON]
-READ_JEV = union(JEV, jev_scope("body", "partial", {"enum": TEXT_REASONS + [MARKUP_REASON]}))
-DELETE_JEV = union(JEV, jev_scope("body", "partial", {"enum": TEXT_REASONS}))
+READ_REASONS = TEXT_REASONS + [MARKUP_REASON]
+
+
+def checked_only(jev):
+    """`jev`, checked whenever it gives one of READ_REASONS: they describe a
+    request Jev answered."""
+    return {**jev, "if": {"properties": {"reasons": {"contains": {"enum": READ_REASONS}}}},
+            "then": {"properties": {"status": {"const": "checked"}}}}
+
+
+def jev_scope(content, coverage, reason):
+    """An annotation naming, by coverage and a reason, what Jev was not sent."""
+    return record({**JEV["properties"], "content": {"const": content},
+        "coverage": {"const": coverage},
+        "reasons": param("array", items=S, minItems=1, contains=reason)})
+
+
+def scoped_jev(body_why, header_why):
+    return checked_only(union(jev_scope("body", "partial", {"const": body_why}),
+                              jev_scope("headers", "headers_only", {"const": header_why})))
+
+
+SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
+SUMMARY_JEV = scoped_jev(SUMMARY_REASON, SUMMARY_REASON)
+READ_JEV = checked_only(union(JEV, jev_scope("body", "partial", {"enum": READ_REASONS})))
+DELETE_JEV = {**checked_only(union(JEV, jev_scope("body", "partial", {"enum": TEXT_REASONS}))),
+              "properties": {"reasons": {"not": {"contains": {"const": MARKUP_REASON}}}}}
 
 ATTACHMENT = record({"filename": S, "content_type": S, "size": N})
 # One sanitizer line per displayed attached-message header value.
