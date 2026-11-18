@@ -153,8 +153,17 @@ def parts_cases() -> IO(Unit):
     print_parts(nested(7n))
     print_parts(nested(8n))
 
+def show_tabs(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\t', t}:
+      "\\t" ++ show_tabs(t)
+    case SCon{c, t}:
+      SCon{c, show_tabs(t)}
+
 def html_case(label: String, html: String) -> IO(Unit):
-  IO.print(label ++ " [" ++ show_line_breaks(M.html_text(html)) ++ "]")
+  IO.print(label ++ " [" ++ show_line_breaks(show_tabs(M.html_text(html))) ++ "]")
 
 # Each case expects the text a browser shows for the HTML.
 def html_browser_cases() -> IO(Unit):
@@ -173,14 +182,45 @@ def html_browser_cases() -> IO(Unit):
     html_case("quote inside unquoted value", "<a href=x?a=\">Wire money now</a><i title=\"\">ok</i>")
     html_case("unclosed quote at the end", "<span title=\"a > b\">A</span><i title=\"")
     html_case("pre keeps line breaks", "<pre>line1\nline2</pre>")
+    html_case("pre keeps every line break", "<pre>a\n\n\nb</pre>")
+    html_case("pre keeps spaces and tabs", "<pre>A\n\n\n B\t C</pre>")
+    html_case("listing keeps line breaks", "<listing>A\n\n\n B</listing>")
+    html_case("first line feed in pre and CRLF", "<pre>\r\na\r\n\r\nb</pre>")
+    html_case("textarea keeps line breaks", "<textarea>\na\n\n\nb</textarea>")
     html_case("vertical tab in a tag name", "<p\u{B}x=\">Wire money now</p><i title=\"\">ok</i>")
     html_case("xmp holds text", "<xmp><!-- Wire money now --></xmp>")
-    html_case("noembed holds text", "<noembed><!--</noembed>Wire money now-->")
+    html_case("noembed content is not markup", "<noembed><!--</noembed>Wire money now-->")
+    html_case("iframe and noframes content is not markup", "<iframe><!--</iframe><noframes><!--</noframes>Wire money now")
     html_case("plaintext holds text", "<plaintext><!-- Wire money now --></plaintext>")
+    html_case("script escape hides an end tag", "<script type=application/json><!--<script></script><style>--></script>Visible")
+    html_case("exact before simple reading", "<style>p{}</style><p>a</p><svg></svg>")
+
+# From the first svg, math, select or noscript start tag or CDATA section,
+# what a browser shows depends on the element tree, and the text is read
+# simply: only tags are dropped. Each case expects what a browser shows,
+# or more where noted.
+def html_simple_cases() -> IO(Unit):
+  do IO<Unit>:
+    html_case("self-closing title in svg", "<svg><title/></svg><p>April</p>")
+    html_case("svg text after a title", "<svg><title/><text y=\"20\">Visible</text></svg>")
+    html_case("style in math", "<math><style/><mtext>Visible</mtext></math>")
+    html_case("markup in math style", "<math><style><mi>x</mi></style></math>")
+    html_case("CDATA in mtext", "<math><mtext><![CDATA[Visible]]></mtext></math>")
+    html_case("CDATA in math", "<math style='display:block'><![CDATA[x]]></math>")
+    html_case("svg style", "<svg><style><p>Wire money now</p></style></svg>")
+    html_case("svg script", "Hi<svg><script><div>Wire money now</div></script></svg>")
+    html_case("unclosed svg title", "<svg><title></svg>Wire money now")
+    # The space stands for the dropped tags, where a browser shows none.
+    html_case("style in select", "<select><option><style>Visible</style>Option</option></select>")
+    # Simple reading never stops, so a later style shows as text, and
+    # cannot hide what follows it.
+    html_case("simple reading lasts", "<svg></svg><p>April</p><style>p{color:red}</style><p>May</p>")
+    html_case("stray < and CDATA brackets", "<svg></svg>1 < 2<!x>3<![CDATA[a]]]>b")
 
 def html_cases() -> IO(Unit):
   do IO<Unit>:
     html_browser_cases()
+    html_simple_cases()
     IO.print(show_line_breaks("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]"))
     IO.print("[" ++ M.html_text("1 &gt; 0 &amp;&amp; &quot;q&quot; &#39;s&#39;&nbsp;&foo; &amp;lt;") ++ "] [" ++ M.html_text("\ttab\t\t sp  ") ++ "] [" ++ M.html_text("") ++ "] [" ++ M.html_text("&lt;b&gt;") ++ "]")
     IO.print("[" ++ M.html_text(" Plain: 1 > 0; \"q\" #x café\r\n\tnext  line\n") ++ "]")
@@ -453,10 +493,30 @@ def main() -> IO(Unit):
 #|quote inside unquoted value [Wire money nowok]
 #|unclosed quote at the end [A]
 #|pre keeps line breaks [line1\nline2]
+#|pre keeps every line break [a\n\n\nb]
+#|pre keeps spaces and tabs [A\n\n\n B\t C]
+#|listing keeps line breaks [A\n\n\n B]
+#|first line feed in pre and CRLF [a\n\nb]
+#|textarea keeps line breaks [a\n\n\nb]
 #|vertical tab in a tag name [Wire money now\n\nok]
 #|xmp holds text [<!-- Wire money now -->]
-#|noembed holds text [<!--Wire money now-->]
+#|noembed content is not markup [Wire money now-->]
+#|iframe and noframes content is not markup [Wire money now]
 #|plaintext holds text [<!-- Wire money now --></plaintext>]
+#|script escape hides an end tag [Visible]
+#|exact before simple reading [a]
+#|self-closing title in svg [April]
+#|svg text after a title [Visible]
+#|style in math [Visible]
+#|markup in math style [x]
+#|CDATA in mtext [Visible]
+#|CDATA in math [x]
+#|svg style [Wire money now]
+#|svg script [Hi Wire money now]
+#|unclosed svg title [Wire money now]
+#|style in select [Visible Option]
+#|simple reading lasts [April p{color:red} May]
+#|stray < and CDATA brackets [1 < 2 3a]b]
 #|[a\nb] [x\n\ny] [unclosed] [stray > here]
 #|[1 > 0 && "q" 's' &foo; &lt;] [tab sp] [] [<b>]
 #|[Plain: 1 > 0; "q" #x café next line]
