@@ -603,13 +603,52 @@ def review_move_problem(delim: String, dest: String) -> String:
     "only mail_triage moves mail into \"" ++ Ops.review_folder() ++ "\", which the user reviews",
     "")
 
+# The mailbox the server marks as Trash: the one selectable LIST row with
+# the \Trash attribute (`t`), if mail_delete may run there and it is not
+# the review folder.
+def marked_trash.if(
+  t: Maybe<&2, String>,
+  caps: List<&2, String>,
+  +fs: List<&2, I.Folder>
+) -> Maybe<&2, String>:
+  match t:
+    case None{}:
+      None{}
+    case Some{+n}:
+      Bool.pick(Maybe<&2, String>,
+        Bool.not(Ops.expunge_keeps(caps, Policy.named_attrs(fs, n)) || in_review(delim_of(fs), n)),
+        Some{n}, None{})
+
+def marked_trash(caps: List<&2, String>, +fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  marked_trash.if(Policy.unique_folder(Policy.role_candidates(fs, "\\Trash", "", "", True{})),
+    caps, fs)
+
+# What a refused Gmail delete says about deleting the messages
+# permanently. It names calls only when MailBend accepts them: mail_delete
+# needs UIDPLUS, which also gives mail_move a plan, and mail_delete then
+# runs in the mailbox the server marks as Trash (`trash`).
+def delete_advice.if(uidplus: Bool, trash: Maybe<&2, String>) -> String:
+  match uidplus trash:
+    case False{} _:
+      "mail_delete cannot run on this server, which does not advertise UIDPLUS"
+    case True{} Some{+t}:
+      "to remove these messages permanently, move them into \"" ++ t ++ "\" with mail_move, " ++
+        "find them there with mail_search (the move gives them new UIDs), then run mail_delete " ++
+        "in \"" ++ t ++ "\""
+    case True{} None{}:
+      "there is no single Trash mailbox MailBend may move mail into on this server"
+
+# The advice above, from a session's capabilities and LIST (`lines`).
+def delete_advice(+lines: List<&2, I.RLine>) -> String:
+  +caps = I.caps(lines)
+  delete_advice.if(I.has_cap(caps, "UIDPLUS"), marked_trash(caps, I.folders(lines)))
+
 # Why mail_trash cannot move mail out of `folder` into `trash` ("" when it
 # can).
 def review_trash_problem(+delim: String, folder: String, trash: String) -> String:
   Bool.pick(String, in_review(delim, folder) || in_review(delim, trash),
     "mail_trash never moves mail into or out of \"" ++ Ops.review_folder() ++
-      "\", which the user reviews; mail_move can take a message out of it, and mail_delete " ++
-      "can remove messages from it permanently",
+      "\", which the user reviews; nothing was changed",
     "")
 
 # Why mail_triage cannot file mail out of `folder` ("" when it can).
@@ -3809,9 +3848,8 @@ def trash_into(
 ) -> IO(Policy.Out):
   match same:
     case True{}:
-      pure_out(Policy.Err{
-        "these messages are already in " ++ trash ++
-          "; use mail_delete to remove them permanently"})
+      pure_out(Policy.Err{"these messages are already in the trash folder \"" ++ trash ++
+        "\"; nothing was changed"})
     case False{}:
       +move = I.has_cap(caps, "MOVE")
       move_plan(Ops.plan_trash(folder, uids, trash, move, I.has_cap(caps, "UIDPLUS"), uidv),
@@ -4025,11 +4063,36 @@ def delete_gated(
       delete_decided(Jev.Decision{Jev.JevOff{}, []}, uidplus, folder, uids, uids, confirm, uidv,
         dry)
 
+# Gmail may keep what an expunge in this folder removes (see
+# Ops.expunge_keeps), so the delete is refused before Jev is asked. The plan
+# would be empty anyway: `uidplus` is then False (a proven law).
+def delete_kept.if(
+  kept: Bool,
+  jev: Jev.Switch,
+  lines: List<&2, I.RLine>,
+  uidplus: Bool,
+  folder: String,
+  uids: List<&2, U32>,
+  confirm: String,
+  uidv: U32,
+  dry: Bool
+) -> IO(Policy.Out):
+  match kept:
+    case True{}:
+      pure_out(Policy.Err{
+        "on Gmail a permanent delete is certain only in Trash or Spam, and the server did not " ++
+          "confirm that this folder is either (by one selectable LIST row with the \\Trash or " ++
+          "\\Junk attribute); nothing was deleted. Elsewhere an expunge removes the folder's " ++
+          "label, and the account's IMAP settings decide whether the messages stay in All " ++
+          "Mail; " ++ delete_advice(lines)})
+    case False{}:
+      delete_gated(jev, lines, uidplus, folder, uids, confirm, uidv, dry)
+
 def delete_caps.if(
   problem: String,
   jev: Jev.Switch,
   +lines: List<&2, I.RLine>,
-  folder: String,
+  +folder: String,
   uids: List<&2, U32>,
   confirm: String,
   uidv: U32,
@@ -4039,7 +4102,9 @@ def delete_caps.if(
     case SCon{h, t}:
       pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      delete_gated(jev, lines, I.has_cap(I.caps(lines), "UIDPLUS"), folder, uids, confirm, uidv,
+      +caps = I.caps(lines)
+      +kept = Ops.expunge_keeps(caps, Policy.named_attrs(I.folders(lines), folder))
+      delete_kept.if(kept, jev, lines, Ops.delete_uidplus(kept, caps), folder, uids, confirm, uidv,
         dry)
 
 def delete_caps(

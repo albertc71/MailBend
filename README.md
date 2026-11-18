@@ -126,7 +126,7 @@ Jev off, no tool asks it.
 | `mail_move` | Move to another folder | yes | — |
 | `mail_label` | Move into an existing label folder (a label is a folder; one copy, `uidvalidity` required) | yes | — |
 | `mail_trash` | Move to the resolved Trash folder (recoverable) | yes | — |
-| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; with Jev on, at most 50 UIDs | yes | can block |
+| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; on Gmail only in Trash or Spam; with Jev on, at most 50 UIDs | yes | can block |
 | `mail_create_folder` | Create and subscribe to a folder: the only tool that creates a mailbox | yes | — |
 | `mail_rename_folder` | Rename a folder with its subfolders; the subscriptions of the moved folders follow | yes | — |
 | `mail_save_draft` | Compose into Drafts (with attachments) | yes | — |
@@ -1009,7 +1009,19 @@ review boundaries, and build steps for a future independent audit.
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as <!-- claim:move-delete-plans -->
-  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
+  `UID EXPUNGE` (proven). On Gmail, which advertises `X-GM-EXT-1`, an <!-- claim:move-delete-plans -->
+  expunge outside Trash and Spam removes that folder's label, and the
+  account's IMAP settings decide whether the message stays in All Mail, so
+  a permanent deletion cannot be guaranteed there. There a delete has no
+  plan unless exactly one selectable LIST row names the folder and carries the
+  `\Trash` or `\Junk` attribute (proven), and `mail_delete` refuses before <!-- claim:move-delete-plans -->
+  any change, in a dry run too. If the server advertises `UIDPLUS` and
+  exactly one LIST row carries `\Trash`, for a selectable mailbox listed
+  once and outside `To Delete`, the refusal names it: move the messages
+  there with `mail_move`, find them with `mail_search`, then run
+  `mail_delete` there. This Gmail behaviour comes
+  from Google's documentation and the fake server; it is not live-tested.
+  STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
   commands. Commands that take a UID list preserve its order. STORE preserves
   the requested flag and add or remove operation (proven). <!-- claim:uid-wire -->
 - **Stale UIDs never touch other messages.** Every change is pinned to the <!-- claim:uidvalidity -->
