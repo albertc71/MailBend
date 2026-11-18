@@ -198,15 +198,18 @@
         "expunge_renders_exact_uid_set",
         "delete_needs_confirmation",
         "delete_checks_uidplus",
-        "copy_move_checks_uidplus"
+        "copy_move_checks_uidplus",
+        "gmail_deletes_only_in_trash_or_junk"
       ],
       "tests": [
         "tests/test-e2e.py#mutations",
-        "tests/test-e2e.py#fallback"
+        "tests/test-e2e.py#fallback",
+        "tests/gmail-delete-cases.py#refusals"
       ],
       "code": [
         "src/ops.bend#plan_move",
-        "src/ops.bend#plan_delete"
+        "src/ops.bend#plan_delete",
+        "src/ops.bend#delete_uidplus"
       ],
       "mutation": {
         "id": "move-delete-plans-negative-control",

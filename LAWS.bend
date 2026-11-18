@@ -773,6 +773,20 @@ law delete_checks_uidplus:
   {Ops.checks_uidplus_or_empty(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) ==
     True{} : Bool}
 
+# LAW: on Gmail (X-GM-EXT-1) a delete has no plan unless the folder carries
+# the \Trash or \Junk attribute: anywhere else its expunge only removes a label
+law gmail_deletes_only_in_trash_or_junk:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for caps: List<&2, String>
+  for gmail: {I.has_cap(caps, "X-GM-EXT-1") == True{} : Bool}
+  for attrs: List<&2, String>
+  for unmarked: {(I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk")) == False{} : Bool}
+  for uidv: U32
+  {Ops.plan_delete(mbox, uids, confirm, Ops.delete_uidplus(caps, attrs), uidv) == [] :
+    List<&2, I.Cmd>}
+
 # LAW: a move by copy confirms UIDPLUS in its own session first
 law copy_move_checks_uidplus:
   for mbox: String

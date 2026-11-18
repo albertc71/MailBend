@@ -4025,11 +4025,34 @@ def delete_gated(
       delete_decided(Jev.Decision{Jev.JevOff{}, []}, uidplus, folder, uids, uids, confirm, uidv,
         dry)
 
+# Gmail keeps what an expunge in this folder removes (see
+# Ops.expunge_keeps), so the delete is refused before Jev is asked. The plan
+# would be empty anyway: `uidplus` is then False (a proven law).
+def delete_kept.if(
+  kept: Bool,
+  jev: Jev.Switch,
+  lines: List<&2, I.RLine>,
+  uidplus: Bool,
+  folder: String,
+  uids: List<&2, U32>,
+  confirm: String,
+  uidv: U32,
+  dry: Bool
+) -> IO(Policy.Out):
+  match kept:
+    case True{}:
+      pure_out(Policy.Err{
+        "on Gmail an expunge outside Trash and Spam only removes this folder's label, and " ++
+          "the messages stay in All Mail; nothing was deleted. Move them with mail_trash, " ++
+          "then run mail_delete in Trash"})
+    case False{}:
+      delete_gated(jev, lines, uidplus, folder, uids, confirm, uidv, dry)
+
 def delete_caps.if(
   problem: String,
   jev: Jev.Switch,
   +lines: List<&2, I.RLine>,
-  folder: String,
+  +folder: String,
   uids: List<&2, U32>,
   confirm: String,
   uidv: U32,
@@ -4039,8 +4062,10 @@ def delete_caps.if(
     case SCon{h, t}:
       pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      delete_gated(jev, lines, I.has_cap(I.caps(lines), "UIDPLUS"), folder, uids, confirm, uidv,
-        dry)
+      +caps = I.caps(lines)
+      +attrs = I.attrs_of(I.folders(lines), folder)
+      delete_kept.if(Ops.expunge_keeps(caps, attrs), jev, lines, Ops.delete_uidplus(caps, attrs),
+        folder, uids, confirm, uidv, dry)
 
 def delete_caps(
   r: Run(),

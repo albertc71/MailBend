@@ -663,6 +663,19 @@ def plan_delete(
 ) -> List<&2, I.Cmd>:
   plan_delete.if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
 
+# Gmail (X-GM-EXT-1) shows labels as folders, and its expunge destroys a
+# message only in Trash or Spam, the folders with the \Trash or \Junk
+# attribute. Anywhere else an expunge removes only that folder's label, and
+# the message stays in All Mail.
+def expunge_keeps(caps: List<&2, String>, +attrs: List<&2, String>) -> Bool:
+  I.has_cap(caps, "X-GM-EXT-1") &&
+    Bool.not(I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk"))
+
+# What plan_delete takes as `uidplus` in a folder with `attrs`: the server
+# expunges exactly the given UIDs (UIDPLUS), and the expunge destroys them.
+def delete_uidplus(+caps: List<&2, String>, attrs: List<&2, String>) -> Bool:
+  Bool.not(expunge_keeps(caps, attrs)) && I.has_cap(caps, "UIDPLUS")
+
 # A label is an iCloud folder, so labelling is moving: every law about
 # plan_move holds for it unchanged.
 def plan_label(
