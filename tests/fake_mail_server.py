@@ -46,6 +46,13 @@ has one, else the structure computed from its raw text (RFC 3501 7.4.2).
 --bodystructure omit leaves the item out of the answer, as a server that
 does not support it may; corrupt answers a malformed one.
 
+With X-GM-EXT-1 in --caps the server deletes as Gmail does: an expunge in a
+folder without the \\Trash or \\Junk attribute removes only that folder's
+label, and the message stays in the \\All folder, All Mail. Gmail Help,
+"Choose your IMAP email client settings for Gmail"
+(https://support.google.com/mail/answer/78892): "You can find messages you
+delete from an IMAP folder in your 'All Mail' label in Gmail."
+
 This file speaks just enough of IMAP4rev1 and ESMTP to drive the MailBend
 transport and Bend parser; it is not a general-purpose mail server.
 """
@@ -1332,17 +1339,32 @@ class IMAPSession:
             messages.sort(key=lambda m: m['uid'])
             uids_sorted = [m['uid'] for m in messages]
             wanted = set(parse_uid_set(spec, uids_sorted)) if spec is not None else set(uids_sorted)
-            remaining, expunge_seqs = [], []
+            remaining, expunge_seqs, expunged = [], [], []
             for seq, m in enumerate(messages, start=1):
                 if m['uid'] in wanted and '\\Deleted' in m['flags']:
                     expunge_seqs.append(seq)
+                    expunged.append(m)
                 else:
                     remaining.append(m)
             self.state.data['mailboxes'][mbox]['messages'] = remaining
+            self.keep_in_all_mail(mbox, expunged)
             self.state.save()
         for seq in sorted(expunge_seqs, reverse=True):
             self.send(f'* {seq} EXPUNGE\r\n')
         self.send(f'{tag} OK EXPUNGE completed\r\n')
+
+    def keep_in_all_mail(self, mbox, expunged):
+        """In Gmail mode, keeps in All Mail what an expunge outside Trash and Spam removed."""
+        mailboxes = self.state.data['mailboxes']
+        if 'X-GM-EXT-1' not in self.caps or {'\\Trash', '\\Junk'} & set(mailboxes[mbox]['special']):
+            return
+        for all_mail in (mb for mb in mailboxes.values() if '\\All' in mb['special']):
+            kept = {m['raw'] for m in all_mail['messages']}
+            for m in expunged:
+                if m['raw'] not in kept:
+                    all_mail['messages'].append({'uid': all_mail['uidnext'], 'flags': [],
+                                                 'internaldate': m['internaldate'], 'raw': m['raw']})
+                    all_mail['uidnext'] += 1
 
     def cmd_uid_expunge(self, tag, args):
         mbox = self.require_selected(tag)

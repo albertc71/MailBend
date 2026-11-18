@@ -1123,6 +1123,10 @@ def run_all(work, *, tool_scenarios_only=False):
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("gmail_delete_cases", ROOT / "tests/gmail-delete-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
 
 
 def quota_reporting(work):
