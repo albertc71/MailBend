@@ -109,7 +109,13 @@ def main() -> IO(Unit):
     IO.print(codes(C.charset_decode("CP1252", "\u{82}\u{83}\u{84}\u{85}\u{86}\u{87}\u{88}\u{89}\u{8A}\u{8B}\u{8C}\u{8E}")))
     IO.print(codes(C.charset_decode("cp1252", "\u{91}\u{92}\u{93}\u{94}\u{95}\u{96}\u{97}\u{98}\u{99}\u{9A}\u{9B}\u{9C}\u{9E}")))
     IO.print(codes(C.charset_decode("Latin1", "\u{80}\u{E9}")) ++ " | " ++ codes(C.charset_decode("US-ASCII", "\u{E9}")) ++ " | " ++ codes(C.charset_decode("ascii", "\u{93}")))
-    IO.print(codes(C.charset_decode("UTF-8", "\u{C3}\u{A9}")) ++ " | " ++ codes(C.charset_decode("koi8-r", "\u{C3}\u{A9}\u{E9}")) ++ " | " ++ codes(C.charset_decode("", "\u{E9}")))
+    IO.print(codes(C.charset_decode("UTF-8", "\u{C3}\u{A9}")) ++ " | " ++ codes(C.charset_decode("", "\u{E9}")))
+    # Single-byte charsets read through the WHATWG indexes; a byte that an
+    # index leaves undefined reads as U+FFFD.
+    IO.print(C.charset_decode("KOI8-R", "\u{F0}\u{D2}\u{C9}\u{D7}\u{C5}\u{D4}") ++ " " ++ C.charset_decode("windows-1251", "\u{CF}\u{F0}\u{E8}\u{E2}\u{E5}\u{F2}") ++ " " ++ codes(C.charset_decode("iso-8859-3", "a\u{A5}")))
+    # Multi-byte charsets are not decoded: escape and non-ASCII bytes read as
+    # U+FFFD, and a replacement charset reads as one U+FFFD.
+    IO.print(codes(C.charset_decode("ISO-2022-JP", "\u{1B}$B$3\u{1B}(B")) ++ " | " ++ codes(C.charset_decode("Shift_JIS", "a\u{82}\u{B1}")) ++ " | " ++ codes(C.charset_decode("iso-2022-kr", "abc")))
     # Base64 encoding: both alphabets, every padding case.
     IO.print(bracket(C.b64_encode("", False{})) ++ bracket(C.b64_encode("", True{})))
     IO.print(C.b64_encode(ch(251) ++ ch(239) ++ ch(190), False{}) ++ " " ++ C.b64_encode(ch(255) ++ ch(255) ++ ch(255), False{}) ++ " " ++ C.b64_encode(ch(255) ++ ch(255) ++ ch(255), True{}))
@@ -194,7 +200,9 @@ def main() -> IO(Unit):
 #|8218 402 8222 8230 8224 8225 710 8240 352 8249 338 381
 #|8216 8217 8220 8221 8226 8211 8212 732 8482 353 8250 339 382
 #|8364 233 | 233 | 8220
-#|233 | 233 65533 | 65533
+#|233 | 65533
+#|Привет Привет 97 65533
+#|65533 36 66 36 51 65533 40 66 | 97 65533 65533 | 65533
 #|[][]
 #|++++ //// ,,,,
 #|TQ TWE TWFu TWFueQ
