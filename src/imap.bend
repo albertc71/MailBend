@@ -1478,15 +1478,6 @@ def named(fs: List<&2, Folder>, +want: String) -> Maybe<&2, String>:
       Bool.pick(Maybe<&2, String>, same_name(name, want), Some{name},
         named(t, want))
 
-# The attributes of the mailbox named `want`, as same_name() compares them;
-# none when `fs` does not list it.
-def attrs_of(fs: List<&2, Folder>, +want: String) -> List<&2, String>:
-  match fs:
-    case Nil{}:
-      []
-    case Folder{name, d, attrs} <> t:
-      Bool.pick(List<&2, String>, same_name(name, want), attrs, attrs_of(t, want))
-
 # Status and data responses
 # -------------------------
 

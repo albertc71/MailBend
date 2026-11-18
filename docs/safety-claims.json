@@ -199,17 +199,20 @@
         "delete_needs_confirmation",
         "delete_checks_uidplus",
         "copy_move_checks_uidplus",
-        "gmail_deletes_only_in_trash_or_junk"
+        "gmail_deletes_only_in_trash_or_junk",
+        "gmail_deletes_need_one_listed_folder"
       ],
       "tests": [
         "tests/test-e2e.py#mutations",
         "tests/test-e2e.py#fallback",
-        "tests/gmail-delete-cases.py#refusals"
+        "tests/gmail-delete-cases.py#refusals",
+        "tests/gmail-delete-cases.py#conflicting_rows"
       ],
       "code": [
         "src/ops.bend#plan_move",
         "src/ops.bend#plan_delete",
-        "src/ops.bend#delete_uidplus"
+        "src/ops.bend#delete_uidplus",
+        "src/policy.bend#named_attrs"
       ],
       "mutation": {
         "id": "move-delete-plans-negative-control",

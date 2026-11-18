@@ -774,7 +774,8 @@ law delete_checks_uidplus:
     True{} : Bool}
 
 # LAW: on Gmail (X-GM-EXT-1) a delete has no plan unless the folder carries
-# the \Trash or \Junk attribute: anywhere else its expunge only removes a label
+# the \Trash or \Junk attribute: anywhere else its expunge may only remove a
+# label
 law gmail_deletes_only_in_trash_or_junk:
   for mbox: String
   for uids: List<&2, U32>
@@ -784,7 +785,23 @@ law gmail_deletes_only_in_trash_or_junk:
   for attrs: List<&2, String>
   for unmarked: {(I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk")) == False{} : Bool}
   for uidv: U32
-  {Ops.plan_delete(mbox, uids, confirm, Ops.delete_uidplus(caps, attrs), uidv) == [] :
+  {Ops.plan_delete(mbox, uids, confirm, Ops.delete_uidplus(Ops.expunge_keeps(caps, attrs), caps),
+    uidv) == [] : List<&2, I.Cmd>}
+
+# LAW: on Gmail a delete has no plan unless exactly one selectable LIST row
+# names its folder, whatever attributes the rows carry: a folder listed
+# twice, unselectable or not at all is never Trash or Spam
+law gmail_deletes_need_one_listed_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for caps: List<&2, String>
+  for gmail: {I.has_cap(caps, "X-GM-EXT-1") == True{} : Bool}
+  for fs: List<&2, I.Folder>
+  for unlisted: {Policy.named_folder(fs, mbox) == None{} : Maybe<&2, String>}
+  for uidv: U32
+  {Ops.plan_delete(mbox, uids, confirm,
+    Ops.delete_uidplus(Ops.expunge_keeps(caps, Policy.named_attrs(fs, mbox)), caps), uidv) == [] :
     List<&2, I.Cmd>}
 
 # LAW: a move by copy confirms UIDPLUS in its own session first

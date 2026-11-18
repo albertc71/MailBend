@@ -724,6 +724,52 @@ def Laws.gmail_deletes_only_in_trash_or_junk(mbox, uids, confirm, caps, gmail, a
         List<&2, I.Cmd>}
   gmail_deletes_only_in_trash_or_junk.if(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidv)
 
+def maybe_motive(m: Maybe<&2, String>) -> Type:
+  match m:
+    case Some{x}:
+      Unit
+    case None{}:
+      Empty
+
+def some_is_not_none(-name: String, e: {Some{name} == None{} : Maybe<&2, String>}) -> Empty:
+  %e : maybe_motive(_)
+  Unit{}
+
+def unlisted_attrs.if(
+  sel: Bool,
+  -name: String,
+  -attrs: List<&2, String>,
+  none: {Bool.pick(Maybe<&2, String>, sel, Some{name}, None{}) == None{} : Maybe<&2, String>}
+) -> {Bool.pick(List<&2, String>, sel, attrs, []) == [] : List<&2, String>}:
+  match sel:
+    case True{}:
+      Empty.absurd({attrs == [] : List<&2, String>}, some_is_not_none(name, none))
+    case False{}:
+      {==}
+
+# Where unique_folder finds no folder, unique_attrs finds no attributes.
+def unlisted_attrs(
+  fs: List<&2, I.Folder>,
+  none: {Policy.unique_folder(fs) == None{} : Maybe<&2, String>}
+) -> {Policy.unique_attrs(fs) == [] : List<&2, String>}:
+  match fs:
+    case Nil{}:
+      {==}
+    case I.Folder{n, d, attrs} <> Nil{}:
+      unlisted_attrs.if(Policy.selectable(attrs), n, attrs, none)
+    case h <> j <> rest:
+      {==}
+
+# With no attributes the folder is unmarked, so the law above applies.
+def Laws.gmail_deletes_need_one_listed_folder(mbox, uids, confirm, caps, gmail, fs, unlisted,
+  uidv):
+  +m = mbox
+  %Equal.sym(List<&2, String>, Policy.named_attrs(fs, m), [],
+    unlisted_attrs(Policy.override_candidates(fs, m), unlisted)) :
+    {Ops.plan_delete(m, uids, confirm, Ops.delete_uidplus(Ops.expunge_keeps(caps, _), caps),
+      uidv) == [] : List<&2, I.Cmd>}
+  Laws.gmail_deletes_only_in_trash_or_junk(m, uids, confirm, caps, gmail, [], {==}, uidv)
+
 def Laws.copy_move_checks_uidplus(mbox, uids, dest, uidv):
   {==}
 

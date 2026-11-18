@@ -4025,7 +4025,7 @@ def delete_gated(
       delete_decided(Jev.Decision{Jev.JevOff{}, []}, uidplus, folder, uids, uids, confirm, uidv,
         dry)
 
-# Gmail keeps what an expunge in this folder removes (see
+# Gmail may keep what an expunge in this folder removes (see
 # Ops.expunge_keeps), so the delete is refused before Jev is asked. The plan
 # would be empty anyway: `uidplus` is then False (a proven law).
 def delete_kept.if(
@@ -4063,9 +4063,9 @@ def delete_caps.if(
       pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
       +caps = I.caps(lines)
-      +attrs = I.attrs_of(I.folders(lines), folder)
-      delete_kept.if(Ops.expunge_keeps(caps, attrs), jev, lines, Ops.delete_uidplus(caps, attrs),
-        folder, uids, confirm, uidv, dry)
+      +kept = Ops.expunge_keeps(caps, Policy.named_attrs(I.folders(lines), folder))
+      delete_kept.if(kept, jev, lines, Ops.delete_uidplus(kept, caps), folder, uids, confirm, uidv,
+        dry)
 
 def delete_caps(
   r: Run(),
