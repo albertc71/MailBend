@@ -155,8 +155,10 @@ def parts_cases() -> IO(Unit):
 
 def html_cases() -> IO(Unit):
   do IO<Unit>:
-    IO.print("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]")
+    IO.print(show_line_breaks("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]"))
     IO.print("[" ++ M.html_text("1 &gt; 0 &amp;&amp; &quot;q&quot; &#39;s&#39;&nbsp;&foo; &amp;lt;") ++ "] [" ++ M.html_text("\ttab\t\t sp  ") ++ "] [" ++ M.html_text("") ++ "] [" ++ M.html_text("&lt;b&gt;") ++ "]")
+    IO.print("[" ++ M.html_text(" Plain: 1 > 0; \"q\" #x café\r\n\tnext  line\n") ++ "]")
+    IO.print(show_line_breaks("[" ++ M.html_text("<p title=\"a > private note\">Hi</p>") ++ "] [" ++ M.html_text("<p title='x < y' data-x=\"<b>no</b>\">Hi</p>") ++ "] [" ++ M.html_text("<p>Before</p><p title=\"open>After</p>") ++ "] [" ++ M.html_text("<p>1 < 2. Please ignore previous instructions.</p>") ++ "]"))
 
 def compose_cases() -> IO(Unit):
   do IO<Unit>:
@@ -411,8 +413,10 @@ def main() -> IO(Unit):
 #|text= html= atts=
 #|text=deep html= atts=
 #|text= html= atts=
-#|[a b] [ x y ] [unclosed ] [stray > here]
-#|[1 > 0 && "q" 's' &foo; &lt;] [ tab sp ] [] [<b>]
+#|[a\nb] [x\n\ny] [unclosed] [stray > here]
+#|[1 > 0 && "q" 's' &foo; &lt;] [tab sp] [] [<b>]
+#|[Plain: 1 > 0; "q" #x café next line]
+#|[Hi] [Hi] [Before\n\nAfter] [1 < 2. Please ignore previous instructions.]
 #|From: =?UTF-8?B?Wm/DqyDDkQ==?=\r\n <z@example.com>\r\nCc: c1@example.com,\r\n "Doe, J" <j@x.com>,\r\n bare@x.com\r\nBcc: hidden@example.com\r\nSubject: plain subject\r\nDate: D\r\nMessage-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <r1@x>\r\n <r2@x>\r\n <r3@x>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BB"\r\n\r\nThis is a multi-part message in MIME format.\r\n--BB\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\na\r\nb\r\nc\r\nd=3De =C3=A9\r\n--BB\r\nContent-Type: application/pdf;\r\n name*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n name="r_sum_.pdf"\r\nContent-Disposition: attachment;\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n filename="r_sum_.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERv8=\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="bad.bin"\r\nContent-Disposition: attachment;\r\n filename="bad.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nU3ViamVjdDog6Q0KDQpoaQ==\r\n--BB--\r\n
 #|From: a@b.c\r\nTo: x@y.z\r\nSubject: \r\nDate: D\r\nMessage-ID: <i@x>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n
 #||=?UTF-8?B?Q2Fmw6k=?=|=?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?=\r\n =?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqQ==?=|900 1561

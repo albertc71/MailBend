@@ -201,11 +201,11 @@ def main() -> IO(Unit):
 #|Jev [outer
 #|
 #|[HTML part as text]
-#| outer ] complete
+#|outer] complete
 #|Jev [outer
 #|
 #|[HTML part as text]
-#| other ] complete
+#|other] complete
 #|Jev [] complete
 #|Jev [] partial
 #|encoded inner header found
