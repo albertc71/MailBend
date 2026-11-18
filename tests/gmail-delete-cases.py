@@ -24,9 +24,9 @@ TRASH_OVERRIDE = {"MAILBEND_TRASH_FOLDER": "Receipts"}
 # The calls a refused Gmail delete names when the server has one Trash
 # mailbox to move the messages into.
 ROUTE = ["mail_move", "mail_search", "mail_delete"]
-# How a refusal names a call ("with mail_x", "run mail_x", "use mail_x" or
-# "mail_x can") outside the mailbox names it quotes, and the folders it
-# names for a move and for a delete.
+# How a refusal names a call ("with", "run" or "use mail_x", or "mail_x can")
+# outside double-quoted spans (no fixture mailbox name holds a double quote),
+# and the folders it names for a move and for a delete.
 NAMED_CALL = re.compile(r'\b(?:with|run|use) (mail_\w+)|\b(mail_\w+) can\b')
 QUOTED = re.compile(r'"[^"]*"')
 MOVE_INTO = re.compile(r'into "([^"]+)" with mail_move')
