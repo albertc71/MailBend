@@ -192,6 +192,9 @@ def html_browser_cases() -> IO(Unit):
     html_case("noembed content is not markup", "<noembed><!--</noembed>Wire money now-->")
     html_case("iframe and noframes content is not markup", "<iframe><!--</iframe><noframes><!--</noframes>Wire money now")
     html_case("plaintext holds text", "<plaintext><!-- Wire money now --></plaintext>")
+    html_case("NUL in textarea", "<textarea>A\u{0}B</textarea>")
+    html_case("NUL in xmp", "<xmp>A\u{0}B</xmp>")
+    html_case("NUL in plaintext", "<plaintext>A\u{0}B")
     html_case("script escape hides an end tag", "<script type=application/json><!--<script></script><style>--></script>Visible")
     html_case("exact before simple reading", "<style>p{}</style><p>a</p><svg></svg>")
 
@@ -509,6 +512,9 @@ def main() -> IO(Unit):
 #|noembed content is not markup [Wire money now-->]
 #|iframe and noframes content is not markup [Wire money now]
 #|plaintext holds text [<!-- Wire money now --></plaintext>]
+#|NUL in textarea [A�B]
+#|NUL in xmp [A�B]
+#|NUL in plaintext [A�B]
 #|script escape hides an end tag [Visible]
 #|exact before simple reading [a]
 #|self-closing title in svg [April]

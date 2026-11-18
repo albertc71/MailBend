@@ -1294,13 +1294,14 @@ def html_text.put(+c: Char, out: HtmlOut) -> HtmlOut:
   HtmlOut{text, gap, +pre} = out
   html_text.put.if(pre, c, HtmlOut{text, gap, pre})
 
-# Writes a character of raw content, unless the content is dropped.
+# Writes a character of raw content or plaintext as it is, unless the
+# content is dropped. The tokenizer reads a NUL there as U+FFFD.
 def html_text.show(keep: HtmlKeep, +c: Char, out: HtmlOut) -> HtmlOut:
   match keep:
     case Drop{}:
       out
     case _:
-      html_text.write(c, out)
+      html_text.write(Bool.pick(Char, Char.is_eq(c, C.chr(0)), C.repl(), c), out)
 
 # Writes a character of simple text: a line feed breaks the line, up to a
 # blank line, and other whitespace collapses, even in <pre>.
@@ -1323,7 +1324,7 @@ def html_text.emit(mode: HtmlMode, +c: Char, out: HtmlOut) -> HtmlOut:
     case Script{at, seen}:
       out
     case Plain{}:
-      html_text.write(c, out)
+      html_text.show(Keep{}, c, out)
     case Loose{}:
       html_text.simple(c, out)
     case Cdata{brackets}:
@@ -1594,7 +1595,7 @@ def html_text.text(+c: Char, rest: String, mode: HtmlMode, out: HtmlOut)
     case Script{at, seen}:
       html_text.script(c, rest, at, seen, out)
     case Plain{}:
-      (InText{Plain{}}, html_text.write(c, out))
+      (InText{Plain{}}, html_text.show(Keep{}, c, out))
     case Loose{}:
       html_text.loose(c, out)
     case Cdata{brackets}:
