@@ -36,6 +36,13 @@ UNSEEN = {
                                 MARKUP_REASON),
 }
 UNDECODABLE = message(7, "text/plain; charset=utf-8", "Caf\xff au lait\r\n")
+HTML_UTF8 = "text/html; charset=utf-8"
+# HTML parts that did not decode only inside markup, which the readable
+# text Jev receives drops along with the U+FFFD.
+UNDECODED_MARKUP = {
+    "an HTML attribute value": message(8, HTML_UTF8, '<p title="caf\xff">OK</p>\r\n'),
+    "an HTML comment": message(9, HTML_UTF8, "<p>OK</p><!-- caf\xff -->\r\n"),
+}
 
 
 def partial(jev, reason):
@@ -49,7 +56,7 @@ def sent_text(states):
 def run(t, work):
     fixture = copy.deepcopy(t.FIX)
     fixture["mailboxes"]["INBOX"]["messages"] = (list(HIDDEN.values()) + [m for m, _, _ in UNSEEN.values()]
-                                                 + [UNDECODABLE])
+                                                 + [UNDECODABLE] + list(UNDECODED_MARKUP.values()))
     key_file = t.typesafe_key_file(work)
     srv, ts = t.Server(work, fixture=fixture), t.TypeSafe(work)
 
@@ -101,6 +108,21 @@ def run(t, work):
         t.check("jev body coverage: an undecodable byte reaches Jev as U+FFFD, and the annotation says coverage "
                 "is partial", c == 0 and "\ufffd" in got.get("text", "") and "\ufffd" in sent_text(states)
                 and partial(got.get("jev", {}), TEXT_REASON), (got, states))
+        for where, m in UNDECODED_MARKUP.items():
+            c, got, states = asked("mail_get", {"uid": m["uid"]}, **t.BODY_MODE)
+            t.check(f"jev body coverage: an undecodable byte in {where} makes Jev's text partial, though the "
+                    "readable text Jev receives lacks its U+FFFD", c == 0 and "\ufffd" in got.get("html", "")
+                    and "OK" in sent_text(states) and "\ufffd" not in sent_text(states)
+                    and partial(got.get("jev", {}), TEXT_REASON) and partial(got.get("jev", {}), MARKUP_REASON),
+                    (got, states))
+            c, got, states = asked("mail_get", {"uid": m["uid"], "projection": "text"}, **t.BODY_MODE)
+            t.check(f"jev body coverage: a text-only read of a message with an undecodable byte in {where} "
+                    "says its text coverage is partial", c == 0 and "html" not in got
+                    and partial(got.get("jev", {}), TEXT_REASON)
+                    and MARKUP_REASON not in got.get("jev", {}).get("reasons", []), got)
+            c, r, states = asked("mail_classify", {"uids": [m["uid"]]}, **t.BODY_MODE)
+            t.check(f"jev body coverage: mail_classify reports a message with an undecodable byte in {where} "
+                    "body_truncated", c == 0 and (r.get("messages") or [{}])[0].get("body_truncated") is True, r)
         cut = UNSEEN["a line past Jev's 16 KB text cap"][0]["uid"]
         delete = {"uids": [cut], "uidvalidity": fixture["mailboxes"]["INBOX"]["uidvalidity"],
                   "confirm": "permanently-delete", "dry_run": True}
