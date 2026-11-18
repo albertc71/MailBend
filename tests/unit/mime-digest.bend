@@ -83,6 +83,8 @@ def completeness(c: Jev.Completeness) -> String:
       "complete"
     case Jev.Partial{}:
       "partial"
+    case Jev.Unconfirmed{}:
+      "unconfirmed"
 
 def jev.text(t: Jev.Text) -> String:
   Jev.MessageText{text, whole} = t
