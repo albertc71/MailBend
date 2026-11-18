@@ -4042,9 +4042,12 @@ def delete_kept.if(
   match kept:
     case True{}:
       pure_out(Policy.Err{
-        "on Gmail an expunge outside Trash and Spam only removes this folder's label, and " ++
-          "the messages stay in All Mail; nothing was deleted. Move them with mail_trash, " ++
-          "then run mail_delete in Trash"})
+        "on Gmail a permanent delete is certain only in Trash or Spam, and the server did not " ++
+          "confirm that this folder is either (by one selectable LIST row with the \\Trash or " ++
+          "\\Junk attribute); nothing was deleted. Elsewhere an expunge removes the folder's " ++
+          "label, and the account's IMAP settings decide whether the messages stay in All " ++
+          "Mail. Move them into Trash with mail_trash (out of \"" ++ Ops.review_folder() ++
+          "\", with mail_move), find them there with mail_search, then run mail_delete in Trash"})
     case False{}:
       delete_gated(jev, lines, uidplus, folder, uids, confirm, uidv, dry)
 

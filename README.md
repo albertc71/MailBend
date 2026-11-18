@@ -1010,11 +1010,14 @@ review boundaries, and build steps for a future independent audit.
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as <!-- claim:move-delete-plans -->
   `UID EXPUNGE` (proven). On Gmail, which advertises `X-GM-EXT-1`, an <!-- claim:move-delete-plans -->
-  expunge outside Trash and Spam only removes that folder's label, and the
-  message stays in All Mail. There a delete has no plan unless the folder
-  carries the `\Trash` or `\Junk` attribute (proven), and `mail_delete` <!-- claim:move-delete-plans -->
-  refuses before any change, in a dry run too: move the messages with
-  `mail_trash`, then run `mail_delete` in Trash. This Gmail behaviour comes
+  expunge outside Trash and Spam removes that folder's label, and the
+  account's IMAP settings decide whether the message stays in All Mail, so
+  a permanent deletion cannot be guaranteed there. There a delete has no
+  plan unless exactly one selectable LIST row names the folder and carries the
+  `\Trash` or `\Junk` attribute (proven), and `mail_delete` refuses before <!-- claim:move-delete-plans -->
+  any change, in a dry run too: move the messages into Trash with
+  `mail_trash` (out of `To Delete`, with `mail_move`), find them there with
+  `mail_search`, then run `mail_delete` in Trash. This Gmail behaviour comes
   from Google's documentation and the fake server; it is not live-tested.
   STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
   commands. Commands that take a UID list preserve its order. STORE preserves
