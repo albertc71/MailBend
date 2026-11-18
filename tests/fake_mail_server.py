@@ -46,10 +46,16 @@ has one, else the structure computed from its raw text (RFC 3501 7.4.2).
 --bodystructure omit leaves the item out of the answer, as a server that
 does not support it may; corrupt answers a malformed one.
 
-With X-GM-EXT-1 in --caps the server deletes as Gmail does: an expunge in a
-folder without the \\Trash or \\Junk attribute removes only that folder's
-label, and the message stays in the \\All folder, All Mail. Gmail Help,
-"Choose your IMAP email client settings for Gmail"
+A fixture's "list_rows" maps a mailbox to the attributes of each LIST row
+that names it, in order, so a server can list one mailbox more than once.
+
+With X-GM-EXT-1 in --caps the server acts as Gmail does. Ordinary LIST
+shows the role attributes, with or without SPECIAL-USE: "All LIST responses
+contain these Special-Use attributes"
+(https://developers.google.com/workspace/gmail/imap/imap-extensions). An
+expunge in a folder without the \\Trash or \\Junk attribute removes only
+that folder's label, and the message stays in the \\All folder, All Mail.
+Gmail Help, "Choose your IMAP email client settings for Gmail"
 (https://support.google.com/mail/answer/78892): "You can find messages you
 delete from an IMAP folder in your 'All Mail' label in Gmail."
 
@@ -250,6 +256,7 @@ class State:
         self.examine_changes = fixture.get("examine_changes", [])
         self.select_uidvalidity = fixture.get("select_uidvalidity", {})
         self.uidnext_response = fixture.get("uidnext_response", {})
+        self.list_rows = fixture.get("list_rows", {})
         mailboxes = {}
         for name, mb in fixture['mailboxes'].items():
             messages = [dict(m) for m in mb.get('messages', [])]
@@ -1021,13 +1028,15 @@ class IMAPSession:
             self.send(f'{tag} NO [UNAVAILABLE] special-use lookup failed\r\n')
             return
         delim = self.state.delim
+        roles_available = bool({'SPECIAL-USE', 'X-GM-EXT-1'} & set(self.caps))
         for name in names:
             has_children = any(other.startswith(name + delim) for other in names)
-            attrs = ['\\HasChildren' if has_children else '\\HasNoChildren']
-            attrs.extend(list_attributes(specials[name], self.state, 'SPECIAL-USE' in self.caps, requested))
             nil = '*' in self.state.nil_delim or name in self.state.nil_delim
             shown = 'NIL' if nil else f'"{delim}"'
-            self.send(f'* LIST ({" ".join(attrs)}) {shown} {imap_quote(mutf7_encode(name))}\r\n')
+            for row in self.state.list_rows.get(name, [specials[name]]):
+                attrs = ['\\HasChildren' if has_children else '\\HasNoChildren']
+                attrs.extend(list_attributes(row, self.state, roles_available, requested))
+                self.send(f'* LIST ({" ".join(attrs)}) {shown} {imap_quote(mutf7_encode(name))}\r\n')
         self.send(f'{tag} OK LIST completed\r\n')
 
     def cmd_select(self, tag, args, readonly):
