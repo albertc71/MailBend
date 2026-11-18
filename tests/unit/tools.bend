@@ -1329,9 +1329,13 @@ def check_triage() -> IO(Unit):
       problem(T.review_move_problem("/", "to delete/Old")) ++
       problem(T.review_move_problem("/", "Work/To Delete")) ++
       problem(T.review_move_problem("/", "INBOX")))
-    IO.print(problem(T.review_trash_problem("/", "To Delete", "Deleted Messages")) ++
-      problem(T.review_trash_problem("/", "INBOX", "to delete/x")) ++
-      problem(T.review_trash_problem("/", "INBOX", "Deleted Messages")))
+    IO.print(problem(T.review_trash_problem("/", "To Delete", "Deleted Messages",
+        T.delete_advice.if(True{}, False{}, None{}, "To Delete"))) ++
+      problem(T.review_trash_problem("/", "INBOX", "to delete/x",
+        T.delete_advice.if(True{}, True{}, Some{"[Gmail]/Trash"}, "INBOX"))) ++
+      problem(T.review_trash_problem("/", "INBOX", "Deleted Messages", "")))
+    IO.print(problem(T.delete_advice.if(False{}, True{}, Some{"Trash"}, "INBOX")) ++
+      problem(T.delete_advice.if(True{}, True{}, None{}, "INBOX")))
     IO.print(problem(T.source_review_problem("/", "To Delete")) ++
       problem(T.source_review_problem("/", "INBOX")))
     IO.print(problem(T.invalid_override(folders(), "To Delete", "MAILBEND_X")) ++
@@ -1797,7 +1801,8 @@ def main() -> IO(Unit):
 #|err stopped
 #|mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off
 #|[only mail_triage moves mail into "To Delete", which the user reviews][only mail_triage moves mail into "To Delete", which the user reviews][][]
-#|[mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it. To delete messages there permanently, move them into Trash with mail_move, find them there with mail_search, then run mail_delete in Trash][mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it. To delete messages there permanently, move them into Trash with mail_move, find them there with mail_search, then run mail_delete in Trash][]
+#|[mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it; run mail_delete in "To Delete" to remove these messages permanently][mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it; to remove these messages permanently, move them into "[Gmail]/Trash" with mail_move, find them there with mail_search (the move gives them new UIDs), then run mail_delete in "[Gmail]/Trash"][]
+#|[mail_delete cannot run on this server, which does not advertise UIDPLUS][MailBend cannot name a folder where this server deletes permanently, and nothing was changed]
 #|[mail_triage files mail out of other folders, never out of "To Delete", which the user reviews][]
 #|[MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X must name one existing selectable mailbox]
 #|[][it is also a special folder, which MailBend never fills][it is also a special folder, which MailBend never fills][it does not exist or cannot be selected: create it with mail_create_folder]
