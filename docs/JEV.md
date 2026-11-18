@@ -275,8 +275,8 @@ charset check.
 
 A secret found blocks the send, and so does text the scan cannot read in
 full. The scan checks up to 1,048,576 characters of text. It then checks up
-to 1,048,576 bytes shared by all the parts that are not text, in the order
-it reads them; bytes past that are not checked and do not block. Its other
+to 1,048,576 bytes shared by the parts it reads as bytes, in the order it
+reads them; bytes past that are not checked and do not block. Its other
 limits are in the
 [enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced).
 A block names the part by position (`attachment 1 > text/plain`), never by

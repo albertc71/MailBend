@@ -33,13 +33,14 @@ def scan_name(s: Scan) -> String:
 # Limits
 # ------
 
-# The most text the scan reads, in characters: 1 MB.
+# The most characters of text the scan reads: 1,048,576.
 def scan_limit() -> Nat:
   1048576n
 
-# The most bytes the scan reads of the parts that are not text, all of them
-# together in the order they come: 1 MB, whatever the length of the text, so
-# that a long text cannot hide the end of an attachment.
+# The most bytes the scan reads of the parts it takes as bytes (Bytes
+# pieces), all of them together in the order they come: 1,048,576, whatever
+# the length of the text, so that a long text cannot hide the end of an
+# attachment.
 def bytes_limit() -> Nat:
   1048576n
 
@@ -516,9 +517,9 @@ def secret_scan.fin(missed: String) -> Scan:
 
 # The bytes of the parts that are not text, read last within bytes_limit,
 # `r` being what reading the previous ones (in `part`) gave. A find is
-# Found, but bytes past bytes_limit are not missed: most such parts
-# (PDF, images, archives) are compressed, so their text cannot be read
-# anyway. Only Bytes pieces are kept for last.
+# Found, but bytes past bytes_limit are not missed: the scan reads such
+# parts (PDF, images, archives) as they are, without unpacking them, so
+# it is best effort for them anyway. Only Bytes pieces are kept for last.
 def secret_scan.last(ps: List<&2, Piece>, r: Reading, part: String, missed: String) -> Scan:
   match ps r:
     case _ Spotted{}:
