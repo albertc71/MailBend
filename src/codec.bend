@@ -330,7 +330,8 @@ def multi_byte_decode.go(bytes: String, out: String) -> String:
     case SCon{c, t}:
       multi_byte_decode.go(t, SCon{multi_byte_decode.char(c), out})
 
-# Text in a replacement charset, such as ISO-2022-KR, reads as one U+FFFD.
+# Text in a charset that is not decoded at all, such as ISO-2022-KR or
+# UTF-16, reads as one U+FFFD.
 def replacement_decode(bytes: String) -> String:
   match bytes:
     case SNil{}:
@@ -382,8 +383,8 @@ def charset_decode.as(cs: CS.Charset, bytes: String) -> String:
       replacement_decode(bytes)
 
 # Bytes in a named charset to text, as the WHATWG Encoding Standard labels
-# them. Unknown and UTF-16 labels decode as UTF-8, which keeps ASCII intact
-# and marks anything else with U+FFFD.
+# them. Unknown labels decode as UTF-8, which keeps ASCII intact and marks
+# invalid bytes with U+FFFD.
 def charset_decode(cs: String, bytes: String) -> String:
   name = charset_decode.lower(String.reverse(charset_decode.trim_start(
     String.reverse(charset_decode.trim_start(cs)))), "")

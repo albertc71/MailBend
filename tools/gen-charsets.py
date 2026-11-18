@@ -9,8 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "tools/whatwg-encoding"
 OUTPUT = ROOT / "src/charsets.bend"
-# UTF-16BE, UTF-16LE and x-user-defined are left out, so their labels keep
-# the UTF-8 fallback.
 GROUPS = {
     "The Encoding": "Utf8{}",
     "Legacy single-byte encodings": None,
@@ -19,6 +17,9 @@ GROUPS = {
     "Legacy multi-byte Japanese encodings": "MultiByte{}",
     "Legacy multi-byte Korean encodings": "MultiByte{}",
 }
+# Recognised encodings that are not decoded, so their text reads as one
+# U+FFFD. x-user-defined is left out, so its labels keep the UTF-8 fallback.
+REPLACED = ("replacement", "UTF-16BE", "UTF-16LE")
 
 
 # An explicit check, because python3 -O strips assert statements.
@@ -72,7 +73,7 @@ def tables(texts):
         for encoding in group["encodings"]:
             if heading in GROUPS:
                 charset = GROUPS[heading]
-            elif encoding["name"] == "replacement":
+            elif encoding["name"] in REPLACED:
                 charset = "Replacement{}"
             else:
                 continue

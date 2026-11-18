@@ -591,4 +591,13 @@ def labels() -> List<&2, Label>:
    Label{"iso-2022-cn", Replacement{}},
    Label{"iso-2022-cn-ext", Replacement{}},
    Label{"iso-2022-kr", Replacement{}},
-   Label{"replacement", Replacement{}}]
+   Label{"replacement", Replacement{}},
+   Label{"unicodefffe", Replacement{}},
+   Label{"utf-16be", Replacement{}},
+   Label{"csunicode", Replacement{}},
+   Label{"iso-10646-ucs-2", Replacement{}},
+   Label{"ucs-2", Replacement{}},
+   Label{"unicode", Replacement{}},
+   Label{"unicodefeff", Replacement{}},
+   Label{"utf-16", Replacement{}},
+   Label{"utf-16le", Replacement{}}]
