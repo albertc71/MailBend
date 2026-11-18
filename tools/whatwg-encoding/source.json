@@ -1,0 +1,181 @@
+{
+  "repository": "https://github.com/whatwg/encoding",
+  "commit": "be17ac5c49881336538acfc7b40dba3c8009144b",
+  "standard": "https://encoding.spec.whatwg.org/",
+  "files": {
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/LICENSE",
+      "bytes": 16315,
+      "sha256": "85dc6f5ccb57a6fe8c33d158f9fc8fc7ee5655a5d3db2cdd131c6a3d0f48a864",
+      "git_blob_sha": "f2dcda46deccefd245749202a88a7837e35c6daa"
+    },
+    "encodings.json": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/encodings.json",
+      "bytes": 8913,
+      "sha256": "078212b3697f60b81225b6671bd9da2604497abff0aa8e96e4d46605c02ac9e7",
+      "git_blob_sha": "74019c09603e215110831276384aa7d96f55b645"
+    },
+    "index-ibm866.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-ibm866.txt",
+      "bytes": 6039,
+      "sha256": "1796f4955dbc5c94e3951a940e9250c819580ce5dd1c9ac396ef73a26e938264",
+      "git_blob_sha": "959f6071844435e18d47cc8358bf344fabeb65bd"
+    },
+    "index-iso-8859-10.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-10.txt",
+      "bytes": 5677,
+      "sha256": "6c1863fca2ad99eed23cc77cce075fcd3cac6bd7b50a584d3067456c2180f16e",
+      "git_blob_sha": "0097b42145eec5849820346504a24874f1f5df92"
+    },
+    "index-iso-8859-13.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-13.txt",
+      "bytes": 5410,
+      "sha256": "5c5fe48042ef633a88d1aeed72dd3a2e1fb5202b70c5b7696b53e76ac5e56752",
+      "git_blob_sha": "0e52de359b828614b19f986156a91227bbb3cc16"
+    },
+    "index-iso-8859-14.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-14.txt",
+      "bytes": 5818,
+      "sha256": "310ec047fbd33d8c02de309f0bc8562e453e7d873cc2093005a5d954fc8f0032",
+      "git_blob_sha": "d020592171b3bec8115801ff21f1b986f52a82f4"
+    },
+    "index-iso-8859-15.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-15.txt",
+      "bytes": 5357,
+      "sha256": "1171d20bd7c98b5755e8802480d2799527a99847531284cd8d860ffda7cde449",
+      "git_blob_sha": "e673fa816b516d02598a62bca245427d6890ebba"
+    },
+    "index-iso-8859-16.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-16.txt",
+      "bytes": 5704,
+      "sha256": "e7bee177fdf60c5167b7c44351cd25f51caf9780889493c7855c0eb222a31660",
+      "git_blob_sha": "985176ff53676ff2511600b0423e34e71ab217da"
+    },
+    "index-iso-8859-2.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-2.txt",
+      "bytes": 5550,
+      "sha256": "86a09a772c5ff8631dc47b8838f0b7751dc31d53fd2eb4262f0fc858e638468b",
+      "git_blob_sha": "3849517a980d92fd6ef32b5664d23358a7e6b69e"
+    },
+    "index-iso-8859-3.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-3.txt",
+      "bytes": 5214,
+      "sha256": "d49c03f3e8cab4fbf861b4471ce121beb937dbd56dfd3106b997326c4b97da0d",
+      "git_blob_sha": "e22c3b1099963cbd8a77328456117931b7408b2f"
+    },
+    "index-iso-8859-4.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-4.txt",
+      "bytes": 5522,
+      "sha256": "d93b8b6606e1a12ccf28418a629911b497cb7a354c8a740207992059c50917b3",
+      "git_blob_sha": "bd7f1270117c756e4f504019c26d77b70381cbf3"
+    },
+    "index-iso-8859-5.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-5.txt",
+      "bytes": 5162,
+      "sha256": "b42bf0bb8d49701efbd8c0fb2bc7330985ce84c576ac51efe86aeff6b47aea5d",
+      "git_blob_sha": "fd096700881120ccdab81dcec2d13cd4826d6abe"
+    },
+    "index-iso-8859-6.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-6.txt",
+      "bytes": 2844,
+      "sha256": "84b979a90c6a4fb2a2dffe37994647cd4836f918550b46d329b0d798f4b84d52",
+      "git_blob_sha": "8a6869100f0d128ea574e71c40e27d2326e3c940"
+    },
+    "index-iso-8859-7.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-7.txt",
+      "bytes": 4986,
+      "sha256": "fc1d4295d73dfd0dd6e1b2c2ee3de7a52c6e94ddb09358161d02a2adb08a5151",
+      "git_blob_sha": "484683ddcfd88a924dfb30a76faaddfc0c8f4164"
+    },
+    "index-iso-8859-8.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-iso-8859-8.txt",
+      "bytes": 3077,
+      "sha256": "25a8f4366e7935f2c5d59f34e59c400683a1df86546776e7d4e527ae7235cc9e",
+      "git_blob_sha": "b60cf8db324ed19da7529cc91bc045f51330dd01"
+    },
+    "index-koi8-r.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-koi8-r.txt",
+      "bytes": 5978,
+      "sha256": "482889b92f244a03fd33ceee13a248a5fd479a3d1633019cc3b21910b8824f52",
+      "git_blob_sha": "ef0b2d710b6504da74c9cbaa289a6cc76b3e5a95"
+    },
+    "index-koi8-u.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-koi8-u.txt",
+      "bytes": 5899,
+      "sha256": "3b8bfcaa2b7fb125e9790cc4964c4c9e51eee2c9c6e2a80ba7dfd8901546a2c6",
+      "git_blob_sha": "bfd717758c2edb01ec13dce25e19f31911508840"
+    },
+    "index-macintosh.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-macintosh.txt",
+      "bytes": 5531,
+      "sha256": "5e2b0aa162f3032cf6c96a119f59f698da80c16d58014080a6bd246d7ade3c38",
+      "git_blob_sha": "fb166d4dc13cb664064970297f3852c68f40629d"
+    },
+    "index-windows-1250.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1250.txt",
+      "bytes": 5842,
+      "sha256": "857f28be0681aae376f1671ab388d8e141cff9648a68803b53887bfdf950f464",
+      "git_blob_sha": "24fa6c9a89e3cb21338175dec3149f47e1c91741"
+    },
+    "index-windows-1251.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1251.txt",
+      "bytes": 5518,
+      "sha256": "bf29b6293d8b5f8011804c575b78a3b589a3fd6a4ace29ff788e3445157a13c0",
+      "git_blob_sha": "ee4533c51ce761ea52c82e6ae130ae709adb2693"
+    },
+    "index-windows-1252.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1252.txt",
+      "bytes": 5667,
+      "sha256": "2c5fa192d566f92b8b9e6e116255b1f94016b4ece5b9dacb3b98be70b8c60795",
+      "git_blob_sha": "af1edbcd19cede0831ffab8602908962e4635d03"
+    },
+    "index-windows-1253.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1253.txt",
+      "bytes": 5173,
+      "sha256": "38390cd918ac2c78c47be62bd486598e7d129e0adceb140c8a7f0165ddbbf3f5",
+      "git_blob_sha": "1b025ce1588d0e67d3b6e2fc3ea1c2dab185c2a1"
+    },
+    "index-windows-1254.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1254.txt",
+      "bytes": 5658,
+      "sha256": "88b7acb81b616bec879521d371eee5766b9306eb050b814e4dce9468e0725822",
+      "git_blob_sha": "4195f3dbc029e282c28c03a4c050965661553778"
+    },
+    "index-windows-1255.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1255.txt",
+      "bytes": 4388,
+      "sha256": "4a3ca10dd8ef4ce06b929f6bf66d7ea8932ab3c06e07162b0f8a9536a692e6ac",
+      "git_blob_sha": "3efcbc74e8c89f02c32aad57a6fc4cf7f4efff76"
+    },
+    "index-windows-1256.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1256.txt",
+      "bytes": 4974,
+      "sha256": "a3e9e6fcf4c3eda90275c791d5d7dad08700374ebe67b17cabdfff1e48f984c1",
+      "git_blob_sha": "8baa3fa8f5a318a4ff3d7c6a1558ecc7d90588ba"
+    },
+    "index-windows-1257.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1257.txt",
+      "bytes": 5478,
+      "sha256": "7e56420f3460befff856365b37733f9eabc1342e82be5999ce34c5eb518fddda",
+      "git_blob_sha": "ffbf66120894cb477afc17169619dbbd82002ea7"
+    },
+    "index-windows-1258.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-1258.txt",
+      "bytes": 5521,
+      "sha256": "2236cdac45f5970629881d09908d13af96965f1c67617160734cbefb54aa3176",
+      "git_blob_sha": "568141350ab0fb1e50a7f23c6d24cf3e24bd5d9a"
+    },
+    "index-windows-874.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-windows-874.txt",
+      "bytes": 4624,
+      "sha256": "81b42398e8bef2acc004f38ed6ae2c4d162dfdc367e5ddfcb1cb752ac8814a1e",
+      "git_blob_sha": "57315c20ff16c9de1a0607dc7c910ef20fe14dca"
+    },
+    "index-x-mac-cyrillic.txt": {
+      "url": "https://raw.githubusercontent.com/whatwg/encoding/be17ac5c49881336538acfc7b40dba3c8009144b/index-x-mac-cyrillic.txt",
+      "bytes": 5485,
+      "sha256": "a01be0035d0cfbb8da0af780eeb6e7c6169ab26d748d03d15ccd4cd969c5b786",
+      "git_blob_sha": "333b361dfce689d2c26f95b8971e3b592e0900f5"
+    }
+  }
+}

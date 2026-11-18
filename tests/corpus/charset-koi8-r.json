@@ -1,15 +1,16 @@
 {
-  "status": "known_unsupported",
+  "status": "conformant",
   "wire": "valid",
   "source": {
     "kind": "synthetic",
     "license": "MIT",
-    "description": "KOI8-R is not decoded by MailBend yet. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
+    "description": "Synthetic KOI8-R fixture read through the WHATWG KOI8-R index in the body, an encoded word and an RFC 2231 file name. No personal mail or third-party sample."
   },
   "references": [
     "https://www.rfc-editor.org/rfc/rfc2045",
     "https://www.rfc-editor.org/rfc/rfc2046",
-    "https://www.rfc-editor.org/rfc/rfc5322"
+    "https://www.rfc-editor.org/rfc/rfc5322",
+    "https://encoding.spec.whatwg.org/#names-and-labels"
   ],
   "issues": [
     "https://github.com/albertc71/MailBend/issues/135"
@@ -34,27 +35,5 @@
         "size": 1
       }
     ]
-  },
-  "known_wrong": {
-    "from": "Synthetic Sender <sender@example.invalid>",
-    "to": "reader@example.invalid",
-    "cc": "",
-    "reply_to": "",
-    "subject": "������",
-    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
-    "message_id": "<charset-koi8-r@corpus.invalid>",
-    "in_reply_to": "",
-    "references": "",
-    "text": "������",
-    "html": "",
-    "html_available": false,
-    "attachments": [
-      {
-        "filename": "������.txt",
-        "content_type": "application/octet-stream",
-        "size": 1
-      }
-    ]
-  },
-  "diagnostic": "KOI8-R is not decoded by MailBend yet. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
+  }
 }

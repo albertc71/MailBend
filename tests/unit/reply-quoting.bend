@@ -131,6 +131,11 @@ def main() -> IO(Unit):
     IO.print(sender_text(T.sender_in(["=?UTF-8?Q?Bob=0A?= <bob@example.com>"])) ++ "|" ++
       sender_text(T.sender_in(["=?UTF-8?Q?Bob=09?= <bob@example.com>"])) ++ "|" ++
       sender_text(T.sender_in(["Bob <BOB@example.com>"])))
+    IO.print(sender_text(T.sender_in(["=?ISO-2022-JP?Q?Bob=1B?= <bob@example.com>"])) ++ "|" ++
+      sender_text(T.sender_in(["=?ISO-2022-KR?Q?Bob=0A?= <bob@example.com>"])) ++ "|" ++
+      sender_text(T.sender_in(["=?KOI8-R?Q?=E2=CF=C2?= <bob@example.com>"])))
+    IO.print(T.decoded_addr("=?ISO-2022-KR?Q?Bob?= <bob@example.com>") ++ "|" ++
+      Bool.show(M.addr_ok(T.decoded_addr("Alice <a@example.com> =?ISO-2022-JP?Q?=1B?="))))
     IO.print(Bool.show(String.eq(T.spec_key(T.decoded_addr(
       "=?UTF-8?Q?Alice=09?= <a@example.com>")), "a@example.com")))
     IO.print(Bool.show(M.addr_ok(T.decoded_addr("=?UTF-8?Q?Alice=09?= <a@example.com>"))) ++
@@ -157,6 +162,8 @@ def main() -> IO(Unit):
 #|Alice|998
 #|Alice <a@example.com>
 #|unverified|unverified|bob@example.com
+#|unverified|unverified|bob@example.com
+#|Bob <bob@example.com>|False
 #|True
 #|True False False
 #|שלום <a@example.com>|False

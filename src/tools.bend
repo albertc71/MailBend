@@ -6874,8 +6874,14 @@ def decoded_addr.if(+a: String, angle: Bool) -> String:
     case False{}:
       a
 
+# An address with its encoded words decoded and every ASCII byte kept (see
+# M.labelled_text), so no charset label hides a character that an address
+# check looks for.
+def addr_text(raw: String) -> String:
+  M.decode_words(raw, True{})
+
 def decoded_addr(raw: String) -> String:
-  +a = M.decode_header(raw)
+  +a = addr_text(raw)
   decoded_addr.if(a, String.contains(a, "<"))
 
 # Keep decoded source text intact for identity checks such as sender_in:
@@ -6885,7 +6891,7 @@ def decoded(xs: List<&2, String>) -> List<&2, String>:
     case Nil{}:
       []
     case x <> t:
-      M.decode_header(x) <> decoded(t)
+      addr_text(x) <> decoded(t)
 
 # Only recipient presentation uses sanitized display names.
 def decoded_recipients(xs: List<&2, String>) -> List<&2, String>:

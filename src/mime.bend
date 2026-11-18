@@ -339,12 +339,21 @@ def ew_charset(ps: List<&2, String>, original: String) -> String:
     case _:
       original
 
-# "=?charset?enc?text?=" split at '?' to text; anything else is the raw
-# word read as UTF-8.
-def ew_parts(ps: List<&2, String>, word: String) -> String:
+# Bytes labelled `charset` read in that charset, or, when `preserve_ascii`,
+# with every ASCII byte kept (see C.ascii_preserving_decode).
+def labelled_text(preserve_ascii: Bool, charset: String, bytes: String) -> String:
+  match preserve_ascii:
+    case True{}:
+      C.ascii_preserving_decode(charset, bytes)
+    case False{}:
+      C.charset_decode(charset, bytes)
+
+# "=?charset?enc?text?=" split at '?' to text (see labelled_text); anything
+# else is the raw word read as UTF-8.
+def ew_parts(ps: List<&2, String>, word: String, preserve_ascii: Bool) -> String:
   match ps:
     case "=" <> +cs <> +enc <> text <> "=" <> Nil{}:
-      C.charset_decode(ew_charset(header_split(cs, '*'), cs),
+      labelled_text(preserve_ascii, ew_charset(header_split(cs, '*'), cs),
         ew_bytes(String.eq(enc, "B") || String.eq(enc, "b"), text))
     case _:
       C.utf8_decode(word)
@@ -353,24 +362,24 @@ def is_ew(+w: String) -> Bool:
   String.starts_with(w, "=?") && String.ends_with(w, "?=")
 
 # A word to text; `encoded` says whether it looks like an encoded word.
-def ew_word(+w: String, encoded: Bool) -> String:
+def ew_word(+w: String, encoded: Bool, preserve_ascii: Bool) -> String:
   match encoded:
     case True{}:
-      ew_parts(header_split(w, '?'), w)
+      ew_parts(header_split(w, '?'), w, preserve_ascii)
     case False{}:
       C.utf8_decode(w)
 
-def ew_join.go(ws: List<&2, String>, prev_ew: Bool, first: Bool, +out: String) -> String:
+def decode_words.go(
+  ws: List<&2, String>, prev_ew: Bool, first: Bool, +preserve_ascii: Bool, +out: String
+) -> String:
   match ws:
     case Nil{}:
       String.reverse(out)
     case +w <> t:
       +encoded = is_ew(w)
       out = Bool.pick(String, first || (prev_ew && encoded), out, SCon{' ', out})
-      ew_join.go(t, encoded, False{}, String.reverse.go(ew_word(w, encoded), out))
-
-def ew_join(ws: List<&2, String>, prev_ew: Bool, first: Bool) -> String:
-  ew_join.go(ws, prev_ew, first, "")
+      decode_words.go(t, encoded, False{}, preserve_ascii,
+        String.reverse.go(ew_word(w, encoded, preserve_ascii), out))
 
 def tab_to_space.go(s: String, out: String) -> String:
   match s:
@@ -382,10 +391,29 @@ def tab_to_space.go(s: String, out: String) -> String:
 def tab_to_space(s: String) -> String:
   tab_to_space.go(s, "")
 
-# A raw header value to text: encoded words decoded, raw 8-bit read as UTF-8.
-# Space and tab are both linear whitespace between words.
+def header_words(v: String) -> List<&2, String>:
+  header_split(tab_to_space(v), ' ')
+
+# A raw header value with its encoded words decoded (see labelled_text);
+# raw 8-bit is read as UTF-8. Space and tab are both linear whitespace
+# between words.
+def decode_words(v: String, preserve_ascii: Bool) -> String:
+  decode_words.go(header_words(v), False{}, True{}, preserve_ascii, "")
+
 def decode_header(v: String) -> String:
-  ew_join(header_split(tab_to_space(v), ' '), False{}, True{})
+  decode_words(v, False{})
+
+def ew_replaced(ps: List<&2, String>) -> Bool:
+  match ps:
+    case "=" <> +cs <> enc <> text <> "=" <> Nil{}:
+      C.charset_replaced(ew_charset(header_split(cs, '*'), cs))
+    case _:
+      False{}
+
+# Whether the header value `v` holds an encoded word in a charset that is
+# not decoded at all (see C.charset_replaced).
+def replaced_words(v: String) -> Bool:
+  List.any(~&2, ~String, ~(w => ew_replaced(header_split(w, '?'))), header_words(v))
 
 # Text copied from an untrusted header into one visible line. Decode once,
 # replace C0/C1 and line separators with spaces, and drop zero-width bidi
@@ -477,16 +505,16 @@ def pct_decode(s: String) -> String:
     case SCon{c, t}:
       SCon{c, pct_decode(t)}
 
-def ext_parts(ps: List<&2, String>, v: String) -> String:
+def ext_parts(ps: List<&2, String>, v: String, preserve_ascii: Bool) -> String:
   match ps:
     case cs <> lang <> text <> Nil{}:
-      C.charset_decode(cs, pct_decode(text))
+      labelled_text(preserve_ascii, cs, pct_decode(text))
     case _:
       v
 
-# RFC 2231 "charset'lang'%XX..." to text.
-def ext_value(+v: String) -> String:
-  ext_parts(String.split(v, '\''), v)
+# RFC 2231 "charset'lang'%XX..." to text (see labelled_text).
+def ext_value(+v: String, preserve_ascii: Bool) -> String:
+  ext_parts(String.split(v, '\''), v, preserve_ascii)
 
 def before_eq(s: String) -> String:
   match s:
@@ -520,25 +548,25 @@ def param_raw(+ps: List<&2, String>, +name: String) -> String:
         param_raw(t, name))
 
 def param_first.if(
-  val: String, rest: String, plain: Bool, ext: Bool
+  val: String, rest: String, plain: Bool, ext: Bool, preserve_ascii: Bool
 ) -> String:
   match plain ext:
     case True{} _:
-      decode_header(unquote(val))
+      decode_words(unquote(val), preserve_ascii)
     case False{} True{}:
-      ext_value(unquote(val))
+      ext_value(unquote(val), preserve_ascii)
     case False{} False{}:
       rest
 
 # The value of the first parameter `name` or `name*`, decoded, or "".
-def param_first(+ps: List<&2, String>, +name: String) -> String:
+def param_first(+ps: List<&2, String>, +name: String, +preserve_ascii: Bool) -> String:
   match ps:
     case Nil{}:
       ""
     case p <> t:
       +key = param_key(p)
-      param_first.if(after_eq(p), param_first(t, name),
-        String.eq(key, name), String.eq(key, name ++ "*"))
+      param_first.if(after_eq(p), param_first(t, name, preserve_ascii),
+        String.eq(key, name), String.eq(key, name ++ "*"), preserve_ascii)
 
 # An RFC 2231 attr-char: kept as is in an extended parameter value.
 def attr_char(+c: Char) -> Bool:
@@ -604,40 +632,51 @@ def cont_join(
 # A joined continuation to text. Only an encoded first segment ("name*0*=")
 # carries the charset'lang' prefix; without it the value is plain text
 # (encoded segments decoded as UTF-8).
-def cont_value(first_enc: Bool, cont: String) -> String:
+def cont_value(first_enc: Bool, cont: String, preserve_ascii: Bool) -> String:
   match first_enc:
     case True{}:
-      ext_value(cont)
+      ext_value(cont, preserve_ascii)
     case False{}:
       C.utf8_decode(pct_decode(cont))
 
 def param.cont(
-  ps: List<&2, String>, name: String, cont: String, none: Bool
+  ps: List<&2, String>, name: String, cont: String, none: Bool, preserve_ascii: Bool
 ) -> String:
   match none:
     case True{}:
-      param_first(ps, name)
+      param_first(ps, name, preserve_ascii)
     case False{}:
       first_enc = Bool.not(String.is_empty(param_raw(ps, name ++ "*0*")))
-      cont_value(first_enc, cont)
+      cont_value(first_enc, cont, preserve_ascii)
 
 def param.ext(
-  +ps: List<&2, String>, +name: String, ext: String, none: Bool
+  +ps: List<&2, String>, +name: String, ext: String, none: Bool, preserve_ascii: Bool
 ) -> String:
   match none:
     case True{}:
       +cont = cont_join(64n, ps, name, 0, cont_seg(ps, name, 0))
-      param.cont(ps, name, cont, String.is_empty(cont))
+      param.cont(ps, name, cont, String.is_empty(cont), preserve_ascii)
     case False{}:
-      ext_value(ext)
+      ext_value(ext, preserve_ascii)
 
-# A parameter of a structured header value, e.g. param(ct, "charset"). An
+# A parameter of a structured header value, decoded (see labelled_text). An
 # RFC 2231 extended value ("name*=", or continuations "name*0*=", ...) wins
 # over a plain fallback ("name=").
-def param(v: String, +name: String) -> String:
+def param.read(v: String, +name: String, preserve_ascii: Bool) -> String:
   +ps = List.tail(&2, String, split_params(v))
   +ext = unquote(param_raw(ps, name ++ "*"))
-  param.ext(ps, name, ext, String.is_empty(ext))
+  param.ext(ps, name, ext, String.is_empty(ext), preserve_ascii)
+
+# A parameter that decides how a message is parsed or scanned, such as
+# param(ct, "charset") or param(ct, "boundary"), with every ASCII byte of
+# its value kept whatever charset the value names.
+def param(v: String, +name: String) -> String:
+  param.read(v, name, True{})
+
+# A part's file name parameter, as text to show: decoded in the charset that
+# its value names.
+def display_param(v: String, +name: String) -> String:
+  param.read(v, name, False{})
 
 # Bodies
 # ------
@@ -691,7 +730,7 @@ def leaf.text(ct: String, bytes: String) -> String:
 def file_name.if(ct: String, from_cd: String, none: Bool) -> String:
   match none:
     case True{}:
-      param(ct, "name")
+      display_param(ct, "name")
     case False{}:
       from_cd
 
@@ -704,7 +743,7 @@ def part_label(k: PartKind) -> String:
 # A part's file name: the Content-Disposition filename, else the
 # Content-Type name.
 def file_name(ct: String, cd: String) -> String:
-  +from_cd = param(cd, "filename")
+  +from_cd = display_param(cd, "filename")
   file_name.if(ct, from_cd, String.is_empty(from_cd))
 
 # A single part is an attachment when it says so or has a file name; else
@@ -1222,7 +1261,7 @@ def html_text.code_point(m: Maybe<&2, U32>) -> Maybe<&2, Char>:
     case Some{+n}:
       bad = U32.is_eq(n, 0) || C.between(n, 55296, 57343) || U32.is_gt(n, 1114111)
       Some{C.chr(Bool.pick(U32, bad, 65533,
-        Bool.pick(U32, C.between(n, 128, 159), C.cp1252_decode.code(n), n)))}
+        Bool.pick(U32, C.between(n, 128, 159), C.cp1252_code(n), n)))}
 
 # The character that a reference, the text between '&' and ';', stands for.
 def html_text.decode(+name: String) -> Maybe<&2, Char>:

@@ -4,7 +4,7 @@
   "source": {
     "kind": "synthetic",
     "license": "MIT",
-    "description": "Shift_JIS is not decoded by MailBend yet. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
+    "description": "Shift_JIS is not decoded by MailBend yet: its non-ASCII and escape bytes read as U+FFFD, so the text is never taken as completely read. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
   },
   "references": [
     "https://www.rfc-editor.org/rfc/rfc2045",
@@ -40,21 +40,21 @@
     "to": "reader@example.invalid",
     "cc": "",
     "reply_to": "",
-    "subject": "����ɂ���",
+    "subject": "����������",
     "date": "Sat, 31 Oct 2026 12:00:00 +0000",
     "message_id": "<charset-shift-jis@corpus.invalid>",
     "in_reply_to": "",
     "references": "",
-    "text": "����ɂ���",
+    "text": "����������",
     "html": "",
     "html_available": false,
     "attachments": [
       {
-        "filename": "����ɂ���.txt",
+        "filename": "����������.txt",
         "content_type": "application/octet-stream",
         "size": 1
       }
     ]
   },
-  "diagnostic": "Shift_JIS is not decoded by MailBend yet. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
+  "diagnostic": "Shift_JIS is not decoded by MailBend yet: its non-ASCII and escape bytes read as U+FFFD, so the text is never taken as completely read. This is an explicit #135 diagnostic, not a conformance pass; no product decoding status exists yet."
 }
