@@ -16,7 +16,7 @@ CONFIRM = "permanently-delete"
 TRASH = "[Gmail]/Trash"
 REVIEW = "To Delete"
 GMAIL_REFUSAL = "on Gmail a permanent delete is certain only in Trash or Spam"
-REVIEW_REFUSAL = f'mail_trash never moves mail into or out of "{REVIEW}", which the user reviews'
+REVIEW_REFUSAL = f'mail_trash never moves mail into or out of "{REVIEW}", which the user reviews; nothing was changed'
 NO_TRASH = "there is no single Trash mailbox MailBend may move mail into on this server"
 LUNCH = "Lunch tomorrow?"
 REVIEWED = "Reviewed for deletion"
@@ -24,9 +24,11 @@ TRASH_OVERRIDE = {"MAILBEND_TRASH_FOLDER": "Receipts"}
 # The calls a refused Gmail delete names when the server has one Trash
 # mailbox to move the messages into.
 ROUTE = ["mail_move", "mail_search", "mail_delete"]
-# How a refusal names a call ("with mail_x", "run mail_x" or "mail_x can"),
-# and the folders it names for a move and for a delete.
-NAMED_CALL = re.compile(r'\b(?:with|run) (mail_\w+)|\b(mail_\w+) can\b')
+# How a refusal names a call ("with mail_x", "run mail_x", "use mail_x" or
+# "mail_x can") outside the mailbox names it quotes, and the folders it
+# names for a move and for a delete.
+NAMED_CALL = re.compile(r'\b(?:with|run|use) (mail_\w+)|\b(mail_\w+) can\b')
+QUOTED = re.compile(r'"[^"]*"')
 MOVE_INTO = re.compile(r'into "([^"]+)" with mail_move')
 DELETE_IN = re.compile(r'mail_delete in "([^"]+)"')
 
@@ -90,7 +92,7 @@ def follow(t, srv, advice, folder, uidvalidity, subject, **env):
     last search found. Returns each call's name, exit code and result."""
     move_into, delete_in = MOVE_INTO.search(advice), DELETE_IN.search(advice)
     calls, uids = [], [1]
-    for match in NAMED_CALL.finditer(advice):
+    for match in NAMED_CALL.finditer(QUOTED.sub('""', advice)):
         name = match[1] or match[2]
         args = {"folder": folder, "uids": uids, "uidvalidity": uidvalidity}
         if name == "mail_move":

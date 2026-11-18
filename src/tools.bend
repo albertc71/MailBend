@@ -624,9 +624,9 @@ def marked_trash(caps: List<&2, String>, +fs: List<&2, I.Folder>) -> Maybe<&2, S
     caps, fs)
 
 # What a refused Gmail delete says about deleting the messages
-# permanently. It names calls only when they can run: mail_move and
-# mail_delete need UIDPLUS, and mail_delete then runs in the mailbox the
-# server marks as Trash (`trash`).
+# permanently. It names calls only when MailBend accepts them: mail_delete
+# needs UIDPLUS, which also gives mail_move a plan, and mail_delete then
+# runs in the mailbox the server marks as Trash (`trash`).
 def delete_advice.if(uidplus: Bool, trash: Maybe<&2, String>) -> String:
   match uidplus trash:
     case False{} _:
@@ -648,7 +648,7 @@ def delete_advice(+lines: List<&2, I.RLine>) -> String:
 def review_trash_problem(+delim: String, folder: String, trash: String) -> String:
   Bool.pick(String, in_review(delim, folder) || in_review(delim, trash),
     "mail_trash never moves mail into or out of \"" ++ Ops.review_folder() ++
-      "\", which the user reviews",
+      "\", which the user reviews; nothing was changed",
     "")
 
 # Why mail_triage cannot file mail out of `folder` ("" when it can).

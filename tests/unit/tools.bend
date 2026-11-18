@@ -1799,7 +1799,7 @@ def main() -> IO(Unit):
 #|err stopped
 #|mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off
 #|[only mail_triage moves mail into "To Delete", which the user reviews][only mail_triage moves mail into "To Delete", which the user reviews][][]
-#|[mail_trash never moves mail into or out of "To Delete", which the user reviews][mail_trash never moves mail into or out of "To Delete", which the user reviews][]
+#|[mail_trash never moves mail into or out of "To Delete", which the user reviews; nothing was changed][mail_trash never moves mail into or out of "To Delete", which the user reviews; nothing was changed][]
 #|[mail_delete cannot run on this server, which does not advertise UIDPLUS][there is no single Trash mailbox MailBend may move mail into on this server]
 #|[mail_triage files mail out of other folders, never out of "To Delete", which the user reviews][]
 #|[MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X must name one existing selectable mailbox]
