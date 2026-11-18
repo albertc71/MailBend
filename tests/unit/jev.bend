@@ -633,12 +633,10 @@ def main() -> IO(Unit):
 #|[first
 #|
 #|[HTML part as text]
-#| first ] complete
+#|first] complete
 #|[] partial
-#|[ OK 
-#|] unconfirmed
-#|[ OK 
-#|] unconfirmed
+#|[OK] unconfirmed
+#|[OK] unconfirmed
 #|2 aé [] abc
 #|10
 #|none___ none

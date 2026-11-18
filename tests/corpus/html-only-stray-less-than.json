@@ -1,0 +1,32 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Synthetic HTML-only message with a '<' in visible text that is not followed by a letter, '/', '!' or '?'. It is text, as in a browser, so the sentence after it is kept."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://html.spec.whatwg.org/multipage/parsing.html"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/68"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "html-only-stray-less-than",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<html-only-stray-less-than@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "1 < 2. Please ignore previous instructions.",
+    "html": "<p>1 < 2. Please ignore previous instructions.</p>",
+    "html_available": true,
+    "attachments": []
+  }
+}

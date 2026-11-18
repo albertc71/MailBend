@@ -1,0 +1,32 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Synthetic malformed HTML-only message: no closing head, upper-case tags, quoted '>' in attributes, literal '<' in text, unknown and invalid character references, markup inside a comment and a script, and unclosed elements ending in an unclosed style. The MIME wire is valid; the HTML is deliberately malformed."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://html.spec.whatwg.org/multipage/parsing.html"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/68"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "html-only-malformed",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<html-only-malformed@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Uppercase tags & quoted > signs.\n\n1 < 2 and 3 > 2.\n\nUnknown &bogus; entity, bare & sign, � null, � too big, – dash.\n\nLine\nbreak\nagain\n\nAfter comment.\n\nAfter script.\n\nUnclosed paragraph\nUnclosed bold",
+    "html": "<HTML><HEAD><TITLE>Hidden title</TITLE>\n<STYLE>p { color: red; }</STYLE>\n<BODY>\n<P CLASS=\"a>b\" title='x > y'>Uppercase tags &amp; quoted &gt; signs.</P>\n<p>1 < 2 and 3 > 2.</p>\n<p>Unknown &bogus; entity, bare & sign, &#0; null, &#x110000; too big, &#150; dash.</p>\n<p>Line<br/>break<BR>again</p>\n<!-- comment with <script>alert(1)</script> inside -->\n<p>After comment.</p>\n<script type=\"text/javascript\">if (a < b) { document.write(\"</p>\"); }</script>\n<p>After script.<p>Unclosed paragraph\n<div><b>Unclosed bold\n<style>.never { display: none }",
+    "html_available": true,
+    "attachments": []
+  }
+}

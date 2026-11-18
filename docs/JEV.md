@@ -158,11 +158,13 @@ a reason for each of these cases:
   only that part's text, or a placeholder for a part that is not text.
 - "Message text or HTML holds a replacement character (U+FFFD), so
   MailBend cannot confirm that every byte decoded." Nothing was left out,
-  but a text or HTML part, markup included, holds U+FFFD. MailBend writes
-  U+FFFD for a byte that does not decode, and cannot tell that from a
-  U+FFFD the message itself contains. A message whose text was also cut
-  gives only the first reason, and so does a delete when the text of any
-  message sent to Jev was cut.
+  but a text or HTML part, markup included, holds U+FFFD, or the text read
+  from the HTML does. MailBend writes U+FFFD for a byte that does not
+  decode and, while it still reads the HTML as a browser's tokenizer does,
+  for a NUL in the content of an element such as `<textarea>`. It cannot
+  tell either from a U+FFFD the message itself contains. A message whose
+  text was also cut gives only the first reason, and so does a delete when
+  the text of any message sent to Jev was cut.
 - "MailBend converts HTML to text before applying Jev's request limits;
   the request did not include the raw HTML." The read returns raw HTML: the
   `html` of a whole message, or the `content` of a selected `text/html`

@@ -1580,7 +1580,7 @@ def main() -> IO(Unit):
 #|err connection or TLS verification failed: down | shown 
 #|{"uid":5,"date":"Mon, 1 Feb 2026 10:00:00 +0000","from":"José <jose@example.com>","to":"me@x.com","cc":"","subject":"Lunch","message_id":"<m1@example.com>","internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"flags":["\\Seen"],"seen":true,"flagged":false,"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false}
 #|ok {"folder":"INBOX","uid":5,"uidvalidity":7,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":false,"from":"José <jose@example.com>","to":"me@x.com","cc":"","reply_to":"","subject":"Lunch","date":"Mon, 1 Feb 2026 10:00:00 +0000","message_id":"<m1@example.com>","in_reply_to":"","references":"","text":"Hello\nthere\n","html":"","html_available":false,"attachments":[],"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false} | whole 5 262144
-#|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":" Hi & bye \n","html":"<p>Hi &amp; bye</p>\n","html_available":true,"attachments":[],"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false} | whole 6 100
+#|ok {"folder":"INBOX","uid":6,"uidvalidity":null,"flags":["\\Seen"],"seen":true,"internal_date":"1-Feb-2026 10:00:00 +0000","size":300,"truncated":true,"from":"a@x.com","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":"Hi & bye","html":"<p>Hi &amp; bye</p>\n","html_available":true,"attachments":[],"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false} | whole 6 100
 #|err no message with UID 8 in Work | shown 
 #|5 ||
 #|ok {"folder":"INBOX","uid":4,"uidvalidity":7,"flags":["\\Flagged"],"seen":false,"internal_date":"2-Feb-2026 10:00:00 +0000","size":7,"truncated":false,"from":"","to":"","cc":"","reply_to":"","subject":"Hi","date":"","message_id":"","in_reply_to":"","references":"","text":"yo","html":"","html_available":false,"attachments":[],"list_id":null,"auto_submitted":null,"bulk":null,"unsubscribe":{"mailto":null,"https":null,"one_click":false},"answered":false,"forwarded":false} | whole 4 1000
@@ -1698,7 +1698,7 @@ def main() -> IO(Unit):
 #|> a\n> \n> b\n|
 #|a@x.com b@y,c@z True False
 #|A <a@x>|b@y
-#|plain| Hi & bye |
+#|plain|Hi & bye|
 #|José <jose@x.com>|"Doe, J" <j@x.com> list@x.com a@x Café|x
 #|\n\n---------- Forwarded message ----------\nFrom: Ann <ann@x.com>\nDate: Mon, 1 Feb 2026 10:00:00 +0000\nSubject: Plans\nTo: José <jose@x.com>, "Doe, J" <j@x.com>\n
 #|> [the original is larger than 256 KB and only its start was read, so this quote may be incomplete]
