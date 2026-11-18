@@ -1,9 +1,10 @@
-"""Permanent deletes on Gmail, and the advice refused deletes give, using
-only fake mail.
+"""Permanent deletes on Gmail, and what refused deletes advise, using only
+fake mail.
 
 Gmail shows labels as folders, and its expunge surely destroys a message
 only in Trash or Spam. Anywhere else mail_delete must refuse before any
-change. Every call a refusal advises must then be one MailBend accepts.
+change. A refusal says why, and every call it names must be one MailBend
+accepts.
 """
 import copy
 import re
@@ -12,25 +13,28 @@ import re
 # lean on SPECIAL-USE.
 GMAIL_CAPS = "MOVE,UIDPLUS,X-GM-EXT-1"
 CONFIRM = "permanently-delete"
-ALL_MAIL = "[Gmail]/All Mail"
 TRASH = "[Gmail]/Trash"
 REVIEW = "To Delete"
 GMAIL_REFUSAL = "on Gmail a permanent delete is certain only in Trash or Spam"
+REVIEW_REFUSAL = f'mail_trash never moves mail into or out of "{REVIEW}", which the user reviews'
+NO_TRASH = "there is no single Trash mailbox MailBend may move mail into on this server"
 LUNCH = "Lunch tomorrow?"
+REVIEWED = "Reviewed for deletion"
 TRASH_OVERRIDE = {"MAILBEND_TRASH_FOLDER": "Receipts"}
-# How a refusal names its next call: a move into a folder, and a delete in
-# one. A folder name is quoted, or a bare word.
-ADVISED_MOVE = re.compile(r'into "?([^"]+?)"? with mail_move')
-ADVISED_DELETE = re.compile(r'mail_delete in ("[^"]+"|\S+)')
+# The calls a refused Gmail delete names when the server has one Trash
+# mailbox to move the messages into.
+ROUTE = ["mail_move", "mail_search", "mail_delete"]
+# How a refusal names a call ("with mail_x", "run mail_x" or "mail_x can"),
+# and the folders it names for a move and for a delete.
+NAMED_CALL = re.compile(r'\b(?:with|run) (mail_\w+)|\b(mail_\w+) can\b')
+MOVE_INTO = re.compile(r'into "([^"]+)" with mail_move')
+DELETE_IN = re.compile(r'mail_delete in "([^"]+)"')
 
 
 def note(name, subject):
     return {"uid": 1, "flags": [], "internaldate": "01-Oct-2026 09:00:00 +0000",
             "raw": f"Message-ID: <{name}@example.com>\r\nFrom: dana@example.com\r\nTo: tester@example.com\r\n"
                    f"Subject: {subject}\r\n\r\nNo longer needed.\r\n"}
-
-
-REVIEWED = note("reviewed1", "Reviewed for deletion")
 
 
 def gmail_fixture(t):
@@ -40,12 +44,19 @@ def gmail_fixture(t):
     fixture["mailboxes"] = {
         "INBOX": inbox,
         "Receipts": {"uidvalidity": 11, "messages": [message]},
-        # Gmail shows a message under each of its labels and in All Mail.
-        ALL_MAIL: {"uidvalidity": 12, "special": ["\\All"], "messages": [REVIEWED]},
         TRASH: {"uidvalidity": 13, "special": ["\\Trash"], "messages": [note("trashed1", "Old newsletter")]},
         "[Gmail]/Spam": {"uidvalidity": 14, "special": ["\\Junk"], "messages": [message]},
-        REVIEW: {"uidvalidity": 15, "messages": [REVIEWED]},
+        REVIEW: {"uidvalidity": 15, "messages": [note("reviewed1", REVIEWED)]},
     }
+    return fixture
+
+
+def gmail_with(t, specials):
+    """The Gmail fixture, with the attributes of the mailboxes in `specials`
+    replaced."""
+    fixture = gmail_fixture(t)
+    for name, special in specials.items():
+        fixture["mailboxes"][name]["special"] = special
     return fixture
 
 
@@ -72,30 +83,35 @@ def refusal(t, srv, folder, uidvalidity, **kwargs):
 
 
 def follow(t, srv, advice, folder, uidvalidity, subject, **env):
-    """Makes the calls `advice` names for UID 1 of `folder`, titled `subject`,
-    as an agent reading it literally would: the move it names, then a search
-    and the delete in the folder it names. Returns each call's name, exit
-    code and result."""
-    calls = []
-    move, delete_in = ADVISED_MOVE.search(advice), ADVISED_DELETE.search(advice)
-    if move:
-        calls.append(("mail_move", *t.tool(srv, "mail_move", {"folder": folder, "uids": [1], "uidvalidity": uidvalidity,
-                                                             "destination": move.group(1)}, **env)))
-    if delete_in:
-        target = delete_in.group(1).strip('".,;')
-        code, found = t.tool(srv, "mail_search", {"folder": target}, **env)
-        calls.append(("mail_search", code, found))
-        uids = [m["uid"] for m in found.get("messages", []) if m.get("subject") == subject]
-        calls.append(("mail_delete", *t.tool(srv, "mail_delete", {
-            "folder": target, "uids": uids if len(uids) == 1 else [], "uidvalidity": found.get("uidvalidity", 0),
-            "confirm": CONFIRM}, **env)))
+    """Makes the calls `advice` names, in its order, for UID 1 of `folder`,
+    titled `subject`, as an agent reading it literally would. A move goes
+    into the folder the advice names, a search looks where the message now
+    is, and a delete runs in the folder the advice names, on the UIDs the
+    last search found. Returns each call's name, exit code and result."""
+    move_into, delete_in = MOVE_INTO.search(advice), DELETE_IN.search(advice)
+    calls, uids = [], [1]
+    for match in NAMED_CALL.finditer(advice):
+        name = match[1] or match[2]
+        args = {"folder": folder, "uids": uids, "uidvalidity": uidvalidity}
+        if name == "mail_move":
+            args["destination"] = move_into and move_into[1]
+            folder = args["destination"]
+        elif name == "mail_search":
+            args = {"folder": folder}
+        elif name == "mail_delete":
+            args.update(folder=delete_in and delete_in[1], confirm=CONFIRM)
+        code, result = t.tool(srv, name, args, **env)
+        calls.append((name, code, result))
+        if name == "mail_search":
+            uids = [m["uid"] for m in result.get("messages", []) if m.get("subject") == subject]
+            uidvalidity = result.get("uidvalidity", 0)
     return calls
 
 
 def advice_followed(t, work, caps, fixture, name, folder, uidvalidity, subject, **env):
     """Calls `name` on UID 1 of `folder`, then follows the advice of its
     refusal. Returns the refusal (None unless it refused before any change)
-    and the advised calls."""
+    and the calls it named."""
     srv = t.Server(work, caps=caps, fixture=fixture)
     try:
         before = srv.st()["mailboxes"]
@@ -110,6 +126,17 @@ def advice_followed(t, work, caps, fixture, name, folder, uidvalidity, subject, 
 def deleted_by(calls):
     """Whether every call was accepted and the last deleted for good."""
     return bool(calls) and all(code == 0 for _, code, _ in calls) and calls[-1][2].get("permanently_deleted") is True
+
+
+def check_advice(t, work, title, caps, fixture, name, folder, uidvalidity, subject, reason, named, **env):
+    """Checks that `name` on UID 1 of `folder` refuses before any change,
+    says `reason` and names exactly the calls `named`, and that those calls
+    are accepted and delete the message for good."""
+    error, calls = advice_followed(t, work, caps, fixture, name, folder, uidvalidity, subject, **env)
+    outcome = f"names {', '.join(named)}, and they delete it for good" if named else "says why and names no call"
+    t.check(f"{title} refuses before any change, {outcome}",
+            error is not None and reason in error and [call for call, _, _ in calls] == named
+            and (not named or deleted_by(calls)), {"error": error, "calls": calls})
 
 
 def refusals(t, work):
@@ -137,22 +164,25 @@ def conflicting_rows(t, work):
             srv.stop()
 
 
-def advised_routes(t, work):
-    for title, name, folder, uidvalidity, subject, env in [
-        ("delete in INBOX", "mail_delete", "INBOX", 1700000001, LUNCH, {}),
-        (f"delete in {REVIEW}", "mail_delete", REVIEW, 15, "Reviewed for deletion", {}),
-        (f"mail_trash in {REVIEW}", "mail_trash", REVIEW, 15, "Reviewed for deletion", {}),
-        ("with Receipts as the trash folder, delete in Receipts", "mail_delete", "Receipts", 11, LUNCH,
-         TRASH_OVERRIDE),
-        ("with Receipts as the trash folder, mail_trash in Receipts", "mail_trash", "Receipts", 11, LUNCH,
-         TRASH_OVERRIDE),
-        (f"with Receipts as the trash folder, mail_trash in {REVIEW}", "mail_trash", REVIEW, 15,
-         "Reviewed for deletion", TRASH_OVERRIDE),
+def gmail_advice(t, work):
+    for title, fixture, name, folder, uidvalidity, subject, reason, named, env in [
+        ("delete in INBOX", gmail_fixture(t), "mail_delete", "INBOX", 1700000001, LUNCH, GMAIL_REFUSAL, ROUTE,
+         {}),
+        (f"delete in {REVIEW}", gmail_fixture(t), "mail_delete", REVIEW, 15, REVIEWED, GMAIL_REFUSAL, ROUTE, {}),
+        ("with Receipts as the trash folder, delete in Receipts", gmail_fixture(t), "mail_delete", "Receipts", 11,
+         LUNCH, GMAIL_REFUSAL, ROUTE, TRASH_OVERRIDE),
+        (f"mail_trash in {REVIEW}", gmail_fixture(t), "mail_trash", REVIEW, 15, REVIEWED, REVIEW_REFUSAL, [], {}),
+        ("with Receipts as the trash folder, mail_trash in Receipts", gmail_fixture(t), "mail_trash", "Receipts",
+         11, LUNCH, 'already in the trash folder "Receipts"; nothing was changed', [], TRASH_OVERRIDE),
+        ("with two mailboxes listed as \\Trash, delete in INBOX", gmail_with(t, {"Receipts": ["\\Trash"]}),
+         "mail_delete", "INBOX", 1700000001, LUNCH, NO_TRASH, [], {}),
+        (f"with {TRASH} unselectable, delete in INBOX", gmail_with(t, {TRASH: ["\\Trash", "\\Noselect"]}),
+         "mail_delete", "INBOX", 1700000001, LUNCH, NO_TRASH, [], {}),
+        (f"with {REVIEW} the only folder listed as \\Trash, delete in INBOX",
+         gmail_with(t, {TRASH: [], REVIEW: ["\\Trash"]}), "mail_delete", "INBOX", 1700000001, LUNCH, NO_TRASH, [], {}),
     ]:
-        error, calls = advice_followed(t, work, GMAIL_CAPS, gmail_fixture(t), name, folder, uidvalidity, subject,
-                                       **env)
-        t.check(f"gmail: {title} refuses before any change, and every call it advises is accepted and ends "
-                "in a permanent delete", error is not None and deleted_by(calls), {"error": error, "calls": calls})
+        check_advice(t, work, f"gmail: {title}", GMAIL_CAPS, fixture, name, folder, uidvalidity, subject, reason,
+                     named, **env)
 
 
 def jev_not_asked(t, work):
@@ -198,26 +228,20 @@ def other_servers(t, work):
 
 def other_server_advice(t, work):
     fixture = copy.deepcopy(t.FIX)
-    fixture["mailboxes"]["Trash"] = fixture["mailboxes"].pop("Deleted Messages")
-    fixture["mailboxes"][REVIEW] = {"uidvalidity": 15, "messages": [REVIEWED]}
-    error, calls = advice_followed(t, work, "MOVE,SPECIAL-USE", fixture, "mail_trash", REVIEW, 15,
-                                   "Reviewed for deletion")
-    t.check(f"delete advice: without UIDPLUS, mail_trash in {REVIEW} refuses, advises no call and says "
-            "mail_delete needs UIDPLUS", error is not None and not calls and "UIDPLUS" in error,
-            {"error": error, "calls": calls})
+    fixture["mailboxes"][REVIEW] = {"uidvalidity": 15, "messages": [note("reviewed1", REVIEWED)]}
+    check_advice(t, work, f"delete advice: without MOVE or UIDPLUS, mail_trash in {REVIEW}", "SPECIAL-USE", fixture,
+                 "mail_trash", REVIEW, 15, REVIEWED, REVIEW_REFUSAL, [])
     fixture = copy.deepcopy(t.FIX)
     del fixture["mailboxes"]["Deleted Messages"]
     fixture["mailboxes"][REVIEW] = {"uidvalidity": 15, "special": ["\\Trash"], "messages": []}
-    error, calls = advice_followed(t, work, None, fixture, "mail_trash", "INBOX", 1700000001, LUNCH)
-    t.check(f"delete advice: with {REVIEW} listed as \\Trash, mail_trash in INBOX refuses, and every call it "
-            "advises is accepted and ends in a permanent delete", error is not None and deleted_by(calls),
-            {"error": error, "calls": calls})
+    check_advice(t, work, f"delete advice: with {REVIEW} listed as \\Trash, mail_trash in INBOX", None, fixture,
+                 "mail_trash", "INBOX", 1700000001, LUNCH, REVIEW_REFUSAL, [])
 
 
 def run(t, work):
     refusals(t, work)
     conflicting_rows(t, work)
-    advised_routes(t, work)
+    gmail_advice(t, work)
     jev_not_asked(t, work)
     trash_and_spam(t, work)
     other_servers(t, work)
