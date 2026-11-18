@@ -317,11 +317,12 @@ def cp1252_code(+n: U32) -> U32:
   cp1252_code.if(between(n, 128, 159), n)
 
 # A byte of a multi-byte charset, which is not decoded: ASCII stays, and any
-# other byte, or the ESC that starts an ISO-2022 shift, reads as U+FFFD, so
+# other byte, or an ISO-2022 shift byte (ESC, SO or SI), reads as U+FFFD, so
 # the text never passes as completely read.
 def multi_byte_decode.char(+c: Char) -> Char:
   +b = u(c)
-  Bool.pick(Char, U32.is_lt(b, 128) && Bool.not(U32.is_eq(b, 27)), c, repl())
+  shift = U32.is_eq(b, 27) || between(b, 14, 15)
+  Bool.pick(Char, U32.is_lt(b, 128) && Bool.not(shift), c, repl())
 
 def multi_byte_decode.go(bytes: String, out: String) -> String:
   match bytes:
