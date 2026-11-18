@@ -230,8 +230,9 @@ builds its own binaries from the checked-out revision. This repeats build work
 to avoid shared-state races and artifact storage. Rust and fuzz checks remain
 separate. Source, proof and mutation lanes each install their own toolchain;
 the mutation lane runs three scripts at a time. The final `checks` job
-requires every lane to succeed, including Rust and fuzz; skipped or cancelled
-lanes do not count as a pass.
+requires every ordinary lane to succeed, including Rust and fuzz; skipped or
+cancelled lanes do not count as a pass. The `scale` job is outside `checks`
+and reports its own result.
 
 The goal is at most ten minutes of CI execution. This is a measurement target,
 not a timeout or permission to omit tests. Record queue time separately.
