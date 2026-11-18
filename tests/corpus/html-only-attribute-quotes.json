@@ -1,0 +1,32 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Synthetic HTML-only message whose double- and single-quoted attribute values hold '>' and '<'. A quoted value does not end the tag, and attribute values stay out of the text view."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://html.spec.whatwg.org/multipage/parsing.html"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/68"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "html-only-attribute-quotes",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<html-only-attribute-quotes@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Hi",
+    "html": "<p title=\"a > private note\" data-x='<b>not text</b>'>Hi</p>",
+    "html_available": true,
+    "attachments": []
+  }
+}

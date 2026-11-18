@@ -1,0 +1,10 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: html-only-attribute-quotes
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <html-only-attribute-quotes@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<p title="a > private note" data-x='<b>not text</b>'>Hi</p>
