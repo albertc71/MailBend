@@ -1013,7 +1013,7 @@ TOOLS = [
          "Move messages to the resolved trash folder (configured override, "
          "advertised special use, or unique conventional name). Recoverable; "
          "does not delete permanently. Refused for mail in \"To Delete\" "
-         "(use mail_move or mail_delete there). " + MOVE_CUT_OFF,
+         "(use mail_move there, or mail_delete except on Gmail). " + MOVE_CUT_OFF,
          NON_ADDITIVE, MESSAGES, MESSAGES_REQUIRED),
     tool("mail_delete", "Permanently delete messages",
          "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly "
