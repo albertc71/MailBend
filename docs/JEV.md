@@ -155,16 +155,20 @@ a reason for each of these cases:
   second text or HTML part, parts nested too deep, or the rest of a cut
   fetch. A checked selected part always gives this reason: Jev was sent
   only that part's text, or a placeholder for a part that is not text.
-- "The message holds a replacement character (U+FFFD), so MailBend cannot
-  confirm that every byte decoded." Nothing was left out, but the text or
-  HTML part, markup included, holds U+FFFD. MailBend writes U+FFFD for a
-  byte that does not decode, and cannot tell that from a U+FFFD the message
-  itself contains. A message whose text was also cut gives only the first
-  reason, and so does a delete when any message it checked was cut.
-- "Jev was sent the text MailBend converted from the HTML, not the raw
-  HTML." The read returns raw HTML: the `html` of a whole message, or the
-  `content` of a selected `text/html` part, under the `full` or `html`
-  projection. The `text` and `metadata` projections return no HTML and do
+- "Message text or HTML holds a replacement character (U+FFFD), so
+  MailBend cannot confirm that every byte decoded." Nothing was left out,
+  but a text or HTML part, markup included, holds U+FFFD. MailBend writes
+  U+FFFD for a byte that does not decode, and cannot tell that from a
+  U+FFFD the message itself contains. A message whose text was also cut
+  gives only the first reason, and so does a delete when any message it
+  checked was cut.
+- "MailBend converts HTML to text before applying Jev's request limits;
+  the request did not include the raw HTML." The read returns raw HTML: the
+  `html` of a whole message, or the `content` of a selected `text/html`
+  part, under the `full` or `html` projection. The reason says nothing about
+  how much of the converted text reached Jev: a long text/plain part can
+  fill the request before the HTML's text begins, which the first reason
+  reports. The `text` and `metadata` projections return no HTML and do
   not give it. The reason is set before a `max_response_bytes` budget
   shortens the result, so it stays when the budget leaves the HTML empty.
   `mail_delete` returns no message text and never gives it.

@@ -5,9 +5,10 @@ import json
 
 PHRASE = "ignore previous instructions"
 TEXT_REASON = "Not all of the message text was included in the Jev request."
-REPLACED_REASON = ("The message holds a replacement character (U+FFFD), so MailBend cannot confirm that every "
-                   "byte decoded.")
-MARKUP_REASON = "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
+REPLACED_REASON = ("Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot confirm "
+                   "that every byte decoded.")
+MARKUP_REASON = ("MailBend converts HTML to text before applying Jev's request limits; the request did not "
+                 "include the raw HTML.")
 
 
 def message(uid, content_type, body, subject=None):
@@ -142,8 +143,8 @@ def run(t, work):
             t.check(f"jev body coverage: mail_classify reports a message with an undecodable byte in {where} "
                     "body_truncated", c == 0 and (r.get("messages") or [{}])[0].get("body_truncated") is True, r)
         c, got, states = asked("mail_get", {"uid": STRAY_CLOSE["uid"]}, **t.BODY_MODE)
-        t.check("jev body coverage: a read of markup with a stray \">\" says Jev was sent converted text, "
-                "not the raw HTML", c == 0 and "PRIVATE" in got.get("html", "") and "COMMENT" in got.get("html", "")
+        t.check("jev body coverage: a read of markup with a stray \">\" says the request did not include "
+                "the raw HTML", c == 0 and "PRIVATE" in got.get("html", "") and "COMMENT" in got.get("html", "")
                 and partial(got.get("jev", {}), MARKUP_REASON) and len(got["jev"]["reasons"]) == 1, (got, states))
         c, got, states = asked("mail_get", {"uid": HTML_PAST_CAP["uid"]}, **t.BODY_MODE)
         reasons = got.get("jev", {}).get("reasons", [])

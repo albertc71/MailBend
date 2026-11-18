@@ -190,9 +190,10 @@ def html_heading.if(both: Bool) -> String:
 def html_heading(+text: String, +html: String) -> String:
   html_heading.if(M.both_filled(text, html))
 
-# What Jev reads of a message: its whole text/plain part, quoted and
-# post-signature lines included, then its HTML part as text, so it reads
-# the `text` mail_get returns and the readable text of its `html`.
+# The text MailBend sends Jev of a message, before the request limits: its
+# whole text/plain part, quoted and post-signature lines included, then the
+# text M.html_text converts its HTML part to. It holds the `text` mail_get
+# returns, never the raw `html`.
 def seen_text(p: M.Parts) -> String:
   M.Parts{+text, +html, _} = p
   text ++ html_heading(text, html) ++ M.html_text(html)
@@ -1686,13 +1687,14 @@ def text_reason() -> String:
   "Not all of the message text was included in the Jev request."
 
 def replaced_reason() -> String:
-  "The message holds a replacement character (U+FFFD), so MailBend cannot confirm that every " ++
-    "byte decoded."
+  "Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot confirm " ++
+    "that every byte decoded."
 
-# Jev reads an HTML part as the text M.html_text converts it to (see
-# seen_text).
+# It promises nothing about what reached Jev: a long text/plain part can
+# fill the request before the HTML's text begins (see seen_text).
 def markup_reason() -> String:
-  "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
+  "MailBend converts HTML to text before applying Jev's request limits; the request did not " ++
+    "include the raw HTML."
 
 # Why, in body mode, Jev's text `b` is not Complete.
 def text_gap(c: Content, b: Completeness) -> Maybe<&2, String>:

@@ -279,12 +279,14 @@ for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
         "Nested message text was not included in the Jev request."]}}, False)
     check("mail_get", {**whole, "jev": plain_jev})
     check("mail_get", {**whole, "jev": jev}, False)
-# In body mode a read says when Jev's text was not complete, or when Jev
-# was sent raw HTML only as converted text; a delete can say only the first.
+# In body mode a read says when Jev's text was not complete, or that the
+# request did not include the raw HTML it returns; a delete can say only the
+# first.
 text_reason = "Not all of the message text was included in the Jev request."
-replaced_reason = ("The message holds a replacement character (U+FFFD), so MailBend cannot confirm that "
-                   "every byte decoded.")
-markup_reason = "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
+replaced_reason = ("Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot confirm "
+                   "that every byte decoded.")
+markup_reason = ("MailBend converts HTML to text before applying Jev's request limits; the request did not "
+                 "include the raw HTML.")
 for reasons in ([text_reason], [markup_reason], [replaced_reason, markup_reason],
                 [text_reason, markup_reason, summary_reason]):
     jev = {"status": "checked", "model": "fixture", "content": "body", "derived_from_untrusted_content": True,

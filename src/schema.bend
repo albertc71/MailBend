@@ -842,10 +842,10 @@ def schema_piece.p0277() -> String:
   "\"minItems\":1,\"contains\":{\"enum\":[\"Not all of the message text was "
 
 def schema_piece.p0278() -> String:
-  "included in the Jev request.\",\"The message holds a replacement "
+  "included in the Jev request.\",\"Message text or HTML holds a "
 
 def schema_piece.p0279() -> String:
-  "character (U+FFFD), so MailBend cannot confirm that every byte "
+  "replacement character (U+FFFD), so MailBend cannot confirm that every "
 
 def schema_piece.p0280() -> String:
   "\"minItems\":1,\"contains\":{\"const\":\"Attached-message summaries were "
@@ -1307,7 +1307,7 @@ def schema_piece.p0432() -> String:
   "\"destination\",\"method\"],\"additionalProperties\":false},"
 
 def schema_piece.p0433() -> String:
-  "decoded.\"]}},\"signals\":{\"type\":\"object\","
+  "byte decoded.\"]}},\"signals\":{\"type\":\"object\","
 
 def schema_piece.p0434() -> String:
   "\"coverage\"],\"additionalProperties\":false}]}},\"required\":[\"ok\","
@@ -4137,8 +4137,9 @@ def tool_defs.mail_get() -> String:
     schema_piece.p0277(),
     schema_piece.p0278(),
     schema_piece.p0279(),
-    "decoded.\",\"Jev was sent the text MailBend converted from the HTML, not ",
-    "the raw HTML.\"]}},\"signals\":{\"type\":\"object\",",
+    "byte decoded.\",\"MailBend converts HTML to text before applying Jev's ",
+    "request limits; the request did not include the raw HTML.\"]}},",
+    schema_piece.p0065(),
     schema_piece.p0066(),
     schema_piece.p0067(),
     schema_piece.p0068(),

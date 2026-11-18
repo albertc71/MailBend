@@ -120,11 +120,12 @@ def scoped_jev(body_why, header_why):
 SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
 SUMMARY_JEV = scoped_jev(SUMMARY_REASON, SUMMARY_REASON)
 TEXT_REASON = "Not all of the message text was included in the Jev request."
-REPLACED_REASON = ("The message holds a replacement character (U+FFFD), so MailBend cannot confirm "
-                   "that every byte decoded.")
-MARKUP_REASON = "Jev was sent the text MailBend converted from the HTML, not the raw HTML."
-# In body mode a read says when Jev's text was not complete, or when Jev was
-# sent raw HTML only as converted text; a delete, only the first.
+REPLACED_REASON = ("Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot "
+                   "confirm that every byte decoded.")
+MARKUP_REASON = ("MailBend converts HTML to text before applying Jev's request limits; the request did "
+                 "not include the raw HTML.")
+# In body mode a read says when Jev's text was not complete, or that the
+# request did not include the raw HTML it returns; a delete, only the first.
 TEXT_REASONS = [TEXT_REASON, REPLACED_REASON]
 READ_JEV = union(JEV, jev_scope("body", "partial", {"enum": TEXT_REASONS + [MARKUP_REASON]}))
 DELETE_JEV = union(JEV, jev_scope("body", "partial", {"enum": TEXT_REASONS}))
