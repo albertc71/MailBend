@@ -25,7 +25,8 @@ def gmail_fixture(t):
     fixture["mailboxes"] = {
         "INBOX": inbox,
         "Receipts": {"uidvalidity": 11, "messages": [message]},
-        ALL_MAIL: {"uidvalidity": 12, "special": ["\\All"], "messages": []},
+        # Gmail shows a message under each of its labels and in All Mail.
+        ALL_MAIL: {"uidvalidity": 12, "special": ["\\All"], "messages": [REVIEWED]},
         TRASH: {"uidvalidity": 13, "special": ["\\Trash"], "messages": [message]},
         "[Gmail]/Spam": {"uidvalidity": 14, "special": ["\\Junk"], "messages": [message]},
         REVIEW: {"uidvalidity": 15, "messages": [REVIEWED]},
@@ -86,6 +87,12 @@ def review_route(t, work):
         error, did = refusal(t, srv, REVIEW, 15)
         t.check(f"gmail: delete in {REVIEW} refuses before any change and points to mail_move",
                 "mail_move" in (error or ""), did)
+        before = srv.st()["mailboxes"]
+        code, trashed = t.tool(srv, "mail_trash", {"folder": REVIEW, "uids": [1], "uidvalidity": 15})
+        told = trashed.get("error", "")
+        t.check(f"gmail: mail_trash in {REVIEW} refuses before any change and points to mail_move, "
+                "then mail_delete in Trash", code != 0 and srv.st()["mailboxes"] == before
+                and "mail_move" in told and "mail_delete in Trash" in told, trashed)
         moved, out = t.tool(srv, "mail_move", {"folder": REVIEW, "uids": [1], "uidvalidity": 15,
                                                "destination": TRASH})
         searched, found = t.tool(srv, "mail_search", {"folder": TRASH})
@@ -94,7 +101,7 @@ def review_route(t, work):
         left = [name for name, mb in srv.st()["mailboxes"].items()
                 if any(m["raw"] == REVIEWED["raw"] for m in mb["messages"])]
         t.check(f"gmail: mail_move from {REVIEW} into Trash, then mail_delete there, leaves the message "
-                "in no folder", moved == 0 and searched == 0 and len(uids) == 1 and code == 0
+                "in no folder, All Mail included", moved == 0 and searched == 0 and len(uids) == 1 and code == 0
                 and result.get("permanently_deleted") is True and not left,
                 {"move": out, "search": found, "delete": result, "left_in": left})
     finally:
