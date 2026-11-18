@@ -137,6 +137,12 @@ def with_part(ctype: String, data: String) -> String:
 def eml(data: String) -> M.Attach:
   M.Attach{"forwarded-message.eml", "message/rfc822", data}
 
+# A forwarded message whose subject is one encoded word: `bytes` in base64,
+# labelled `cs`.
+def subject_in(cs: String, bytes: String) -> M.Attach:
+  eml("Subject: =?" ++ cs ++ "?B?" ++ C.b64_encode(bytes, False{}) ++
+    "?=\r\n\r\nsee the subject\r\n")
+
 # `n` words of 5 characters each, built without deep recursion.
 def words(n: Nat, acc: String) -> String:
   match n:
@@ -199,6 +205,7 @@ def check_attachments() -> IO(Unit):
 
 def check_forwards() -> IO(Unit):
   +secret : String = "Password: hunter22"
+  +key : String = "AKIAIOSFODNN7EXAMPLE"
   +plain = forwarded("7bit", "nothing to see\r\n")
   do IO<Unit>:
     IO.print(scan_atts([eml(plain)]))
@@ -220,8 +227,15 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([eml(with_part("message/global", "Subject: inner\r\n\r\n" ++ secret))]))
     IO.print(scan_atts([eml("Subject: Deploy\r\nX-Deploy-Token: " ++ github_token() ++
       "\r\n\r\nsee the header\r\n")]))
-    IO.print(scan_atts([eml("Subject: =?utf-8?B?" ++ C.b64_encode("AKIAIOSFODNN7EXAMPLE",
-      False{}) ++ "?=\r\n\r\nsee the subject\r\n")]))
+    IO.print(scan_atts([subject_in("utf-8", key)]))
+    IO.print(scan_atts([subject_in("koi8-r", key)]))
+    IO.print(scan_atts([subject_in("shift_jis", key)]))
+    IO.print(scan_atts([subject_in("utf-7", key)]))
+    IO.print(scan_atts([subject_in("iso-2022-kr", key)]))
+    IO.print(scan_atts([subject_in("hz-gb-2312", key)]))
+    IO.print(scan_atts([subject_in("utf-16", key)]))
+    IO.print(scan_atts([subject_in("utf-16le", wide(key))]))
+    IO.print(scan_atts([subject_in("iso-2022-kr", "hello")]))
     IO.print(scan_atts([M.Attach{"key.eml", "message/rfc822", pem()}]))
     IO.print(scan_atts([eml(multiparts(7n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(multiparts(8n, forwarded("7bit", secret)))]))
@@ -284,6 +298,14 @@ def main() -> IO(Unit):
 #|found in attachment 1 > message/rfc822 > message/global > text/plain
 #|found in the header of attachment 1 > message/rfc822
 #|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the encoded words in the header of attachment 1 > message/rfc822
+#|found in the encoded words in the header of attachment 1 > message/rfc822
+#|found in the encoded words in the header of attachment 1 > message/rfc822
+#|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
+#|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
 #|found in the header of attachment 1 > message/rfc822
 #|found in attachment 1 > message/rfc822 > text/plain
 #|incomplete: attachment 1 > message/rfc822 nests its parts more than 8 levels deep

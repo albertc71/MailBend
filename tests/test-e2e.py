@@ -6959,6 +6959,7 @@ def gates(work):
     finally:
         srv.stop()
     gates_digest_encoding(work)
+    gates_encoded_word_charsets(work)
     gates_delete(work, key_file)
 
 
@@ -6976,26 +6977,46 @@ def gates_digest_encoding(work):
         ("encoded secret", "", "base64", base64.b64encode(
             f"Subject: inner\r\n\r\n{GATE_PASSWORD}".encode()).decode(), "found"),
     ]
+    forward_scans(work, "digest scan", [
+        (title, f"Subject: digest wrapper\r\nContent-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n"
+                f"{ct}Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--d--\r\n", expected)
+        for title, ct, encoding, body, expected in cases])
+
+
+def gates_encoded_word_charsets(work):
+    """An original whose subject is one encoded word holding the fake token:
+    the scan reads the word's bytes whatever its charset label, and a label
+    MailBend does not decode makes it incomplete."""
+    def subject(charset, data):
+        return f"Subject: =?{charset}?B?{base64.b64encode(data).decode('ascii')}?=\r\n\r\nsee the subject\r\n"
+    forward_scans(work, "encoded-word scan", [
+        *((charset, subject(charset, GATE_TOKEN.encode()), "found") for charset in
+          ("utf-8", "koi8-r", "shift_jis", "utf-7", "iso-2022-kr", "hz-gb-2312", "utf-16")),
+        ("utf-16le", subject("utf-16le", GATE_TOKEN.encode("utf-16-le")), "incomplete"),
+    ])
+
+
+def forward_scans(work, label, originals):
+    """Forwards each original, a (title, raw message, expected scan) triple,
+    with the local scan on: a clean one goes, and any other blocks before
+    SMTP or APPEND."""
     fixture = copy.deepcopy(FIX)
     inbox = fixture["mailboxes"]["INBOX"]
-    inbox["messages"] = [gate_message(uid,
-        f"Subject: digest wrapper\r\nContent-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n"
-        f"{ct}Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--d--\r\n")
-        for uid, (_, ct, encoding, body, _) in enumerate(cases, 1)]
-    inbox["uidnext"] = len(cases) + 1
+    inbox["messages"] = [gate_message(uid, raw) for uid, (_, raw, _) in enumerate(originals, 1)]
+    inbox["uidnext"] = len(originals) + 1
     srv = Server(work, fixture=fixture)
     try:
-        for uid, (title, _, _, _, expected) in enumerate(cases, 1):
+        for uid, (title, _, expected) in enumerate(originals, 1):
             before, start, sent = srv.st(), len(srv.log_records()), sent_count(srv)
             code, result = tool(srv, "mail_forward", {"uid": uid, "uidvalidity": inbox["uidvalidity"],
                 "to": FRIEND}, MAILBEND_SECRET_SCAN="1", MAILBEND_SAVE_SENT="1")
             logged = srv.log_records()[start:]
             if expected == "clean":
-                check("digest scan: " + title + " forwards after a clean scan",
+                check(f"{label}: {title} forwards after a clean scan",
                       code == 0 and result.get("secret_scan") == "clean" and sent_count(srv) == sent + 1,
                       result)
             else:
-                check("digest scan: " + title + " blocks before SMTP or APPEND",
+                check(f"{label}: {title} blocks before SMTP or APPEND",
                       code != 0 and result.get("secret_scan") == expected
                       and result.get("smtp_outcome") == "not_sent" and srv.st() == before
                       and not any(x["proto"] == "smtp" or " APPEND " in x["line"] for x in logged), result)
