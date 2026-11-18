@@ -225,14 +225,20 @@ before relying on a particular client version.
 The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
 checks. The second repeats the tool scenarios through structured MCP without
 repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
-complete run, including when `MAILBEND_TEST_MCP=1` is set.
+complete run, including when `MAILBEND_TEST_MCP=1` is set. Each run first
+runs its fixed checks and shared-server block on their own, then runs the
+remaining scenario groups in two halves at once. A child process runs the
+second half with its own work directory, fake servers and end-of-run checks,
+and prints its own count; its failure fails the run. Each scenario group
+prints its time.
 
 CI runs on pull requests, weekly on `main` and on manual dispatch, but not on
 pushes: `main` accepts only up-to-date squash merges, so a pull request's run
 has already tested the tree that lands. CI runs source checks and unit tests,
 kernel-rechecked proofs, proof mutation checks, installer and transport tests,
 and the CLI, structured MCP and support suites on isolated standard Ubuntu
-runners. The installer and transport tests build their own helpers or use
+runners. Each runtime step runs one test script, so a step's time is that
+script's time. The installer and transport tests build their own helpers or use
 synthetic toolchains, so they need no compiled core. Each runtime runner
 builds its own binaries from the checked-out revision. This repeats build work
 to avoid shared-state races and artifact storage. Rust and fuzz checks remain
