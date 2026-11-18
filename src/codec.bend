@@ -3,6 +3,7 @@
 # and how composed messages are built before they go to the wire.
 
 import Base
+import ./charsets.bend as CS
 
 def u(c: Char) -> U32:
   Char.to_u32(c)
@@ -235,83 +236,107 @@ def utf16_unit(+n: U32, hi: U32, out: String) -> String:
 # Other charsets
 # --------------
 
-# The code point of a Windows-1252 byte. Windows-1252 differs from
-# Latin-1 only in 0x80..0x9F.
-def cp1252_decode.code(b: U32) -> U32:
-  match b:
-    case 128:
-      8364
-    case 130:
-      8218
-    case 131:
-      402
-    case 132:
-      8222
-    case 133:
-      8230
-    case 134:
-      8224
-    case 135:
-      8225
-    case 136:
-      710
-    case 137:
-      8240
-    case 138:
-      352
-    case 139:
-      8249
-    case 140:
-      338
-    case 142:
-      381
-    case 145:
-      8216
-    case 146:
-      8217
-    case 147:
-      8220
-    case 148:
-      8221
-    case 149:
-      8226
-    case 150:
-      8211
-    case 151:
-      8212
-    case 152:
-      732
-    case 153:
-      8482
-    case 154:
-      353
-    case 155:
-      8250
-    case 156:
-      339
-    case 158:
-      382
-    case 159:
-      376
-    case _:
-      b
+# A single-byte index as a binary tree, so that a byte finds its code point
+# in seven steps instead of a walk along the table.
+type Lookup is Data:
+  Leaf{c: Char}
+  Node{lo: Lookup, hi: Lookup}
 
-def cp1252_decode.go(bytes: String, out: String) -> String:
+def lookup.leaves(s: String) -> List<&2, Lookup>:
+  match s:
+    case SNil{}:
+      []
+    case SCon{c, t}:
+      Leaf{c} <> lookup.leaves(t)
+
+def lookup.pairs(ts: List<&2, Lookup>) -> List<&2, Lookup>:
+  match ts:
+    case a <> b <> t:
+      Node{a, b} <> lookup.pairs(t)
+    case _:
+      []
+
+def lookup.top(ts: List<&2, Lookup>) -> Lookup:
+  match ts:
+    case t <> _:
+      t
+    case Nil{}:
+      Leaf{repl()}
+
+# The tree of 2^n leaves: each round pairs neighbours, so the root splits on
+# the highest bit of an entry's position.
+def lookup.fold(n: Nat, ts: List<&2, Lookup>) -> Lookup:
+  match n:
+    case 0n:
+      lookup.top(ts)
+    case 1n+p:
+      lookup.fold(p, lookup.pairs(ts))
+
+# Entry k of a tree folded from 2^n leaves.
+def lookup.find(+n: Nat, t: Lookup, +k: U32) -> Char:
+  match n t:
+    case 1n+p Node{lo, hi}:
+      bit = ((k >> p) .&. 1 : U32)
+      lookup.find(p, Bool.pick(Lookup, U32.is_zero(bit), lo, hi), k)
+    case _ Leaf{c}:
+      c
+    case 0n Node{_, _}:
+      repl()
+
+def single_byte_decode.char(high: Bool, +t: Lookup, c: Char) -> Char:
+  match high:
+    case True{}:
+      lookup.find(7n, t, (u(c) - 128 : U32))
+    case False{}:
+      c
+
+# Bytes in a single-byte charset to text: ASCII stays, and each byte from
+# 0x80 reads through the index tree t.
+def single_byte_decode.go(bytes: String, +t: Lookup, out: String) -> String:
+  match bytes:
+    case SNil{}:
+      String.reverse(out)
+    case SCon{+c, rest}:
+      ch = single_byte_decode.char(U32.is_ge(u(c), 128), t, c)
+      single_byte_decode.go(rest, t, SCon{ch, out})
+
+def single_byte_decode(i: CS.Index, bytes: String) -> String:
+  single_byte_decode.go(bytes, lookup.fold(7n, lookup.leaves(CS.Index.table(i))), "")
+
+def cp1252_code.if(c1: Bool, +n: U32) -> U32:
+  match c1:
+    case True{}:
+      u(lookup.find(7n, lookup.fold(7n, lookup.leaves(CS.windows_1252())), (n - 128 : U32)))
+    case False{}:
+      n
+
+# The code point of the Windows-1252 byte n, which is also how HTML reads a
+# numeric reference from 128 to 159. Only 0x80 to 0x9F differ from Latin-1,
+# so any other n stays as it is.
+def cp1252_code(+n: U32) -> U32:
+  cp1252_code.if(between(n, 128, 159), n)
+
+# A byte of a multi-byte charset, which is not decoded: ASCII stays, and any
+# other byte, or the ESC that starts an ISO-2022 shift, reads as U+FFFD, so
+# the text never passes as completely read.
+def multi_byte_decode.char(+c: Char) -> Char:
+  +b = u(c)
+  Bool.pick(Char, U32.is_lt(b, 128) && Bool.not(U32.is_eq(b, 27)), c, repl())
+
+def multi_byte_decode.go(bytes: String, out: String) -> String:
   match bytes:
     case SNil{}:
       String.reverse(out)
     case SCon{c, t}:
-      cp1252_decode.go(t, SCon{chr(cp1252_decode.code(u(c))), out})
+      multi_byte_decode.go(t, SCon{multi_byte_decode.char(c), out})
 
-def cp1252_decode(bytes: String) -> String:
-  cp1252_decode.go(bytes, "")
-
-def charset_decode.cp1252(yes: Bool, bytes: String) -> String:
-  match yes:
-    case True{}:
-      cp1252_decode(bytes)
-    case False{}:
-      utf8_decode(bytes)
+# Text in a replacement charset, such as ISO-2022-KR, reads as one U+FFFD.
+def replacement_decode(bytes: String) -> String:
+  match bytes:
+    case SNil{}:
+      ""
+    case SCon{_, _}:
+      SCon{repl(), SNil{}}
 
 # Encoding labels trim ASCII whitespace (not vertical tab or Unicode spaces).
 def charset_decode.trim_start(s: String) -> String:
@@ -329,19 +354,6 @@ def charset_decode.trim_start(s: String) -> String:
     case _:
       s
 
-# WHATWG's Windows-1252 label family includes Latin-1 and ASCII aliases.
-# In particular, byte 0x85 is an ellipsis, not the NEL line separator.
-def charset_decode.is_cp1252(+name: String) -> Bool:
-  String.eq(name, "ansi_x3.4-1968") || String.eq(name, "ascii")
-    || String.eq(name, "cp1252") || String.eq(name, "cp819")
-    || String.eq(name, "csisolatin1") || String.eq(name, "ibm819")
-    || String.eq(name, "iso-8859-1") || String.eq(name, "iso-ir-100")
-    || String.eq(name, "iso8859-1") || String.eq(name, "iso88591")
-    || String.eq(name, "iso_8859-1") || String.eq(name, "iso_8859-1:1987")
-    || String.eq(name, "l1") || String.eq(name, "latin1")
-    || String.eq(name, "us-ascii") || String.eq(name, "windows-1252")
-    || String.eq(name, "x-cp1252")
-
 def charset_decode.lower(s: String, out: String) -> String:
   match s:
     case SNil{}:
@@ -349,12 +361,33 @@ def charset_decode.lower(s: String, out: String) -> String:
     case SCon{c, t}:
       charset_decode.lower(t, SCon{Char.to_lower(c), out})
 
-# Bytes in a named charset to text. Unknown charsets decode as UTF-8, which
-# keeps ASCII intact and marks anything else with U+FFFD.
+# How text labelled `name`, trimmed and in lower case, is read. An unknown
+# label reads as UTF-8.
+def charset_of(labels: List<&2, CS.Label>, +name: String) -> CS.Charset:
+  match labels:
+    case Nil{}:
+      CS.Utf8{}
+    case CS.Label{label, cs} <> t:
+      Bool.pick(CS.Charset, String.eq(label, name), cs, charset_of(t, name))
+
+def charset_decode.as(cs: CS.Charset, bytes: String) -> String:
+  match cs:
+    case CS.Utf8{}:
+      utf8_decode(bytes)
+    case CS.SingleByte{i}:
+      single_byte_decode(i, bytes)
+    case CS.MultiByte{}:
+      multi_byte_decode.go(bytes, "")
+    case CS.Replacement{}:
+      replacement_decode(bytes)
+
+# Bytes in a named charset to text, as the WHATWG Encoding Standard labels
+# them. Unknown and UTF-16 labels decode as UTF-8, which keeps ASCII intact
+# and marks anything else with U+FFFD.
 def charset_decode(cs: String, bytes: String) -> String:
   name = charset_decode.lower(String.reverse(charset_decode.trim_start(
     String.reverse(charset_decode.trim_start(cs)))), "")
-  charset_decode.cp1252(charset_decode.is_cp1252(name), bytes)
+  charset_decode.as(charset_of(CS.labels(), name), bytes)
 
 # Base64
 # ------

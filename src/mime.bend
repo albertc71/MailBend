@@ -1222,7 +1222,7 @@ def html_text.code_point(m: Maybe<&2, U32>) -> Maybe<&2, Char>:
     case Some{+n}:
       bad = U32.is_eq(n, 0) || C.between(n, 55296, 57343) || U32.is_gt(n, 1114111)
       Some{C.chr(Bool.pick(U32, bad, 65533,
-        Bool.pick(U32, C.between(n, 128, 159), C.cp1252_decode.code(n), n)))}
+        Bool.pick(U32, C.between(n, 128, 159), C.cp1252_code(n), n)))}
 
 # The character that a reference, the text between '&' and ';', stands for.
 def html_text.decode(+name: String) -> Maybe<&2, Char>:
