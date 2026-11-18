@@ -208,6 +208,8 @@ def check_attachments() -> IO(Unit):
     IO.print(scan_atts([M.Attach{"wide.txt", "text/plain",
       SCon{Char.from_u32(255), SCon{Char.from_u32(254), wide(secret)}}}]))
     IO.print(scan_atts([M.Attach{"wide.txt", "text/plain; charset=utf-16", "x"}]))
+    IO.print(scan_atts([M.Attach{"wide.txt", "text/plain; charset*=ISO-2022-KR''utf-16",
+      "hello"}]))
     IO.print(scan_atts([M.Attach{"wide.txt", "text/plain; charset=utf-16", "x"},
       M.Attach{"notes.txt", "text/plain", secret}]))
     IO.print(scan_atts([M.Attach{"notes.txt", "text/plain", secret},
@@ -231,6 +233,9 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([eml(nested(2n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(nested(3n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(nested(3n, plain))]))
+    IO.print(scan_atts([eml(text_entity("Subject: fwd\r\n" ++
+      "Content-Type: multipart/mixed; boundary*=ISO-2022-KR''council\r\n",
+      "--council\r\nContent-Type: text/plain\r\n\r\n" ++ secret ++ "\r\n--council--\r\n"))]))
     IO.print(scan_atts([eml(forwarded("x-uuencode", "begin 644 x"))]))
     IO.print(scan_atts([eml(forwarded_in("unicode", "base64", C.b64_encode(wide(secret),
       False{})))]))
@@ -308,6 +313,7 @@ def main() -> IO(Unit):
 #|incomplete: attachment 1 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
 #|incomplete: attachment 1 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
 #|incomplete: the text part attachment 1 > text/plain cannot be decoded
+#|incomplete: the text part attachment 1 > text/plain cannot be decoded
 #|found in attachment 2 > text/plain
 #|found in attachment 1 > text/plain
 #|found in attachment 2 > text/plain
@@ -318,6 +324,7 @@ def main() -> IO(Unit):
 #|found in attachment 1 > message/rfc822 > message/rfc822 > message/rfc822 > text/plain
 #|incomplete: attachment 1 > message/rfc822 > message/rfc822 > message/rfc822 > message/rfc822 nests forwarded messages more than 3 levels deep
 #|incomplete: attachment 1 > message/rfc822 > message/rfc822 > message/rfc822 > message/rfc822 nests forwarded messages more than 3 levels deep
+#|found in attachment 1 > message/rfc822 > text/plain
 #|incomplete: the text part attachment 1 > message/rfc822 > text/plain cannot be decoded
 #|incomplete: attachment 1 > message/rfc822 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
 #|incomplete: attachment 1 > message/rfc822 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do

@@ -109,6 +109,10 @@ def show_parts_raw(p: M.Parts) -> String:
 def print_parts(m: String) -> IO(Unit):
   IO.print(show_parts_raw(M.parts(m)))
 
+# How many single parts a message has, then what they hold.
+def print_leaves(+m: String) -> IO(Unit):
+  IO.print(Nat.show(List.length(&2, M.Leaf, M.message_leaves(m))) ++ " " ++ show_parts_raw(M.parts(m)))
+
 def print_compose(c: V.Case) -> IO(Unit):
   IO.print(show_line_breaks(V.wire(c)))
 
@@ -135,6 +139,7 @@ def param_cases() -> IO(Unit):
     IO.print(M.param("text/plain; charset=utf-8", "charset") ++ " " ++ M.param("text/plain; CHARSET = \"ISO-8859-1\"", "charset") ++ " [" ++ M.param("text/plain", "charset") ++ "] [" ++ M.param("a; filename=x", "name") ++ "]")
     IO.print(M.param("a; filename=plain.txt; filename*=utf-8''r%C3%A9.txt", "filename") ++ " | " ++ M.param("a; filename*=utf-8'en'%41%zz%4", "filename") ++ " | " ++ M.param("a; filename*=noquotes", "filename") ++ " | " ++ M.param("a; filename*=\"\"; filename=fallback", "filename"))
     IO.print(M.param("a; filename*0=\"a \"; filename*2=\"c\"", "filename") ++ " | " ++ M.param("a; filename*0=\"a b\"; filename*1*=%C3%A9", "filename") ++ " | " ++ M.param("a; name=\"=?UTF-8?Q?caf=C3=A9?=\"", "name") ++ " | " ++ M.param("a; x=\"q\\\\b\"", "x") ++ " [" ++ M.param("a; x=\"\"", "x") ++ "] " ++ M.param("a; x=\"", "x"))
+    IO.print(M.param("text/plain; charset*=ISO-2022-KR''utf-16", "charset") ++ " | " ++ M.param("text/plain; charset*0*=ISO-2022-KR''utf; charset*1*=-16", "charset"))
 
 def parts_cases() -> IO(Unit):
   do IO<Unit>:
@@ -145,6 +150,9 @@ def parts_cases() -> IO(Unit):
     print_parts("Content-Type: text/plain\r\nContent-Disposition: ATTACHMENT\r\n\r\nabc")
     print_parts("Content-Type: image/png\r\nContent-Disposition: inline; filename=\"i.png\"\r\nContent-Transfer-Encoding: base64\r\n\r\neHl6\r\n")
     print_parts("Content-Type: image/png\r\n\r\nxyz")
+    print_parts("Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=koi8-r''%F0%D2%C9%D7%C5%D4.txt\r\n\r\nabc")
+    print_parts("Content-Type: application/octet-stream; name*0*=koi8-r''%F0%D2%C9; name*1*=%D7%C5%D4.txt\r\n\r\nabc")
+    print_leaves("Content-Type: multipart/mixed; boundary*=ISO-2022-KR''council\r\n\r\n--council\r\nContent-Type: text/plain\r\n\r\nLunch at noon.\r\n--council--\r\n")
     print_parts("Subject: x\n\nline1\r\nline2\rend")
     print_parts("Content-Type: multipart/mixed; boundary=B\r\n\r\npre\r\n--B\r\nContent-Type: text/plain\r\n\r\nfirst\r\n--B\r\nContent-Type: text/plain\r\n\r\nsecond\r\n--B \r\nContent-Type: text/html\r\n\r\n<b>h</b>\r\n--B--\r\n--B\r\nContent-Type: text/plain\r\n\r\nepilogue")
     print_parts("Content-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\n\r\nfirst\r\n--B\r\nContent-Type: text/html\r\n\r\n<b>cut")
@@ -475,6 +483,7 @@ def main() -> IO(Unit):
 #|utf-8 ISO-8859-1 [] []
 #|ré.txt | A%4 | noquotes | 
 #|a  | a bé | café | q\b [] "
+#|utf-16 | utf-16
 #|text= html=<p>Hi &lt;3</p>\n atts=
 #|text=hi html= atts=
 #|text=café soft html= atts=
@@ -482,6 +491,9 @@ def main() -> IO(Unit):
 #|text= html= atts=|text/plain|3;
 #|text= html= atts=i.png|image/png|3;
 #|text= html= atts=|image/png|3;
+#|text= html= atts=Привет.txt|application/octet-stream|3;
+#|text= html= atts=Привет.txt|application/octet-stream|3;
+#|1 text=Lunch at noon. html= atts=
 #|text=line1\nline2\rend html= atts=
 #|text=first html=<b>h</b> atts=
 #|text=first html=<b>cut atts=
