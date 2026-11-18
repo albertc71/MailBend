@@ -134,6 +134,18 @@ def run(t, work):
         c, got = t.tool(srv, "mail_get", {"uid": UNSEEN["an HTML comment"][0]["uid"]})
         t.check("jev off: mail_get returns the HTML and no annotation",
                 c == 0 and "NOTE" in got.get("html", "") and "jev" not in got, got)
+        srv.stop()
+        srv = t.Server(work, fixture=fixture, extra=["--reject", "LIST"], capture=False)
+        reasons = {}
+        for what, uid in [("an HTML", UNSEEN["an HTML comment"][0]["uid"]), ("a plain-text", 1)]:
+            c, got, states = asked("mail_get", {"uid": uid}, **t.BODY_MODE)
+            jev = got.get("jev", {})
+            reasons[what] = jev.get("reasons")
+            t.check(f"jev body coverage: {what} read whose folder discovery fails before Jev is asked is "
+                    "unchecked and describes no request", c == 0 and not states and jev.get("status") == "unchecked"
+                    and "coverage" not in jev and len(jev.get("reasons", [])) == 1, (got, states))
+        t.check("jev body coverage: an HTML and a plain-text read give the same reason when Jev was not asked",
+                reasons["an HTML"] == reasons["a plain-text"], reasons)
     finally:
         ts.stop()
         srv.stop()
