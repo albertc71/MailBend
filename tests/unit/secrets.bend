@@ -206,6 +206,9 @@ def check_attachments() -> IO(Unit):
 def check_forwards() -> IO(Unit):
   +secret : String = "Password: hunter22"
   +key : String = "AKIAIOSFODNN7EXAMPLE"
+  # A password line of 55 characters read as UTF-8, ending in the digit that
+  # makes its value a password; byte by byte it is 99 characters long.
+  +long : String = "Password: " ++ String.repeat("\u{C3}\u{A9}", 44n) ++ "2"
   +plain = forwarded("7bit", "nothing to see\r\n")
   do IO<Unit>:
     IO.print(scan_atts([eml(plain)]))
@@ -236,6 +239,9 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([subject_in("utf-16", key)]))
     IO.print(scan_atts([subject_in("utf-16le", wide(key))]))
     IO.print(scan_atts([subject_in("iso-2022-kr", "hello")]))
+    IO.print(scan_atts([subject_in("koi8-r", long)]))
+    IO.print(scan_atts([subject_in("shift_jis", long)]))
+    IO.print(scan_atts([subject_in("utf-8", C.utf8_encode("Password: 1月2日"))]))
     IO.print(scan_atts([M.Attach{"key.eml", "message/rfc822", pem()}]))
     IO.print(scan_atts([eml(multiparts(7n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(multiparts(8n, forwarded("7bit", secret)))]))
@@ -301,11 +307,14 @@ def main() -> IO(Unit):
 #|found in the decoded header of attachment 1 > message/rfc822
 #|found in the decoded header of attachment 1 > message/rfc822
 #|found in the decoded header of attachment 1 > message/rfc822
-#|found in the encoded words in the header of attachment 1 > message/rfc822
-#|found in the encoded words in the header of attachment 1 > message/rfc822
-#|found in the encoded words in the header of attachment 1 > message/rfc822
+#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
+#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
+#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
 #|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
 #|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
+#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
+#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
+#|clean
 #|found in the header of attachment 1 > message/rfc822
 #|found in attachment 1 > message/rfc822 > text/plain
 #|incomplete: attachment 1 > message/rfc822 nests its parts more than 8 levels deep
