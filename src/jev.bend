@@ -2027,8 +2027,8 @@ def delete_decision.fin(d: Decision, gap: Maybe<&2, String>) -> Decision:
     case Decision{g, report} None{}:
       Decision{g, report}
 
-# The decision on the keep answers about `xs`; in body mode its jev object
-# says when the text of a message sent to Jev is not Complete.
+# The decision on the keep answers about `xs`; in body mode a checked jev
+# object says when the text of a message sent to Jev is not Complete.
 def delete_decision(+c: Content, +xs: List<&2, Answered>) -> Decision:
   delete_decision.fin(decided(c, delete_concerns(xs), []), text_gap(c, texts_whole(xs)))
 

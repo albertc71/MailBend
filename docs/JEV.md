@@ -145,8 +145,9 @@ fails.
 
 ### What `checked` covers
 
-`status: "checked"` means Jev answered about what it was sent. It is never
-an approval. In body mode, a checked `mail_get` read, a selected part
+`status: "checked"` means the result rests on Jev's answers about what it
+was sent. A `mail_delete` that Jev vetoes is checked even when the reply
+gave no answer for another message. It is never an approval. In body mode, a checked `mail_get` read, a selected part
 included, and a checked `mail_delete` result add `coverage: "partial"`, with
 a reason for each of these cases:
 
@@ -160,8 +161,8 @@ a reason for each of these cases:
   but a text or HTML part, markup included, holds U+FFFD. MailBend writes
   U+FFFD for a byte that does not decode, and cannot tell that from a
   U+FFFD the message itself contains. A message whose text was also cut
-  gives only the first reason, and so does a delete when any message it
-  checked was cut.
+  gives only the first reason, and so does a delete when the text of any
+  message sent to Jev was cut.
 - "MailBend converts HTML to text before applying Jev's request limits;
   the request did not include the raw HTML." The read returns raw HTML: the
   `html` of a whole message, or the `content` of a selected `text/html`

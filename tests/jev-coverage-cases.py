@@ -164,8 +164,8 @@ def run(t, work):
         c, r, states = asked("mail_delete", {**delete, "uids": [DEADLINE["uid"], UNASKED_UNDECODABLE["uid"]]},
                              **t.BODY_MODE)
         jev = r.get("jev", {})
-        t.check("jev body coverage: a delete Jev vetoes reports text coverage only for the messages it answered "
-                "about", [e.get("uid") for state in states for e in state["emails"]] == [DEADLINE["uid"]]
+        t.check("jev body coverage: a delete Jev vetoes reports text coverage only for the messages sent to "
+                "Jev", [e.get("uid") for state in states for e in state["emails"]] == [DEADLINE["uid"]]
                 and f"UID {DEADLINE['uid']} carries an open action" in r.get("error", "")
                 and jev.get("status") == "checked" and jev.get("decision") == "blocked" and "coverage" not in jev
                 and srv.st() == before, (jev, r.get("error")))
