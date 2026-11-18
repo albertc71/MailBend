@@ -279,6 +279,19 @@ for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
         "Nested message text was not included in the Jev request."]}}, False)
     check("mail_get", {**whole, "jev": plain_jev})
     check("mail_get", {**whole, "jev": jev}, False)
+# In body mode a read or a delete says when Jev saw only part of its text.
+text_reason = "Not all of the message text was included in the Jev request."
+for reasons in ([text_reason], [text_reason, summary_reason]):
+    jev = {"status": "checked", "model": "fixture", "content": "body", "derived_from_untrusted_content": True,
+           "decision": "proceeded", "signals": {}, "reasons": reasons, "coverage": "partial"}
+    check("mail_get", {**whole, "jev": jev})
+    check("mail_get", {**selected, "jev": jev})
+    check("mail_get", {**whole, "jev": {**jev, "content": "headers"}}, False)
+    check("mail_get", {**whole, "jev": {**jev, "coverage": "headers_only"}}, False)
+    check("mail_get", {**whole, "jev": {**jev, "reasons": []}}, False)
+    check("mail_delete", {"ok": False, "error": "blocked", "jev": jev})
+    check("mail_search", {**search, "messages": [{**message, "jev": jev}]}, False)
+check("mail_get", {**whole, "jev": {**jev, "reasons": [summary_reason]}}, False)
 for invalid in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u061c", "\u200e",
                 "\u2028", "\u202e", "\u2066"):
     for key in summary:

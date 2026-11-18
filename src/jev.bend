@@ -1627,6 +1627,63 @@ def answered_jsons(
     case x <> t:
       J.obj(answered_kvs(x, c, candidates, none, [])) <> answered_jsons(t, c, candidates, none)
 
+# Coverage
+# --------
+
+# A jev object that covers less than its result shows says so: a reason
+# names what Jev was not sent, and its coverage what it was sent instead,
+# the header facts alone or only part of the text.
+def coverage_name(c: Content) -> String:
+  match c:
+    case Headers{}:
+      "headers_only"
+    case Body{}:
+      "partial"
+
+def scoped.reasons(xs: List<&2, J.Json>, +why: String) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      []
+    case J.JKv{"reasons", J.JArr{items}} <> t:
+      J.kv("reasons", J.arr(List.append(&2, J.Json, J.unchain(items), [J.str(why)]))) <>
+        scoped.reasons(t, why)
+    case kv <> t:
+      kv <> scoped.reasons(t, why)
+
+def scoped.put(j: J.Json, has: Bool, c: Content, why: String) -> J.Json:
+  match j:
+    case J.JObj{fields}:
+      J.obj(List.append(&2, J.Json, scoped.reasons(J.unchain(fields), why),
+        List.filter.put(J.Json, J.kv("coverage", J.str(coverage_name(c))), [], Bool.not(has))))
+    case _:
+      j
+
+# The jev object `j` with the reason `why`; it keeps a coverage it has.
+def scoped(+j: J.Json, c: Content, why: String) -> J.Json:
+  scoped.put(j, Maybe.is_some(&2, J.Json, J.get(j, "coverage")), c, why)
+
+# A result's fields, its jev object with the reason `why`.
+def scoped_fields(kvs: List<&2, J.Json>, +c: Content, +why: String) -> List<&2, J.Json>:
+  match kvs:
+    case Nil{}:
+      []
+    case J.JKv{"jev", j} <> t:
+      J.kv("jev", scoped(j, c, why)) <> scoped_fields(t, c, why)
+    case kv <> t:
+      kv <> scoped_fields(t, c, why)
+
+def text_reason() -> String:
+  "Not all of the message text was included in the Jev request."
+
+# A jev object, with text_reason when in body mode Jev saw only part of
+# the text.
+def covered(j: J.Json, c: Content, b: Completeness) -> J.Json:
+  match c b:
+    case Body{} Partial{}:
+      scoped(j, Body{}, text_reason())
+    case _ _:
+      j
+
 # Annotations
 # -----------
 
@@ -1650,11 +1707,12 @@ def annotation_signals(a: Answers, none: String) -> J.Json:
     injection_kvs(injection)
   ]))
 
-# A read message's jev object.
-def annotation_json(x: Answered, c: Content, none: String) -> J.Json:
+# A read message's jev object; it says so when Jev saw only part of the
+# text.
+def annotation_json(x: Answered, +c: Content, none: String) -> J.Json:
   match x:
     case Answered{f, a}:
-      jev_json(Checked{}, c, True{}, [], annotation_signals(a, none))
+      covered(jev_json(Checked{}, c, True{}, [], annotation_signals(a, none)), c, facts_body(f))
     case Skipped{f}:
       unchecked_json(c, unchecked_reason())
 
@@ -1900,6 +1958,31 @@ type Decision is Data:
 def decided(c: Content, +cs: List<&2, Concern>, extra: List<&2, J.Json>) -> Decision:
   +g = gate_of(cs)
   Decision{g, List.append(&2, J.Json, gate_kvs(g, c, J.obj(concern_kvs(cs))), extra)}
+
+# Whether Jev saw all the text of every message in `xs`.
+def all_whole(xs: List<&2, Answered>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case x <> t:
+      is_complete(facts_body(answered_facts(x))) && all_whole(t)
+
+def delete_report(whole: Bool, report: List<&2, J.Json>) -> List<&2, J.Json>:
+  match whole:
+    case True{}:
+      report
+    case False{}:
+      scoped_fields(report, Body{}, text_reason())
+
+def delete_decision.fin(d: Decision, whole: Bool) -> Decision:
+  Decision{g, report} = d
+  Decision{g, delete_report(whole, report)}
+
+# The decision on the keep answers about `xs`; in body mode its jev object
+# says so when Jev saw only part of a message's text.
+def delete_decision(+c: Content, +xs: List<&2, Answered>) -> Decision:
+  delete_decision.fin(decided(c, delete_concerns(xs), []),
+    Bool.not(is_body(c)) || all_whole(xs))
 
 # Jev could not decide, and why: the action is blocked.
 def undecided(c: Content, +reason: String) -> Decision:

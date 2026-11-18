@@ -1742,6 +1742,9 @@ def Laws.complete_text_is_whole(text, html, atts, left_out, cut, complete):
   complete_text_is_whole.if(cut || left_out, String.contains(shown, SCon{C.repl(), SNil{}}),
     String.eq(M.utf8_prefix(shown, Jev.max_text()), shown), complete)
 
+def Laws.partial_text_annotation_says_so(uid, fields, flags, date, size, atts, a, none):
+  ({==}, {==})
+
 def Laws.state_images_on_headers_is_state(uid, fields, flags, date, size, atts, body, text, refs):
   {==}
 

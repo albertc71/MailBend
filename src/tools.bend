@@ -3975,7 +3975,7 @@ def delete_answered(t: Tally(), c: Jev.Content) -> Jev.Decision:
     case Fail{m}:
       Jev.undecided(c, m)
     case Done{Progress{xs, reqs}}:
-      Jev.decided(c, Jev.delete_concerns(List.reverse(&2, Jev.Answered, xs)), [])
+      Jev.delete_decision(c, List.reverse(&2, Jev.Answered, xs))
 
 # With Jev on, the keep questions are asked about each message the
 # preflight fetched (`ms`) before anything is deleted; one that would keep
@@ -9176,46 +9176,11 @@ def projected.if(enabled: Bool, o: Policy.Out, +args: J.Json) -> Policy.Out:
       projected.out(o, Policy.str_arg(args, "projection", "full"),
         u32_arg(args, "max_response_bytes", 0))
 
-def nested_coverage.fields(xs: List<&2, J.Json>, +why: String) -> List<&2, J.Json>:
-  match xs:
-    case Nil{}:
-      []
-    case J.JKv{"reasons", J.JArr{items}} <> t:
-      J.kv("reasons", J.arr(List.append(&2, J.Json, J.unchain(items), [J.str(why)]))) <>
-        nested_coverage.fields(t, why)
-    case kv <> t:
-      kv <> nested_coverage.fields(t, why)
-
-# A scoped annotation: Jev saw less than the result shows, so it gains
-# coverage and a reason naming what the TypeSafe request left out.
-def nested_coverage.jev(j: J.Json, c: Jev.Content, +headers_why: String, +body_why: String)
-  -> J.Json:
-  match j c:
-    case J.JObj{fields} Jev.Headers{}:
-      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields), headers_why),
-        [J.kv("coverage", J.str("headers_only"))]))
-    case J.JObj{fields} Jev.Body{}:
-      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields), body_why),
-        [J.kv("coverage", J.str("partial"))]))
-    case _ _:
-      j
-
-def nested_coverage.items(xs: List<&2, J.Json>, +c: Jev.Content, +headers_why: String,
-  +body_why: String) -> List<&2, J.Json>:
-  match xs:
-    case Nil{}:
-      []
-    case J.JKv{"jev", j} <> t:
-      J.kv("jev", nested_coverage.jev(j, c, headers_why, body_why)) <>
-        nested_coverage.items(t, c, headers_why, body_why)
-    case kv <> t:
-      kv <> nested_coverage.items(t, c, headers_why, body_why)
-
-def nested_coverage.scoped(j: J.Json, +c: Jev.Content, +headers_why: String, +body_why: String)
-  -> J.Json:
+# A read's result, its jev object with the reason `why` (see Jev.scoped).
+def scoped_result(j: J.Json, +c: Jev.Content, +why: String) -> J.Json:
   match j:
     case J.JObj{fields}:
-      J.obj(nested_coverage.items(J.unchain(fields), c, headers_why, body_why))
+      J.obj(Jev.scoped_fields(J.unchain(fields), c, why))
     case _:
       j
 
@@ -9241,18 +9206,17 @@ def summarized(j: J.Json) -> Bool:
 def summarized_coverage.if(summary: Bool, j: J.Json, +c: Jev.Content) -> J.Json:
   match summary:
     case True{}:
-      +why : String = "Attached-message summaries were not included in the Jev request."
-      nested_coverage.scoped(j, c, why, why)
+      scoped_result(j, c, "Attached-message summaries were not included in the Jev request.")
     case False{}:
       j
 
 def nested_coverage.if(nested: Bool, +j: J.Json, +c: Jev.Content) -> J.Json:
   match nested:
     case True{}:
-      nested_coverage.scoped(j, c,
+      scoped_result(j, c, Bool.pick(String, Jev.is_body(c),
+        "Nested message text was not included in the Jev request.",
         "Only parent header facts were eligible for checking; " ++
-          "nested headers and text were not included.",
-        "Nested message text was not included in the Jev request.")
+          "nested headers and text were not included."))
     case False{}:
       summarized_coverage.if(summarized(j), j, c)
 
