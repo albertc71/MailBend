@@ -124,11 +124,11 @@ An expunge outside Trash and Spam removes only that folder's label, and the
 account's IMAP settings decide whether the message stays in All Mail. So on
 Gmail, `mail_delete` refuses before any change unless exactly one selectable
 LIST row names the folder and carries `\Trash` or `\Junk`. If the server
-advertises `UIDPLUS` and marks exactly one selectable mailbox other than
-`To Delete` as Trash, the refusal names it: to delete messages permanently,
-move them there with `mail_move`, find them with `mail_search`, then run
-`mail_delete` there. This behaviour is tested only against the fake server,
-not on a live Gmail account.
+advertises `UIDPLUS` and exactly one LIST row carries `\Trash`, for a
+selectable mailbox listed once and outside `To Delete`, the refusal names
+it: to delete messages permanently, move them there with `mail_move`, find
+them with `mail_search`, then run `mail_delete` there. This behaviour is
+tested only against the fake server, not on a live Gmail account.
 
 Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
 `[Gmail]/Important`, but no Archive role. MailBend reserves every folder
