@@ -434,14 +434,14 @@ def piece_if(keep: Bool, p: Piece) -> List<&2, Piece>:
     case False{}:
       []
 
-# Each header field's value with its RFC 2047 encoded words decoded, one
-# per line; with `as_utf8`, each word is read as UTF-8 whatever its charset.
-def decoded_values(fs: List<&2, M.Hdr>, +as_utf8: Bool) -> String:
+# Each header field's value with its RFC 2047 encoded words decoded as the
+# scan reads them (see M.decode_words), one per line.
+def decoded_values(fs: List<&2, M.Hdr>) -> String:
   match fs:
     case Nil{}:
       ""
     case M.Hdr{name, value} <> t:
-      M.decode_words(value, as_utf8) ++ "\n" ++ decoded_values(t, as_utf8)
+      M.decode_words(value, True{}) ++ "\n" ++ decoded_values(t)
 
 # Whether a field holds an encoded word in a charset that is not decoded.
 def replaced_fields(fs: List<&2, M.Hdr>) -> Bool:
@@ -459,24 +459,19 @@ def message_pieces.put(
 ) -> List<&2, Piece>:
   (ls, cut) = leaves
   +hs = M.headers(head)
-  +decoded = decoded_values(hs, False{})
-  +utf8 = decoded_values(hs, True{})
   List.concat(&2, Piece, [
-    [Plain{"the header of " ++ part, head}, Plain{"the decoded header of " ++ part, decoded}],
     piece_if(replaced_fields(hs),
       Unreadable{"an encoded word in the header of " ++ part ++ " cannot be decoded"}),
-    piece_if(Bool.not(String.eq(decoded, utf8)),
-      Plain{"the encoded words read as UTF-8 in the header of " ++ part, utf8}),
+    [Plain{"the header of " ++ part, head}, Plain{"the decoded header of " ++ part,
+      decoded_values(hs)}],
     leaves_pieces(ls, forwards, part),
     piece_if(cut, Unreadable{part ++ " nests its parts more than " ++
       Nat.show(M.multipart_limit()) ++ " levels deep"})])
 
 # A forwarded message: its header section, read as text (so a message with
-# no blank line is read whole), with its values decoded and, where that
-# differs, with its encoded words read as UTF-8, so that no charset label
-# hides a word from the rules; then its single parts. An encoded word in a
-# charset that is not decoded, or a part nested past M.multipart_limit, is
-# missed.
+# no blank line is read whole) and with its values decoded, then its single
+# parts. An encoded word in a charset that is not decoded, and parts nested
+# past M.multipart_limit, are missed.
 def message_pieces(part: String, +raw: String, forwards: Nat) -> List<&2, Piece>:
   message_pieces.put(part, M.head_of(M.split(raw)), forwards, M.message_leaves.cut(raw))
 

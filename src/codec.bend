@@ -410,6 +410,21 @@ def charset_replaced(cs: String) -> Bool:
 def charset_decode(cs: String, bytes: String) -> String:
   charset_decode.as(charset_named(cs), bytes)
 
+def scan_decode.as(cs: CS.Charset, bytes: String) -> String:
+  match cs:
+    case CS.SingleByte{CS.Windows1252{}}:
+      single_byte_decode(CS.Windows1252{}, bytes)
+    case _:
+      utf8_decode(bytes)
+
+# Bytes under the label `cs` as the secret scan reads them: in Windows-1252
+# when the label names it, otherwise as UTF-8. The rules look for ASCII
+# text, which both readings keep byte for byte, so a wrong or unknown label
+# cannot hide it; and the reading does not follow the other charsets'
+# decoders, so how mail is displayed never changes what the scan finds.
+def scan_decode(cs: String, bytes: String) -> String:
+  scan_decode.as(charset_named(cs), bytes)
+
 # Base64
 # ------
 
