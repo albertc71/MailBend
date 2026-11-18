@@ -257,6 +257,9 @@ def check_limits() -> IO(Unit):
       [M.Attach{"creds.env", "application/octet-stream", secret}])))
     IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209710n, ""),
       [M.Attach{"creds.env", "application/octet-stream", secret}])))
+    IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209520n, ""),
+      [M.Attach{"sample.eml", "message/rfc822", "Subject: " ++ words(80n, "") ++
+        "\r\n\r\nHello"}])))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -321,4 +324,5 @@ def main() -> IO(Unit):
 #|found in attachment 1 > text/plain
 #|incomplete: it holds more than 1 MB of text
 #|found in attachment 1 > application/octet-stream
+#|clean
 #|clean
