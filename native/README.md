@@ -206,7 +206,8 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
   hostname. The helper asks for A and AAAA records (RFC 8484 POST) and uses
   whichever answers; it then races connections to the addresses within the
   time budget, alternating address families and starting each attempt
-  250 ms after the previous one or as soon as one fails. The default cloud
+  250 ms after the previous one (sooner when little time is left, so that
+  every address is tried) or as soon as one fails. The default cloud
   resolver, `cloudflare-dns.com:443`, is bootstrapped with Cloudflare's
   `1.1.1.1` and `1.0.0.1` anycast addresses.
   Other resolver hostnames use system DNS for bootstrap. DoH verifies both

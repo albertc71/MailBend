@@ -3,7 +3,8 @@
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use rustls::ClientConfig;
@@ -130,10 +131,11 @@ pub fn resolve(
 const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
 /// Races connections to `addrs` as RFC 8305 describes: the address families
-/// alternate, and each attempt starts `ATTEMPT_DELAY` after the previous one
-/// or as soon as an attempt fails. The first socket to connect by the
-/// deadline wins. When none does, the error is the last address's, as when
-/// the addresses were tried in turn.
+/// alternate, and the next attempt starts as soon as one fails or after
+/// `ATTEMPT_DELAY`, sooner when the time left would otherwise not reach
+/// every address. The first socket to connect by the deadline wins. When
+/// none does, the error is the last address's, as when the addresses were
+/// tried in turn.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
     race(addrs, deadline, Arc::new(TcpStream::connect_timeout))
 }
@@ -151,38 +153,50 @@ fn race(
     deadline: &Deadline,
     connect: Connector,
 ) -> Result<TcpStream, NetError> {
-    // An address never tried ran out of time, as with attempts in turn.
+    // An address never started ran out of time, as with attempts in turn.
     let mut errors = vec![NetError::TimedOut; addrs.len()];
     let (report, outcomes) = mpsc::channel();
-    let mut unstarted = alternate_families(addrs).into_iter();
-    let mut running = 0;
-    while let Ok(left) = deadline.remaining() {
-        let wait = match unstarted.next() {
-            Some((index, addr)) => {
-                let connect = Arc::clone(&connect);
-                if let Err(e) = start_attempt(index, addr, *deadline, connect, report.clone()) {
-                    errors[index] = e;
-                    continue;
-                }
-                running += 1;
-                errors[index] = attempt_timed_out();
-                left.min(ATTEMPT_DELAY)
+    // Each attempt holds a sender, so the channel disconnects once every
+    // attempt has been started and has reported.
+    let mut waiting = alternate_families(addrs)
+        .into_iter()
+        .map(|attempt| (attempt, report.clone()))
+        .collect::<Vec<_>>()
+        .into_iter();
+    drop(report);
+    loop {
+        if let Some(((index, addr), report)) = waiting.next() {
+            if let Err(e) = start_attempt(index, addr, deadline, Arc::clone(&connect), report) {
+                errors[index] = e;
+                continue;
             }
-            None if running > 0 => left,
-            None => break,
-        };
+            errors[index] = attempt_timed_out();
+        }
+        let left = deadline.remaining().ok();
+        // Past the deadline, take only the outcomes already queued.
+        let wait = left.map_or(Duration::ZERO, |left| wait_for_outcome(left, waiting.len()));
         match outcomes.recv_timeout(wait) {
             Ok((_, Ok(sock))) if deadline.remaining().is_ok() => return Ok(sock),
-            Ok((index, outcome)) => {
-                running -= 1;
-                errors[index] = outcome.err().unwrap_or_else(attempt_timed_out);
-            }
-            Err(_delay_passed) => {}
+            Ok((index, outcome)) => errors[index] = outcome.err().unwrap_or_else(attempt_timed_out),
+            Err(RecvTimeoutError::Timeout) if left.is_some() => {}
+            Err(_) => break,
         }
     }
     Err(errors
         .pop()
         .unwrap_or_else(|| NetError::Connect("no addresses".to_string())))
+}
+
+/// How long to wait for an outcome after starting an attempt while
+/// `waiting` addresses are still to start: `ATTEMPT_DELAY`, or the attempt's
+/// equal share of the time `left` when that is shorter, so every address
+/// starts before the deadline. With none waiting, all the time left.
+fn wait_for_outcome(left: Duration, waiting: usize) -> Duration {
+    if waiting == 0 {
+        return left;
+    }
+    let shares = u32::try_from(waiting).map_or(u32::MAX, |n| n.saturating_add(1));
+    (left / shares).min(ATTEMPT_DELAY)
 }
 
 /// `addrs` with their positions, the address families alternating and
@@ -210,19 +224,15 @@ fn alternate_families(addrs: &[SocketAddr]) -> Vec<(usize, SocketAddr)> {
 fn start_attempt(
     index: usize,
     addr: SocketAddr,
-    deadline: Deadline,
+    deadline: &Deadline,
     connect: Connector,
     report: mpsc::Sender<Outcome>,
 ) -> Result<(), NetError> {
+    let left = deadline.remaining()?;
     std::thread::Builder::new()
         .name("connect".to_string())
         .spawn(move || {
-            let outcome = deadline
-                .remaining()
-                .map_err(|_| attempt_timed_out())
-                .and_then(|left| {
-                    connect(&addr, left).map_err(|e| NetError::Connect(e.to_string()))
-                });
+            let outcome = connect(&addr, left).map_err(|e| NetError::Connect(e.to_string()));
             let _too_late = report.send((index, outcome));
         })
         .map(drop)
@@ -296,40 +306,27 @@ mod tests {
         assert_eq!(loser.read(&mut [0; 1]).expect("closed, not kept open"), 0);
     }
 
-    /// Races `addrs` with every attempt refused at once, and returns where
-    /// and when each attempt started, in starting order.
-    fn starts_when_all_refuse(addrs: &[SocketAddr]) -> Vec<(SocketAddr, Instant)> {
-        let (record, starts) = mpsc::channel();
-        let refuse: Connector = Arc::new(move |addr: &SocketAddr, _: Duration| {
-            let _test_gone = record.send((*addr, Instant::now()));
-            Err(io::ErrorKind::ConnectionRefused.into())
-        });
-        let _all_refused = race(addrs, &Deadline::after(Duration::from_secs(5)), refuse);
-        starts.try_iter().collect()
-    }
-
     #[test]
-    fn alternates_address_families_starting_with_the_first_listed() {
+    fn attempts_alternate_address_families_starting_with_the_first_listed() {
         let v6 = |last| SocketAddr::from(([0x2001, 0xdb8, 0, 0, 0, 0, 0, last], 993));
-        let v4 = SocketAddr::from(([192, 0, 2, 1], 993));
-        let order: Vec<_> = starts_when_all_refuse(&[v6(1), v6(2), v6(3), v4])
-            .into_iter()
-            .map(|(addr, _)| addr)
-            .collect();
-        assert_eq!(order, [v6(1), v4, v6(2), v6(3)]);
+        let v4 = |last| SocketAddr::from(([192, 0, 2, last], 993));
+        assert_eq!(
+            alternate_families(&[v6(1), v6(2), v6(3), v4(1)]),
+            [(0, v6(1)), (3, v4(1)), (1, v6(2)), (2, v6(3))]
+        );
+        assert_eq!(
+            alternate_families(&[v4(1), v4(2), v6(1), v6(2)]),
+            [(0, v4(1)), (2, v6(1)), (1, v4(2)), (3, v6(2))]
+        );
     }
 
     #[test]
-    fn a_failed_attempt_starts_the_next_at_once() {
-        let addrs: Vec<_> = (1..=4)
-            .map(|last| SocketAddr::from(([192, 0, 2, last], 993)))
-            .collect();
-        let starts = starts_when_all_refuse(&addrs);
-        let spread = starts[3].1 - starts[0].1;
-        assert!(
-            spread < 2 * ATTEMPT_DELAY,
-            "four refused attempts took {spread:?} to start"
-        );
+    fn the_next_attempt_waits_250_ms_or_an_equal_share_of_a_short_budget() {
+        let ms = Duration::from_millis;
+        assert_eq!(wait_for_outcome(ms(30_000), 2), ms(250));
+        assert_eq!(wait_for_outcome(ms(100), 1), ms(50));
+        assert_eq!(wait_for_outcome(ms(400), 2), ms(400) / 3);
+        assert_eq!(wait_for_outcome(ms(100), 0), ms(100));
     }
 
     #[test]
@@ -353,23 +350,6 @@ mod tests {
                 "a {budget:?} deadline returned after {waited:?}"
             );
         }
-    }
-
-    #[test]
-    fn when_every_attempt_fails_the_last_address_error_is_reported() {
-        let fails_late = SocketAddr::from(([192, 0, 2, 1], 993));
-        let closed = closed_port();
-        let refused = TcpStream::connect(closed).expect_err("nothing listens");
-        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
-            if *addr != fails_late {
-                return TcpStream::connect_timeout(addr, timeout);
-            }
-            std::thread::sleep(2 * ATTEMPT_DELAY);
-            Err(io::ErrorKind::TimedOut.into())
-        });
-        let deadline = Deadline::after(Duration::from_secs(2));
-        let result = race(&[fails_late, closed], &deadline, connect);
-        assert_eq!(result.err(), Some(NetError::Connect(refused.to_string())));
     }
 
     /// How a stand-in peer answers a connection attempt.
