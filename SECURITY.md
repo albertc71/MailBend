@@ -42,6 +42,10 @@ In scope: anything that breaks the guarantees in the README's
   without `MAILBEND_TYPESAFE_CONTENT=body` and
   `MAILBEND_TYPESAFE_ZERO_RETENTION=1`, or a request going to an endpoint
   other than `https://api.typesafe.ai/v1/systemone`;
+- an image reaching TypeSafe when `MAILBEND_TYPESAFE_IMAGES` is off,
+  when either body mode or the operator's zero-retention statement is missing,
+  or from a tool other than `mail_classify`; see
+  [image settings](docs/JEV.md#settings);
 - with Jev on, a send or permanent delete that goes ahead although the
   secret scan or Jev blocked it, or TypeSafe failed;
 - a Jev check that changes an action instead of only blocking it;
