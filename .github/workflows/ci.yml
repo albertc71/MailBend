@@ -27,8 +27,9 @@ on:
 
 permissions:
   contents: read
+# The weekly run is the only full run on main, so no dispatch shares its group.
 concurrency:
-  group: ci-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.scale) && 'scale' || 'ci' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'schedule' && 'schedule' || inputs.scale && 'scale' || 'ci' }}
   cancel-in-progress: true
 env:
   BEND_NO_TELEMETRY: '1'
