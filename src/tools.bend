@@ -608,8 +608,9 @@ def review_move_problem(delim: String, dest: String) -> String:
 def review_trash_problem(+delim: String, folder: String, trash: String) -> String:
   Bool.pick(String, in_review(delim, folder) || in_review(delim, trash),
     "mail_trash never moves mail into or out of \"" ++ Ops.review_folder() ++
-      "\", which the user reviews; mail_move can take a message out of it, and mail_delete " ++
-      "can remove messages from it permanently",
+      "\", which the user reviews; mail_move can take a message out of it. To delete messages " ++
+      "there permanently, move them into Trash with mail_move, find them there with " ++
+      "mail_search, then run mail_delete in Trash",
     "")
 
 # Why mail_triage cannot file mail out of `folder` ("" when it can).

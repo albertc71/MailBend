@@ -1797,7 +1797,7 @@ def main() -> IO(Unit):
 #|err stopped
 #|mail_classify is disabled: it consults TypeSafe's Jev, and MAILBEND_TYPESAFE is off
 #|[only mail_triage moves mail into "To Delete", which the user reviews][only mail_triage moves mail into "To Delete", which the user reviews][][]
-#|[mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it, and mail_delete can remove messages from it permanently][mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it, and mail_delete can remove messages from it permanently][]
+#|[mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it. To delete messages there permanently, move them into Trash with mail_move, find them there with mail_search, then run mail_delete in Trash][mail_trash never moves mail into or out of "To Delete", which the user reviews; mail_move can take a message out of it. To delete messages there permanently, move them into Trash with mail_move, find them there with mail_search, then run mail_delete in Trash][]
 #|[mail_triage files mail out of other folders, never out of "To Delete", which the user reviews][]
 #|[MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X cannot name the review folder "To Delete" or a folder inside it][MAILBEND_X must name one existing selectable mailbox]
 #|[][it is also a special folder, which MailBend never fills][it is also a special folder, which MailBend never fills][it does not exist or cannot be selected: create it with mail_create_folder]
