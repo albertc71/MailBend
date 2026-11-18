@@ -8,6 +8,11 @@ with pure-function safety rules proven by the compiler for every input. <!-- cla
 These cover read and move/delete plans, recipient allowlists and Jev gates;
 [the proof scope](#what-the-proofs-cover) distinguishes them from native IO.
 
+Limits: Linux only, password login only (no OAuth); see
+[Known limits](#known-limits).
+
+From a built checkout, [try it without an account](#try-it-without-an-account).
+
 ```sh
 sudo apt-get install -y build-essential clang ca-certificates curl
 git clone https://github.com/albertc71/MailBend.git && cd MailBend
@@ -76,9 +81,6 @@ directory. No real mail is sent, and no live provider or Jev behavior is tested.
   [passed on a real iCloud account](docs/CLOUD_AGENT.md#live-icloud-record)
   with the earlier helpers, and the current Rust helpers have passed the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-checklist).
-
-Limits: Linux only, password login only (no OAuth); see
-[Known limits](#known-limits).
 
 For a dated comparison with other email connectors, see
 [the connector comparison](docs/COMPARISON.md).
