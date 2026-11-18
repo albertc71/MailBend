@@ -278,10 +278,10 @@ other charset the scan checks the bytes for its patterns, and text that
 only displays lossily, such as Shift_JIS or ISO-2022-JP, does not make it
 incomplete.
 
-A reply's body holds the original's text as MailBend shows it, and the scan
-reads that body as it is sent. An original in a charset that MailBend does
-not decode, such as UTF-16, is quoted as U+FFFD. The quote then holds none of
-the original's text, and it does not block.
+The scan reads a reply's body as it is sent, with the original quoted as
+MailBend shows it. A quoted part in UTF-16 or in a WHATWG replacement
+encoding shows as one U+FFFD, unless it is empty, and that character alone
+does not block the reply.
 
 An attached message, including an implicit `multipart/digest` child, must use
 a supported Content-Transfer-Encoding before the scan opens it. An unsupported
