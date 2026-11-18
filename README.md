@@ -1126,8 +1126,10 @@ review boundaries, and build steps for a future independent audit.
 The [law catalogue](docs/LAWS.md) lists every root law with its source summary.
 The [claim coverage](docs/PROOF-COVERAGE.md) maps these statements to named laws,
 tests, code and seeded bugs. See [how to maintain the claims](docs/SAFETY-CLAIMS.md).
-The badge above reports the latest full CI run on `main`, weekly or manual,
-including its kernel-verdict step, rather than an individual proof job.
+The badge above reports the latest CI workflow run on `main`, not an individual
+proof job. The weekly run is a full run, including the kernel-verdict step. A
+manual dispatch on `main` also sets the badge, and a scale-only dispatch runs
+no proofs.
 
 Mark and flag plans change only their documented flags. <!-- claim:flag-plans -->
 An APPEND dry-run preview shows the message size rather than its contents. <!-- claim:dry-run -->
