@@ -1624,7 +1624,10 @@ def reads(srv):
     frm = {m["uid"]: m["from"] for m in r.get("messages", [])}
     check("search: encoded display name decoded", frm.get(2, "").startswith("José"), frm.get(2))
     c, r = tool(srv, "mail_search", {"from": "ALICE@Example"})
-    check("search: a partial, mixed-case from value reaches the server as given", c == 0 and [m["uid"] for m in r["messages"]] == [1], r)
+    check("search: a partial, mixed-case from value finds the message", c == 0 and [m["uid"] for m in r["messages"]] == [1], r)
+    check("search: the from value is sent as given",
+          any(' UID SEARCH ' in line and 'FROM "ALICE@Example"' in line for line in srv.log_lines()),
+          [line for line in srv.log_lines() if ' UID SEARCH ' in line])
     c, r = tool(srv, "mail_search", {"unseen": True, "limit": 2})
     check("search: unseen + limit", c == 0 and r.get("total") == 5 and [m["uid"] for m in r["messages"]] == [6, 4], r)
     c, r = tool(srv, "mail_search", {"subject": "café"})

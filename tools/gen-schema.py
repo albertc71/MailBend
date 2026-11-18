@@ -702,7 +702,7 @@ TOOLS = [
          "back as cursor with the same folder and criteria for older matches. "
          "has_more=false and next_cursor=null end traversal. Searches are re-evaluated; "
          "new arrivals above the boundary are excluded. Each page reruns the full search; "
-         "total counts its matches, not only this page."
+         "total counts the UIDs in the search response, before paging."
          + JEV_NOTES,
          READS,
          {"folder": FOLDER,
