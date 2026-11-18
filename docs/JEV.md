@@ -58,15 +58,15 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
 - In `body` mode, `mail_get`, `mail_classify`, `mail_triage` and
   `mail_delete` also send up to 16 KB of each message's text: its whole
   text/plain part, quoted lines and lines after a `-- ` signature delimiter
-  included, then its HTML part as text. This covers the `text` that
-  `mail_get` returns and the readable text of its `html`. The HTML part as
-  text keeps only what lies outside `<` and `>`: every tag is removed with
-  its attributes, so link targets, image sources, and alt and title text
-  are not sent, nor are comments, nor any text after a stray `<` up to the
-  next `>`. Runs of spaces and tabs become one space, and the common
-  entities are decoded. A message whose text is longer, holds an
-  undecodable byte (even one only in HTML markup that is not sent), or had
-  a second text or HTML part left out counts as only partly seen; see [what `checked` covers](#what-checked-covers).
+  included, then the text MailBend converts its HTML part to. This covers
+  the `text` that `mail_get` returns. Jev never receives the raw HTML that
+  `mail_get` returns in `html`, and this document makes no promise about
+  which parts of the markup the conversion leaves out. A message whose text
+  is longer, or that had a second text or HTML part left out, counts as
+  only partly seen. One whose text or HTML part, markup included, holds a
+  replacement character (U+FFFD) is treated the same way, because MailBend
+  cannot confirm that every byte decoded; see
+  [what `checked` covers](#what-checked-covers).
 - With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` also sends PNG and JPEG
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools
@@ -146,38 +146,47 @@ fails.
 ### What `checked` covers
 
 `status: "checked"` means Jev answered about what it was sent. It is never
-an approval. In body mode, a `mail_get` read, a selected part included, and
-a `mail_delete` result add `coverage: "partial"` when Jev was sent less of
-the message text than the result shows, with a reason for each gap:
+an approval. In body mode, a checked `mail_get` read, a selected part
+included, and a checked `mail_delete` result add `coverage: "partial"`, with
+a reason for each of these cases:
 
 - "Not all of the message text was included in the Jev request." Jev's
-  text stopped at the 16 KB cap or at the request budget, the text or
-  HTML part holds an undecodable byte (shown as U+FFFD; in the HTML part,
-  markup included), or Jev's text left out a second text or HTML part,
-  parts nested too deep, or the rest of a cut fetch. A message Jev
-  did not answer about is `unchecked` with its own reason instead. A
-  checked selected part always gives this reason: Jev was sent only that
-  part's readable text, or a placeholder for a part that is not text.
-- "Raw HTML markup was not included in the Jev request, only its readable
-  text." The read returns raw HTML: the `html` of a whole message, or the
+  text stopped at the 16 KB cap or at the request budget, or left out a
+  second text or HTML part, parts nested too deep, or the rest of a cut
+  fetch. A checked selected part always gives this reason: Jev was sent
+  only that part's text, or a placeholder for a part that is not text.
+- "The message holds a replacement character (U+FFFD), so MailBend cannot
+  confirm that every byte decoded." Nothing was left out, but the text or
+  HTML part, markup included, holds U+FFFD. MailBend writes U+FFFD for a
+  byte that does not decode, and cannot tell that from a U+FFFD the message
+  itself contains. A message whose text was also cut gives only the first
+  reason, and so does a delete when any message it checked was cut.
+- "Jev was sent the text MailBend converted from the HTML, not the raw
+  HTML." The read returns raw HTML: the `html` of a whole message, or the
   `content` of a selected `text/html` part, under the `full` or `html`
-  projection, whatever the status. The `text` and `metadata` projections
-  return no HTML and do not give it. The reason is set before a
-  `max_response_bytes` budget shortens the result, so it stays when the
-  budget leaves the HTML empty. `mail_delete` returns no message text and
-  never gives it.
+  projection. The `text` and `metadata` projections return no HTML and do
+  not give it. The reason is set before a `max_response_bytes` budget
+  shortens the result, so it stays when the budget leaves the HTML empty.
+  `mail_delete` returns no message text and never gives it.
+
+These reasons describe a request Jev answered, so only a `checked` result
+gives them. An `unchecked` result gives why it is unchecked instead: for
+example, folder discovery failed before TypeSafe was contacted, or
+TypeSafe gave no usable answer. A message Jev did not answer about is
+`unchecked` with its own reason in the same way.
 
 Reasons add up, together with the nested-message and attached-message
-reasons above, and `coverage` appears once. A body-mode `mail_get` without
-`coverage` returns no message text that Jev was not sent. This covers the
-message text only: Jev sees the header facts listed under
-[what leaves the machine](#what-leaves-the-machine), while `mail_get` also
-returns Reply-To, Message-ID, In-Reply-To and References. In headers mode,
-`content: "headers"` already says that Jev was sent no text, and neither
-reason is given. `mail_classify`, `mail_triage` and sends report a partly
-seen text as `body_truncated` instead. There, an HTML part read as text
-still counts as fully seen, so the markup alone does not keep a message
-out of review.
+reasons above, and `coverage` appears once. A body-mode `mail_get` whose
+`status` is `checked` and that has no `coverage` returns no message text
+that Jev was not sent. This covers the message text only: Jev sees the
+header facts listed under [what leaves the machine](#what-leaves-the-machine),
+while `mail_get` also returns Reply-To, Message-ID, In-Reply-To and
+References. In headers mode, `content: "headers"` already says that Jev was
+sent no text, and none of these reasons is given. `mail_classify` and
+`mail_triage` report either of the first two cases as `body_truncated`
+instead, and sends report a text cut at the cap that way. There, an HTML
+part read as converted text still counts as fully seen, so the markup alone
+does not keep a message out of review.
 
 The pinned model is `jev-1.14.0`, never `jev-latest`. The 0.30 and 0.70 cuts
 are TypeSafe's suggested starting points, not measured on MailBend mail for
