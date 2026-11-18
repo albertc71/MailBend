@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Bounded public-command crash oracle. Disposable synthetic data only."""
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -9,9 +10,11 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+OUTPUT = threading.Lock()
 MEMBERS = ("mailbend-core", "mailbend-tls", "mailbend-attach",
            "mailbend-typesafe", "mailbend-stdio")
 B = {"mailbend-core": b"#!/bin/sh\necho B-mailbend-core\n",
@@ -347,9 +350,10 @@ def case(phase, index=0, how="before", event=None, activation=None):
                             position += 1
                     if position != len(expected):
                         raise AssertionError("bootstrap retry omitted a dependency flush before build")
-            print(json.dumps({"phase": phase, "event": index, "action": how, "exit": status,
-                              "stdout": stdout.decode("utf-8", "replace"),
-                              "stderr": stderr.decode("utf-8", "replace"), "accepted": True}))
+            with OUTPUT:
+                print(json.dumps({"phase": phase, "event": index, "action": how, "exit": status,
+                                  "stdout": stdout.decode("utf-8", "replace"),
+                                  "stderr": stderr.decode("utf-8", "replace"), "accepted": True}))
             return events
         finally:
             for proc in held:
@@ -361,10 +365,9 @@ def case(phase, index=0, how="before", event=None, activation=None):
 def main():
     global DEADLINE
     os.umask(0o022)
-    started = time.monotonic()
-    DEADLINE = started + 600
+    DEADLINE = time.monotonic() + 600
     oracle_controls()
-    cases = 0
+    faults = []
     for phase in ("fresh", "upgrade", "rollback"):
         events = case(phase)
         commits = [event["index"] for event in events if event["command"] == "mv"
@@ -384,14 +387,19 @@ def main():
                 actions.append("after")
             if event["command"] == "cp":
                 actions.append("disk-full")
-            for action in actions:
-                if time.monotonic() - started > 600:
-                    raise AssertionError("fault campaign exceeded its fixed 600-second budget")
-                cases += 1
-                if cases > 256:
-                    raise AssertionError("fault campaign exceeded its fixed 256-case cap")
-                case(phase, event["index"], action, event, activation)
-    print(f"install swap: {cases} bounded failure cases, whole-pair controls, live ELF and retries passed")
+            faults.extend((phase, event["index"], action, event, activation) for action in actions)
+    if len(faults) > 256:
+        raise AssertionError("fault campaign exceeded its fixed 256-case cap")
+
+    def bounded(fault):
+        if time.monotonic() > DEADLINE:
+            raise AssertionError("fault campaign exceeded its fixed 600-second budget")
+        case(*fault)
+
+    # Each case has its own directory and process group, so four run at once.
+    with concurrent.futures.ThreadPoolExecutor(4) as pool:
+        list(pool.map(bounded, faults))
+    print(f"install swap: {len(faults)} bounded failure cases, whole-pair controls, live ELF and retries passed")
     print("Process interruption and syscall-failure evidence only; not power-loss validation.")
 
 
