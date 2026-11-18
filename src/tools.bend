@@ -591,9 +591,8 @@ def at_or_inside(delim: String, +ancestor: String, +name: String) -> Bool:
 # Ops.review_folder), or into any folder inside it, and never out of it:
 # the user reviews what is there. mail_move and mail_label may take a
 # message out of it, when the user keeps it; mail_trash may not, and
-# mail_delete removes messages from it only on its confirmation, and never
-# on Gmail (see Ops.expunge_keeps). Names are compared in lower case, as
-# the reserved names are.
+# mail_delete removes messages from it only on its confirmation. Names are
+# compared in lower case, as the reserved names are.
 
 def in_review(delim: String, name: String) -> Bool:
   at_or_inside(delim, String.to_lower(Ops.review_folder()), String.to_lower(name))
@@ -624,37 +623,32 @@ def marked_trash(caps: List<&2, String>, +fs: List<&2, I.Folder>) -> Maybe<&2, S
   marked_trash.if(Policy.unique_folder(Policy.role_candidates(fs, "\\Trash", "", "", True{})),
     caps, fs)
 
-# What to do next to delete messages in `here` permanently, naming only
-# calls this server accepts. mail_delete needs UIDPLUS, and runs in `here`
-# unless Gmail may keep what it expunges there (`kept`). Then the messages
-# must first move into the mailbox the server marks as Trash (`trash`).
-def delete_advice.if(uidplus: Bool, kept: Bool, trash: Maybe<&2, String>, here: String) -> String:
-  match uidplus kept trash:
-    case False{} _ _:
+# What a refused Gmail delete says about deleting the messages
+# permanently. It names calls only when they can run: mail_move and
+# mail_delete need UIDPLUS, and mail_delete then runs in the mailbox the
+# server marks as Trash (`trash`).
+def delete_advice.if(uidplus: Bool, trash: Maybe<&2, String>) -> String:
+  match uidplus trash:
+    case False{} _:
       "mail_delete cannot run on this server, which does not advertise UIDPLUS"
-    case True{} False{} _:
-      "run mail_delete in \"" ++ here ++ "\" to remove these messages permanently"
-    case True{} True{} Some{+t}:
+    case True{} Some{+t}:
       "to remove these messages permanently, move them into \"" ++ t ++ "\" with mail_move, " ++
         "find them there with mail_search (the move gives them new UIDs), then run mail_delete " ++
         "in \"" ++ t ++ "\""
-    case True{} True{} None{}:
-      "MailBend cannot name a folder where this server deletes permanently, and nothing was " ++
-        "changed"
+    case True{} None{}:
+      "there is no single Trash mailbox MailBend may move mail into on this server"
 
 # The advice above, from a session's capabilities and LIST (`lines`).
-def delete_advice(+here: String, +lines: List<&2, I.RLine>) -> String:
+def delete_advice(+lines: List<&2, I.RLine>) -> String:
   +caps = I.caps(lines)
-  +fs = I.folders(lines)
-  delete_advice.if(I.has_cap(caps, "UIDPLUS"),
-    Ops.expunge_keeps(caps, Policy.named_attrs(fs, here)), marked_trash(caps, fs), here)
+  delete_advice.if(I.has_cap(caps, "UIDPLUS"), marked_trash(caps, I.folders(lines)))
 
 # Why mail_trash cannot move mail out of `folder` into `trash` ("" when it
-# can), ending with `advice` on deleting the messages (see delete_advice).
-def review_trash_problem(+delim: String, folder: String, trash: String, advice: String) -> String:
+# can).
+def review_trash_problem(+delim: String, folder: String, trash: String) -> String:
   Bool.pick(String, in_review(delim, folder) || in_review(delim, trash),
     "mail_trash never moves mail into or out of \"" ++ Ops.review_folder() ++
-      "\", which the user reviews; mail_move can take a message out of it; " ++ advice,
+      "\", which the user reviews",
     "")
 
 # Why mail_triage cannot file mail out of `folder` ("" when it can).
@@ -3847,7 +3841,6 @@ def trash_into(
   same: Bool,
   +trash: String,
   +caps: List<&2, String>,
-  advice: String,
   +folder: String,
   +uids: List<&2, U32>,
   uidv: U32,
@@ -3855,7 +3848,8 @@ def trash_into(
 ) -> IO(Policy.Out):
   match same:
     case True{}:
-      pure_out(Policy.Err{"these messages are already in " ++ trash ++ "; " ++ advice})
+      pure_out(Policy.Err{"these messages are already in the trash folder \"" ++ trash ++
+        "\"; nothing was changed"})
     case False{}:
       +move = I.has_cap(caps, "MOVE")
       move_plan(Ops.plan_trash(folder, uids, trash, move, I.has_cap(caps, "UIDPLUS"), uidv),
@@ -3865,7 +3859,6 @@ def trash_to.if(
   problem: String,
   +trash: String,
   caps: List<&2, String>,
-  advice: String,
   +folder: String,
   uids: List<&2, U32>,
   uidv: U32,
@@ -3875,15 +3868,12 @@ def trash_to.if(
     case SCon{h, t}:
       pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      trash_into(I.same_name(trash, folder), trash, caps, advice, folder, uids, uidv, dry)
+      trash_into(I.same_name(trash, folder), trash, caps, folder, uids, uidv, dry)
 
-# `advice` says how to delete the messages permanently instead, for the
-# refusals that need it (see delete_advice).
 def trash_to(
   trash: Maybe<&2, String>,
   delim: String,
   caps: List<&2, String>,
-  +advice: String,
   +folder: String,
   uids: List<&2, U32>,
   uidv: U32,
@@ -3893,13 +3883,11 @@ def trash_to(
     case None{}:
       pure_out(Policy.Err{"no unique selectable Trash folder: configure MAILBEND_TRASH_FOLDER"})
     case Some{+t}:
-      trash_to.if(review_trash_problem(delim, folder, t, advice), t, caps, advice, folder, uids,
-        uidv, dry)
+      trash_to.if(review_trash_problem(delim, folder, t), t, caps, folder, uids, uidv, dry)
 
 def trash_fs(
   f: Fs(),
   caps: List<&2, String>,
-  advice: String,
   folder: String,
   uids: List<&2, U32>,
   uidv: U32,
@@ -3909,12 +3897,12 @@ def trash_fs(
     case Fail{m}:
       pure_out(Policy.Err{m ++ "; nothing was changed"})
     case Done{Policy.Folders{fs, drafts, trash, sent, junk, archive}}:
-      trash_to(trash, delim_of(fs), caps, advice, folder, uids, uidv, dry)
+      trash_to(trash, delim_of(fs), caps, folder, uids, uidv, dry)
 
 def trash_found.if(
   problem: String,
   +lines: List<&2, I.RLine>,
-  +folder: String,
+  folder: String,
   uids: List<&2, U32>,
   uidv: U32,
   dry: Bool
@@ -3925,7 +3913,7 @@ def trash_found.if(
     case SNil{}:
       do IO<Policy.Out>:
         f : Fs() <- folders_io(lines)
-        trash_fs(f, I.caps(lines), delete_advice(folder, lines), folder, uids, uidv, dry)
+        trash_fs(f, I.caps(lines), folder, uids, uidv, dry)
 
 def trash_found(
   r: Run(),
@@ -4096,7 +4084,7 @@ def delete_kept.if(
           "confirm that this folder is either (by one selectable LIST row with the \\Trash or " ++
           "\\Junk attribute); nothing was deleted. Elsewhere an expunge removes the folder's " ++
           "label, and the account's IMAP settings decide whether the messages stay in All " ++
-          "Mail; " ++ delete_advice(folder, lines)})
+          "Mail; " ++ delete_advice(lines)})
     case False{}:
       delete_gated(jev, lines, uidplus, folder, uids, confirm, uidv, dry)
 
