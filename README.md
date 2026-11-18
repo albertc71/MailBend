@@ -1015,9 +1015,9 @@ review boundaries, and build steps for a future independent audit.
   a permanent deletion cannot be guaranteed there. There a delete has no
   plan unless exactly one selectable LIST row names the folder and carries the
   `\Trash` or `\Junk` attribute (proven), and `mail_delete` refuses before <!-- claim:move-delete-plans -->
-  any change, in a dry run too: move the messages into Trash with
-  `mail_trash` (out of `To Delete`, with `mail_move`), find them there with
-  `mail_search`, then run `mail_delete` in Trash. This Gmail behaviour comes
+  any change, in a dry run too. The refusal names the folder the server
+  lists with `\Trash`: move the messages there with `mail_move`, find them
+  with `mail_search`, then run `mail_delete` there. This Gmail behaviour comes
   from Google's documentation and the fake server; it is not live-tested.
   STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
   commands. Commands that take a UID list preserve its order. STORE preserves
