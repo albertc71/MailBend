@@ -155,7 +155,7 @@ jobs:
           fi
       - name: Unit tests
         run: |
-          sh tests/run-unit.sh
+          sh measure.sh sh tests/run-unit.sh --jobs 2
           python3 tests/test-meet-removal.py --controls-only
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
@@ -371,7 +371,7 @@ jobs:
         run: python3 tests/test-search-flags.py
       - name: CLI end-to-end tests
         if: matrix.suite == 'cli'
-        run: python3 tests/test-e2e.py
+        run: sh measure.sh python3 tests/test-e2e.py
       # Straight after the build, as in its former job, so its latency and
       # memory bounds see the same fresh runner.
       - name: Short synthetic MCP soak
@@ -389,7 +389,7 @@ jobs:
         run: MAILBEND_TEST_MCP=1 python3 tests/test-search-flags.py
       - name: Structured MCP tool scenarios
         if: matrix.suite == 'mcp'
-        run: MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only
+        run: MAILBEND_TEST_MCP=1 sh measure.sh python3 tests/test-e2e.py --tool-scenarios-only
       - name: Integrated results
         if: matrix.suite == 'support'
         run: python3 tests/test-integrated-results.py
