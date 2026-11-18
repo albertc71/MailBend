@@ -1709,38 +1709,63 @@ def completeness_motive(c: Jev.Completeness) -> Type:
       Unit
     case Jev.Complete{}:
       Empty
+    case Jev.Unconfirmed{}:
+      Unit
 
 def partial_is_not_complete(e: {Jev.Partial{} == Jev.Complete{} : Jev.Completeness}) -> Empty:
   %e : completeness_motive(_)
   Unit{}
 
-# text_of.put's verdict is Complete only when nothing was cut, the text
-# decoded and the cap kept it whole (`same`).
+def unconfirmed_is_not_complete(e: {Jev.Unconfirmed{} == Jev.Complete{} : Jev.Completeness})
+  -> Empty:
+  %e : completeness_motive(_)
+  Unit{}
+
+# text_of.put's verdict is Complete only when nothing was cut, the cap kept
+# the text whole (`same`) and no U+FFFD was found (`replaced`).
 def complete_text_is_whole.if(
-  cut: Bool, undecodable: Bool, same: Bool,
-  e: {Bool.pick(Jev.Completeness, cut || undecodable || Bool.not(same), Jev.Partial{},
-    Jev.Complete{}) == Jev.Complete{} : Jev.Completeness}
-) -> {cut == False{} : Bool} & {same == True{} : Bool}:
+  cut: Bool, same: Bool, replaced: Bool,
+  e: {Bool.pick(Jev.Completeness, cut || Bool.not(same), Jev.Partial{},
+    Bool.pick(Jev.Completeness, replaced, Jev.Unconfirmed{}, Jev.Complete{})) == Jev.Complete{}
+    : Jev.Completeness}
+) -> {cut == False{} : Bool} & {same == True{} : Bool} & {replaced == False{} : Bool}:
   match cut:
     case True{}:
-      Empty.absurd({True{} == False{} : Bool} & {same == True{} : Bool}, partial_is_not_complete(e))
+      Empty.absurd({True{} == False{} : Bool} & {same == True{} : Bool} &
+        {replaced == False{} : Bool}, partial_is_not_complete(e))
     case False{}:
-      match undecodable:
-        case True{}:
-          Empty.absurd({False{} == False{} : Bool} & {same == True{} : Bool},
-            partial_is_not_complete(e))
+      match same:
         case False{}:
-          match same:
+          Empty.absurd({False{} == False{} : Bool} & {False{} == True{} : Bool} &
+            {replaced == False{} : Bool}, partial_is_not_complete(e))
+        case True{}:
+          match replaced:
             case True{}:
-              ({==}, {==})
+              Empty.absurd({False{} == False{} : Bool} & {True{} == True{} : Bool} &
+                {True{} == False{} : Bool}, unconfirmed_is_not_complete(e))
             case False{}:
-              Empty.absurd({False{} == False{} : Bool} & {False{} == True{} : Bool},
-                partial_is_not_complete(e))
+              ({==}, {==}, {==})
+
+# No U+FFFD was found only when the HTML part, markup included, held none
+# (`marked`).
+def complete_text_is_whole.fin(lost: Bool, same: Bool, +marked: Bool, -found: Bool,
+  e: {lost == False{} : Bool} & {same == True{} : Bool} & {Bool.or(marked, found) == False{} : Bool}
+) -> {lost == False{} : Bool} & {marked == False{} : Bool} & {same == True{} : Bool}:
+  (whole, fits, clean) = e
+  (whole, or_false_left(marked, found, clean), fits)
 
 def Laws.complete_text_is_whole(text, html, atts, left_out, cut, complete):
-  +shown = Jev.seen_text(M.Parts{text, html, atts})
-  complete_text_is_whole.if(cut || left_out, String.contains(shown, SCon{C.repl(), SNil{}}),
-    String.eq(M.utf8_prefix(shown, Jev.max_text()), shown), complete)
+  +parts : M.Parts = M.Parts{text, html, atts}
+  +shown = Jev.seen_text(parts)
+  +lost = cut || left_out
+  +marked = Jev.html_replaced(parts)
+  +same = String.eq(M.utf8_prefix(shown, Jev.max_text()), shown)
+  +found = String.contains(shown, SCon{C.repl(), SNil{}})
+  complete_text_is_whole.fin(lost, same, marked, found,
+    complete_text_is_whole.if(lost, same, marked || found, complete))
+
+def Laws.partial_text_annotation_says_so(uid, fields, flags, date, size, atts, a, none):
+  ({==}, {==})
 
 def Laws.state_images_on_headers_is_state(uid, fields, flags, date, size, atts, body, text, refs):
   {==}
