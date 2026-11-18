@@ -120,9 +120,14 @@ so a second Sent copy is not recommended.
 expose labels as folders. MailBend's `mail_label` moves between folders;
 do not assume it adds a tag while retaining INBOX membership. That distinction
 is tracked in [#176](https://github.com/albertc71/MailBend/issues/176).
-An expunge outside Trash can remove a label instead of permanently removing
-the message. Do not rely on `mail_delete` as proof of global deletion while
-[#101](https://github.com/albertc71/MailBend/issues/101) remains unresolved.
+An expunge outside Trash and Spam removes only that folder's label, and the
+account's IMAP settings decide whether the message stays in All Mail. So on
+Gmail, `mail_delete` refuses before any change unless exactly one selectable
+LIST row names the folder and carries `\Trash` or `\Junk`. To delete messages
+permanently, move them into Trash with `mail_trash` (out of `To Delete`, with
+`mail_move`), find them there with `mail_search`, then run `mail_delete` in
+Trash. This behaviour is tested only against the fake server, not on a live
+Gmail account.
 
 Google's example advertises Drafts, Sent, Junk, Trash, All Mail, and
 `[Gmail]/Important`, but no Archive role. MailBend reserves every folder
