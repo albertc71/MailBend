@@ -180,9 +180,17 @@ itself or descendants that deliberately escape their process group. Ordinary
 compiler failures produce the final pass/fail count; infrastructure errors and
 interruptions exit without that summary.
 
-CI exercises the synthetic scheduling and cleanup contracts with the source checks.
-Its actual Bend unit invocation remains serial until separate x86-64 and ARM64
-resource measurements support changing it. This option makes no speedup claim.
+CI exercises the synthetic scheduling and cleanup contracts with the source checks,
+and runs the Bend unit files with `--jobs 2`. Two manual runs per architecture
+([first](https://github.com/albertc71/MailBend/actions/runs/44310831155),
+[second](https://github.com/albertc71/MailBend/actions/runs/44315343460)) measured
+66 unit files with two jobs on the 16 GiB hosted runners. All four passed. Peak
+memory in use on the runner (total less available, sampled every 0.2 s) was 9,255
+and 8,674 MiB on x86-64 and 8,893 and 8,306 MiB on ARM64. The runner took 282.5 and
+405.0 s on x86-64 and 308.6 and 298.6 s on ARM64. Serial runs that day, of 66 or
+70 files, took 342 to 494 s on x86-64 and 413 s on ARM64; hosted runner speed varies more than the gap
+between two single runs. These are four observations, not a bound for other
+machines; recheck memory before raising the job count.
 
 When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
 the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).

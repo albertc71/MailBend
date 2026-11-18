@@ -155,7 +155,7 @@ jobs:
           fi
       - name: Unit tests
         run: |
-          sh tests/run-unit.sh
+          sh tests/run-unit.sh --jobs 2
           python3 tests/test-meet-removal.py --controls-only
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
