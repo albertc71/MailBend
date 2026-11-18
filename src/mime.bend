@@ -1801,17 +1801,19 @@ def html_text.feed(+c: Char, rest: String, quotes: Bool, st: HtmlScan & HtmlOut)
   html_text.step(c, rest, quotes, scan, out)
 
 # The input is read as HTML reads it, with each CRLF and lone CR as a line
-# feed.
-def html_text.go(s: String, +quotes: Bool, st: HtmlScan & HtmlOut) -> HtmlScan & HtmlOut:
-  match s:
-    case SNil{}:
+# feed: a CR is read as a line feed, and `cr` says the last character was
+# one, so the line feed of a CRLF is passed over.
+def html_text.go(s: String, +quotes: Bool, cr: Bool, st: HtmlScan & HtmlOut)
+  -> HtmlScan & HtmlOut:
+  match s cr:
+    case SNil{} _:
       st
-    case SCon{'\r', SCon{'\n', +t}}:
-      html_text.go(t, quotes, html_text.feed('\n', t, quotes, st))
-    case SCon{'\r', +t}:
-      html_text.go(t, quotes, html_text.feed('\n', t, quotes, st))
-    case SCon{c, +t}:
-      html_text.go(t, quotes, html_text.feed(c, t, quotes, st))
+    case SCon{'\r', +t} _:
+      html_text.go(t, quotes, True{}, html_text.feed('\n', t, quotes, st))
+    case SCon{'\n', +t} True{}:
+      html_text.go(t, quotes, False{}, st)
+    case SCon{c, +t} _:
+      html_text.go(t, quotes, False{}, html_text.feed(c, t, quotes, st))
 
 # At the end of the input, an open '<', "</" or reference is text, and so
 # are what may have been raw content's end tag and a CDATA section's held
@@ -1844,7 +1846,7 @@ def html_text.close.st(st: HtmlScan & HtmlOut) -> HtmlOut:
 def html_text.fin(+scan: HtmlScan, out: HtmlOut) -> HtmlOut:
   match scan:
     case InTag{close, name, at, tail}:
-      html_text.close.st(html_text.go(tail, False{}, (InText{Markup{}}, out)))
+      html_text.close.st(html_text.go(tail, False{}, False{}, (InText{Markup{}}, out)))
     case _:
       html_text.close(scan, out)
 
@@ -1867,7 +1869,8 @@ def html_text.result(st: HtmlScan & HtmlOut) -> String:
 # or '?' to the next '>', and the brackets around CDATA content are left
 # out, line feeds break lines and other whitespace collapses, even in <pre>.
 def html_text(html: String) -> String:
-  html_text.result(html_text.go(html, True{}, (InText{Markup{}}, HtmlOut{"", 0, False{}})))
+  html_text.result(html_text.go(html, True{}, False{},
+    (InText{Markup{}}, HtmlOut{"", 0, False{}})))
 
 def is_blank(+c: Char) -> Bool:
   Char.is_eq(c, ' ') || Char.is_eq(c, '\t')

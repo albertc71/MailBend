@@ -224,6 +224,7 @@ def html_simple_cases() -> IO(Unit):
     html_case("line breaks after simple reading starts", "<svg></svg><pre>A\n\n B\tC</pre>")
     html_case("line breaks once simple reading starts in pre", "<pre>one<svg></svg>two\n  three</pre>")
     html_case("CRLF and line feed runs in simple reading", "<svg></svg>a\r\nb\n\n\n\nc")
+    html_case("lone CR and CR before CRLF in simple reading", "<svg></svg>a\r\n\nb\r\r\nc\rd")
     html_case("line feed in CDATA", "<![CDATA[one\ntwo]]>")
 
 def html_cases() -> IO(Unit):
@@ -532,6 +533,7 @@ def main() -> IO(Unit):
 #|line breaks after simple reading starts [A\n\nB C]
 #|line breaks once simple reading starts in pre [one two\nthree]
 #|CRLF and line feed runs in simple reading [a\nb\n\nc]
+#|lone CR and CR before CRLF in simple reading [a\n\nb\n\nc\nd]
 #|line feed in CDATA [one\ntwo]
 #|[a\nb] [x\n\ny] [unclosed] [stray > here]
 #|[1 > 0 && "q" 's' &foo; &lt;] [tab sp] [] [<b>]
