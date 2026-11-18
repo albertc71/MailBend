@@ -406,9 +406,10 @@ verifying `cloudflare-dns.com` over HTTPS, so a broken system lookup for the
 resolver cannot defeat the default. Apple IPs are never hard-coded. Each
 helper invocation resolves again, including later calls in an MCP process
 that has stayed running through sleep/wake. The lookup succeeds when either
-the A or the AAAA question returns addresses; the helper then tries each
-address in turn (IPv4 first), giving each attempt an equal share of the time
-left. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
+the A or the AAAA question returns addresses; the helper then races
+connections to them, IPv4 first and alternating with IPv6. Each attempt
+starts 250 ms after the previous one, or at once when one fails, and the
+first to connect wins. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
 default). A connected endpoint that fails TLS/protocol checks stops the call;
 MailBend does not replay mail operations on another address.
 
