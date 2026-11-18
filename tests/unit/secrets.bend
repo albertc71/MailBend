@@ -137,11 +137,25 @@ def with_part(ctype: String, data: String) -> String:
 def eml(data: String) -> M.Attach:
   M.Attach{"forwarded-message.eml", "message/rfc822", data}
 
-# A forwarded message whose subject is one encoded word: `bytes` in base64,
-# labelled `cs`.
+# An encoded word: `bytes` in base64, labelled `cs`.
+def b_word(cs: String, bytes: String) -> String:
+  "=?" ++ cs ++ "?B?" ++ C.b64_encode(bytes, False{}) ++ "?="
+
+def subject(value: String) -> M.Attach:
+  eml("Subject: " ++ value ++ "\r\n\r\nsee the subject\r\n")
+
 def subject_in(cs: String, bytes: String) -> M.Attach:
-  eml("Subject: =?" ++ cs ++ "?B?" ++ C.b64_encode(bytes, False{}) ++
-    "?=\r\n\r\nsee the subject\r\n")
+  subject(b_word(cs, bytes))
+
+# A forwarded subject with a password line behind 75 quote marks, whose
+# value is two encoded words: an emoji labelled iso-8859-1, then three
+# emoji and a digit labelled `cs`. With the first word read in Windows-1252
+# and the second as UTF-8, the value is 8 characters long and its digit is
+# the 94th character of the line, within the 96 that the rule reads.
+def quoted_password_in(cs: String) -> M.Attach:
+  +face = C.utf8_encode("\u{1F600}")
+  subject(String.repeat(">", 75n) ++ " Password: " ++ b_word("iso-8859-1", face) ++ " " ++
+    b_word(cs, String.repeat(face, 3n) ++ "2"))
 
 # `n` words of 5 characters each, built without deep recursion.
 def words(n: Nat, acc: String) -> String:
@@ -241,6 +255,8 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([subject_in("iso-2022-kr", "hello")]))
     IO.print(scan_atts([subject_in("koi8-r", long)]))
     IO.print(scan_atts([subject_in("shift_jis", long)]))
+    IO.print(scan_atts([quoted_password_in("koi8-r")]))
+    IO.print(scan_atts([quoted_password_in("shift_jis")]))
     IO.print(scan_atts([subject_in("utf-8", C.utf8_encode("Password: 1月2日"))]))
     IO.print(scan_atts([M.Attach{"key.eml", "message/rfc822", pem()}]))
     IO.print(scan_atts([eml(multiparts(7n, forwarded("7bit", secret)))]))
@@ -260,6 +276,10 @@ def check_limits() -> IO(Unit):
     IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209520n, ""),
       [M.Attach{"sample.eml", "message/rfc822", "Subject: " ++ words(80n, "") ++
         "\r\n\r\nHello"}])))
+    IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(207000n, ""),
+      [subject_in("koi8-r", String.repeat("\u{C1}", 3000n)),
+        M.Attach{"creds.env", "application/octet-stream", String.repeat("x", 5000n) ++ "\n" ++
+          secret}])))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -310,13 +330,15 @@ def main() -> IO(Unit):
 #|found in the decoded header of attachment 1 > message/rfc822
 #|found in the decoded header of attachment 1 > message/rfc822
 #|found in the decoded header of attachment 1 > message/rfc822
-#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
-#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
-#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
 #|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
 #|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
-#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
-#|found in the encoded words read as UTF-8 in the header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
 #|clean
 #|found in the header of attachment 1 > message/rfc822
 #|found in attachment 1 > message/rfc822 > text/plain
@@ -326,3 +348,4 @@ def main() -> IO(Unit):
 #|found in attachment 1 > application/octet-stream
 #|clean
 #|clean
+#|found in attachment 2 > application/octet-stream
