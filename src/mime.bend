@@ -1302,9 +1302,18 @@ def html_text.show(keep: HtmlKeep, +c: Char, out: HtmlOut) -> HtmlOut:
     case _:
       html_text.write(c, out)
 
+# Writes a character of simple text: a line feed breaks the line, up to a
+# blank line, and other whitespace collapses, even in <pre>.
+def html_text.simple(+c: Char, out: HtmlOut) -> HtmlOut:
+  match c:
+    case '\n':
+      html_text.line_break(out)
+    case _:
+      html_text.collapse(c, out)
+
 # Writes a character read in `mode` as that mode shows it: raw content
-# that is kept and plaintext as they are, simple text collapsing even in
-# <pre>, and dropped content not at all.
+# that is kept and plaintext as they are, simple text with its line
+# breaks, and dropped content not at all.
 def html_text.emit(mode: HtmlMode, +c: Char, out: HtmlOut) -> HtmlOut:
   match mode:
     case Markup{}:
@@ -1316,9 +1325,9 @@ def html_text.emit(mode: HtmlMode, +c: Char, out: HtmlOut) -> HtmlOut:
     case Plain{}:
       html_text.write(c, out)
     case Loose{}:
-      html_text.collapse(c, out)
+      html_text.simple(c, out)
     case Cdata{brackets}:
-      html_text.collapse(c, out)
+      html_text.simple(c, out)
 
 def html_text.emit_all(+mode: HtmlMode, s: String, out: HtmlOut) -> HtmlOut:
   match s:
@@ -1531,7 +1540,7 @@ def html_text.loose(+c: Char, out: HtmlOut) -> HtmlScan & HtmlOut:
     case '&':
       (InRef{"", Loose{}}, out)
     case _:
-      (InText{Loose{}}, html_text.collapse(c, out))
+      (InText{Loose{}}, html_text.simple(c, out))
 
 def html_text.loose_open.tag(tag: Bool, +c: Char, out: HtmlOut) -> HtmlScan & HtmlOut:
   match tag:
@@ -1572,7 +1581,7 @@ def html_text.cdata(+c: Char, +brackets: U32, +out: HtmlOut) -> HtmlScan & HtmlO
       Bool.pick(HtmlScan & HtmlOut, U32.is_eq(brackets, 2), (InText{Loose{}}, out),
         (InText{Cdata{0}}, html_text.collapse('>', html_text.brackets(brackets, out))))
     case _:
-      (InText{Cdata{0}}, html_text.collapse(c, html_text.brackets(brackets, out)))
+      (InText{Cdata{0}}, html_text.simple(c, html_text.brackets(brackets, out)))
 
 # A character of text in `mode`.
 def html_text.text(+c: Char, rest: String, mode: HtmlMode, out: HtmlOut)
@@ -1855,7 +1864,7 @@ def html_text.result(st: HtmlScan & HtmlOut) -> String:
 # there on, what a browser shows depends on the element tree, so reading is
 # simple and stays so: only tags, each from a '<' before a letter, '/', '!'
 # or '?' to the next '>', and the brackets around CDATA content are left
-# out.
+# out, line feeds break lines and other whitespace collapses, even in <pre>.
 def html_text(html: String) -> String:
   html_text.result(html_text.go(html, True{}, (InText{Markup{}}, HtmlOut{"", 0, False{}})))
 

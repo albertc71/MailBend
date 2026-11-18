@@ -216,6 +216,12 @@ def html_simple_cases() -> IO(Unit):
     # cannot hide what follows it.
     html_case("simple reading lasts", "<svg></svg><p>April</p><style>p{color:red}</style><p>May</p>")
     html_case("stray < and CDATA brackets", "<svg></svg>1 < 2<!x>3<![CDATA[a]]]>b")
+    # Line feeds break lines, up to a blank line, even in <pre>; other
+    # whitespace collapses.
+    html_case("line breaks after simple reading starts", "<svg></svg><pre>A\n\n B\tC</pre>")
+    html_case("line breaks once simple reading starts in pre", "<pre>one<svg></svg>two\n  three</pre>")
+    html_case("CRLF and line feed runs in simple reading", "<svg></svg>a\r\nb\n\n\n\nc")
+    html_case("line feed in CDATA", "<![CDATA[one\ntwo]]>")
 
 def html_cases() -> IO(Unit):
   do IO<Unit>:
@@ -517,6 +523,10 @@ def main() -> IO(Unit):
 #|style in select [Visible Option]
 #|simple reading lasts [April p{color:red} May]
 #|stray < and CDATA brackets [1 < 2 3a]b]
+#|line breaks after simple reading starts [A\n\nB C]
+#|line breaks once simple reading starts in pre [one two\nthree]
+#|CRLF and line feed runs in simple reading [a\nb\n\nc]
+#|line feed in CDATA [one\ntwo]
 #|[a\nb] [x\n\ny] [unclosed] [stray > here]
 #|[1 > 0 && "q" 's' &foo; &lt;] [tab sp] [] [<b>]
 #|[Plain: 1 > 0; "q" #x café next line]
