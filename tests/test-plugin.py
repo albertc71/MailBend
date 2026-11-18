@@ -39,7 +39,7 @@ class Packaging(unittest.TestCase):
         plugin = read_json(".claude-plugin/plugin.json")
         marketplace = read_json(".claude-plugin/marketplace.json")
         self.assertEqual(plugin["name"], "mailbend")
-        self.assertEqual(plugin["version"], "0.1.1")
+        self.assertEqual(plugin["version"], "0.1.2")
         self.assertEqual(marketplace["name"], "mailbend")
         self.assertTrue(marketplace["description"].strip())
         self.assertEqual(marketplace["plugins"], [{"name": "mailbend", "source": "./"}])

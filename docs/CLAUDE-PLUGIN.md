@@ -4,7 +4,7 @@ The optional plugin connects an existing MailBend installation, loads the
 existing [mail skill](../skills/mailbend/SKILL.md), and adds the
 [send/delete prompt](CLAUDE-HOOK.md). It does not build MailBend, collect a
 password, grant tool permissions, or probe your account automatically.
-Plugin version `0.1.1` is packaging metadata, not a MailBend binary release.
+Plugin version `0.1.2` is packaging metadata, not a MailBend binary release.
 
 Use Claude Code **2.1.295 or later** on a supported
 [Linux installation](../README.md#install-linux). The hook uses exec-form
