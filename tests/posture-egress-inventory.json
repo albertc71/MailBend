@@ -35,7 +35,7 @@
     },
     {
       "path": "native/README.md",
-      "sha256": "6a700c85e95d4cb4e3bb3d1fda60f5574297d2cd7c26d7ab82242eddbf5cb006"
+      "sha256": "601df48521fa5fcfc29fb0d19ec551721b743f60207de3ba7149b7797ccc3c0a"
     },
     {
       "path": "native/clippy.toml",
@@ -163,7 +163,7 @@
     },
     {
       "path": "native/mailbend-net/src/connect.rs",
-      "sha256": "7161edf7fad1c381676c485eb1f91b71ae33728448097f2c2214f815c0db8cde"
+      "sha256": "dcff0b7afbea4e635632703bab2917c68497fbd45cdf50665f62bb9ca28e386e"
     },
     {
       "path": "native/mailbend-net/src/dns.rs",
