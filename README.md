@@ -795,9 +795,10 @@ locally, without a TypeSafe account or network request. It looks for private
 keys, known token prefixes and password lines in headers, bodies and
 attachments, including forwarded originals. A secret or text it cannot read
 in full blocks the send before SMTP, including during a dry run. Text it
-cannot read includes text labelled UTF-16 and encoded words in a charset
-that MailBend replaces whole, such as ISO-2022-KR, but in other charsets,
-such as Shift_JIS, it checks the bytes and lossy display text does not block.
+cannot read includes text parts labelled UTF-16, UTF-32, UTF-7 or UCS, and
+encoded words in UTF-16 or in a charset that MailBend replaces whole, such
+as ISO-2022-KR. In any other charset, such as Shift_JIS, it checks the
+bytes, and lossy display text does not block.
 
 The result reports `secret_scan` as `clean`, `found` or `incomplete`.
 Refusals identify a field or attachment position, never the matched value.

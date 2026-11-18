@@ -18,7 +18,7 @@ GROUPS = {
     "Legacy multi-byte Korean encodings": "MultiByte{}",
 }
 # Encodings read by name instead of by group. ISO-2022-JP is the one
-# multi-byte encoding whose decoder rejects the shift bytes ESC, SO and SI.
+# multi-byte encoding in which ESC, SO and SI are not plain ASCII characters.
 # The others are recognised but not decoded, so their text reads as one
 # U+FFFD. x-user-defined is left out, so its labels keep the UTF-8 fallback.
 BY_NAME = {
