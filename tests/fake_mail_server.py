@@ -291,12 +291,10 @@ class State:
 
 
 class Logger:
-    def __init__(self, path: str, composed: str | None = None, accepts: str | None = None):
+    def __init__(self, path: str, composed: str | None = None):
         self.composed = composed
-        self.accepts = accepts
-        for optional in (composed, accepts):
-            if optional:
-                open(optional, 'w', encoding='utf-8').close()
+        if composed:
+            open(composed, 'w', encoding='utf-8').close()
         self.lock = threading.Lock()
         self.path = path
         open(path, 'w', encoding='utf-8').close()
@@ -306,11 +304,6 @@ class Logger:
             with open(self.path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps({'proto': proto, 'line': line}, ensure_ascii=False) + '\n')
 
-    def accepted(self, listener: str):
-        """Counts a connection even when it closes before any protocol line."""
-        if self.accepts:
-            with self.lock, open(self.accepts, 'a', encoding='utf-8') as stream:
-                stream.write(listener + '\n')
 
     def composition(self, protocol: str, raw: str):
         if self.composed:
@@ -1780,7 +1773,6 @@ def main():
     ap.add_argument('--drop-unanswered', type=parse_upper_names, default=set(),
                     help='run these comma-separated commands, then close the connection without answering')
     ap.add_argument('--composed', help='write complete received SMTP DATA and APPEND wires as JSONL')
-    ap.add_argument('--accepts', help='append the name of the listener that accepts each connection')
     ap.add_argument('--reject', type=parse_upper_names, default=set(),
                     help='answer these comma-separated commands NO without running them')
     ap.add_argument('--permanent-flags', type=lambda v: sorted(parse_names(v)), default=DEFAULT_PERMANENT_FLAGS,
@@ -1835,7 +1827,7 @@ def main():
     state.cut_goodbye = args.cut_goodbye
     state.file_sent = args.file_sent
     state.bodystructure = args.bodystructure
-    logger = Logger(args.log, args.composed, args.accepts)
+    logger = Logger(args.log, args.composed)
     caps = parse_upper_names(args.caps)
     ctx = make_ssl_context(args.certdir, args.cert_name)
     if args.require_sni:
@@ -1870,13 +1862,12 @@ def main():
     signal.signal(signal.SIGTERM, handle_sigterm)
     signal.signal(signal.SIGINT, handle_sigterm)
 
-    def accept_loop(sock, handler, listener):
+    def accept_loop(sock, handler):
         while running:
             try:
                 conn, _ = sock.accept()
             except OSError:
                 break
-            logger.accepted(listener)
             # Small TLS replies must not wait for Nagle/delayed-ACK timers.
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             conn.settimeout(60)
@@ -1917,12 +1908,11 @@ def main():
         held_silent_conns.append(conn)
 
     threads = [
-        threading.Thread(target=accept_loop, args=(imap_sock, imap_handler, 'imap'), daemon=True),
-        threading.Thread(target=accept_loop, args=(smtp_sock, smtp_handler, 'smtp'), daemon=True),
+        threading.Thread(target=accept_loop, args=(imap_sock, imap_handler), daemon=True),
+        threading.Thread(target=accept_loop, args=(smtp_sock, smtp_handler), daemon=True),
     ]
     if silent_sock is not None:
-        threads.append(threading.Thread(target=accept_loop, args=(silent_sock, silent_handler, 'silent'),
-                                        daemon=True))
+        threads.append(threading.Thread(target=accept_loop, args=(silent_sock, silent_handler), daemon=True))
     for t in threads:
         t.start()
 

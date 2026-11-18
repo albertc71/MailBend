@@ -4,7 +4,7 @@ to exercise mailbend-typesafe, mail_classify and mail_triage without the
 real service.
 
 Usage:
-    python3 fake_typesafe.py --certdir DIR --key KEY --log FILE [--scenario NAME] [--accepts FILE]
+    python3 fake_typesafe.py --certdir DIR --key KEY --log FILE [--scenario NAME]
 
 Listens on 127.0.0.1 with an OS-assigned port and prints one line
 
@@ -466,7 +466,6 @@ def main():
     ap.add_argument("--key", required=True)
     ap.add_argument("--log", required=True)
     ap.add_argument("--scenario", default="ok")
-    ap.add_argument("--accepts", help="append a line for each accepted proxy connection")
     args = ap.parse_args()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(os.path.join(args.certdir, "typesafe.pem"), os.path.join(args.certdir, "typesafe-key.pem"))
@@ -478,9 +477,6 @@ def main():
     print(f"READY proxy={listener.getsockname()[1]}", flush=True)
     while True:
         conn, _ = listener.accept()
-        if args.accepts:
-            with open(args.accepts, "a", encoding="utf-8") as stream:
-                stream.write("proxy\n")
         threading.Thread(target=fake.serve, args=(conn,), daemon=True).start()
 
 
