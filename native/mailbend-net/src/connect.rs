@@ -372,6 +372,103 @@ mod tests {
         assert_eq!(result.err(), Some(NetError::Connect(refused.to_string())));
     }
 
+    /// How a stand-in peer answers a connection attempt.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Peer {
+        Refuses,
+        Unreachable,
+        /// Never answers, so the attempt gives up at its timeout.
+        Silent,
+    }
+
+    impl Peer {
+        fn failure(self) -> io::Error {
+            match self {
+                Peer::Refuses => io::ErrorKind::ConnectionRefused.into(),
+                Peer::Unreachable => io::ErrorKind::NetworkUnreachable.into(),
+                Peer::Silent => io::Error::new(io::ErrorKind::TimedOut, "connection timed out"),
+            }
+        }
+
+        fn answer(self, timeout: Duration) -> io::Result<TcpStream> {
+            if self == Peer::Silent {
+                std::thread::sleep(timeout);
+            }
+            Err(self.failure())
+        }
+    }
+
+    /// Races peers listed in order, each an IPv6 (`true`) or IPv4 address,
+    /// with every attempt failing as its peer does.
+    fn race_failing(peers: &[(bool, Peer)], budget: Duration) -> Result<TcpStream, NetError> {
+        let answers: Vec<(SocketAddr, Peer)> = (1u8..)
+            .zip(peers)
+            .map(|(last, &(v6, peer))| match v6 {
+                true => (
+                    ([0x2001, 0xdb8, 0, 0, 0, 0, 0, last.into()], 993).into(),
+                    peer,
+                ),
+                false => (([192, 0, 2, last], 993).into(), peer),
+            })
+            .collect();
+        let addrs: Vec<_> = answers.iter().map(|&(addr, _)| addr).collect();
+        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+            let (_, peer) = answers
+                .iter()
+                .find(|(listed, _)| listed == addr)
+                .expect("listed");
+            peer.answer(timeout)
+        });
+        race(&addrs, &Deadline::after(budget), connect)
+    }
+
+    #[test]
+    fn when_every_attempt_fails_the_error_is_the_last_address_s_as_when_tried_in_turn() {
+        let kinds: Vec<(bool, Peer)> = [true, false]
+            .into_iter()
+            .flat_map(|v6| [Peer::Refuses, Peer::Unreachable, Peer::Silent].map(|peer| (v6, peer)))
+            .collect();
+        let mut mixes = vec![Vec::new()];
+        let mut every_mix = Vec::new();
+        for _ in 0..3 {
+            mixes = mixes
+                .iter()
+                .flat_map(|mix| {
+                    kinds
+                        .iter()
+                        .map(move |&kind| [mix.clone(), vec![kind]].concat())
+                })
+                .collect();
+            every_mix.extend(mixes.iter().cloned());
+        }
+        let budget = Duration::from_millis(200);
+        let mut wrong = Vec::new();
+        // Racing every mix at once can delay thread starts past the deadline.
+        for batch in every_mix.chunks(32) {
+            std::thread::scope(|scope| {
+                let races: Vec<_> = batch
+                    .iter()
+                    .map(|mix| scope.spawn(move || (mix, race_failing(mix, budget).err())))
+                    .collect();
+                wrong.extend(
+                    races
+                        .into_iter()
+                        .map(|race| race.join().expect("race"))
+                        .filter(|(mix, error)| {
+                            let (_, last) = mix.last().expect("a peer");
+                            *error != Some(NetError::Connect(last.failure().to_string()))
+                        }),
+                );
+            });
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} of {} mixes: {wrong:?}",
+            wrong.len(),
+            every_mix.len()
+        );
+    }
+
     #[test]
     fn an_expired_deadline_stops_everything() {
         let deadline = Deadline::after(Duration::ZERO);
