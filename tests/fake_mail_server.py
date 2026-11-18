@@ -53,10 +53,6 @@ With X-GM-EXT-1 in --caps, ordinary LIST shows the role attributes with or
 without SPECIAL-USE, as Gmail's does: "All LIST responses contain these
 Special-Use attributes"
 (https://developers.google.com/workspace/gmail/imap/imap-extensions).
-Gmail's folders are labels of one message, and a message in Trash or Spam
-shows in no other folder, All Mail included. So in this mode a message
-moved into a folder with the \\Trash or \\Junk attribute leaves every other
-folder.
 
 This file speaks just enough of IMAP4rev1 and ESMTP to drive the MailBend
 transport and Bend parser; it is not a general-purpose mail server.
@@ -1332,7 +1328,6 @@ class IMAPSession:
                 else:
                     remaining.append(m)
             mailboxes[mbox]['messages'] = remaining
-            self.trash_in_gmail(dest, [m for m in src_msgs if m['uid'] in wanted])
             dst_validity = dst['uidvalidity']
             self.state.save()
         if src_uids:
@@ -1341,16 +1336,6 @@ class IMAPSession:
             for seq in sorted(expunge_seqs, reverse=True):
                 self.send(f'* {seq} EXPUNGE\r\n')
         self.send(f'{tag} OK MOVE completed\r\n')
-
-    def trash_in_gmail(self, dest, moved):
-        """In Gmail mode, what moves into Trash or Spam leaves every other folder."""
-        mailboxes = self.state.data['mailboxes']
-        if 'X-GM-EXT-1' not in self.caps or not {'\\Trash', '\\Junk'} & set(mailboxes[dest]['special']):
-            return
-        raws = {m['raw'] for m in moved}
-        for name, mb in mailboxes.items():
-            if name != dest:
-                mb['messages'] = [m for m in mb['messages'] if m['raw'] not in raws]
 
     def _expunge(self, tag, mbox, spec):
         with self.state.lock:
