@@ -134,6 +134,19 @@ const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 /// or as soon as an attempt fails. The first socket to connect wins, and
 /// every attempt ends by the deadline.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
+    race(addrs, deadline, Arc::new(TcpStream::connect_timeout))
+}
+
+/// Opens a TCP connection to an address within a timeout.
+type Connector = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Send + Sync>;
+
+/// `connect_any` with the connecting step given, so tests can stand in for
+/// peers that answer late or never.
+fn race(
+    addrs: &[SocketAddr],
+    deadline: &Deadline,
+    connect: Connector,
+) -> Result<TcpStream, NetError> {
     let (report, results) = mpsc::channel();
     let mut last = NetError::Connect("no addresses".to_string());
     for addr in alternate_families(addrs) {
@@ -141,7 +154,7 @@ pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStrea
             last = NetError::TimedOut;
             break;
         };
-        if let Err(e) = start_attempt(addr, timeout, report.clone()) {
+        if let Err(e) = start_attempt(addr, timeout, Arc::clone(&connect), report.clone()) {
             last = e;
             continue;
         }
@@ -184,13 +197,13 @@ fn alternate_families(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
 fn start_attempt(
     addr: SocketAddr,
     timeout: Duration,
+    connect: Connector,
     report: mpsc::Sender<Result<TcpStream, NetError>>,
 ) -> Result<(), NetError> {
     std::thread::Builder::new()
         .name("connect".to_string())
         .spawn(move || {
-            let result = TcpStream::connect_timeout(&addr, timeout)
-                .map_err(|e| NetError::Connect(e.to_string()));
+            let result = connect(&addr, timeout).map_err(|e| NetError::Connect(e.to_string()));
             let _too_late = report.send(result);
         })
         .map(drop)
@@ -208,89 +221,130 @@ pub fn set_timeouts(sock: &TcpStream, timeout: Duration) -> Result<(), NetError>
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    fn closed_port() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.local_addr().expect("addr")
+    }
 
     #[test]
     fn falls_back_to_the_address_that_listens() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let good = listener.local_addr().expect("addr");
-        let closed = {
-            let l = TcpListener::bind("127.0.0.1:0").expect("bind");
-            l.local_addr().expect("addr")
-        };
         let deadline = Deadline::after(Duration::from_secs(2));
-        let sock = connect_any(&[closed, good], &deadline).expect("connect");
+        let sock = connect_any(&[closed_port(), good], &deadline).expect("connect");
         assert_eq!(sock.peer_addr().expect("peer"), good);
     }
 
-    /// A loopback listener that never answers, like a black-holed route:
-    /// Linux drops a SYN while the accept queue is full, so the queue is
-    /// filled first. Returns how many connections wait in the queue.
-    fn silent_listener() -> (TcpListener, SocketAddr, usize) {
+    #[test]
+    fn the_first_socket_to_connect_wins_and_a_late_loser_is_closed() {
+        let slow = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let slow_addr = slow.local_addr().expect("addr");
+        let fast = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let fast_addr = fast.local_addr().expect("addr");
+        let (release, held) = mpsc::channel::<()>();
+        let held = Mutex::new(held);
+        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+            if *addr == slow_addr {
+                let _released = held
+                    .lock()
+                    .expect("lock")
+                    .recv_timeout(Duration::from_secs(2));
+            }
+            TcpStream::connect_timeout(addr, timeout)
+        });
+        let deadline = Deadline::after(Duration::from_secs(5));
+        let sock = race(&[slow_addr, fast_addr], &deadline, connect).expect("connect");
+        assert_eq!(sock.peer_addr().expect("peer"), fast_addr);
+
+        let (accepted, late) = mpsc::channel();
+        std::thread::spawn(move || accepted.send(slow.accept()));
+        let _attempt_gone = release.send(());
+        let (mut loser, _) = late
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the losing attempt connects late")
+            .expect("accept");
+        loser
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("timeout");
+        assert_eq!(loser.read(&mut [0; 1]).expect("closed, not kept open"), 0);
+    }
+
+    /// Races `addrs` with every attempt refused at once, and returns where
+    /// and when each attempt started, in starting order.
+    fn starts_when_all_refuse(addrs: &[SocketAddr]) -> Vec<(SocketAddr, Instant)> {
+        let (record, starts) = mpsc::channel();
+        let refuse: Connector = Arc::new(move |addr: &SocketAddr, _: Duration| {
+            let _test_gone = record.send((*addr, Instant::now()));
+            Err(io::ErrorKind::ConnectionRefused.into())
+        });
+        let _all_refused = race(addrs, &Deadline::after(Duration::from_secs(5)), refuse);
+        starts.try_iter().collect()
+    }
+
+    #[test]
+    fn alternates_address_families_starting_with_the_first_listed() {
+        let v6 = |last| SocketAddr::from(([0x2001, 0xdb8, 0, 0, 0, 0, 0, last], 993));
+        let v4 = SocketAddr::from(([192, 0, 2, 1], 993));
+        let order: Vec<_> = starts_when_all_refuse(&[v6(1), v6(2), v6(3), v4])
+            .into_iter()
+            .map(|(addr, _)| addr)
+            .collect();
+        assert_eq!(order, [v6(1), v4, v6(2), v6(3)]);
+    }
+
+    #[test]
+    fn a_failed_attempt_starts_the_next_at_once() {
+        let addrs: Vec<_> = (1..=4)
+            .map(|last| SocketAddr::from(([192, 0, 2, last], 993)))
+            .collect();
+        let starts = starts_when_all_refuse(&addrs);
+        let spread = starts[3].1 - starts[0].1;
+        assert!(
+            spread < 2 * ATTEMPT_DELAY,
+            "four refused attempts took {spread:?} to start"
+        );
+    }
+
+    #[test]
+    fn an_attempt_that_connects_too_late_fails_at_the_deadline() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
-        let mut queued = 0;
-        loop {
-            match TcpStream::connect_timeout(&addr, Duration::from_millis(250)) {
-                Ok(_closed_at_once) => queued += 1,
-                Err(e) => {
-                    assert_eq!(e.kind(), io::ErrorKind::TimedOut, "a full queue drops SYNs");
-                    return (listener, addr, queued);
-                }
-            }
+        let stalls: Connector = Arc::new(|addr: &SocketAddr, timeout: Duration| {
+            std::thread::sleep(Duration::from_secs(1));
+            TcpStream::connect_timeout(addr, timeout)
+        });
+        for budget in [Duration::from_millis(50), Duration::from_millis(300)] {
+            let started = Instant::now();
+            let result = race(&[addr], &Deadline::after(budget), Arc::clone(&stalls));
+            let waited = started.elapsed();
+            assert!(
+                matches!(result, Err(NetError::Connect(_))),
+                "{budget:?}: {result:?}"
+            );
+            assert!(
+                (budget..budget + Duration::from_millis(200)).contains(&waited),
+                "a {budget:?} deadline returned after {waited:?}"
+            );
         }
     }
 
     #[test]
-    fn races_past_a_silent_address_and_closes_the_losing_socket() {
-        let (silent, silent_addr, queued) = silent_listener();
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let good = listener.local_addr().expect("addr");
-        let started = Instant::now();
-        let deadline = Deadline::after(Duration::from_secs(5));
-        let sock = connect_any(&[silent_addr, good], &deadline).expect("connect");
-        assert_eq!(sock.peer_addr().expect("peer"), good);
-        assert!(started.elapsed() < Duration::from_secs(1));
-
-        // Once the queue drains, a connection that the losing attempt
-        // completes must arrive already closed, like the queued ones.
-        silent.set_nonblocking(true).expect("nonblocking");
-        let mut accepted = 0;
-        while accepted <= queued && deadline.remaining().is_ok() {
-            match silent.accept() {
-                Ok((mut peer, _)) => {
-                    accepted += 1;
-                    peer.set_read_timeout(Some(Duration::from_secs(1)))
-                        .expect("timeout");
-                    assert_eq!(peer.read(&mut [0; 1]).expect("closed, not kept open"), 0);
-                }
-                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+    fn when_every_attempt_fails_the_last_address_error_is_reported() {
+        let fails_late = SocketAddr::from(([192, 0, 2, 1], 993));
+        let closed = closed_port();
+        let refused = TcpStream::connect(closed).expect_err("nothing listens");
+        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+            if *addr != fails_late {
+                return TcpStream::connect_timeout(addr, timeout);
             }
-        }
-    }
-
-    #[test]
-    fn alternates_address_families() {
-        let (_silent, silent, _) = silent_listener();
-        let v4 = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let v6 = TcpListener::bind("[::1]:0").expect("bind the IPv6 loopback");
-        let addrs = [
-            silent,
-            v4.local_addr().expect("addr"),
-            v6.local_addr().expect("addr"),
-        ];
-        let deadline = Deadline::after(Duration::from_secs(5));
-        let sock = connect_any(&addrs, &deadline).expect("connect");
-        assert_eq!(sock.peer_addr().expect("peer"), addrs[2]);
-    }
-
-    #[test]
-    fn an_address_that_never_answers_fails_at_the_deadline() {
-        let (_silent, silent, _) = silent_listener();
-        let started = Instant::now();
-        let result = connect_any(&[silent], &Deadline::after(Duration::from_millis(300)));
-        assert!(matches!(result, Err(NetError::Connect(_))));
-        let waited = started.elapsed();
-        assert!((Duration::from_millis(300)..Duration::from_secs(1)).contains(&waited));
+            std::thread::sleep(2 * ATTEMPT_DELAY);
+            Err(io::ErrorKind::TimedOut.into())
+        });
+        let deadline = Deadline::after(Duration::from_secs(2));
+        let result = race(&[fails_late, closed], &deadline, connect);
+        assert_eq!(result.err(), Some(NetError::Connect(refused.to_string())));
     }
 
     #[test]
