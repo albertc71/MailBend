@@ -160,8 +160,9 @@ fn connect_with(
             Step::Start(index, addr) => {
                 let started =
                     start_attempt(index, addr, *deadline, Arc::clone(&connect), report.clone());
-                if let Err(e) = started {
-                    race.heard(Some((index, Err(e))));
+                if started.is_err() {
+                    // No thread to spare: make this attempt here instead.
+                    race.heard(Some((index, attempt(&addr, deadline, &*connect))));
                 }
             }
             Step::Wait(wait) => race.heard(outcomes.recv_timeout(wait).ok()),
@@ -309,14 +310,13 @@ fn start_attempt(
     deadline: Deadline,
     connect: Connector,
     report: mpsc::Sender<Outcome<TcpStream>>,
-) -> Result<(), NetError> {
+) -> io::Result<()> {
     std::thread::Builder::new()
         .name("connect".to_string())
         .spawn(move || {
             let _too_late = report.send((index, attempt(&addr, &deadline, &*connect)));
         })
         .map(drop)
-        .map_err(|_| NetError::Connect("cannot start a connection attempt".to_string()))
 }
 
 /// Connects to `addr` within the time left when the attempt begins, which
