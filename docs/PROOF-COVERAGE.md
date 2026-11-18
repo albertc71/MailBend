@@ -8,7 +8,9 @@ The remaining **7 laws** have explicit reasons below.
 `proven` applies only to the stated pure-function scope. Its mutation is one negative
 control, not exhaustive mutation coverage. `tested` refers to executable checks, and
 `reviewed` records a code boundary without a formal guarantee. None is independent certification.
-The README badge reports the complete CI workflow, including `bend PROOF.bend --verdict`.
+The README badge reports the latest weekly CI run on `main`. Every weekly run is a full
+run, including `bend PROOF.bend --verdict`. Pull requests and manual dispatches do not
+set the badge, and a scale-only dispatch skips the kernel-verdict job.
 It does not report an individual job or certify a pending pull request.
 
 Each mutation names a cited law and explains how its first failing observer relates

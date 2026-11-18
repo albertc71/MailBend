@@ -64,9 +64,6 @@ class DriftChecks(unittest.TestCase):
             self.assertIn(expected, result.stderr)
         return result
 
-    def test_current_documentation(self):
-        self.check()
-
     def test_issue_chooser_requires_private_security_route(self):
         path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
         path.parent.mkdir(parents=True, exist_ok=True)

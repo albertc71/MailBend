@@ -248,19 +248,25 @@ def proof_files(root):
     return visited
 
 
-def observer_names(root, value):
+def reachable_definitions(root):
+    return {path: bend_names(path, "def") for path in proof_files(root)}
+
+
+def observer_names(root, value, definitions=None):
     """Bind Bend's name-only diagnostic to one reachable source declaration.
 
     Bend may omit the Laws. prefix. It does not report the source path, so
     rejecting collisions is necessary before a path#name can identify a failure.
+    Pass `definitions` from reachable_definitions to check several names
+    against one unchanged tree.
     """
     relative, name = reference(root, value, "proof")
-    reachable = proof_files(root)
-    require(local_path(root, relative) in reachable, "mutation proof is not reachable")
+    definitions = definitions or reachable_definitions(root)
+    require(local_path(root, relative) in definitions, "mutation proof is not reachable")
     bare = name.removeprefix("Laws.")
     candidates = sorted(
         f"{path.relative_to(root.resolve()).as_posix()}#{definition}"
-        for path in reachable for definition in bend_names(path, "def")
+        for path, names in definitions.items() for definition in names
         if definition.removeprefix("Laws.") == bare)
     require(candidates == [value],
             f"ambiguous mutation observer {value}: {candidates}")

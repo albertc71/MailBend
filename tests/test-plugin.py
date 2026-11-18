@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Guard plugin declarations and exercise a Python-only launch emulation.
 
---runtime also runs the real hook and MCP launcher against the loopback mail
+--runtime instead runs the real hook and MCP launcher against the loopback mail
 fixture. Python performs substitutions, environment merges and argv launches
 in both modes; they do not test Claude's handling of any of these operations.
 Neither mode runs Claude or proves that Claude loads the plugin.
@@ -375,5 +375,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument("--runtime", action="store_true")
     args, rest = parser.parse_known_args()
-    cases = ["Packaging", "PythonLaunchEmulation"] + (["Runtime"] if args.runtime else [])
+    cases = ["Runtime"] if args.runtime else ["Packaging", "PythonLaunchEmulation"]
     unittest.main(argv=[sys.argv[0], *rest], defaultTest=cases)

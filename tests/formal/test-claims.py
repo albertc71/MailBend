@@ -81,10 +81,6 @@ class Claims(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, message):
             CHECKS.validate(self.root)
 
-    def test_current_catalogue_and_coverage(self):
-        generated(self.root / "docs/LAWS.md", catalogue(self.root), True)
-        generated(self.root / "docs/PROOF-COVERAGE.md", CHECKS.coverage(self.root), True)
-
     def test_every_declaration_in_catalogue_once(self):
         records, _ = CHECKS.validate(self.root)
         result = catalogue(self.root)

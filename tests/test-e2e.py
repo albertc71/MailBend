@@ -1033,7 +1033,7 @@ def main():
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
-    check("password never appears in any tool output", not leaked, leaked[:1])
+    check("password never appears in any tool output", not leaked, f"{len(leaked)} matching outputs")
     failed = [n for n, ok in results if not ok]
     print(f"e2e: {len(results) - len(failed)} passed, {len(failed)} failed")
     sys.exit(1 if failed else 0)
@@ -5398,7 +5398,7 @@ def jev(work):
     jev_image_kinds(work, key_file)
     jev_image_metadata(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
-    check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
+    check("jev: the TypeSafe key never appears in any tool output", not leaked, f"{len(leaked)} matching outputs")
 
 
 def jev_switches(srv, work, key_file):
