@@ -1441,6 +1441,22 @@ law headers_state_has_no_body:
         [J.kv("attachments", Jev.attachments_json(atts))]))
     : J.Json}
 
+# LAW: for every message content, Jev's text is Complete only when no part
+# was left out and the fetch was whole, and then it is the whole text/plain
+# part, quoted and post-signature lines included, followed by the whole
+# HTML part as text
+law complete_text_is_whole:
+  for text: String
+  for html: String
+  for atts: List<&2, M.Att>
+  for left_out: Bool
+  for cut: Bool
+  for complete: {Jev.text_whole(Jev.text_of.fin((M.Parts{text, html, atts}, left_out), cut)) ==
+    Jev.Complete{} : Jev.Completeness}
+  ({cut || left_out == False{} : Bool} &
+   {String.eq(Jev.text_shown(Jev.text_of.fin((M.Parts{text, html, atts}, left_out), cut)),
+      text ++ Jev.html_heading(text, html) ++ M.html_text(html)) == True{} : Bool})
+
 # LAW: for every ref list, adding images to a headers-mode state leaves it
 # equal to state_of on headers
 law state_images_on_headers_is_state:

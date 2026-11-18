@@ -56,7 +56,13 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   Subject, Date, List-Id, List-Unsubscribe, Auto-Submitted and Precedence
   headers, and its attachment names.
 - In `body` mode, `mail_get`, `mail_classify`, `mail_triage` and
-  `mail_delete` also send up to 16 KB of each message's plain text.
+  `mail_delete` also send up to 16 KB of each message's text: its whole
+  text/plain part, quoted lines and lines after a `-- ` signature delimiter
+  included, then its HTML part with the markup removed. This covers the
+  `text` that `mail_get` returns and the readable text of its `html`;
+  text inside HTML markup, such as comments and attribute values, is not
+  sent. A message whose text is longer, or whose second text or HTML part
+  was left out, counts as only partly seen (`body_truncated`).
 - With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` also sends PNG and JPEG
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools

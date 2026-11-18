@@ -176,48 +176,54 @@ def with_body(f: Facts, c: Completeness) -> Facts:
 def max_text() -> U32:
   16384
 
-# The lines before a "-- " signature delimiter, without quoted (">")
-# lines; `ended` says the line before `ls` was the delimiter.
-def plain_text.go(
-  ls: List<&2, String>,
-  acc: List<&2, String>,
-  ended: Bool
-) -> List<&2, String>:
-  match ls ended:
-    case _ True{}:
-      List.reverse(&2, String, acc)
-    case Nil{} False{}:
-      List.reverse(&2, String, acc)
-    case +l <> t False{}:
-      +sig = String.eq(l, "-- ")
-      keep = Bool.not(sig || String.starts_with(l, ">"))
-      plain_text.go(t, List.filter.put(String, l, acc, keep), sig)
+# What separates a message's text/plain part from its HTML part in the
+# text Jev reads; none when the message lacks either.
+def html_heading.if(both: Bool) -> String:
+  match both:
+    case True{}:
+      "\n\n[HTML part as text]\n"
+    case False{}:
+      ""
 
-# A message's readable text with quoted replies and the signature removed.
-def plain_text(text: String) -> String:
-  String.join(plain_text.go(String.lines(text), [], False{}), "\n")
+def html_heading(+text: String, +html: String) -> String:
+  html_heading.if(M.both_filled(text, html))
 
-def text_of.put(+plain: String, cut: Bool) -> Text:
-  +capped = M.utf8_prefix(plain, max_text())
-  undecodable = String.contains(plain, SCon{C.repl(), SNil{}})
-  partial = cut || undecodable || U32.is_lt(C.utf8_len(capped), C.utf8_len(plain))
+# What Jev reads of a message: its whole text/plain part, quoted and
+# post-signature lines included, then its HTML part as text, so it reads
+# the `text` mail_get returns and the readable text of its `html`.
+def seen_text(p: M.Parts) -> String:
+  M.Parts{+text, +html, _} = p
+  text ++ html_heading(text, html) ++ M.html_text(html)
+
+def text_of.put(+shown: String, cut: Bool) -> Text:
+  +capped = M.utf8_prefix(shown, max_text())
+  undecodable = String.contains(shown, SCon{C.repl(), SNil{}})
+  partial = cut || undecodable || Bool.not(String.eq(capped, shown))
   MessageText{capped, Bool.pick(Completeness, partial, Partial{}, Complete{})}
 
 def text_of.fin(kept: M.Parts & Bool, cut: Bool) -> Text:
   (p, left_out) = kept
-  text_of.put(plain_text(M.readable_text(p)), cut || left_out)
+  text_of.put(seen_text(p), cut || left_out)
 
-def text_of.go(walk: List<&2, M.Leaf> & Bool & Bool & Bool & Bool, fetch_cut: Bool) -> Text:
-  (ls, nest_cut, text, html, apart) = walk
-  text_of.fin(M.parts_kept(ls), fetch_cut || nest_cut || apart)
+def text_of.go(walk: List<&2, M.Leaf> & Bool, fetch_cut: Bool) -> Text:
+  (ls, nest_cut) = walk
+  text_of.fin(M.parts_kept(ls), fetch_cut || nest_cut)
 
 # The text of a message fetched whole up to `max` bytes: Partial when the
-# fetch cut it, parts nested past M.multipart_limit, a second text part
-# (see M.parts_kept) or an HTML part apart from the text (see M.leaves.fin)
-# were left out, the cap shortened it or a part did not decode.
+# fetch cut it, parts nested past M.multipart_limit or a second text or
+# HTML part (see M.parts_kept) were left out, the cap shortened it or a
+# part did not decode.
 def text_of(m: I.Msg, max: U32) -> Text:
   I.Msg{uid, flags, date, size, headers, body, structure} = m
-  text_of.go(M.message_leaves.run(body), U32.is_gt(size, max))
+  text_of.go(M.message_leaves.cut(body), U32.is_gt(size, max))
+
+def text_shown(t: Text) -> String:
+  MessageText{text, _} = t
+  text
+
+def text_whole(t: Text) -> Completeness:
+  MessageText{_, whole} = t
+  whole
 
 def escaped_prefix.if(fits: Bool, c: Char, acc: String) -> String:
   match fits:

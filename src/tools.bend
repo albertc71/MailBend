@@ -1569,7 +1569,7 @@ def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
       parts = Bool.pick(M.Parts, String.eq(M.main_value(ct), "text/html"),
         M.Parts{"", text, []}, M.Parts{text, "", []})
       Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
-        "; message incomplete]\n" ++ Jev.plain_text(M.readable_text(parts)), True{})
+        "; message incomplete]\n" ++ Jev.seen_text(parts), True{})
     case False{} Part.Part{path, ct, cd, encoding, size}:
       Jev.MessageText{"[Selected MIME section " ++ I.section_str(path) ++
         "; no text body fetched]", Jev.Partial{}}
@@ -2882,7 +2882,7 @@ def jev_limit() -> U32:
   50
 
 # In body mode each message is fetched up to this many bytes, of which Jev
-# sees at most Jev.max_text bytes of plain text.
+# sees at most Jev.max_text bytes of text (see Jev.seen_text).
 def jev_max() -> U32:
   262144
 

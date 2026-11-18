@@ -18,6 +18,7 @@ import ./LAWS.bend as Laws
 import ./src/json.bend as J
 import ./src/codec.bend as C
 import ./src/imap.bend as I
+import ./src/mime.bend as M
 import ./src/sections.bend as Part
 
 import ./src/search-cursor.bend as SC
@@ -1701,6 +1702,45 @@ def Laws.append_preview_hides_message(mbox, flags, msg, n):
 
 def Laws.headers_state_has_no_body(uid, fields, flags, date, size, atts, body, text):
   {==}
+
+def completeness_motive(c: Jev.Completeness) -> Type:
+  match c:
+    case Jev.Partial{}:
+      Unit
+    case Jev.Complete{}:
+      Empty
+
+def partial_is_not_complete(e: {Jev.Partial{} == Jev.Complete{} : Jev.Completeness}) -> Empty:
+  %e : completeness_motive(_)
+  Unit{}
+
+# text_of.put's verdict is Complete only when nothing was cut, the text
+# decoded and the cap kept it whole (`same`).
+def complete_text_is_whole.if(
+  cut: Bool, undecodable: Bool, same: Bool,
+  e: {Bool.pick(Jev.Completeness, cut || undecodable || Bool.not(same), Jev.Partial{},
+    Jev.Complete{}) == Jev.Complete{} : Jev.Completeness}
+) -> {cut == False{} : Bool} & {same == True{} : Bool}:
+  match cut:
+    case True{}:
+      Empty.absurd({True{} == False{} : Bool} & {same == True{} : Bool}, partial_is_not_complete(e))
+    case False{}:
+      match undecodable:
+        case True{}:
+          Empty.absurd({False{} == False{} : Bool} & {same == True{} : Bool},
+            partial_is_not_complete(e))
+        case False{}:
+          match same:
+            case True{}:
+              ({==}, {==})
+            case False{}:
+              Empty.absurd({False{} == False{} : Bool} & {False{} == True{} : Bool},
+                partial_is_not_complete(e))
+
+def Laws.complete_text_is_whole(text, html, atts, left_out, cut, complete):
+  +shown = Jev.seen_text(M.Parts{text, html, atts})
+  complete_text_is_whole.if(cut || left_out, String.contains(shown, SCon{C.repl(), SNil{}}),
+    String.eq(M.utf8_prefix(shown, Jev.max_text()), shown), complete)
 
 def Laws.state_images_on_headers_is_state(uid, fields, flags, date, size, atts, body, text, refs):
   {==}
