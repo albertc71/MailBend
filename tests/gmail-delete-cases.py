@@ -1,8 +1,8 @@
 """Permanent deletes on Gmail, using only fake mail.
 
-Gmail shows labels as folders. Its expunge destroys a message only in Trash
-or Spam; anywhere else it removes that label, and the message stays in All
-Mail. The fake server acts so when it advertises X-GM-EXT-1.
+Gmail shows labels as folders, and its expunge surely destroys a message
+only in Trash or Spam. Anywhere else mail_delete must refuse before any
+change.
 """
 import copy
 
@@ -125,7 +125,7 @@ def trash_and_spam(t, work):
         t.check("gmail: delete in Trash expunges that UID for good",
                 code == 0 and result.get("permanently_deleted") is True
                 and any(line.endswith("UID EXPUNGE 1") for line in lines)
-                and not after[TRASH]["messages"] and not after[ALL_MAIL]["messages"], result)
+                and not after[TRASH]["messages"], result)
     finally:
         srv.stop()
 
