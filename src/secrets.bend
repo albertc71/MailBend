@@ -370,8 +370,8 @@ type Piece is Data:
 
 # Where a scan stands: a secret found in the part named; or the pieces
 # still to scan, the bytes to read last (newest first), how many
-# characters it may still read, and why it is incomplete so far ("" while
-# it is not).
+# characters of text it may still read, and why it is incomplete so far
+# ("" while it is not).
 type Scanning is Data:
   Hit{part: String}
   Next{todo: List<&2, Piece>, later: List<&2, Piece>, left: Nat, missed: String}

@@ -264,9 +264,8 @@ well-known prefix (AWS, Google, GitHub, GitLab, Slack, Stripe, Anthropic,
 OpenAI, npm) and password lines (`Password: ...` with a digit, also when
 quoted with `>`). It reads the header fields, the body, attachment names,
 every text part of the attachments and of a forwarded original, the headers
-of attached or forwarded messages, and, best effort, the first 1 MB of the
-bytes of every other part taken together; compressed formats are not
-inspected.
+of attached or forwarded messages, and, best effort, every other part's
+bytes; compressed data is read as it is and is not unpacked.
 
 An attached message, including an implicit `multipart/digest` child, must use
 a supported Content-Transfer-Encoding before the scan opens it. An unsupported
@@ -275,8 +274,11 @@ wrapper do not describe its enclosed parts; each inner text part keeps its own
 charset check.
 
 A secret found blocks the send, and so does text the scan cannot read in
-full (its limits are in the
-[enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced)).
+full. The scan checks up to 1,048,576 characters of text. It then checks up
+to 1,048,576 bytes shared by all the parts that are not text, in the order
+it reads them; bytes past that are not checked and do not block. Its other
+limits are in the
+[enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced).
 A block names the part by position (`attachment 1 > text/plain`), never by
 file name, and TypeSafe is not asked. The scan catches mistakes; it is not a
 boundary against an agent set on leaking.
