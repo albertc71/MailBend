@@ -266,13 +266,16 @@ quoted with `>`). It reads the header fields, the body, attachment names,
 every text part of the attachments and of a forwarded original, the headers
 of attached or forwarded messages, and, best effort, every other part's
 bytes; compressed formats are not inspected. Its patterns are ASCII, so it
-reads a text part as its bytes, and each encoded word in such a header also
-as UTF-8 whatever its charset. An encoded word in UTF-16 or in a WHATWG
-replacement encoding such as ISO-2022-KR or HZ-GB-2312, which MailBend
-replaces whole, is text it cannot read. So is a text part labelled UTF-16,
-UTF-32, UTF-7 or UCS-2, or one that holds a NUL character. In any other
-charset the scan checks the bytes for its patterns, and text that only
-displays lossily, such as Shift_JIS or ISO-2022-JP, does not make it
+reads a text part as its bytes. In the header of an attached or forwarded
+message it reads an encoded word under a label that WHATWG gives to
+windows-1252, such as `iso-8859-1` or `us-ascii`, in Windows-1252, and a
+word under any other label as UTF-8. An encoded word in UTF-16 or in a
+WHATWG replacement encoding such as ISO-2022-KR or HZ-GB-2312, which
+MailBend replaces whole, is text it cannot read. The scan also treats a text
+part as unreadable if its charset label begins with `utf-16`, `utf-32`,
+`utf-7` or `ucs-`, ignoring case, or if it holds a NUL character. In any
+other charset the scan checks the bytes for its patterns, and text that
+only displays lossily, such as Shift_JIS or ISO-2022-JP, does not make it
 incomplete.
 
 An attached message, including an implicit `multipart/digest` child, must use
