@@ -697,11 +697,12 @@ TOOLS = [
     tool("mail_search", "Search mail",
          "Search a folder, newest first. Opens the folder read-only, so "
          "nothing is marked read. All criteria are combined with AND. from, to, cc and "
-         "subject match as case-insensitive substrings. Pass next_cursor "
+         "subject are matched by the server, usually as substrings ignoring ASCII case. "
+         "Pass next_cursor "
          "back as cursor with the same folder and criteria for older matches. "
          "has_more=false and next_cursor=null end traversal. Searches are re-evaluated; "
-         "new arrivals above the boundary are excluded. Each page reruns the full search, "
-         "so total counts every current match."
+         "new arrivals above the boundary are excluded. Each page reruns the full search; "
+         "total counts its matches, not only this page."
          + JEV_NOTES,
          READS,
          {"folder": FOLDER,

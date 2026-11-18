@@ -92,7 +92,7 @@ def rpc_invalid_id(legacy: Maybe<&2, String>, id: J.Json, code: String, msg: Str
 # ----------
 
 def instructions() -> String:
-  "Mail over IMAP/SMTP. Call mail_probe only after a connection or login error. " ++
+  "Mail over IMAP/SMTP. Use mail_probe to diagnose a connection or login error. " ++
   "Read-only tools never mark mail as read. " ++
   "mail_trash is recoverable; " ++
   "mail_delete is permanent and needs confirm = \"permanently-delete\". " ++
