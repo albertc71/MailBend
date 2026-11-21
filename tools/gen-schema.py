@@ -133,17 +133,41 @@ JEV = record({"status": param("string", enum=["checked", "unchecked"]),
 ANNOTATION = {"jev": JEV}
 
 
-def scoped_jev(body_why, header_why):
-    """An annotation naming, by coverage and reason, what Jev was not sent."""
-    return union(*[record({**JEV["properties"], "content": {"const": content},
+TEXT_REASON = "Not all of the message text was included in the Jev request."
+REPLACED_REASON = ("Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot "
+                   "confirm that every byte decoded.")
+MARKUP_REASON = ("MailBend converts HTML to text before applying Jev's request limits; the request did "
+                 "not include the raw HTML.")
+# In body mode a read says when Jev's text was not complete, or that the
+# request did not include the raw HTML it returns; a delete, only the first.
+TEXT_REASONS = [TEXT_REASON, REPLACED_REASON]
+READ_REASONS = TEXT_REASONS + [MARKUP_REASON]
+
+
+def checked_only(jev):
+    """`jev`, checked whenever it gives one of READ_REASONS: they describe a
+    request Jev answered."""
+    return {**jev, "if": {"properties": {"reasons": {"contains": {"enum": READ_REASONS}}}},
+            "then": {"properties": {"status": {"const": "checked"}}}}
+
+
+def jev_scope(content, coverage, reason):
+    """An annotation naming, by coverage and a reason, what Jev was not sent."""
+    return record({**JEV["properties"], "content": {"const": content},
         "coverage": {"const": coverage},
-        "reasons": param("array", items=S, minItems=1, contains={"const": why})})
-        for content, coverage, why in [("body", "partial", body_why),
-                                       ("headers", "headers_only", header_why)]])
+        "reasons": param("array", items=S, minItems=1, contains=reason)})
+
+
+def scoped_jev(body_why, header_why):
+    return checked_only(union(jev_scope("body", "partial", {"const": body_why}),
+                              jev_scope("headers", "headers_only", {"const": header_why})))
 
 
 SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
 SUMMARY_JEV = scoped_jev(SUMMARY_REASON, SUMMARY_REASON)
+READ_JEV = checked_only(union(JEV, jev_scope("body", "partial", {"enum": READ_REASONS})))
+DELETE_JEV = {**checked_only(union(JEV, jev_scope("body", "partial", {"enum": TEXT_REASONS}))),
+              "properties": {"reasons": {"not": {"contains": {"const": MARKUP_REASON}}}}}
 
 ATTACHMENT = record({"filename": S, "content_type": S, "size": N})
 # One sanitizer line per displayed attached-message header value.
@@ -180,16 +204,6 @@ GET["allOf"] = [{"if": {"properties": {"attachments": {"contains": {"required": 
                         "required": ["attachments"]},
                  "then": {"properties": {"jev": {"$ref": "#/$defs/summary_jev"}}},
                  "else": {"properties": {"jev": {"$ref": "#/$defs/jev"}}}}]
-MEETING_FACTS = {
-    "facts": param("array", maxItems=16, items=record({
-        "kind": {"const": "meeting_link"},
-        "value": param("string", minLength=36, maxLength=36,
-                       pattern=r"^https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}$"),
-        "source": {"const": "text"}, "start": param("integer", minimum=0, maximum=65500),
-        "end": param("integer", minimum=36, maximum=65536),
-        "line": param("integer", minimum=1, maximum=65501), "untrusted": YES})),
-    "facts_scan": record({"scope": {"const": "returned_text"}, "limited": B}),
-}
 CLASSIFIED_FIELDS = {"uid": N, "category": NS, "jev": JEV}
 CLASSIFIED_OPTIONAL = {"new_category": S, "needs_new_category": YES,
                        "body_truncated": YES}
@@ -270,7 +284,7 @@ PARTS = record({"folder": S, "uid": N, "uidvalidity": NN,
 SELECTED = record({"folder": S, "uid": N, "uidvalidity": N, "section": S,
     "content_type": S, "complete": YES, "scope": {"const": "selected_part"},
     "message_complete": NO, "content": S,
-    "content_encoding": param("string", enum=["text", "base64"])}, ANNOTATION)
+    "content_encoding": param("string", enum=["text", "base64"])}, {"jev": {"$ref": "#/$defs/jev"}})
 
 
 NESTED_HEADER = LINE
@@ -315,8 +329,8 @@ NESTED_DEFS = {f"nested_{level}_complete": nested_node(level, True) for level in
 NESTED_DEFS.update({f"nested_{level}": union(
     {"$ref": f"#/$defs/nested_{level}_complete"}, nested_node(level, False))
     for level in (1, 2, 3)})
-# mail_get's whole-read annotations, shared by every projected variant.
-NESTED_DEFS.update({"jev": JEV, "summary_jev": SUMMARY_JEV})
+# mail_get's read annotations, shared by every projected variant.
+NESTED_DEFS.update({"jev": READ_JEV, "summary_jev": SUMMARY_JEV})
 NESTED_SELECTED = record({**{k: v for k, v in SELECTED["properties"].items()
     if k not in ("content", "content_encoding", "jev")},
     "content_type": param("string", anyOf=[
@@ -483,9 +497,10 @@ def output_schema(name):
     elif name in ("mail_move", "mail_label", "mail_trash"):
         variants += [MOVE, MOVE_PARTIAL, IMAP_PREVIEW]
     elif name == "mail_delete":
-        variants += [record({**CHANGED, "permanently_deleted": YES}, ANNOTATION),
-                     preview("imap", STRINGS, ANNOTATION),
-                     record({"ok": NO, "error": S}, ANNOTATION)]
+        deleted = {"jev": DELETE_JEV}
+        variants += [record({**CHANGED, "permanently_deleted": YES}, deleted),
+                     preview("imap", STRINGS, deleted),
+                     record({"ok": NO, "error": S}, deleted)]
     elif name in ("mail_create_folder", "mail_rename_folder"):
         fields = {"folder": S} if name == "mail_create_folder" else {"from": S, "to": S}
         variants += [record({"ok": YES, **fields, "subscribed": B}, {"note": S}),
@@ -510,9 +525,6 @@ def output_schema(name):
         # Error and Partial results bypass response projection.
         variants += [projected(v, mode) for v in variants[1:]
                      for mode in ("full", "text", "html", "metadata")]
-    if name == "mail_get":
-        variants += [extended(GET, MEETING_FACTS),
-                     *[extended(projected(GET, mode), MEETING_FACTS) for mode in ("full", "text")]]
     if name in ("mail_send", "mail_save_draft", "mail_reply", "mail_forward"):
         fields = {"hidden_unicode": HIDDEN_UNICODE}
         if name in ("mail_reply", "mail_forward"):
@@ -544,10 +556,12 @@ SENDS = hints(open_world=True)
 # Shared parameters
 
 FOLDER = param("string", "Folder (IMAP mailbox) name. Default: INBOX.")
-UID = param("integer", minimum=1)
+UID_ITEM = param("integer", minimum=1)
+UID = param("integer", "Message UID in the folder (from mail_search or mail_get_new).",
+            minimum=1)
 UIDS = param(
     "array", "Message UIDs in the folder (from mail_search or mail_get_new).",
-    items=UID, minItems=1)
+    items=UID_ITEM, minItems=1)
 UIDVALIDITY = param(
     "integer",
     "The folder's UIDVALIDITY returned with the UIDs (mail_search, mail_get, "
@@ -728,10 +742,13 @@ TOOLS = [
                                 "Missing or false keeps the existing folder listing.")}),
     tool("mail_search", "Search mail",
          "Search a folder, newest first. Opens the folder read-only, so "
-         "nothing is marked read. All criteria are combined with AND. Pass next_cursor "
+         "nothing is marked read. All criteria are combined with AND. from, to, cc and "
+         "subject are matched by the server, usually as substrings ignoring ASCII case. "
+         "Pass next_cursor "
          "back as cursor with the same folder and criteria for older matches. "
          "has_more=false and next_cursor=null end traversal. Searches are re-evaluated; "
-         "new arrivals above the boundary are excluded. UID SEARCH still enumerates matches."
+         "new arrivals above the boundary are excluded. Each page reruns the full search; "
+         "total counts the UIDs in the search response, before paging."
          + JEV_NOTES,
          READS,
          {"folder": FOLDER,
@@ -767,14 +784,6 @@ TOOLS = [
          {"folder": FOLDER,
           "uid": UID,
           "uidvalidity": READ_UIDVALIDITY,
-          "facts": param("boolean", "Opt in to literal canonical lowercase HTTPS Google Meet links "
-                         "from returned text only. Facts include exact values, zero-based half-open "
-                         "Unicode-scalar start/end offsets, one-based LF line, and untrusted=true. "
-                         "Scans at most 65536 scalars and emits at most 16 facts; facts_scan.limited "
-                         "marks source truncation or either cap. Only whole-message full/text reads. "
-                         "A response budget must fit the existing projection plus facts; raise it "
-                         "if the final result cannot fit. Cannot be combined with nested_message=true. "
-                         "No links are opened."),
           "section": param("string", "Optional: list for section metadata, text/html for the first "
                            "inline part, or a numeric section from list. Requires uidvalidity. "
                            "Fetches only that part; incomplete or malformed content fails. "
@@ -785,7 +794,7 @@ TOOLS = [
               "Requires a numeric section, uidvalidity and absent/full projection. Only message/rfc822 "
               "and message/global are supported. Three opened message levels, 128 entities, 16 MiB aggregate "
               "parse admission and 16 MiB conservative UTF-8 view admission. The view is atomic. "
-              "Cannot be combined with facts=true. Nested text and headers are not added to Jev requests. "
+              "Nested text and headers are not added to Jev requests. "
               "False/absent preserves legacy output."),
           "attached_message_headers": param("boolean", "Opt in, on a whole-message read without section, "
               "to a message object on each message/rfc822 or message/global attachment entry: its "
@@ -945,7 +954,7 @@ TOOLS = [
          {"folder": FOLDER,
           "uids": param(
               "array", "Message UIDs in the folder, at most 50.",
-              items=UID, minItems=1, maxItems=50),
+              items=UID_ITEM, minItems=1, maxItems=50),
           "uidvalidity": CLASSIFY_UIDVALIDITY,
           "candidates": param(
               "array",
@@ -969,7 +978,7 @@ TOOLS = [
          {"folder": FOLDER,
           "uids": param(
               "array", "Message UIDs in the folder, at most 50.",
-              items=UID, minItems=1, maxItems=50),
+              items=UID_ITEM, minItems=1, maxItems=50),
           "uidvalidity": UIDVALIDITY},
          ["uids", "uidvalidity"]),
     tool("mail_get_attachment", "Save an attachment",
@@ -1049,14 +1058,15 @@ TOOLS = [
     tool("mail_trash", "Move messages to Trash",
          "Move messages to the resolved trash folder (configured override, "
          "advertised special use, or unique conventional name). Recoverable; "
-         "does not delete permanently. Refused for mail in \"To Delete\" "
-         "(use mail_move or mail_delete there). " + MOVE_CUT_OFF,
+         "does not delete permanently. Refused for mail in \"To Delete\". "
+         + MOVE_CUT_OFF,
          NON_ADDITIVE, MESSAGES, MESSAGES_REQUIRED),
     tool("mail_delete", "Permanently delete messages",
          "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly "
          "these UIDs). Cannot be undone; prefer mail_trash. Requires confirm "
          "= \"permanently-delete\", the folder's uidvalidity and UIDPLUS on "
-         "the server. The confirm word guards against mistakes; it is not the "
+         "the server; on Gmail it runs only in a folder marked \\Trash or "
+         "\\Junk. The confirm word guards against mistakes; it is not the "
          "user's approval, so ask the user first. With MAILBEND_TYPESAFE on, "
          "it takes at most 50 UIDs, and Jev is first asked whether each "
          "message should be kept: any high answer, or TypeSafe failing, "

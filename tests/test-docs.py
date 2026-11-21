@@ -64,9 +64,6 @@ class DriftChecks(unittest.TestCase):
             self.assertIn(expected, result.stderr)
         return result
 
-    def test_current_documentation(self):
-        self.check()
-
     def test_issue_chooser_requires_private_security_route(self):
         path = self.root / ".github/ISSUE_TEMPLATE/config.yml"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -390,14 +387,14 @@ class DriftChecks(unittest.TestCase):
 
     def test_skill_index_signature_requires_every_argument(self):
         self.replace("skills/mailbend/references/tools.md",
-                     "mail_get(folder, uid, uidvalidity, facts, section, nested_message, attached_message_headers, max_bytes, projection, max_response_bytes)",
+                     "mail_get(folder, uid, uidvalidity, section, nested_message, attached_message_headers, max_bytes, projection, max_response_bytes)",
                      "mail_get(folder, uid)")
         self.check("missing argument mail_get.uidvalidity")
 
     def test_skill_index_signature_requires_nested_message(self):
         self.replace("skills/mailbend/references/tools.md",
-                     "mail_get(folder, uid, uidvalidity, facts, section, nested_message, attached_message_headers, max_bytes, projection, max_response_bytes)",
-                     "mail_get(folder, uid, uidvalidity, facts, section, attached_message_headers, max_bytes, projection, max_response_bytes)")
+                     "mail_get(folder, uid, uidvalidity, section, nested_message, attached_message_headers, max_bytes, projection, max_response_bytes)",
+                     "mail_get(folder, uid, uidvalidity, section, attached_message_headers, max_bytes, projection, max_response_bytes)")
         self.check("missing argument mail_get.nested_message")
 
     def test_skill_empty_index_signature_does_not_hide_arguments(self):

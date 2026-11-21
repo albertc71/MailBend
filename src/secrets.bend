@@ -33,9 +33,15 @@ def scan_name(s: Scan) -> String:
 # Limits
 # ------
 
-# The most text the scan reads, in characters: 1 MB. The bytes of parts
-# that are not text are read in what is left of it.
+# The most characters of text the scan reads: 1,048,576.
 def scan_limit() -> Nat:
+  1048576n
+
+# The most bytes the scan reads of the parts it takes as bytes (Bytes
+# pieces), all of them together in the order they come: 1,048,576, whatever
+# the length of the text, so that a long text cannot hide the end of an
+# attachment.
+def bytes_limit() -> Nat:
   1048576n
 
 # The most parts the scan opens or reads; a message with more is
@@ -365,8 +371,8 @@ type Piece is Data:
 
 # Where a scan stands: a secret found in the part named; or the pieces
 # still to scan, the bytes to read last (newest first), how many
-# characters it may still read, and why it is incomplete so far ("" while
-# it is not).
+# characters of text it may still read, and why it is incomplete so far
+# ("" while it is not).
 type Scanning is Data:
   Hit{part: String}
   Next{todo: List<&2, Piece>, later: List<&2, Piece>, left: Nat, missed: String}
@@ -427,22 +433,29 @@ def leaves_pieces(ls: List<&2, M.Leaf>, +forwards: Nat, +part: String) -> List<&
     case l <> t:
       List.append(&2, Piece, part_pieces(forwards, part, l), leaves_pieces(t, forwards, part))
 
-def cut_pieces(cut: Bool, part: String) -> List<&2, Piece>:
-  match cut:
+def piece_if(keep: Bool, p: Piece) -> List<&2, Piece>:
+  match keep:
     case True{}:
-      [Unreadable{part ++ " nests its parts more than " ++ Nat.show(M.multipart_limit()) ++
-        " levels deep"}]
+      [p]
     case False{}:
       []
 
-# Each header field's value with its RFC 2047 encoded words decoded, one
-# per line.
+# Each header field's value with its RFC 2047 encoded words decoded as the
+# scan reads them (see M.decode_words), one per line.
 def decoded_values(fs: List<&2, M.Hdr>) -> String:
   match fs:
     case Nil{}:
       ""
     case M.Hdr{name, value} <> t:
-      M.decode_header(value) ++ "\n" ++ decoded_values(t)
+      M.decode_words(value, True{}) ++ "\n" ++ decoded_values(t)
+
+# Whether a field holds an encoded word in a charset that is not decoded.
+def replaced_fields(fs: List<&2, M.Hdr>) -> Bool:
+  match fs:
+    case Nil{}:
+      False{}
+    case M.Hdr{name, value} <> t:
+      M.replaced_words(value) || replaced_fields(t)
 
 def message_pieces.put(
   +part: String,
@@ -451,13 +464,20 @@ def message_pieces.put(
   leaves: List<&2, M.Leaf> & Bool
 ) -> List<&2, Piece>:
   (ls, cut) = leaves
-  Plain{"the header of " ++ part, head} <>
-    Plain{"the decoded header of " ++ part, decoded_values(M.headers(head))} <>
-      List.append(&2, Piece, leaves_pieces(ls, forwards, part), cut_pieces(cut, part))
+  +hs = M.headers(head)
+  List.concat(&2, Piece, [
+    piece_if(replaced_fields(hs),
+      Unreadable{"an encoded word in the header of " ++ part ++ " cannot be decoded"}),
+    [Plain{"the header of " ++ part, head}, Plain{"the decoded header of " ++ part,
+      decoded_values(hs)}],
+    leaves_pieces(ls, forwards, part),
+    piece_if(cut, Unreadable{part ++ " nests its parts more than " ++
+      Nat.show(M.multipart_limit()) ++ " levels deep"})])
 
 # A forwarded message: its header section, read as text (so a message with
 # no blank line is read whole) and with its values decoded, then its single
-# parts. Parts nested past M.multipart_limit are missed.
+# parts. An encoded word in a charset that is not decoded, and parts nested
+# past M.multipart_limit, are missed.
 def message_pieces(part: String, +raw: String, forwards: Nat) -> List<&2, Piece>:
   message_pieces.put(part, M.head_of(M.split(raw)), forwards, M.message_leaves.cut(raw))
 
@@ -509,11 +529,11 @@ def secret_scan.fin(missed: String) -> Scan:
     case SCon{h, t}:
       Incomplete{SCon{h, t}}
 
-# The bytes of the parts that are not text, read last in what is left of
-# the budget, `r` being what reading the previous ones (in `part`) gave. A
-# find is Found, but bytes past the budget are not missed: most such parts
-# (PDF, images, archives) are compressed, so their text cannot be read
-# anyway. Only Bytes pieces are kept for last.
+# The bytes of the parts that are not text, read last within bytes_limit,
+# `r` being what reading the previous ones (in `part`) gave. A find is
+# Found, but bytes past bytes_limit are not missed: the scan reads such
+# parts (PDF, images, archives) as they are, without unpacking them, so
+# it is best effort for them anyway. Only Bytes pieces are kept for last.
 def secret_scan.last(ps: List<&2, Piece>, r: Reading, part: String, missed: String) -> Scan:
   match ps r:
     case _ Spotted{}:
@@ -531,7 +551,7 @@ def secret_scan.go(fuel: Nat, s: Scanning) -> Scan:
     case _ Hit{part}:
       Found{part}
     case _ Next{Nil{}, later, left, missed}:
-      secret_scan.last(List.reverse(&2, Piece, later), Read{left}, "", missed)
+      secret_scan.last(List.reverse(&2, Piece, later), Read{bytes_limit()}, "", missed)
     case 0n Next{p <> t, later, left, missed}:
       Incomplete{"it has too many parts"}
     case 1n+f Next{p <> t, later, left, missed}:

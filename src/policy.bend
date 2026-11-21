@@ -551,6 +551,20 @@ def override_candidates(fs: List<&2, I.Folder>, +want: String) -> List<&2, I.Fol
 def named_folder(fs: List<&2, I.Folder>, name: String) -> Maybe<&2, String>:
   unique_folder(override_candidates(fs, name))
 
+# The attributes of the one selectable folder in `fs`, if there is exactly
+# one; none otherwise.
+def unique_attrs(fs: List<&2, I.Folder>) -> List<&2, String>:
+  match fs:
+    case I.Folder{name, d, +attrs} <> Nil{}:
+      Bool.pick(List<&2, String>, selectable(attrs), attrs, [])
+    case _:
+      []
+
+# The attributes of the folder named_folder finds; none when it finds none,
+# so a folder listed twice takes no attribute from either row.
+def named_attrs(fs: List<&2, I.Folder>, name: String) -> List<&2, String>:
+  unique_attrs(override_candidates(fs, name))
+
 def resolved_role.if(
   unset: Bool,
   fs: List<&2, I.Folder>,

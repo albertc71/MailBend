@@ -841,6 +841,79 @@ exec {shutil.which("sync")} "$@"
             finally:
                 parent.chmod(0o700)
 
+    def test_checkout_permission_refusals_name_path_mode_and_preserve_the_tree(self):
+        cases = ((False, 0o775, "0775"), (True, 0o775, "0775"),
+                 (True, 0o757, "0757"), (True, 0o4755, "04755"),
+                 (True, 0o2755, "02755"), (True, 0o1755, "01755"),
+                 (True, 0o2775, "02775"))
+        for managed, mode, observed in cases:
+            with self.subTest(managed=managed, mode=observed), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory) / "checkout with spaces"
+                root.mkdir(mode=0o700)
+                self.prepare(root, clang=True)
+                commands = (("install.sh", ()),)
+                if managed:
+                    self.old_bin(root)
+                    for name in ("mailbend", "setup-cloud.sh"):
+                        shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
+                    commands += (("install.sh", ("--rollback",)),
+                                 ("mailbend", ("tools",)), ("setup-cloud.sh", ("--check",)))
+
+                def snapshot():
+                    result = {}
+                    for path in root.rglob("*"):
+                        info = path.lstat()
+                        if path.is_symlink():
+                            content = ("link", os.readlink(path))
+                        elif path.is_file():
+                            content = ("file", path.read_bytes())
+                        else:
+                            content = ("directory",)
+                        result[str(path.relative_to(root))] = (
+                            info.st_mode, info.st_ino, info.st_nlink, content)
+                    return result
+
+                root.chmod(mode)
+                self.assertEqual(root.stat().st_mode & 0o7777, mode)
+                before = snapshot()
+                expected = (
+                    f"mailbend: invalid installation: unsafe checkout permissions: {root} "
+                    f"(mode {observed}); root owner must be UID {os.getuid()}. "
+                    "Group or world write and setuid, setgid or sticky bits are forbidden. "
+                    "Only if local policy permits, the owner may remove unwanted bits "
+                    "(group-write/setgid only: chmod g-w,g-s); otherwise use a new private checkout. "
+                    "See README.md#checkout-permissions\n").encode()
+                try:
+                    for shell in ("/bin/sh", "/bin/bash"):
+                        for script, args in commands:
+                            with self.subTest(shell=shell, script=script, args=args):
+                                proc = subprocess.run([shell, str(root / "scripts" / script), *args],
+                                                      env=self.env(root), capture_output=True, timeout=5)
+                                self.assertEqual((proc.returncode, proc.stdout, proc.stderr),
+                                                 (2, b"", expected))
+                                self.assertEqual(root.stat().st_mode & 0o7777, mode)
+                                self.assertEqual(snapshot(), before)
+                finally:
+                    root.chmod(0o700)
+
+    def test_allowed_checkout_modes_keep_managed_launch_and_readiness_available(self):
+        for mode in (0o700, 0o750, 0o755):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                self.prepare(root, clang=True)
+                (root / "tools/sh").symlink_to("/bin/sh")
+                old = self.old_bin(root)
+                for name in ("mailbend", "setup-cloud.sh"):
+                    shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
+                root.chmod(mode)
+                for shell in ("/bin/sh", "/bin/bash"):
+                    for script, args in (("mailbend", ("tools",)), ("setup-cloud.sh", ("--check",))):
+                        proc = subprocess.run([shell, str(root / "scripts" / script), *args],
+                                              env=self.env(root), capture_output=True, timeout=5)
+                        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+                        self.assertEqual(root.stat().st_mode & 0o7777, mode)
+                        self.assert_unchanged(root, old)
+
 
 
     def test_manifest_hash_failure_after_compile_preserves_the_active_pair(self):

@@ -25,9 +25,11 @@ record-or-update mode. Review every expected-value change with the fixture bytes
 windows-1252, so byte 0x92 becomes U+2019. Strict ISO-8859-1 instead maps it to
 U+0092. This expectation does not claim RFC charset conformance.
 
-The legacy charset diagnostics link to [#135](https://github.com/albertc71/MailBend/issues/135).
-They are test metadata. They do not claim that MailBend currently reports a charset
-status. Flowed text is unsupported rendering, not an automatic RFC violation;
+`charset-koi8-r` reads KOI8-R through the WHATWG single-byte index. The ISO-2022-JP
+and Shift_JIS diagnostics link to [#135](https://github.com/albertc71/MailBend/issues/135):
+those multi-byte charsets are not decoded, so their pins show U+FFFD for every
+non-ASCII and escape byte. They are test metadata. They do not claim that MailBend
+currently reports a charset status. Flowed text is unsupported rendering, not an automatic RFC violation;
 [RFC 3676 section 4](https://www.rfc-editor.org/rfc/rfc3676#section-4) permits a receiver
 not to interpret it. The implicit `multipart/digest` default follows
 [RFC 2046 section 5.1.5](https://www.rfc-editor.org/rfc/rfc2046#section-5.1.5).

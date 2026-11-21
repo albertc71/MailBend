@@ -1033,7 +1033,7 @@ def main():
     finally:
         shutil.rmtree(work, ignore_errors=True)
     leaked = [o for o in outputs if PASSWORD in o]
-    check("password never appears in any tool output", not leaked, leaked[:1])
+    check("password never appears in any tool output", not leaked, f"{len(leaked)} matching outputs")
     failed = [n for n, ok in results if not ok]
     print(f"e2e: {len(results) - len(failed)} passed, {len(failed)} failed")
     sys.exit(1 if failed else 0)
@@ -1117,6 +1117,14 @@ def run_all(work, *, tool_scenarios_only=False):
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
     spec = importlib.util.spec_from_file_location("brief_cases", ROOT / "tests/brief-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("jev_coverage_cases", ROOT / "tests/jev-coverage-cases.py")
+    cases = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cases)
+    cases.run(sys.modules[__name__], work)
+    spec = importlib.util.spec_from_file_location("gmail_delete_cases", ROOT / "tests/gmail-delete-cases.py")
     cases = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cases)
     cases.run(sys.modules[__name__], work)
@@ -1620,8 +1628,11 @@ def reads(srv):
     check("search: RFC 2047 subject decoded", subj.get(2) == "Café menu", subj)
     frm = {m["uid"]: m["from"] for m in r.get("messages", [])}
     check("search: encoded display name decoded", frm.get(2, "").startswith("José"), frm.get(2))
-    c, r = tool(srv, "mail_search", {"from": "alice"})
-    check("search: from filter", c == 0 and [m["uid"] for m in r["messages"]] == [1], r)
+    c, r = tool(srv, "mail_search", {"from": "ALICE@Example"})
+    check("search: a partial, mixed-case from value finds the message", c == 0 and [m["uid"] for m in r["messages"]] == [1], r)
+    check("search: the from value is sent as given",
+          any(' UID SEARCH ' in line and 'FROM "ALICE@Example"' in line for line in srv.log_lines()),
+          [line for line in srv.log_lines() if ' UID SEARCH ' in line])
     c, r = tool(srv, "mail_search", {"unseen": True, "limit": 2})
     check("search: unseen + limit", c == 0 and r.get("total") == 5 and [m["uid"] for m in r["messages"]] == [6, 4], r)
     c, r = tool(srv, "mail_search", {"subject": "café"})
@@ -1706,7 +1717,8 @@ def mutations(srv):
     check("trash moves to the special-use Trash", c == 0 and r.get("destination") == "Deleted Messages" and 1 not in msgs(s, "INBOX")
           and len(s["mailboxes"]["Deleted Messages"]["messages"]) == 1, r)
     c, r = tool(srv, "mail_trash", {"folder": "Deleted Messages", "uids": [1], "uidvalidity": 1700000003})
-    check("trash refuses to act inside Trash", c != 0 and "mail_delete" in r.get("error", ""), r)
+    check("trash refuses to act inside Trash, says so and changes nothing", c != 0 and "already in the trash folder" in r.get("error", "")
+          and len(srv.st()["mailboxes"]["Deleted Messages"]["messages"]) == 1, r)
 
     before = srv.st()
     c, r = tool(srv, "mail_move", {"uids": [5], "destination": "Archive", "uidvalidity": 42})
@@ -5640,7 +5652,7 @@ def jev(work):
     jev_image_kinds(work, key_file)
     jev_image_metadata(work, key_file)
     leaked = [o for o in outputs if TYPESAFE_KEY in o]
-    check("jev: the TypeSafe key never appears in any tool output", not leaked, leaked[:1])
+    check("jev: the TypeSafe key never appears in any tool output", not leaked, f"{len(leaked)} matching outputs")
 
 
 def jev_switches(srv, work, key_file):
@@ -7193,6 +7205,7 @@ def gates(work):
     finally:
         srv.stop()
     gates_digest_encoding(work)
+    gates_encoded_word_charsets(work)
     gates_delete(work, key_file)
 
 
@@ -7210,26 +7223,46 @@ def gates_digest_encoding(work):
         ("encoded secret", "", "base64", base64.b64encode(
             f"Subject: inner\r\n\r\n{GATE_PASSWORD}".encode()).decode(), "found"),
     ]
+    forward_scans(work, "digest scan", [
+        (title, f"Subject: digest wrapper\r\nContent-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n"
+                f"{ct}Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--d--\r\n", expected)
+        for title, ct, encoding, body, expected in cases])
+
+
+def gates_encoded_word_charsets(work):
+    """An original whose subject is one encoded word holding the fake token:
+    the scan reads the word's bytes whatever its charset label, and a label
+    MailBend does not decode makes it incomplete."""
+    def subject(charset, data):
+        return f"Subject: =?{charset}?B?{base64.b64encode(data).decode('ascii')}?=\r\n\r\nsee the subject\r\n"
+    forward_scans(work, "encoded-word scan", [
+        *((charset, subject(charset, GATE_TOKEN.encode()), "found") for charset in
+          ("utf-8", "koi8-r", "shift_jis", "utf-7", "iso-2022-kr", "hz-gb-2312", "utf-16")),
+        ("utf-16le", subject("utf-16le", GATE_TOKEN.encode("utf-16-le")), "incomplete"),
+    ])
+
+
+def forward_scans(work, label, originals):
+    """Forwards each original, a (title, raw message, expected scan) triple,
+    with the local scan on: a clean one goes, and any other blocks before
+    SMTP or APPEND."""
     fixture = copy.deepcopy(FIX)
     inbox = fixture["mailboxes"]["INBOX"]
-    inbox["messages"] = [gate_message(uid,
-        f"Subject: digest wrapper\r\nContent-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n"
-        f"{ct}Content-Transfer-Encoding: {encoding}\r\n\r\n{body}\r\n--d--\r\n")
-        for uid, (_, ct, encoding, body, _) in enumerate(cases, 1)]
-    inbox["uidnext"] = len(cases) + 1
+    inbox["messages"] = [gate_message(uid, raw) for uid, (_, raw, _) in enumerate(originals, 1)]
+    inbox["uidnext"] = len(originals) + 1
     srv = Server(work, fixture=fixture)
     try:
-        for uid, (title, _, _, _, expected) in enumerate(cases, 1):
+        for uid, (title, _, expected) in enumerate(originals, 1):
             before, start, sent = srv.st(), len(srv.log_records()), sent_count(srv)
             code, result = tool(srv, "mail_forward", {"uid": uid, "uidvalidity": inbox["uidvalidity"],
                 "to": FRIEND}, MAILBEND_SECRET_SCAN="1", MAILBEND_SAVE_SENT="1")
             logged = srv.log_records()[start:]
             if expected == "clean":
-                check("digest scan: " + title + " forwards after a clean scan",
+                check(f"{label}: {title} forwards after a clean scan",
                       code == 0 and result.get("secret_scan") == "clean" and sent_count(srv) == sent + 1,
                       result)
             else:
-                check("digest scan: " + title + " blocks before SMTP or APPEND",
+                check(f"{label}: {title} blocks before SMTP or APPEND",
                       code != 0 and result.get("secret_scan") == expected
                       and result.get("smtp_outcome") == "not_sent" and srv.st() == before
                       and not any(x["proto"] == "smtp" or " APPEND " in x["line"] for x in logged), result)

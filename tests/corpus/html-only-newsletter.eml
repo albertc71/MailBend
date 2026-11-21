@@ -1,0 +1,41 @@
+From: Synthetic Newsletter <news@example.invalid>
+To: reader@example.invalid
+Subject: html-only-newsletter
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <html-only-newsletter@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Synthetic title</title>
+<style type="text/css">
+body { font-family: Arial, sans-serif; color: #333333; }
+.button > a { padding: 12px; }
+</style>
+<!--[if mso]>
+<style>table { border-collapse: collapse; }</style>
+<![endif]-->
+<script>window.trackOpen("synthetic");</script>
+</head>
+<body>
+<!-- Synthetic preheader comment -->
+<table role="presentation" width="100%"><tr><td>
+<h1>Weekly update</h1>
+<p>Hello reader,<br>
+here is this week&#8217;s news &mdash; caf&#233; &amp; more.</p>
+<ul>
+<li>First item</li>
+<li>Second item &lt;new&gt;</li>
+</ul>
+<p>Price: <b>&euro;5</b>&nbsp;each.</p>
+</td></tr>
+<tr><td>Name</td><td>Value</td></tr>
+</table>
+<div>Unsubscribe at any time.</div>
+<p>&copy; 2026 Example</p>
+</body>
+</html>

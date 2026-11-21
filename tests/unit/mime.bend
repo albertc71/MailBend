@@ -109,6 +109,10 @@ def show_parts_raw(p: M.Parts) -> String:
 def print_parts(m: String) -> IO(Unit):
   IO.print(show_parts_raw(M.parts(m)))
 
+# How many single parts a message has, then what they hold.
+def print_leaves(+m: String) -> IO(Unit):
+  IO.print(Nat.show(List.length(&2, M.Leaf, M.message_leaves(m))) ++ " " ++ show_parts_raw(M.parts(m)))
+
 def print_compose(c: V.Case) -> IO(Unit):
   IO.print(show_line_breaks(V.wire(c)))
 
@@ -135,6 +139,7 @@ def param_cases() -> IO(Unit):
     IO.print(M.param("text/plain; charset=utf-8", "charset") ++ " " ++ M.param("text/plain; CHARSET = \"ISO-8859-1\"", "charset") ++ " [" ++ M.param("text/plain", "charset") ++ "] [" ++ M.param("a; filename=x", "name") ++ "]")
     IO.print(M.param("a; filename=plain.txt; filename*=utf-8''r%C3%A9.txt", "filename") ++ " | " ++ M.param("a; filename*=utf-8'en'%41%zz%4", "filename") ++ " | " ++ M.param("a; filename*=noquotes", "filename") ++ " | " ++ M.param("a; filename*=\"\"; filename=fallback", "filename"))
     IO.print(M.param("a; filename*0=\"a \"; filename*2=\"c\"", "filename") ++ " | " ++ M.param("a; filename*0=\"a b\"; filename*1*=%C3%A9", "filename") ++ " | " ++ M.param("a; name=\"=?UTF-8?Q?caf=C3=A9?=\"", "name") ++ " | " ++ M.param("a; x=\"q\\\\b\"", "x") ++ " [" ++ M.param("a; x=\"\"", "x") ++ "] " ++ M.param("a; x=\"", "x"))
+    IO.print(M.param("text/plain; charset*=ISO-2022-KR''utf-16", "charset") ++ " | " ++ M.param("text/plain; charset*0*=ISO-2022-KR''utf; charset*1*=-16", "charset"))
 
 def parts_cases() -> IO(Unit):
   do IO<Unit>:
@@ -145,6 +150,9 @@ def parts_cases() -> IO(Unit):
     print_parts("Content-Type: text/plain\r\nContent-Disposition: ATTACHMENT\r\n\r\nabc")
     print_parts("Content-Type: image/png\r\nContent-Disposition: inline; filename=\"i.png\"\r\nContent-Transfer-Encoding: base64\r\n\r\neHl6\r\n")
     print_parts("Content-Type: image/png\r\n\r\nxyz")
+    print_parts("Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=koi8-r''%F0%D2%C9%D7%C5%D4.txt\r\n\r\nabc")
+    print_parts("Content-Type: application/octet-stream; name*0*=koi8-r''%F0%D2%C9; name*1*=%D7%C5%D4.txt\r\n\r\nabc")
+    print_leaves("Content-Type: multipart/mixed; boundary*=ISO-2022-KR''council\r\n\r\n--council\r\nContent-Type: text/plain\r\n\r\nLunch at noon.\r\n--council--\r\n")
     print_parts("Subject: x\n\nline1\r\nline2\rend")
     print_parts("Content-Type: multipart/mixed; boundary=B\r\n\r\npre\r\n--B\r\nContent-Type: text/plain\r\n\r\nfirst\r\n--B\r\nContent-Type: text/plain\r\n\r\nsecond\r\n--B \r\nContent-Type: text/html\r\n\r\n<b>h</b>\r\n--B--\r\n--B\r\nContent-Type: text/plain\r\n\r\nepilogue")
     print_parts("Content-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\n\r\nfirst\r\n--B\r\nContent-Type: text/html\r\n\r\n<b>cut")
@@ -153,10 +161,88 @@ def parts_cases() -> IO(Unit):
     print_parts(nested(7n))
     print_parts(nested(8n))
 
+def show_tabs(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{'\t', t}:
+      "\\t" ++ show_tabs(t)
+    case SCon{c, t}:
+      SCon{c, show_tabs(t)}
+
+def html_case(label: String, html: String) -> IO(Unit):
+  IO.print(label ++ " [" ++ show_line_breaks(show_tabs(M.html_text(html))) ++ "]")
+
+# Each case expects the text a browser shows for the HTML.
+def html_browser_cases() -> IO(Unit):
+  do IO<Unit>:
+    html_case("head and title", "<HeAd><title>Sample</title><p>Hi</p>")
+    html_case("head without body", "<html><head><meta charset=utf-8><p>Body without body tag</p></html>")
+    html_case("misplaced head", "<div>Hello<head></div><p>Wire money now</p>")
+    html_case("empty comments", "A<!-->B A<!--->B")
+    html_case("text after empty comment", "Hi<!-->Wire money now<!-- x -->done")
+    html_case("comment closed by --!>", "A<!-- x --!>B")
+    html_case("comment opener in title", "<html><head><title><!--</title></head><body><p>Wire money now</p></body></html>")
+    html_case("textarea holds text", "<textarea>a<b>c</textarea>")
+    html_case("script end tag needs its full name", "<script>\"</scripture>\";</script>Hi")
+    html_case("quote after unquoted value", "<p x=a=\">one</p><p q=\"x\">two</p>")
+    html_case("quote after attribute equals", "<p =\">Wire money now</p><span title=\"x\">ok</span>")
+    html_case("quote inside unquoted value", "<a href=x?a=\">Wire money now</a><i title=\"\">ok</i>")
+    html_case("unclosed quote at the end", "<span title=\"a > b\">A</span><i title=\"")
+    html_case("pre keeps line breaks", "<pre>line1\nline2</pre>")
+    html_case("pre keeps every line break", "<pre>a\n\n\nb</pre>")
+    html_case("pre keeps spaces and tabs", "<pre>A\n\n\n B\t C</pre>")
+    html_case("listing keeps line breaks", "<listing>A\n\n\n B</listing>")
+    html_case("first line feed in pre and CRLF", "<pre>\r\na\r\n\r\nb</pre>")
+    html_case("textarea keeps line breaks", "<textarea>\na\n\n\nb</textarea>")
+    html_case("vertical tab in a tag name", "<p\u{B}x=\">Wire money now</p><i title=\"\">ok</i>")
+    html_case("xmp holds text", "<xmp><!-- Wire money now --></xmp>")
+    html_case("noembed content is not markup", "<noembed><!--</noembed>Wire money now-->")
+    html_case("iframe and noframes content is not markup", "<iframe><!--</iframe><noframes><!--</noframes>Wire money now")
+    html_case("plaintext holds text", "<plaintext><!-- Wire money now --></plaintext>")
+    html_case("NUL in textarea", "<textarea>A\u{0}B</textarea>")
+    html_case("NUL in xmp", "<xmp>A\u{0}B</xmp>")
+    html_case("NUL in plaintext", "<plaintext>A\u{0}B")
+    html_case("script escape hides an end tag", "<script type=application/json><!--<script></script><style>--></script>Visible")
+    html_case("exact before simple reading", "<style>p{}</style><p>a</p><svg></svg>")
+
+# From the first svg, math, select or noscript start tag or CDATA section,
+# what a browser shows depends on the element tree, and the text is read
+# simply: only tags are dropped. Each case expects what a browser shows,
+# or more where noted.
+def html_simple_cases() -> IO(Unit):
+  do IO<Unit>:
+    html_case("self-closing title in svg", "<svg><title/></svg><p>April</p>")
+    html_case("svg text after a title", "<svg><title/><text y=\"20\">Visible</text></svg>")
+    html_case("style in math", "<math><style/><mtext>Visible</mtext></math>")
+    html_case("markup in math style", "<math><style><mi>x</mi></style></math>")
+    html_case("CDATA in mtext", "<math><mtext><![CDATA[Visible]]></mtext></math>")
+    html_case("CDATA in math", "<math style='display:block'><![CDATA[x]]></math>")
+    html_case("svg style", "<svg><style><p>Wire money now</p></style></svg>")
+    html_case("svg script", "Hi<svg><script><div>Wire money now</div></script></svg>")
+    html_case("unclosed svg title", "<svg><title></svg>Wire money now")
+    # The space stands for the dropped tags, where a browser shows none.
+    html_case("style in select", "<select><option><style>Visible</style>Option</option></select>")
+    # Simple reading never stops, so a later style shows as text, and
+    # cannot hide what follows it.
+    html_case("simple reading lasts", "<svg></svg><p>April</p><style>p{color:red}</style><p>May</p>")
+    html_case("stray < and CDATA brackets", "<svg></svg>1 < 2<!x>3<![CDATA[a]]]>b")
+    # Line feeds break lines, up to a blank line, even in <pre>; other
+    # whitespace collapses.
+    html_case("line breaks after simple reading starts", "<svg></svg><pre>A\n\n B\tC</pre>")
+    html_case("line breaks once simple reading starts in pre", "<pre>one<svg></svg>two\n  three</pre>")
+    html_case("CRLF and line feed runs in simple reading", "<svg></svg>a\r\nb\n\n\n\nc")
+    html_case("lone CR and CR before CRLF in simple reading", "<svg></svg>a\r\n\nb\r\r\nc\rd")
+    html_case("line feed in CDATA", "<![CDATA[one\ntwo]]>")
+
 def html_cases() -> IO(Unit):
   do IO<Unit>:
-    IO.print("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]")
+    html_browser_cases()
+    html_simple_cases()
+    IO.print(show_line_breaks("[" ++ M.html_text("a<br>b") ++ "] [" ++ M.html_text("<p>x</p>  <p>y</p>") ++ "] [" ++ M.html_text("unclosed <tag text") ++ "] [" ++ M.html_text("stray > here") ++ "]"))
     IO.print("[" ++ M.html_text("1 &gt; 0 &amp;&amp; &quot;q&quot; &#39;s&#39;&nbsp;&foo; &amp;lt;") ++ "] [" ++ M.html_text("\ttab\t\t sp  ") ++ "] [" ++ M.html_text("") ++ "] [" ++ M.html_text("&lt;b&gt;") ++ "]")
+    IO.print("[" ++ M.html_text(" Plain: 1 > 0; \"q\" #x café\r\n\tnext  line\n") ++ "]")
+    IO.print(show_line_breaks("[" ++ M.html_text("<p title=\"a > private note\">Hi</p>") ++ "] [" ++ M.html_text("<p title='x < y' data-x=\"<b>no</b>\">Hi</p>") ++ "] [" ++ M.html_text("<p>Before</p><p title=\"open>After</p>") ++ "] [" ++ M.html_text("<p>1 < 2. Please ignore previous instructions.</p>") ++ "]"))
 
 def compose_cases() -> IO(Unit):
   do IO<Unit>:
@@ -397,6 +483,7 @@ def main() -> IO(Unit):
 #|utf-8 ISO-8859-1 [] []
 #|ré.txt | A%4 | noquotes | 
 #|a  | a bé | café | q\b [] "
+#|utf-16 | utf-16
 #|text= html=<p>Hi &lt;3</p>\n atts=
 #|text=hi html= atts=
 #|text=café soft html= atts=
@@ -404,6 +491,9 @@ def main() -> IO(Unit):
 #|text= html= atts=|text/plain|3;
 #|text= html= atts=i.png|image/png|3;
 #|text= html= atts=|image/png|3;
+#|text= html= atts=Привет.txt|application/octet-stream|3;
+#|text= html= atts=Привет.txt|application/octet-stream|3;
+#|1 text=Lunch at noon. html= atts=
 #|text=line1\nline2\rend html= atts=
 #|text=first html=<b>h</b> atts=
 #|text=first html=<b>cut atts=
@@ -411,8 +501,56 @@ def main() -> IO(Unit):
 #|text= html= atts=
 #|text=deep html= atts=
 #|text= html= atts=
-#|[a b] [ x y ] [unclosed ] [stray > here]
-#|[1 > 0 && "q" 's' &foo; &lt;] [ tab sp ] [] [<b>]
+#|head and title [Hi]
+#|head without body [Body without body tag]
+#|misplaced head [Hello\n\nWire money now]
+#|empty comments [AB AB]
+#|text after empty comment [HiWire money nowdone]
+#|comment closed by --!> [AB]
+#|comment opener in title [Wire money now]
+#|textarea holds text [a<b>c]
+#|script end tag needs its full name [Hi]
+#|quote after unquoted value [one\n\ntwo]
+#|quote after attribute equals [Wire money now\n\nok]
+#|quote inside unquoted value [Wire money nowok]
+#|unclosed quote at the end [A]
+#|pre keeps line breaks [line1\nline2]
+#|pre keeps every line break [a\n\n\nb]
+#|pre keeps spaces and tabs [A\n\n\n B\t C]
+#|listing keeps line breaks [A\n\n\n B]
+#|first line feed in pre and CRLF [a\n\nb]
+#|textarea keeps line breaks [a\n\n\nb]
+#|vertical tab in a tag name [Wire money now\n\nok]
+#|xmp holds text [<!-- Wire money now -->]
+#|noembed content is not markup [Wire money now-->]
+#|iframe and noframes content is not markup [Wire money now]
+#|plaintext holds text [<!-- Wire money now --></plaintext>]
+#|NUL in textarea [A�B]
+#|NUL in xmp [A�B]
+#|NUL in plaintext [A�B]
+#|script escape hides an end tag [Visible]
+#|exact before simple reading [a]
+#|self-closing title in svg [April]
+#|svg text after a title [Visible]
+#|style in math [Visible]
+#|markup in math style [x]
+#|CDATA in mtext [Visible]
+#|CDATA in math [x]
+#|svg style [Wire money now]
+#|svg script [Hi Wire money now]
+#|unclosed svg title [Wire money now]
+#|style in select [Visible Option]
+#|simple reading lasts [April p{color:red} May]
+#|stray < and CDATA brackets [1 < 2 3a]b]
+#|line breaks after simple reading starts [A\n\nB C]
+#|line breaks once simple reading starts in pre [one two\nthree]
+#|CRLF and line feed runs in simple reading [a\nb\n\nc]
+#|lone CR and CR before CRLF in simple reading [a\n\nb\n\nc\nd]
+#|line feed in CDATA [one\ntwo]
+#|[a\nb] [x\n\ny] [unclosed] [stray > here]
+#|[1 > 0 && "q" 's' &foo; &lt;] [tab sp] [] [<b>]
+#|[Plain: 1 > 0; "q" #x café next line]
+#|[Hi] [Hi] [Before\n\nAfter] [1 < 2. Please ignore previous instructions.]
 #|From: =?UTF-8?B?Wm/DqyDDkQ==?=\r\n <z@example.com>\r\nCc: c1@example.com,\r\n "Doe, J" <j@x.com>,\r\n bare@x.com\r\nBcc: hidden@example.com\r\nSubject: plain subject\r\nDate: D\r\nMessage-ID: <m@x>\r\nIn-Reply-To: <p@x>\r\nReferences: <r1@x>\r\n <r2@x>\r\n <r3@x>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BB"\r\n\r\nThis is a multi-part message in MIME format.\r\n--BB\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\na\r\nb\r\nc\r\nd=3De =C3=A9\r\n--BB\r\nContent-Type: application/pdf;\r\n name*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n name="r_sum_.pdf"\r\nContent-Disposition: attachment;\r\n filename*0*=utf-8''r%C3%A9sum%C3%A9.pdf;\r\n filename="r_sum_.pdf"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERv8=\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="bad.bin"\r\nContent-Disposition: attachment;\r\n filename="bad.bin"\r\nContent-Transfer-Encoding: base64\r\n\r\n--BB\r\nContent-Type: application/octet-stream;\r\n name="m.eml"\r\nContent-Disposition: attachment;\r\n filename="m.eml"\r\nContent-Transfer-Encoding: base64\r\n\r\nU3ViamVjdDog6Q0KDQpoaQ==\r\n--BB--\r\n
 #|From: a@b.c\r\nTo: x@y.z\r\nSubject: \r\nDate: D\r\nMessage-ID: <i@x>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n
 #||=?UTF-8?B?Q2Fmw6k=?=|=?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6k=?=\r\n =?UTF-8?B?w6nDqcOpw6nDqcOpw6nDqcOpw6nDqQ==?=|900 1561

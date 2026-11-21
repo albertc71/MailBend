@@ -285,13 +285,13 @@ whole = dict(folder="INBOX", uid=1, uidvalidity=7, internal_date="", **{"from": 
 with_facts = {**whole, "facts": [meeting_fact],
               "facts_scan": {"scope": "returned_text", "limited": False}}
 check("mail_get", whole)
-check("mail_get", with_facts)
+check("mail_get", with_facts, False)
 # attached_message_headers adds a sanitized summary only to attached messages.
 summary = {"from": "a <a@example.invalid>", "to": "", "subject": "inner", "date": "", "message_id": ""}
 attached_entry = {"filename": "", "content_type": "message/rfc822", "size": 9, "message": summary}
 check("mail_get", {**whole, "attachments": [attached_entry]})
 check("mail_get", {**whole, "attachments": [{**attached_entry, "content_type": "message/global"}]})
-check("mail_get", {**with_facts, "attachments": [attached_entry]})
+check("mail_get", {**with_facts, "attachments": [attached_entry]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "content_type": "application/pdf"}]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {**summary, "cc": ""}}]}, False)
 check("mail_get", {**whole, "attachments": [{**attached_entry, "message": {
@@ -307,7 +307,7 @@ for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
                  "reasons": []}
     jev = {**plain_jev, "reasons": [summary_reason], "coverage": coverage}
     check("mail_get", {**summarized, "jev": jev})
-    check("mail_get", {**with_facts, "attachments": [attached_entry], "jev": jev})
+    check("mail_get", {**with_facts, "attachments": [attached_entry], "jev": jev}, False)
     check("mail_get", {**summarized, "jev": plain_jev}, False)
     check("mail_get", {**summarized, "jev": {**plain_jev, "coverage": coverage}}, False)
     check("mail_get", {**summarized, "jev": {**jev, "coverage": "complete"}}, False)
@@ -315,12 +315,42 @@ for mode, coverage in [("body", "partial"), ("headers", "headers_only")]:
         "Nested message text was not included in the Jev request."]}}, False)
     check("mail_get", {**whole, "jev": plain_jev})
     check("mail_get", {**whole, "jev": jev}, False)
+# In body mode a read says when Jev's text was not complete, or that the
+# request did not include the raw HTML it returns; a delete can say only the
+# first. Only a checked annotation gives these reasons.
+text_reason = "Not all of the message text was included in the Jev request."
+replaced_reason = ("Message text or HTML holds a replacement character (U+FFFD), so MailBend cannot confirm "
+                   "that every byte decoded.")
+markup_reason = ("MailBend converts HTML to text before applying Jev's request limits; the request did not "
+                 "include the raw HTML.")
+for reasons in ([text_reason], [markup_reason], [replaced_reason, markup_reason],
+                [text_reason, markup_reason, summary_reason]):
+    jev = {"status": "checked", "model": "fixture", "content": "body", "derived_from_untrusted_content": True,
+           "decision": "proceeded", "signals": {}, "reasons": reasons, "coverage": "partial"}
+    unchecked = {**jev, "status": "unchecked"}
+    check("mail_get", {**whole, "jev": jev})
+    check("mail_get", {**selected, "jev": jev})
+    check("mail_get", {**whole, "jev": {**jev, "content": "headers"}}, False)
+    check("mail_get", {**whole, "jev": {**jev, "coverage": "headers_only"}}, False)
+    check("mail_get", {**whole, "jev": {**jev, "reasons": []}}, False)
+    for result in (whole, selected):
+        check("mail_get", {**result, "jev": unchecked}, False)
+        check("mail_get", {**result, "jev": {k: v for k, v in unchecked.items() if k != "coverage"}}, False)
+    check("mail_get", {**summarized, "jev": {**jev, "reasons": reasons + [summary_reason]}})
+    check("mail_get", {**summarized, "jev": {**unchecked, "reasons": reasons + [summary_reason]}}, False)
+    check("mail_delete", {"ok": False, "error": "blocked", "jev": jev},
+          markup_reason not in reasons and (text_reason in reasons or replaced_reason in reasons))
+    check("mail_delete", {"ok": False, "error": "blocked", "jev": unchecked}, False)
+    check("mail_search", {**search, "messages": [{**message, "jev": jev}]}, False)
+check("mail_get", {**whole, "jev": {**jev, "reasons": [summary_reason]}}, False)
 for invalid in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x85", "\u061c", "\u200e",
                 "\u2028", "\u202e", "\u2066"):
     for key in summary:
         check("mail_get", {**whole, "attachments": [{**attached_entry,
             "message": {**summary, key: "safe" + invalid}}]}, False)
 check("mail_get", {**whole, "facts": []}, False)
+check("mail_get", {**whole, "facts_scan": {"scope": "returned_text", "limited": False}}, False)
+check("mail_get", {**whole, "facts": [], "facts_scan": {"scope": "returned_text", "limited": False}}, False)
 check("mail_get", {**with_facts, "facts": [meeting_fact] * 17}, False)
 for change in ({"value": literal_link + "\n"}, {"value": literal_link + "?x"},
                {"source": "html"}, {"untrusted": False}, {"start": -1}, {"end": 65537},

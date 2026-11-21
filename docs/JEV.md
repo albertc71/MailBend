@@ -56,7 +56,17 @@ Requests go only to `https://api.typesafe.ai/v1/systemone`, a constant in
   Subject, Date, List-Id, List-Unsubscribe, Auto-Submitted and Precedence
   headers, and its attachment names.
 - In `body` mode, `mail_get`, `mail_classify`, `mail_triage` and
-  `mail_delete` also send up to 16 KB of each message's plain text.
+  `mail_delete` also send up to 16 KB of each message's text: its whole
+  text/plain part, quoted lines and lines after a `-- ` signature delimiter
+  included, then the text MailBend converts its HTML part to. This covers
+  the `text` that `mail_get` returns. Jev never receives the raw HTML that
+  `mail_get` returns in `html`, and this document makes no promise about
+  which parts of the markup the conversion leaves out. A message whose text
+  is longer, or that had a second text or HTML part left out, counts as
+  only partly seen. One whose text or HTML part, markup included, holds a
+  replacement character (U+FFFD) is treated the same way, because MailBend
+  cannot confirm that every byte decoded; see
+  [what `checked` covers](#what-checked-covers).
 - With `MAILBEND_TYPESAFE_IMAGES` on, `mail_classify` also sends PNG and JPEG
   parts that are within TypeSafe's pixel rules and MailBend's own cap (at
   most four images and 1,572,864 decoded bytes in one request). Other tools
@@ -133,6 +143,60 @@ names the pinned model as the one that answered; a reply from any other
 model, or one that does not say, counts as no answer, as when TypeSafe
 fails.
 
+### What `checked` covers
+
+`status: "checked"` means the result rests on Jev's answers about what it
+was sent. A `mail_delete` that Jev vetoes is checked even when the reply
+gave no answer for another message. It is never an approval. In body mode, a checked `mail_get` read, a selected part
+included, and a checked `mail_delete` result add `coverage: "partial"`, with
+a reason for each of these cases:
+
+- "Not all of the message text was included in the Jev request." Jev's
+  text stopped at the 16 KB cap or at the request budget, or left out a
+  second text or HTML part, parts nested too deep, or the rest of a cut
+  fetch. A checked selected part always gives this reason: Jev was sent
+  only that part's text, or a placeholder for a part that is not text.
+- "Message text or HTML holds a replacement character (U+FFFD), so
+  MailBend cannot confirm that every byte decoded." Nothing was left out,
+  but a text or HTML part, markup included, holds U+FFFD, or the text read
+  from the HTML does. MailBend writes U+FFFD for a byte that does not
+  decode and, while it still reads the HTML as a browser's tokenizer does,
+  for a NUL in the content of an element such as `<textarea>`. It cannot
+  tell either from a U+FFFD the message itself contains. A message whose
+  text was also cut gives only the first reason, and so does a delete when
+  the text of any message sent to Jev was cut.
+- "MailBend converts HTML to text before applying Jev's request limits;
+  the request did not include the raw HTML." The read returns raw HTML: the
+  `html` of a whole message, or the `content` of a selected `text/html`
+  part, under the `full` or `html` projection. The reason says nothing about
+  how much of the converted text reached Jev: a long text/plain part can
+  fill the request before the HTML's text begins, which the first reason
+  reports. The `text` and `metadata` projections return no HTML and do
+  not give it. The reason is set before a `max_response_bytes` budget
+  shortens the result, so it stays when the budget leaves the HTML empty.
+  `mail_delete` returns no message text and never gives it.
+
+These reasons describe a request Jev answered, so only a `checked` result
+gives them. An `unchecked` result gives why it is unchecked instead: for
+example, folder discovery failed before TypeSafe was contacted, or
+TypeSafe gave no usable answer. A message Jev did not answer about is
+`unchecked` with its own reason in the same way. A `mail_delete` result
+counts the text of every message sent to Jev, including one the reply
+gave no answer for, and never a message that was not sent.
+
+Reasons add up, together with the nested-message and attached-message
+reasons above, and `coverage` appears once. A body-mode `mail_get` whose
+`status` is `checked` and that has no `coverage` returns no message text
+that Jev was not sent. This covers the message text only: Jev sees the
+header facts listed under [what leaves the machine](#what-leaves-the-machine),
+while `mail_get` also returns Reply-To, Message-ID, In-Reply-To and
+References. In headers mode, `content: "headers"` already says that Jev was
+sent no text, and none of these reasons is given. `mail_classify` and
+`mail_triage` report either of the first two cases as `body_truncated`
+instead, and sends report a text cut at the cap that way. There, an HTML
+part read as converted text still counts as fully seen, so the markup alone
+does not keep a message out of review.
+
 The pinned model is `jev-1.14.0`, never `jev-latest`. The 0.30 and 0.70 cuts
 are TypeSafe's suggested starting points, not measured on MailBend mail for
 any model. The request budgets are unchanged because the price and the
@@ -201,7 +265,24 @@ OpenAI, npm) and password lines (`Password: ...` with a digit, also when
 quoted with `>`). It reads the header fields, the body, attachment names,
 every text part of the attachments and of a forwarded original, the headers
 of attached or forwarded messages, and, best effort, every other part's
-bytes; compressed formats are not inspected.
+bytes; compressed data is read as it is and is not unpacked. Its patterns
+are ASCII, so it reads a text part as its bytes. In the header of an
+attached or forwarded message it reads an encoded word under a label that
+WHATWG gives to
+windows-1252, such as `iso-8859-1` or `us-ascii`, in Windows-1252, and a
+word under any other label as UTF-8. An encoded word in UTF-16 or in a
+WHATWG replacement encoding such as ISO-2022-KR or HZ-GB-2312, which
+MailBend replaces whole, is text it cannot read. The scan also treats a text
+part as unreadable if its charset label begins with `utf-16`, `utf-32`,
+`utf-7` or `ucs-`, ignoring case, or if it holds a NUL character. In any
+other charset the scan checks the bytes for its patterns, and text that
+only displays lossily, such as Shift_JIS or ISO-2022-JP, does not make it
+incomplete.
+
+The scan reads a reply's body as it is sent, with the original quoted as
+MailBend shows it. A quoted part in UTF-16 or in a WHATWG replacement
+encoding shows as one U+FFFD, unless it is empty, and that character alone
+does not block the reply.
 
 An attached message, including an implicit `multipart/digest` child, must use
 a supported Content-Transfer-Encoding before the scan opens it. An unsupported
@@ -210,8 +291,11 @@ wrapper do not describe its enclosed parts; each inner text part keeps its own
 charset check.
 
 A secret found blocks the send, and so does text the scan cannot read in
-full (its limits are in the
-[enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced)).
+full. The scan checks up to 1,048,576 characters of text. It then checks up
+to 1,048,576 bytes shared by the parts it reads as bytes, in the order it
+reads them; bytes past that are not checked and do not block. Its other
+limits are in the
+[enforcement table](ARCHITECTURE.md#where-each-safety-rule-is-enforced).
 A block names the part by position (`attachment 1 > text/plain`), never by
 file name, and TypeSafe is not asked. The scan catches mistakes; it is not a
 boundary against an agent set on leaking.

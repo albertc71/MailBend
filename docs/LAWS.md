@@ -14,289 +14,286 @@ the mail provider, or the agent. See [proof limits](../README.md#what-the-proofs
 
 ## Tool classes
 
-- [`read_is_read_only`](../LAWS.bend#L49). mail_get is read-only
-- [`search_is_read_only`](../LAWS.bend#L53). mail_search is read-only
-- [`delete_is_not_read_only`](../LAWS.bend#L57). mail_delete is not read-only
-- [`download_is_not_read_only`](../LAWS.bend#L61). mail_get_attachment is not read-only: it saves a file
-- [`trash_is_not_destructive`](../LAWS.bend#L65). mail_trash is not destructive
-- [`read_only_tools_are_exactly_twelve`](../LAWS.bend#L69). the read-only tools are exactly these twelve, in this order
-- [`tools_listed_per_config`](../LAWS.bend#L79). the tools each configuration lists: with Jev on, every tool; with it off, all but mail_classify and mail_triage; drafts-only mode hides mail_send; read-only mode lists only the read-only tools, whatever drafts-only says
-- [`from_name_inverts_name`](../LAWS.bend#L117). every operation's tool name resolves back to that operation.
+- [`read_is_read_only`](../LAWS.bend#L47). mail_get is read-only
+- [`search_is_read_only`](../LAWS.bend#L51). mail_search is read-only
+- [`delete_is_not_read_only`](../LAWS.bend#L55). mail_delete is not read-only
+- [`download_is_not_read_only`](../LAWS.bend#L59). mail_get_attachment is not read-only: it saves a file
+- [`trash_is_not_destructive`](../LAWS.bend#L63). mail_trash is not destructive
+- [`read_only_tools_are_exactly_twelve`](../LAWS.bend#L67). the read-only tools are exactly these twelve, in this order
+- [`tools_listed_per_config`](../LAWS.bend#L77). the tools each configuration lists: with Jev on, every tool; with it off, all but mail_classify and mail_triage; drafts-only mode hides mail_send; read-only mode lists only the read-only tools, whatever drafts-only says
+- [`from_name_inverts_name`](../LAWS.bend#L115). every operation's tool name resolves back to that operation.
 
 ## Read plans
 
-- [`plan_quota_writes_nothing`](../LAWS.bend#L128). the quota plan writes nothing
-- [`probe_writes_nothing`](../LAWS.bend#L132). the probe plan writes nothing
-- [`folders_write_nothing`](../LAWS.bend#L136). the folder-list plan writes nothing
-- [`roles_write_nothing`](../LAWS.bend#L140). the special-use role plan writes nothing
-- [`folder_status_effects`](../LAWS.bend#L144). folder status commands and their finite capability gate have no mail effect.
-- [`folder_status_roles_exact`](../LAWS.bend#L153). role discovery checks SPECIAL-USE in the same session before its LIST.
-- [`folder_status_empty_exact`](../LAWS.bend#L158). the empty status scope opens no session and sends no command.
-- [`folder_status_commands_empty`](../LAWS.bend#L164). the status batch has no commands for an empty mailbox list.
-- [`folder_status_commands_exact`](../LAWS.bend#L169). each supplied mailbox adds exactly one STATUS before the remaining mailbox batch.
-- [`folder_status_fast_exact`](../LAWS.bend#L177). a nonempty fast plan has one LIST-STATUS after the exact capability conjunction.
-- [`folder_status_fallback_exact`](../LAWS.bend#L186). the fallback sends CAPABILITY, only the required CONDSTORE gate, then the fixed mailbox batch.
-- [`folder_status_render_exact`](../LAWS.bend#L196). STATUS renders the caller's encoded mailbox and exactly the fixed status items.
-- [`folder_list_status_render_exact`](../LAWS.bend#L203). LIST-STATUS renders only the fixed wildcard and status items.
-- [`folder_status_gate_render_exact`](../LAWS.bend#L209). a capability conjunction consumes no wire tag and retains its exact token order.
-- [`folder_status_writes_nothing`](../LAWS.bend#L215). every overview plan contains only nonwriting commands.
-- [`folder_scan_writes_nothing`](../LAWS.bend#L222). the scan before a folder change writes nothing
-- [`search_writes_nothing`](../LAWS.bend#L226). for every mailbox and keys, the search plan writes nothing
-- [`parts_write_nothing`](../LAWS.bend#L232). metadata discovery and selected section reads never change mail.
-- [`part_writes_nothing`](../LAWS.bend#L237). Fetching a selected MIME part changes no mailbox.
-- [`part_guarded`](../LAWS.bend#L247). a selected read checks the discovered generation before requesting the exact UID and numeric section; it also refetches the metadata.
-- [`image_round_guarded`](../LAWS.bend#L259). a round pins the folder before its exact per-message selected reads.
-- [`image_round_fetch_empty`](../LAWS.bend#L267). An empty selected-read tail adds no message fetch or other command.
-- [`image_round_fetch_exact`](../LAWS.bend#L270). Each selected message fetch uses the supplied UID, original part metadata and exactly its selected section items.
-- [`image_round_section_empty`](../LAWS.bend#L279). An empty selected-range tail adds no MIME section or other fetch item.
-- [`image_round_section_exact`](../LAWS.bend#L282). Each selected image range becomes exactly its supplied MIME section and fetch limit.
-- [`any_writes_after_read`](../LAWS.bend#L292). The concrete EXAMINE-then-SELECT command list is classified as writing, witnessing a write after a read.
-- [`image_round_writes_nothing`](../LAWS.bend#L295). An image round changes no mailbox for every folder, identity and list of selected reads.
-- [`search_page_writes_nothing`](../LAWS.bend#L302). every search page is read-only, including its UIDVALIDITY expectation.
-- [`search_page_examines`](../LAWS.bend#L309). every search page starts by opening the folder read-only.
-- [`search_continuation_pins_identity`](../LAWS.bend#L317). continuation searches pin UIDVALIDITY before searching with the unchanged keys.
-- [`get_writes_nothing`](../LAWS.bend#L326). for every mailbox, UID and size limit, the get plan writes nothing
-- [`get_checked_writes_nothing`](../LAWS.bend#L333). the optional identity guard never makes a whole-message read write.
-- [`get_checked_pins_identity`](../LAWS.bend#L342). a supplied identity is checked after EXAMINE and before the exact UID's full-message PEEK fetch; omitting it preserves the original plan.
-- [`get_checked_without_identity_unchanged`](../LAWS.bend#L352). A whole-message read without supplied UIDVALIDITY is the original read plan.
-- [`headers_write_nothing`](../LAWS.bend#L360). for every mailbox and UIDs, the headers plan writes nothing
-- [`preflight_writes_nothing`](../LAWS.bend#L366). for every mailbox, the preflight before a change writes nothing
-- [`get_new_writes_nothing`](../LAWS.bend#L372). for every mailbox and checkpoint, the get-new plan writes nothing, the largest UID included
-- [`get_new_now_examines_only`](../LAWS.bend#L379). taking a current-end checkpoint only examines the folder, without searching, fetching messages, selecting for writes, or changing mail.
-- [`refresh_plan`](../LAWS.bend#L385). refresh is read-only, pins identity before reading UIDs, and uses only metadata FETCH followed by a caller-bounded UID SEARCH.
-- [`thread_start_writes_nothing`](../LAWS.bend#L396). a thread seed and its folder discovery never change mail.
-- [`thread_start_checked_exact`](../LAWS.bend#L403). a checked thread start guards its exact folder and UID before discovery.
-- [`thread_start_unchecked_exact`](../LAWS.bend#L413). an unchecked thread start fetches its exact seed before discovery.
-- [`thread_plans_write_nothing`](../LAWS.bend#L423). for every folder list, key list and UIDs per folder, the plans that read a thread write nothing
-- [`awaiting_sent_writes_nothing`](../LAWS.bend#L432). awaiting reply Sent selection never writes.
-- [`reread_flags_writes_nothing`](../LAWS.bend#L438). for every mailbox and UIDs, reading their flags again writes nothing
-- [`classify_writes_nothing`](../LAWS.bend#L445). for every mailbox, UIDs, content and size limit, the classify plan writes nothing
-- [`checked_headers_pin_identity`](../LAWS.bend#L454). optional identities preserve legacy plans; supplied identities precede the exact requested header/classification fetch in the same read-only session.
-- [`checked_classify_pin_identity`](../LAWS.bend#L463). A classification read with UIDVALIDITY checks it immediately after EXAMINE.
-- [`checked_reads_without_identity_unchanged`](../LAWS.bend#L473). Header and classification reads without UIDVALIDITY retain their original plans.
-- [`checked_read_expectation`](../LAWS.bend#L483). A known UIDVALIDITY produces its exact expectation; an unknown one produces none.
-- [`checked_read_session_order`](../LAWS.bend#L487). A known identity check immediately follows EXAMINE, before the remaining read commands.
-- [`checked_read_preserves_writes`](../LAWS.bend#L497). inserting read expectations never adds a mailbox write, for any plan.
-- [`checked_read_without_identities_unchanged`](../LAWS.bend#L502). Wrapping a read plan with no known identities preserves every command.
-- [`checked_headers_write_nothing`](../LAWS.bend#L506). Identity-checked header reads change no mailbox.
-- [`checked_classify_writes_nothing`](../LAWS.bend#L512). Identity-checked classification reads change no mailbox.
+- [`plan_quota_writes_nothing`](../LAWS.bend#L126). the quota plan writes nothing
+- [`probe_writes_nothing`](../LAWS.bend#L130). the probe plan writes nothing
+- [`folders_write_nothing`](../LAWS.bend#L134). the folder-list plan writes nothing
+- [`roles_write_nothing`](../LAWS.bend#L138). the special-use role plan writes nothing
+- [`folder_status_effects`](../LAWS.bend#L142). folder status commands and their finite capability gate have no mail effect.
+- [`folder_status_roles_exact`](../LAWS.bend#L151). role discovery checks SPECIAL-USE in the same session before its LIST.
+- [`folder_status_empty_exact`](../LAWS.bend#L156). the empty status scope opens no session and sends no command.
+- [`folder_status_commands_empty`](../LAWS.bend#L162). the status batch has no commands for an empty mailbox list.
+- [`folder_status_commands_exact`](../LAWS.bend#L167). each supplied mailbox adds exactly one STATUS before the remaining mailbox batch.
+- [`folder_status_fast_exact`](../LAWS.bend#L175). a nonempty fast plan has one LIST-STATUS after the exact capability conjunction.
+- [`folder_status_fallback_exact`](../LAWS.bend#L184). the fallback sends CAPABILITY, only the required CONDSTORE gate, then the fixed mailbox batch.
+- [`folder_status_render_exact`](../LAWS.bend#L194). STATUS renders the caller's encoded mailbox and exactly the fixed status items.
+- [`folder_list_status_render_exact`](../LAWS.bend#L201). LIST-STATUS renders only the fixed wildcard and status items.
+- [`folder_status_gate_render_exact`](../LAWS.bend#L207). a capability conjunction consumes no wire tag and retains its exact token order.
+- [`folder_status_writes_nothing`](../LAWS.bend#L213). every overview plan contains only nonwriting commands.
+- [`folder_scan_writes_nothing`](../LAWS.bend#L220). the scan before a folder change writes nothing
+- [`search_writes_nothing`](../LAWS.bend#L224). for every mailbox and keys, the search plan writes nothing
+- [`parts_write_nothing`](../LAWS.bend#L230). metadata discovery and selected section reads never change mail.
+- [`part_writes_nothing`](../LAWS.bend#L235). Fetching a selected MIME part changes no mailbox.
+- [`part_guarded`](../LAWS.bend#L245). a selected read checks the discovered generation before requesting the exact UID and numeric section; it also refetches the metadata.
+- [`image_round_guarded`](../LAWS.bend#L257). a round pins the folder before its exact per-message selected reads.
+- [`image_round_fetch_empty`](../LAWS.bend#L265). An empty selected-read tail adds no message fetch or other command.
+- [`image_round_fetch_exact`](../LAWS.bend#L268). Each selected message fetch uses the supplied UID, original part metadata and exactly its selected section items.
+- [`image_round_section_empty`](../LAWS.bend#L277). An empty selected-range tail adds no MIME section or other fetch item.
+- [`image_round_section_exact`](../LAWS.bend#L280). Each selected image range becomes exactly its supplied MIME section and fetch limit.
+- [`any_writes_after_read`](../LAWS.bend#L290). The concrete EXAMINE-then-SELECT command list is classified as writing, witnessing a write after a read.
+- [`image_round_writes_nothing`](../LAWS.bend#L293). An image round changes no mailbox for every folder, identity and list of selected reads.
+- [`search_page_writes_nothing`](../LAWS.bend#L300). every search page is read-only, including its UIDVALIDITY expectation.
+- [`search_page_examines`](../LAWS.bend#L307). every search page starts by opening the folder read-only.
+- [`search_continuation_pins_identity`](../LAWS.bend#L315). continuation searches pin UIDVALIDITY before searching with the unchanged keys.
+- [`get_writes_nothing`](../LAWS.bend#L324). for every mailbox, UID and size limit, the get plan writes nothing
+- [`get_checked_writes_nothing`](../LAWS.bend#L331). the optional identity guard never makes a whole-message read write.
+- [`get_checked_pins_identity`](../LAWS.bend#L340). a supplied identity is checked after EXAMINE and before the exact UID's full-message PEEK fetch; omitting it preserves the original plan.
+- [`get_checked_without_identity_unchanged`](../LAWS.bend#L350). A whole-message read without supplied UIDVALIDITY is the original read plan.
+- [`headers_write_nothing`](../LAWS.bend#L358). for every mailbox and UIDs, the headers plan writes nothing
+- [`preflight_writes_nothing`](../LAWS.bend#L364). for every mailbox, the preflight before a change writes nothing
+- [`get_new_writes_nothing`](../LAWS.bend#L370). for every mailbox and checkpoint, the get-new plan writes nothing, the largest UID included
+- [`get_new_now_examines_only`](../LAWS.bend#L377). taking a current-end checkpoint only examines the folder, without searching, fetching messages, selecting for writes, or changing mail.
+- [`refresh_plan`](../LAWS.bend#L383). refresh is read-only, pins identity before reading UIDs, and uses only metadata FETCH followed by a caller-bounded UID SEARCH.
+- [`thread_start_writes_nothing`](../LAWS.bend#L394). a thread seed and its folder discovery never change mail.
+- [`thread_start_checked_exact`](../LAWS.bend#L401). a checked thread start guards its exact folder and UID before discovery.
+- [`thread_start_unchecked_exact`](../LAWS.bend#L411). an unchecked thread start fetches its exact seed before discovery.
+- [`thread_plans_write_nothing`](../LAWS.bend#L421). for every folder list, key list and UIDs per folder, the plans that read a thread write nothing
+- [`awaiting_sent_writes_nothing`](../LAWS.bend#L430). awaiting reply Sent selection never writes.
+- [`reread_flags_writes_nothing`](../LAWS.bend#L436). for every mailbox and UIDs, reading their flags again writes nothing
+- [`classify_writes_nothing`](../LAWS.bend#L443). for every mailbox, UIDs, content and size limit, the classify plan writes nothing
+- [`checked_headers_pin_identity`](../LAWS.bend#L452). optional identities preserve legacy plans; supplied identities precede the exact requested header/classification fetch in the same read-only session.
+- [`checked_classify_pin_identity`](../LAWS.bend#L461). A classification read with UIDVALIDITY checks it immediately after EXAMINE.
+- [`checked_reads_without_identity_unchanged`](../LAWS.bend#L471). Header and classification reads without UIDVALIDITY retain their original plans.
+- [`checked_read_expectation`](../LAWS.bend#L481). A known UIDVALIDITY produces its exact expectation; an unknown one produces none.
+- [`checked_read_session_order`](../LAWS.bend#L485). A known identity check immediately follows EXAMINE, before the remaining read commands.
+- [`checked_read_preserves_writes`](../LAWS.bend#L495). inserting read expectations never adds a mailbox write, for any plan.
+- [`checked_read_without_identities_unchanged`](../LAWS.bend#L500). Wrapping a read plan with no known identities preserves every command.
+- [`checked_headers_write_nothing`](../LAWS.bend#L504). Identity-checked header reads change no mailbox.
+- [`checked_classify_writes_nothing`](../LAWS.bend#L510). Identity-checked classification reads change no mailbox.
 
 ## Read rendering
 
-- [`examine_renders_examine`](../LAWS.bend#L527). an EXAMINE command renders as EXAMINE
-- [`search_script_examines`](../LAWS.bend#L532). the search script's first command is EXAMINE
-- [`get_script_examines`](../LAWS.bend#L539). the get script's first command is EXAMINE
-- [`fetch_items_never_set_seen`](../LAWS.bend#L547). every fetch item renders as BODY.PEEK or metadata
-- [`search_headers_render_exactly`](../LAWS.bend#L552). summary headers render only the exact read-only header section.
-- [`full_fetch_renders_exactly`](../LAWS.bend#L559). a full-message read renders exactly its caller's byte bound, with no suffix command.
-- [`search_answered_renders_exactly`](../LAWS.bend#L564). the ANSWERED search key renders exactly its fixed IMAP atom.
-- [`search_unanswered_renders_exactly`](../LAWS.bend#L568). the UNANSWERED search key renders exactly its fixed IMAP atom.
-- [`search_draft_renders_exactly`](../LAWS.bend#L572). the DRAFT search key renders exactly its fixed IMAP atom.
-- [`search_undraft_renders_exactly`](../LAWS.bend#L576). the UNDRAFT search key renders exactly its fixed IMAP atom.
+- [`examine_renders_examine`](../LAWS.bend#L525). an EXAMINE command renders as EXAMINE
+- [`search_script_examines`](../LAWS.bend#L530). the search script's first command is EXAMINE
+- [`get_script_examines`](../LAWS.bend#L537). the get script's first command is EXAMINE
+- [`fetch_items_never_set_seen`](../LAWS.bend#L545). every fetch item renders as BODY.PEEK or metadata
+- [`search_headers_render_exactly`](../LAWS.bend#L550). summary headers render only the exact read-only header section.
+- [`full_fetch_renders_exactly`](../LAWS.bend#L557). a full-message read renders exactly its caller's byte bound, with no suffix command.
+- [`search_answered_renders_exactly`](../LAWS.bend#L562). the ANSWERED search key renders exactly its fixed IMAP atom.
+- [`search_unanswered_renders_exactly`](../LAWS.bend#L566). the UNANSWERED search key renders exactly its fixed IMAP atom.
+- [`search_draft_renders_exactly`](../LAWS.bend#L570). the DRAFT search key renders exactly its fixed IMAP atom.
+- [`search_undraft_renders_exactly`](../LAWS.bend#L574). the UNDRAFT search key renders exactly its fixed IMAP atom.
 
 ## Marking and flagging
 
-- [`mark_never_deletes`](../LAWS.bend#L588). marking never marks \Deleted and never expunges
-- [`flag_never_deletes`](../LAWS.bend#L598). flagging and unflagging never mark \Deleted and never expunge
-- [`answered_plan_exact`](../LAWS.bend#L611). the accepted-reply follow-up pins one original and adds only Answered.
-- [`answered_changes_only_original`](../LAWS.bend#L621). the only mail change is one Answered store on the caller's original UID.
-- [`mark_changes_only_seen`](../LAWS.bend#L630). marking read or unread changes mail only by one store of the caller's Seen value, for exactly the caller's UIDs; no other flag changes.
-- [`flag_changes_only_flag_and_colour`](../LAWS.bend#L640). every store that flagging and unflagging make is on \Flagged or a colour bit
-- [`flag_changes_exactly`](../LAWS.bend#L654). flagging changes exactly what was asked, in order: without a colour, one store adding \Flagged (the colour bits stay as they are); with a colour, \Flagged, then each colour bit added or removed as colour_bits gives it
-- [`unflag_clears_flag_and_colour`](../LAWS.bend#L673). unflagging removes \Flagged, then all three colour bits
+- [`mark_never_deletes`](../LAWS.bend#L586). marking never marks \Deleted and never expunges
+- [`flag_never_deletes`](../LAWS.bend#L596). flagging and unflagging never mark \Deleted and never expunge
+- [`answered_plan_exact`](../LAWS.bend#L609). the accepted-reply follow-up pins one original and adds only Answered.
+- [`answered_changes_only_original`](../LAWS.bend#L619). the only mail change is one Answered store on the caller's original UID.
+- [`mark_changes_only_seen`](../LAWS.bend#L628). marking read or unread changes mail only by one store of the caller's Seen value, for exactly the caller's UIDs; no other flag changes.
+- [`flag_changes_only_flag_and_colour`](../LAWS.bend#L638). every store that flagging and unflagging make is on \Flagged or a colour bit
+- [`flag_changes_exactly`](../LAWS.bend#L652). flagging changes exactly what was asked, in order: without a colour, one store adding \Flagged (the colour bits stay as they are); with a colour, \Flagged, then each colour bit added or removed as colour_bits gives it
+- [`unflag_clears_flag_and_colour`](../LAWS.bend#L671). unflagging removes \Flagged, then all three colour bits
 
 ## Moving, trashing and deleting
 
-- [`move_never_loses_mail`](../LAWS.bend#L709). a move plan never expunges before it has copied
-- [`trash_never_loses_mail`](../LAWS.bend#L720). a trash plan never expunges before it has copied
-- [`move_expunges_only_copied`](../LAWS.bend#L731). a move plan's first UID EXPUNGE names its first UID COPY's UIDs
-- [`trash_expunges_only_copied`](../LAWS.bend#L743). a trash plan's first UID EXPUNGE names its first UID COPY's UIDs
-- [`delete_expunges_only_marked`](../LAWS.bend#L756). a delete plan's first UID EXPUNGE names its first \Deleted store's UIDs
-- [`delete_expunges_given_uids`](../LAWS.bend#L767). a confirmed delete with UIDPLUS expunges exactly the caller's UIDs
-- [`move_changes_exactly`](../LAWS.bend#L775). with MOVE, a move changes mail only by one UID MOVE
-- [`copy_move_changes_exactly`](../LAWS.bend#L786). without MOVE but with UIDPLUS, a move changes mail only by one UID COPY, one \Deleted store and one UID EXPUNGE, all of the caller's UIDs
-- [`trash_changes_exactly`](../LAWS.bend#L796). with MOVE, trashing changes mail only by one UID MOVE
-- [`copy_trash_changes_exactly`](../LAWS.bend#L807). without MOVE but with UIDPLUS, trashing changes mail only by one UID COPY, one \Deleted store and one UID EXPUNGE, all of the caller's UIDs
-- [`delete_changes_exactly`](../LAWS.bend#L818). a confirmed delete with UIDPLUS changes mail only by one \Deleted store and one UID EXPUNGE, both of the caller's UIDs
-- [`expunge_renders_uid_expunge`](../LAWS.bend#L826). expunging always renders as UID EXPUNGE, never a plain EXPUNGE
-- [`expunge_renders_exact_uid_set`](../LAWS.bend#L831). UID EXPUNGE renders exactly the supplied set, with no suffix command.
-- [`delete_needs_confirmation`](../LAWS.bend#L837). unless the confirmation is exactly "permanently-delete", deletion does nothing at all
-- [`delete_checks_uidplus`](../LAWS.bend#L847). a delete plan, if any, confirms UIDPLUS in its own session first
-- [`copy_move_checks_uidplus`](../LAWS.bend#L857). a move by copy confirms UIDPLUS in its own session first
+- [`move_never_loses_mail`](../LAWS.bend#L707). a move plan never expunges before it has copied
+- [`trash_never_loses_mail`](../LAWS.bend#L718). a trash plan never expunges before it has copied
+- [`move_expunges_only_copied`](../LAWS.bend#L729). a move plan's first UID EXPUNGE names its first UID COPY's UIDs
+- [`trash_expunges_only_copied`](../LAWS.bend#L741). a trash plan's first UID EXPUNGE names its first UID COPY's UIDs
+- [`delete_expunges_only_marked`](../LAWS.bend#L754). a delete plan's first UID EXPUNGE names its first \Deleted store's UIDs
+- [`delete_expunges_given_uids`](../LAWS.bend#L765). a confirmed delete with UIDPLUS expunges exactly the caller's UIDs
+- [`move_changes_exactly`](../LAWS.bend#L773). with MOVE, a move changes mail only by one UID MOVE
+- [`copy_move_changes_exactly`](../LAWS.bend#L784). without MOVE but with UIDPLUS, a move changes mail only by one UID COPY, one \Deleted store and one UID EXPUNGE, all of the caller's UIDs
+- [`trash_changes_exactly`](../LAWS.bend#L794). with MOVE, trashing changes mail only by one UID MOVE
+- [`copy_trash_changes_exactly`](../LAWS.bend#L805). without MOVE but with UIDPLUS, trashing changes mail only by one UID COPY, one \Deleted store and one UID EXPUNGE, all of the caller's UIDs
+- [`delete_changes_exactly`](../LAWS.bend#L816). a confirmed delete with UIDPLUS changes mail only by one \Deleted store and one UID EXPUNGE, both of the caller's UIDs
+- [`expunge_renders_uid_expunge`](../LAWS.bend#L824). expunging always renders as UID EXPUNGE, never a plain EXPUNGE
+- [`expunge_renders_exact_uid_set`](../LAWS.bend#L829). UID EXPUNGE renders exactly the supplied set, with no suffix command.
+- [`delete_needs_confirmation`](../LAWS.bend#L835). unless the confirmation is exactly "permanently-delete", deletion does nothing at all
+- [`delete_checks_uidplus`](../LAWS.bend#L845). a delete plan, if any, confirms UIDPLUS in its own session first
+- [`gmail_deletes_only_in_trash_or_junk`](../LAWS.bend#L857). on Gmail (X-GM-EXT-1) a delete has no plan unless the folder carries the \Trash or \Junk attribute: anywhere else its expunge may only remove a label
+- [`gmail_deletes_need_one_listed_folder`](../LAWS.bend#L872). on Gmail a delete has no plan unless exactly one selectable LIST row names its folder, whatever attributes the rows carry: a folder listed twice, unselectable or not at all is never Trash or Spam
+- [`copy_move_checks_uidplus`](../LAWS.bend#L886). a move by copy confirms UIDPLUS in its own session first
 
 ## Exact command rendering
 
-- [`uid_set_is_comma_joined`](../LAWS.bend#L876). UID wire sets are the comma-joined supplied UIDs in their original order.
-- [`select_renders_callers_folder`](../LAWS.bend#L880). SELECT renders the supplied folder exactly.
-- [`copy_renders_exactly`](../LAWS.bend#L884). COPY renders a UID COPY with the supplied UIDs and destination.
-- [`move_renders_exactly`](../LAWS.bend#L890). MOVE renders a UID MOVE with the supplied UIDs and destination.
-- [`fetch_renders_exactly`](../LAWS.bend#L896). FETCH renders a UID FETCH with the supplied UIDs and fetch items.
-- [`search_renders_uid_search`](../LAWS.bend#L902). SEARCH renders as UID SEARCH.
-- [`guard_search_renders_exact_uids`](../LAWS.bend#L906). A UID identity search renders exactly the supplied UID set.
-- [`store_renders_exactly`](../LAWS.bend#L911). STORE renders UID STORE with the supplied UIDs, operation and flag.
+- [`uid_set_is_comma_joined`](../LAWS.bend#L905). UID wire sets are the comma-joined supplied UIDs in their original order.
+- [`select_renders_callers_folder`](../LAWS.bend#L909). SELECT renders the supplied folder exactly.
+- [`copy_renders_exactly`](../LAWS.bend#L913). COPY renders a UID COPY with the supplied UIDs and destination.
+- [`move_renders_exactly`](../LAWS.bend#L919). MOVE renders a UID MOVE with the supplied UIDs and destination.
+- [`fetch_renders_exactly`](../LAWS.bend#L925). FETCH renders a UID FETCH with the supplied UIDs and fetch items.
+- [`search_renders_uid_search`](../LAWS.bend#L931). SEARCH renders as UID SEARCH.
+- [`guard_search_renders_exact_uids`](../LAWS.bend#L935). A UID identity search renders exactly the supplied UID set.
+- [`store_renders_exactly`](../LAWS.bend#L940). STORE renders UID STORE with the supplied UIDs, operation and flag.
 
 ## UIDVALIDITY pinning
 
-- [`mark_is_pinned`](../LAWS.bend#L955). marking is pinned
-- [`flag_is_pinned`](../LAWS.bend#L963). flagging and unflagging are pinned
-- [`move_is_pinned`](../LAWS.bend#L972). a move plan, if any, is pinned
-- [`trash_is_pinned`](../LAWS.bend#L983). a trash plan, if any, is pinned
-- [`delete_is_pinned`](../LAWS.bend#L994). a delete plan, if any, is pinned
-- [`mark_pins_callers_uidvalidity`](../LAWS.bend#L1004). marking expects the caller's UIDVALIDITY
-- [`flag_pins_callers_uidvalidity`](../LAWS.bend#L1013). flagging and unflagging expect the caller's UIDVALIDITY
-- [`move_pins_callers_uidvalidity`](../LAWS.bend#L1024). a move plan, if any, expects the caller's UIDVALIDITY
-- [`trash_pins_callers_uidvalidity`](../LAWS.bend#L1036). a trash plan, if any, expects the caller's UIDVALIDITY
-- [`delete_pins_callers_uidvalidity`](../LAWS.bend#L1048). a delete plan, if any, expects the caller's UIDVALIDITY
-- [`mark_opens_callers_folder`](../LAWS.bend#L1059). A mark plan opens the caller's exact folder and has no later folder switch.
-- [`flag_opens_callers_folder`](../LAWS.bend#L1071). A flag plan opens the caller's exact folder and has no later folder switch.
-- [`unflag_opens_callers_folder`](../LAWS.bend#L1098). An unflag plan opens the caller's exact folder and has no later folder switch.
-- [`move_opens_callers_folder`](../LAWS.bend#L1113). A move plan opens the caller's exact folder and has no later folder switch.
-- [`trash_opens_callers_folder`](../LAWS.bend#L1137). A trash plan opens the caller's exact folder and has no later folder switch.
-- [`label_opens_callers_folder`](../LAWS.bend#L1161). A label plan opens the caller's exact folder and has no later folder switch.
-- [`delete_opens_callers_folder`](../LAWS.bend#L1185). A confirmed delete plan opens the caller's exact folder and has no later folder switch.
+- [`mark_is_pinned`](../LAWS.bend#L984). marking is pinned
+- [`flag_is_pinned`](../LAWS.bend#L992). flagging and unflagging are pinned
+- [`move_is_pinned`](../LAWS.bend#L1001). a move plan, if any, is pinned
+- [`trash_is_pinned`](../LAWS.bend#L1012). a trash plan, if any, is pinned
+- [`delete_is_pinned`](../LAWS.bend#L1023). a delete plan, if any, is pinned
+- [`mark_pins_callers_uidvalidity`](../LAWS.bend#L1033). marking expects the caller's UIDVALIDITY
+- [`flag_pins_callers_uidvalidity`](../LAWS.bend#L1042). flagging and unflagging expect the caller's UIDVALIDITY
+- [`move_pins_callers_uidvalidity`](../LAWS.bend#L1053). a move plan, if any, expects the caller's UIDVALIDITY
+- [`trash_pins_callers_uidvalidity`](../LAWS.bend#L1065). a trash plan, if any, expects the caller's UIDVALIDITY
+- [`delete_pins_callers_uidvalidity`](../LAWS.bend#L1077). a delete plan, if any, expects the caller's UIDVALIDITY
+- [`mark_opens_callers_folder`](../LAWS.bend#L1088). A mark plan opens the caller's exact folder and has no later folder switch.
+- [`flag_opens_callers_folder`](../LAWS.bend#L1100). A flag plan opens the caller's exact folder and has no later folder switch.
+- [`unflag_opens_callers_folder`](../LAWS.bend#L1127). An unflag plan opens the caller's exact folder and has no later folder switch.
+- [`move_opens_callers_folder`](../LAWS.bend#L1142). A move plan opens the caller's exact folder and has no later folder switch.
+- [`trash_opens_callers_folder`](../LAWS.bend#L1166). A trash plan opens the caller's exact folder and has no later folder switch.
+- [`label_opens_callers_folder`](../LAWS.bend#L1190). A label plan opens the caller's exact folder and has no later folder switch.
+- [`delete_opens_callers_folder`](../LAWS.bend#L1214). A confirmed delete plan opens the caller's exact folder and has no later folder switch.
 
 ## Drafts
 
-- [`draft_never_removes`](../LAWS.bend#L1204). saving a draft only appends: it never expunges or marks \Deleted
+- [`draft_never_removes`](../LAWS.bend#L1233). saving a draft only appends: it never expunges or marks \Deleted
 
 ## Sending
 
-- [`allowlist_refuses_unlisted`](../LAWS.bend#L1221). for every allowlist, recipient list and position, an unlisted recipient means no envelope at all
-- [`no_allowlist_is_unchanged`](../LAWS.bend#L1234). without an allowlist, the envelope is the plain one for every recipient list
-- [`sent_copy_only_appends`](../LAWS.bend#L1243). a Sent copy changes mail only by one APPEND of the message to Sent, marked seen, and changes no folder
+- [`allowlist_refuses_unlisted`](../LAWS.bend#L1250). for every allowlist, recipient list and position, an unlisted recipient means no envelope at all
+- [`no_allowlist_is_unchanged`](../LAWS.bend#L1263). without an allowlist, the envelope is the plain one for every recipient list
+- [`sent_copy_only_appends`](../LAWS.bend#L1272). a Sent copy changes mail only by one APPEND of the message to Sent, marked seen, and changes no folder
 
 ## Folders
 
-- [`create_changes_exactly`](../LAWS.bend#L1260). creating changes folders only by CREATE, then SUBSCRIBE, of the name
-- [`create_changes_no_mail`](../LAWS.bend#L1266). creating changes no mail
-- [`rename_changes_exactly`](../LAWS.bend#L1271). renaming changes folders only by RENAME, then the subscriptions
-- [`rename_subscribes_each_moved_folder`](../LAWS.bend#L1281). each moved folder is subscribed under its new name, in order
-- [`rename_unsubscribes_each_moved_folder`](../LAWS.bend#L1293). each moved folder's old name is unsubscribed, in order
-- [`rename_subscribes_before_unsubscribing`](../LAWS.bend#L1301). a rename plan is CAPABILITY, RENAME, every new subscription, then every old unsubscription
-- [`rename_changes_no_mail`](../LAWS.bend#L1311). renaming changes no mail
-- [`folder_plans_destroy_nothing`](../LAWS.bend#L1318). neither creating nor renaming expunges
+- [`create_changes_exactly`](../LAWS.bend#L1289). creating changes folders only by CREATE, then SUBSCRIBE, of the name
+- [`create_changes_no_mail`](../LAWS.bend#L1295). creating changes no mail
+- [`rename_changes_exactly`](../LAWS.bend#L1300). renaming changes folders only by RENAME, then the subscriptions
+- [`rename_subscribes_each_moved_folder`](../LAWS.bend#L1310). each moved folder is subscribed under its new name, in order
+- [`rename_unsubscribes_each_moved_folder`](../LAWS.bend#L1322). each moved folder's old name is unsubscribed, in order
+- [`rename_subscribes_before_unsubscribing`](../LAWS.bend#L1330). a rename plan is CAPABILITY, RENAME, every new subscription, then every old unsubscription
+- [`rename_changes_no_mail`](../LAWS.bend#L1340). renaming changes no mail
+- [`folder_plans_destroy_nothing`](../LAWS.bend#L1347). neither creating nor renaming expunges
 
 ## Labels
 
-- [`label_is_move`](../LAWS.bend#L1335). a label plan is the move plan into the label
-- [`label_creates_no_folder`](../LAWS.bend#L1346). labelling changes no folder
+- [`label_is_move`](../LAWS.bend#L1364). a label plan is the move plan into the label
+- [`label_creates_no_folder`](../LAWS.bend#L1375). labelling changes no folder
 
 ## Triage
 
-- [`triage_moves_only_to_known_folders`](../LAWS.bend#L1371). every UID MOVE and UID COPY of a triage plan goes into the review folder or one of the categories passed in; never into INBOX or one of the reserved (role) folders passed in, in any case; and never into the source folder
-- [`triage_creates_no_mailbox`](../LAWS.bend#L1391). triage changes no folder: a new category exists only through mail_create_folder
-- [`triage_one_move_per_message`](../LAWS.bend#L1403). no UID is moved or copied twice, within one triage plan or across two
-- [`triage_expunges_only_moved`](../LAWS.bend#L1418). each triage plan expunges only what it copied: its UID EXPUNGEs name, in order, exactly the UIDs of its UID COPYs (a plan with UID MOVE has neither)
-- [`filing_matches_table`](../LAWS.bend#L1435). filing follows its table for every verdict and category: a message safe to delete goes to review whatever its category; with any other verdict (Keep, Review, or Unanswered when the delete answers are missing), an existing folder chosen with High confidence files it, and a candidate, no fitting folder, a lower confidence or no category answer leaves it
-- [`uncertain_changes_nothing`](../LAWS.bend#L1450). a message that is not safe to delete, with a category answer below High confidence or none at all, is in no triage plan; nor is a message whose answers are all missing (an empty reply), whatever its content, completeness and code vetoes
+- [`triage_moves_only_to_known_folders`](../LAWS.bend#L1400). every UID MOVE and UID COPY of a triage plan goes into the review folder or one of the categories passed in; never into INBOX or one of the reserved (role) folders passed in, in any case; and never into the source folder
+- [`triage_creates_no_mailbox`](../LAWS.bend#L1420). triage changes no folder: a new category exists only through mail_create_folder
+- [`triage_one_move_per_message`](../LAWS.bend#L1432). no UID is moved or copied twice, within one triage plan or across two
+- [`triage_expunges_only_moved`](../LAWS.bend#L1447). each triage plan expunges only what it copied: its UID EXPUNGEs name, in order, exactly the UIDs of its UID COPYs (a plan with UID MOVE has neither)
+- [`filing_matches_table`](../LAWS.bend#L1464). filing follows its table for every verdict and category: a message safe to delete goes to review whatever its category; with any other verdict (Keep, Review, or Unanswered when the delete answers are missing), an existing folder chosen with High confidence files it, and a candidate, no fitting folder, a lower confidence or no category answer leaves it
+- [`uncertain_changes_nothing`](../LAWS.bend#L1479). a message that is not safe to delete, with a category answer below High confidence or none at all, is in no triage plan; nor is a message whose answers are all missing (an empty reply), whatever its content, completeness and code vetoes
 
 ## Dry runs
 
-- [`append_preview_hides_message`](../LAWS.bend#L1489). for every mailbox, flags, message and tag, a dry run shows an APPEND as its command with the size of its message, never the message
+- [`append_preview_hides_message`](../LAWS.bend#L1518). for every mailbox, flags, message and tag, a dry run shows an APPEND as its command with the size of its message, never the message
 
 ## Jev
 
-- [`headers_state_has_no_body`](../LAWS.bend#L1509). for every message and text, the headers-mode state is the header facts alone
-- [`state_images_on_headers_is_state`](../LAWS.bend#L1526). for every ref list, adding images to a headers-mode state leaves it equal to state_of on headers
-- [`state_images_body_without_refs_is_state`](../LAWS.bend#L1543). a body-mode state with no image refs is state_of on body
-- [`cargo_of_without_images`](../LAWS.bend#L1560). entries whose used lists are empty build the plain request and no danger-zone header
-- [`entry_at_sends_no_images`](../LAWS.bend#L1568). an entry as the requests are built sends no still, for every content mode, message, text, question set and reserve; only Jev.entry_images, which classify alone calls, gives an entry stills
-- [`missing_answer_is_cautious`](../LAWS.bend#L1579). a missing answer reads as Missing, which the injection screen flags (Jev.suspects), suggests nothing and files it nowhere, whatever the key, candidates and none key
-- [`only_the_pinned_model_answers`](../LAWS.bend#L1594). only the pinned model's name counts as the model that answered: a reply with no model, with a model that is not a string, or with any other string does not, whatever that string is
-- [`unpinned_reply_is_no_answer`](../LAWS.bend#L1613). for every reply that the pinned model did not answer, and every entry list, category list and question count, the answers of mail_classify, mail_triage, deletes and reads (reply_of) and those of the send gate (outgoing_answers.put) are none, so each takes its cautious path
+- [`headers_state_has_no_body`](../LAWS.bend#L1538). for every message and text, the headers-mode state is the header facts alone
+- [`complete_text_is_whole`](../LAWS.bend#L1557). for every message content, Jev's text is Complete only when no part was left out, the fetch was whole and the HTML part, markup included, holds no U+FFFD, and then it is the whole text/plain part, quoted and post-signature lines included, followed by the whole HTML part as text
+- [`partial_text_annotation_says_so`](../LAWS.bend#L1573). for every message whose text Jev saw only in part and every answer, its body-mode read annotation says coverage is partial, with the text reason as its only reason
+- [`state_images_on_headers_is_state`](../LAWS.bend#L1591). for every ref list, adding images to a headers-mode state leaves it equal to state_of on headers
+- [`state_images_body_without_refs_is_state`](../LAWS.bend#L1608). a body-mode state with no image refs is state_of on body
+- [`cargo_of_without_images`](../LAWS.bend#L1625). entries whose used lists are empty build the plain request and no danger-zone header
+- [`entry_at_sends_no_images`](../LAWS.bend#L1633). an entry as the requests are built sends no still, for every content mode, message, text, question set and reserve; only Jev.entry_images, which classify alone calls, gives an entry stills
+- [`missing_answer_is_cautious`](../LAWS.bend#L1644). a missing answer reads as Missing, which the injection screen flags (Jev.suspects), suggests nothing and files it nowhere, whatever the key, candidates and none key
+- [`only_the_pinned_model_answers`](../LAWS.bend#L1659). only the pinned model's name counts as the model that answered: a reply with no model, with a model that is not a string, or with any other string does not, whatever that string is
+- [`unpinned_reply_is_no_answer`](../LAWS.bend#L1678). for every reply that the pinned model did not answer, and every entry list, category list and question count, the answers of mail_classify, mail_triage, deletes and reads (reply_of) and those of the send gate (outgoing_answers.put) are none, so each takes its cautious path
 
 ## Gates
 
-- [`send_veto_only_subtracts`](../LAWS.bend#L1635). for every allowlist, recipient list, sender and message, a send the secret scan found clean gets the allowlist's envelope unchanged when Jev is off or vetoed nothing, and no envelope when Jev vetoed it
-- [`delete_veto_only_subtracts`](../LAWS.bend#L1650). for every plan, a delete keeps its plan unchanged when Jev is off or vetoed nothing, and runs no command when Jev vetoed it
-- [`failure_blocks_outbound`](../LAWS.bend#L1660). when Jev could not decide, for every scan result, allowlist, recipient list, sender, message and plan, a send gets no envelope and a delete runs no command
-- [`secret_scan_blocks`](../LAWS.bend#L1676). a send in which the secret scan found a secret, or which it could not read in full, gets no envelope, whatever Jev decided and for every allowlist, recipient list, sender and message: only a clean scan can give one
-- [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1692). in headers mode, the request about an outgoing message is the same whatever its text, for every header field, attachment name, original and list of veto questions: TypeSafe never sees the body
+- [`send_veto_only_subtracts`](../LAWS.bend#L1700). for every allowlist, recipient list, sender and message, a send the secret scan found clean gets the allowlist's envelope unchanged when Jev is off or vetoed nothing, and no envelope when Jev vetoed it
+- [`delete_veto_only_subtracts`](../LAWS.bend#L1715). for every plan, a delete keeps its plan unchanged when Jev is off or vetoed nothing, and runs no command when Jev vetoed it
+- [`failure_blocks_outbound`](../LAWS.bend#L1725). when Jev could not decide, for every scan result, allowlist, recipient list, sender, message and plan, a send gets no envelope and a delete runs no command
+- [`secret_scan_blocks`](../LAWS.bend#L1741). a send in which the secret scan found a secret, or which it could not read in full, gets no envelope, whatever Jev decided and for every allowlist, recipient list, sender and message: only a clean scan can give one
+- [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1757). in headers mode, the request about an outgoing message is the same whatever its text, for every header field, attachment name, original and list of veto questions: TypeSafe never sees the body
 
 ## SMTP outcome evidence
 
-- [`smtp_unconfirmed_is_unknown`](../LAWS.bend#L1717). once DATA started without a final acknowledgement, or progress is missing, every exit code and server transcript remains unknown.
-- [`smtp_acceptance_survives_exit`](../LAWS.bend#L1726). a final DATA acceptance stays successful for every later process exit code; a failed QUIT or interruption cannot turn it into a refusal.
+- [`smtp_unconfirmed_is_unknown`](../LAWS.bend#L1782). once DATA started without a final acknowledgement, or progress is missing, every exit code and server transcript remains unknown.
+- [`smtp_acceptance_survives_exit`](../LAWS.bend#L1791). a final DATA acceptance stays successful for every later process exit code; a failed QUIT or interruption cannot turn it into a refusal.
 
 ## Read response projections
 
-- [`projection_keeps_nonbody`](../LAWS.bend#L1737). projection cannot omit a field other than body text, HTML or selected content.
-- [`response_body_fields_are_exact`](../LAWS.bend#L1746). the budget's body classifier cannot expand to safety or identity fields.
-- [`response_preserves_nonbody`](../LAWS.bend#L1753). fitting a non-body field preserves its complete value, consumes no allowance and never claims it was shortened. This includes Jev and cursor data.
-- [`prefix_is_prefix`](../LAWS.bend#L1762). every cut is an initial segment of the original scalar string.
-- [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1770). the actual cut conserves its allowance as natural numbers. This bounds the sum of each emitted scalar's JSON-escaped UTF-8 byte cost.
-- [`prefix_whole_when_scalar_room`](../LAWS.bend#L1779). enough room for all scalar escapes preserves the entire text and leaves exactly the unused natural-number allowance. Intermediate scalar-cost contract; see prefix_whole_when_room for wire weight.
+- [`projection_keeps_nonbody`](../LAWS.bend#L1802). projection cannot omit a field other than body text, HTML or selected content.
+- [`response_body_fields_are_exact`](../LAWS.bend#L1811). the budget's body classifier cannot expand to safety or identity fields.
+- [`response_preserves_nonbody`](../LAWS.bend#L1818). fitting a non-body field preserves its complete value, consumes no allowance and never claims it was shortened. This includes Jev and cursor data.
+- [`prefix_is_prefix`](../LAWS.bend#L1827). every cut is an initial segment of the original scalar string.
+- [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1835). the actual cut conserves its allowance as natural numbers. This bounds the sum of each emitted scalar's JSON-escaped UTF-8 byte cost.
+- [`prefix_whole_when_scalar_room`](../LAWS.bend#L1844). enough room for all scalar escapes preserves the entire text and leaves exactly the unused natural-number allowance. Intermediate scalar-cost contract; see prefix_whole_when_room for wire weight.
 
 ## Image admission budgets
 
-- [`image_used_only_with_clear_ref`](../LAWS.bend#L1792). binding a token either records it in both the corpus and Used fate, when absent from the corpus, or retries without changing either value.
-- [`image_admission_count_cap`](../LAWS.bend#L1807). a pure fold of the real admission step takes no more than four stills.
-- [`image_admission_byte_cap`](../LAWS.bend#L1814). the taken byte strings fit the request cap when their lengths are represented exactly by the U32 byte counter. The premise is explicit.
+- [`image_used_only_with_clear_ref`](../LAWS.bend#L1857). binding a token either records it in both the corpus and Used fate, when absent from the corpus, or retries without changing either value.
+- [`image_admission_count_cap`](../LAWS.bend#L1872). a pure fold of the real admission step takes no more than four stills.
+- [`image_admission_byte_cap`](../LAWS.bend#L1879). the taken byte strings fit the request cap when their lengths are represented exactly by the U32 byte counter. The premise is explicit.
 
 ## Policy and classifier soundness
 
-- [`store_classifies_as_writing`](../LAWS.bend#L1823). STORE has its exact mutating effect and is always classified as writing
-- [`copy_classifies_as_writing`](../LAWS.bend#L1832). COPY has its exact mutating effect and is always classified as writing
-- [`move_classifies_as_writing`](../LAWS.bend#L1840). MOVE has its exact mutating effect and is always classified as writing
-- [`expunge_classifies_as_writing`](../LAWS.bend#L1848). EXPUNGE has its exact mutating effect and is always classified as writing
-- [`append_classifies_as_writing`](../LAWS.bend#L1855). APPEND has its exact mutating effect and is always classified as writing
-- [`create_classifies_as_writing`](../LAWS.bend#L1864). CREATE has its exact mutating effect and is always classified as writing
-- [`rename_classifies_as_writing`](../LAWS.bend#L1871). RENAME has its exact mutating effect and is always classified as writing
-- [`subscribe_classifies_as_writing`](../LAWS.bend#L1879). SUBSCRIBE has its exact mutating effect and is always classified as writing
-- [`unsubscribe_classifies_as_writing`](../LAWS.bend#L1886). UNSUBSCRIBE has its exact mutating effect and is always classified as writing
-- [`select_classifies_as_writing`](../LAWS.bend#L1893). SELECT has its exact mutating effect and is always classified as writing
-- [`any_writes_checks_each_command`](../LAWS.bend#L1900). the plan classifier checks every command, not only the first one
-- [`draft_is_exact_append`](../LAWS.bend#L1908). saving a draft is exactly one APPEND of its message, marked Draft and Seen
-- [`refused_helper_is_not_lost`](../LAWS.bend#L1915). a helper that never started is not an uncertain mailbox change
-- [`sending_calls_are_exact`](../LAWS.bend#L1931). only Send and non-draft Reply or Forward calls send over SMTP
-- [`read_only_refuses_writes`](../LAWS.bend#L1937). read-only refuses every call whose operation is not read-only
-- [`drafts_only_refuses_sends`](../LAWS.bend#L1946). drafts-only refuses every call that sends over SMTP
-- [`jev_off_refuses_jev_calls`](../LAWS.bend#L1955). Jev-off refuses every operation that needs Jev
-- [`malformed_switch_is_bad`](../LAWS.bend#L1964). a Boolean switch outside the documented on and off values is bad
-- [`bad_read_only_rejects_config`](../LAWS.bend#L1976). a bad read-only switch rejects config, whatever the other settings are
-- [`bad_drafts_only_rejects_config`](../LAWS.bend#L1990). a bad drafts-only switch rejects config, whatever the other settings are
-- [`bad_typesafe_rejects_config`](../LAWS.bend#L2004). a bad typesafe switch rejects config, whatever the other settings are
-- [`bad_zero_retention_rejects_config`](../LAWS.bend#L2018). a bad zero-retention switch rejects config, whatever the other settings are
-- [`bad_images_rejects_config`](../LAWS.bend#L2032). a bad images switch rejects config, whatever the other settings are
-- [`resolved_role_names_selectable_folder`](../LAWS.bend#L2063). every resolved role names a selectable folder in the original listing
-- [`awaiting_incomplete_is_unknown`](../LAWS.bend#L2073). incomplete evidence without a positive reply never confirms absence.
-- [`contact_plans`](../LAWS.bend#L2078). contact scans read only, and header fetches pin the discovered generation.
+- [`store_classifies_as_writing`](../LAWS.bend#L1888). STORE has its exact mutating effect and is always classified as writing
+- [`copy_classifies_as_writing`](../LAWS.bend#L1897). COPY has its exact mutating effect and is always classified as writing
+- [`move_classifies_as_writing`](../LAWS.bend#L1905). MOVE has its exact mutating effect and is always classified as writing
+- [`expunge_classifies_as_writing`](../LAWS.bend#L1913). EXPUNGE has its exact mutating effect and is always classified as writing
+- [`append_classifies_as_writing`](../LAWS.bend#L1920). APPEND has its exact mutating effect and is always classified as writing
+- [`create_classifies_as_writing`](../LAWS.bend#L1929). CREATE has its exact mutating effect and is always classified as writing
+- [`rename_classifies_as_writing`](../LAWS.bend#L1936). RENAME has its exact mutating effect and is always classified as writing
+- [`subscribe_classifies_as_writing`](../LAWS.bend#L1944). SUBSCRIBE has its exact mutating effect and is always classified as writing
+- [`unsubscribe_classifies_as_writing`](../LAWS.bend#L1951). UNSUBSCRIBE has its exact mutating effect and is always classified as writing
+- [`select_classifies_as_writing`](../LAWS.bend#L1958). SELECT has its exact mutating effect and is always classified as writing
+- [`any_writes_checks_each_command`](../LAWS.bend#L1965). the plan classifier checks every command, not only the first one
+- [`draft_is_exact_append`](../LAWS.bend#L1973). saving a draft is exactly one APPEND of its message, marked Draft and Seen
+- [`refused_helper_is_not_lost`](../LAWS.bend#L1980). a helper that never started is not an uncertain mailbox change
+- [`sending_calls_are_exact`](../LAWS.bend#L1996). only Send and non-draft Reply or Forward calls send over SMTP
+- [`read_only_refuses_writes`](../LAWS.bend#L2002). read-only refuses every call whose operation is not read-only
+- [`drafts_only_refuses_sends`](../LAWS.bend#L2011). drafts-only refuses every call that sends over SMTP
+- [`jev_off_refuses_jev_calls`](../LAWS.bend#L2020). Jev-off refuses every operation that needs Jev
+- [`malformed_switch_is_bad`](../LAWS.bend#L2029). a Boolean switch outside the documented on and off values is bad
+- [`bad_read_only_rejects_config`](../LAWS.bend#L2041). a bad read-only switch rejects config, whatever the other settings are
+- [`bad_drafts_only_rejects_config`](../LAWS.bend#L2055). a bad drafts-only switch rejects config, whatever the other settings are
+- [`bad_typesafe_rejects_config`](../LAWS.bend#L2069). a bad typesafe switch rejects config, whatever the other settings are
+- [`bad_zero_retention_rejects_config`](../LAWS.bend#L2083). a bad zero-retention switch rejects config, whatever the other settings are
+- [`bad_images_rejects_config`](../LAWS.bend#L2097). a bad images switch rejects config, whatever the other settings are
+- [`resolved_role_names_selectable_folder`](../LAWS.bend#L2128). every resolved role names a selectable folder in the original listing
+- [`awaiting_incomplete_is_unknown`](../LAWS.bend#L2138). incomplete evidence without a positive reply never confirms absence.
+- [`contact_plans`](../LAWS.bend#L2143). contact scans read only, and header fetches pin the discovered generation.
 
 ## Scalar wire bytes, and production image state-machine budgets
 
-- [`prefix_fits_allowance`](../LAWS.bend#L2095). The serialized escaped prefix fits its natural-number byte allowance without a counter-overflow premise.
-- [`image_bind_count_cap`](../LAWS.bend#L2102). The production image-binding transitions preserve the four-image cap from their empty seed.
-- [`image_bind_byte_cap`](../LAWS.bend#L2110). The production image-binding transitions preserve the stripped-byte cap under the explicit byte-counter premise.
-- [`prefix_whole_when_room`](../LAWS.bend#L2123). Enough unbounded wire-byte allowance preserves the whole string and exact remainder.
-- [`brief_preserves_selected_uids`](../LAWS.bend#L2133). Brief classification retains the selected UID sequence and its multiplicity.
-- [`brief_partitions_selected_uids`](../LAWS.bend#L2140). Brief classification assigns each selected item to exactly one group.
-- [`brief_plans_write_nothing`](../LAWS.bend#L2149). Brief header plans change no mailbox.
-- [`awaiting_disabled_filters_keep_candidate`](../LAWS.bend#L2155). Disabled awaiting-reply filters never remove a sampled candidate.
-- [`brief_complete_unseen_highwater`](../LAWS.bend#L2160). A complete unseen snapshot advances to its high-water boundary only after all selected items fit.
-- [`brief_partial_unseen_prefix`](../LAWS.bend#L2166). A partial unseen snapshot advances only through its retained prefix.
-- [`brief_arrivals_keep_prefix`](../LAWS.bend#L2172). An arrivals brief keeps its retained prefix and corresponding continuation.
-- [`json_serialized_bytes`](../LAWS.bend#L2180). The serializer and response-size counter agree modulo 2^32 for every JSON value.
-- [`brief_range_writes_nothing`](../LAWS.bend#L2185). A brief range-search plan changes no mailbox.
-- [`brief_range_wire`](../LAWS.bend#L2192). A brief range-search plan renders its exact UID interval and search mode.
-- [`brief_completed_has_no_continuation`](../LAWS.bend#L2197). A completed brief range has no continuation cursor.
-- [`brief_unseen_filter_interval`](../LAWS.bend#L2204). Unseen filtering keeps only UIDs in the requested interval.
-
-## Literal meeting-link facts
-
-- [`meeting_facts_spans_within_text`](../LAWS.bend#L2216). Actual extracted spans are nonempty, exactly 36 scalars wide and contained in the supplied text.
-- [`meeting_facts_emitted_values`](../LAWS.bend#L2224). Production facts fields render each extracted source substring and its corresponding coordinates, text source and untrusted marker.
-- [`meeting_facts_complete_source_witness`](../LAWS.bend#L2231). A complete canonical link produces the concrete span from scalar 0 to 36 on line 1.
-- [`meeting_facts_unicode_source_witness`](../LAWS.bend#L2235). A canonical link after Unicode and LF produces the concrete span from scalar 4 to 40 on line 2.
+- [`prefix_fits_allowance`](../LAWS.bend#L2160). The serialized escaped prefix fits its natural-number byte allowance without a counter-overflow premise.
+- [`image_bind_count_cap`](../LAWS.bend#L2167). The production image-binding transitions preserve the four-image cap from their empty seed.
+- [`image_bind_byte_cap`](../LAWS.bend#L2175). The production image-binding transitions preserve the stripped-byte cap under the explicit byte-counter premise.
+- [`prefix_whole_when_room`](../LAWS.bend#L2188). Enough unbounded wire-byte allowance preserves the whole string and exact remainder.
+- [`brief_preserves_selected_uids`](../LAWS.bend#L2198). Brief classification retains the selected UID sequence and its multiplicity.
+- [`brief_partitions_selected_uids`](../LAWS.bend#L2205). Brief classification assigns each selected item to exactly one group.
+- [`brief_plans_write_nothing`](../LAWS.bend#L2214). Brief header plans change no mailbox.
+- [`awaiting_disabled_filters_keep_candidate`](../LAWS.bend#L2220). Disabled awaiting-reply filters never remove a sampled candidate.
+- [`brief_complete_unseen_highwater`](../LAWS.bend#L2225). A complete unseen snapshot advances to its high-water boundary only after all selected items fit.
+- [`brief_partial_unseen_prefix`](../LAWS.bend#L2231). A partial unseen snapshot advances only through its retained prefix.
+- [`brief_arrivals_keep_prefix`](../LAWS.bend#L2237). An arrivals brief keeps its retained prefix and corresponding continuation.
+- [`json_serialized_bytes`](../LAWS.bend#L2245). The serializer and response-size counter agree modulo 2^32 for every JSON value.
+- [`brief_range_writes_nothing`](../LAWS.bend#L2250). A brief range-search plan changes no mailbox.
+- [`brief_range_wire`](../LAWS.bend#L2257). A brief range-search plan renders its exact UID interval and search mode.
+- [`brief_completed_has_no_continuation`](../LAWS.bend#L2262). A completed brief range has no continuation cursor.
+- [`brief_unseen_filter_interval`](../LAWS.bend#L2269). Unseen filtering keeps only UIDs in the requested interval.
 
 ## Client-side prompts
 
-- [`hook_never_allows_or_denies`](../LAWS.bend#L2255). every bounded event produces either an ask decision or no decision
-- [`hook_real_send_asks`](../LAWS.bend#L2260). every real send that is not an exact Boolean dry run asks
-- [`hook_real_delete_asks`](../LAWS.bend#L2268). every permanent delete that is not an exact Boolean dry run asks
-- [`hook_printed_output_contract`](../LAWS.bend#L2290). actual printed output is empty or exactly the specified ask envelope
-- [`hook_unparseable_input_asks`](../LAWS.bend#L2295). unparseable input prints an ask decision, whether within or over the cap
-- [`hook_oversized_input_asks`](../LAWS.bend#L2301). input over the byte cap prints an ask decision regardless of its contents
-- [`hook_unknown_tool_asks`](../LAWS.bend#L2307). an unrecognized operation prints an ask decision regardless of its arguments
-- [`hook_missing_name_asks`](../LAWS.bend#L2315). a missing or non-string tool name prints an ask decision for any input
-- [`hook_wrong_kind_asks`](../LAWS.bend#L2336). every missing or non-PreToolUse kind prints ask for any event payload
-- [`hook_nonobject_input_asks`](../LAWS.bend#L2343). a present tool name with missing or non-object input prints ask
+- [`hook_never_allows_or_denies`](../LAWS.bend#L2292). every bounded event produces either an ask decision or no decision
+- [`hook_real_send_asks`](../LAWS.bend#L2297). every real send that is not an exact Boolean dry run asks
+- [`hook_real_delete_asks`](../LAWS.bend#L2305). every permanent delete that is not an exact Boolean dry run asks
+- [`hook_printed_output_contract`](../LAWS.bend#L2327). actual printed output is empty or exactly the specified ask envelope
+- [`hook_unparseable_input_asks`](../LAWS.bend#L2332). unparseable input prints an ask decision, whether within or over the cap
+- [`hook_oversized_input_asks`](../LAWS.bend#L2338). input over the byte cap prints an ask decision regardless of its contents
+- [`hook_unknown_tool_asks`](../LAWS.bend#L2344). an unrecognized operation prints an ask decision regardless of its arguments
+- [`hook_missing_name_asks`](../LAWS.bend#L2352). a missing or non-string tool name prints an ask decision for any input
+- [`hook_wrong_kind_asks`](../LAWS.bend#L2373). every missing or non-PreToolUse kind prints ask for any event payload
+- [`hook_nonobject_input_asks`](../LAWS.bend#L2380). a present tool name with missing or non-object input prints ask

@@ -21,7 +21,6 @@ import ./image.bend as Image
 import ./jev.bend as Jev
 import ./secrets.bend as Secrets
 import ./response.bend as Response
-import ./facts.bend as Facts
 import ./policy.bend as Policy
 import ./message-metadata.bend as Metadata
 import ./folder-status.bend as FolderStatus
@@ -605,13 +604,52 @@ def review_move_problem(delim: String, dest: String) -> String:
     "only mail_triage moves mail into \"" ++ Ops.review_folder() ++ "\", which the user reviews",
     "")
 
+# The mailbox the server marks as Trash: the one selectable LIST row with
+# the \Trash attribute (`t`), if mail_delete may run there and it is not
+# the review folder.
+def marked_trash.if(
+  t: Maybe<&2, String>,
+  caps: List<&2, String>,
+  +fs: List<&2, I.Folder>
+) -> Maybe<&2, String>:
+  match t:
+    case None{}:
+      None{}
+    case Some{+n}:
+      Bool.pick(Maybe<&2, String>,
+        Bool.not(Ops.expunge_keeps(caps, Policy.named_attrs(fs, n)) || in_review(delim_of(fs), n)),
+        Some{n}, None{})
+
+def marked_trash(caps: List<&2, String>, +fs: List<&2, I.Folder>) -> Maybe<&2, String>:
+  marked_trash.if(Policy.unique_folder(Policy.role_candidates(fs, "\\Trash", "", "", True{})),
+    caps, fs)
+
+# What a refused Gmail delete says about deleting the messages
+# permanently. It names calls only when MailBend accepts them: mail_delete
+# needs UIDPLUS, which also gives mail_move a plan, and mail_delete then
+# runs in the mailbox the server marks as Trash (`trash`).
+def delete_advice.if(uidplus: Bool, trash: Maybe<&2, String>) -> String:
+  match uidplus trash:
+    case False{} _:
+      "mail_delete cannot run on this server, which does not advertise UIDPLUS"
+    case True{} Some{+t}:
+      "to remove these messages permanently, move them into \"" ++ t ++ "\" with mail_move, " ++
+        "find them there with mail_search (the move gives them new UIDs), then run mail_delete " ++
+        "in \"" ++ t ++ "\""
+    case True{} None{}:
+      "there is no single Trash mailbox MailBend may move mail into on this server"
+
+# The advice above, from a session's capabilities and LIST (`lines`).
+def delete_advice(+lines: List<&2, I.RLine>) -> String:
+  +caps = I.caps(lines)
+  delete_advice.if(I.has_cap(caps, "UIDPLUS"), marked_trash(caps, I.folders(lines)))
+
 # Why mail_trash cannot move mail out of `folder` into `trash` ("" when it
 # can).
 def review_trash_problem(+delim: String, folder: String, trash: String) -> String:
   Bool.pick(String, in_review(delim, folder) || in_review(delim, trash),
     "mail_trash never moves mail into or out of \"" ++ Ops.review_folder() ++
-      "\", which the user reviews; mail_move can take a message out of it, and mail_delete " ++
-      "can remove messages from it permanently",
+      "\", which the user reviews; nothing was changed",
     "")
 
 # Why mail_triage cannot file mail out of `folder` ("" when it can).
@@ -1759,7 +1797,7 @@ def part_get.text.if(readable: Bool, p: Part.Part, bytes: String) -> Jev.Text:
       parts = Bool.pick(M.Parts, String.eq(M.main_value(ct), "text/html"),
         M.Parts{"", text, []}, M.Parts{text, "", []})
       Jev.text_of.put("[Selected MIME section " ++ I.section_str(path) ++
-        "; message incomplete]\n" ++ Jev.plain_text(M.readable_text(parts)), True{})
+        "; message incomplete]\n" ++ Jev.seen_text(parts), True{}, False{})
     case False{} Part.Part{path, ct, cd, encoding, size}:
       Jev.MessageText{"[Selected MIME section " ++ I.section_str(path) ++
         "; no text body fetched]", Jev.Partial{}}
@@ -3072,7 +3110,7 @@ def jev_limit() -> U32:
   50
 
 # In body mode each message is fetched up to this many bytes, of which Jev
-# sees at most Jev.max_text bytes of plain text.
+# sees at most Jev.max_text bytes of text (see Jev.seen_text).
 def jev_max() -> U32:
   262144
 
@@ -3999,9 +4037,8 @@ def trash_into(
 ) -> IO(Policy.Out):
   match same:
     case True{}:
-      pure_out(Policy.Err{
-        "these messages are already in " ++ trash ++
-          "; use mail_delete to remove them permanently"})
+      pure_out(Policy.Err{"these messages are already in the trash folder \"" ++ trash ++
+        "\"; nothing was changed"})
     case False{}:
       +move = I.has_cap(caps, "MOVE")
       move_plan(Ops.plan_trash(folder, uids, trash, move, I.has_cap(caps, "UIDPLUS"), uidv),
@@ -4165,7 +4202,7 @@ def delete_answered(t: Tally(), c: Jev.Content) -> Jev.Decision:
     case Fail{m}:
       Jev.undecided(c, m)
     case Done{Progress{xs, reqs}}:
-      Jev.decided(c, Jev.delete_concerns(List.reverse(&2, Jev.Answered, xs)), [])
+      Jev.delete_decision(c, List.reverse(&2, Jev.Answered, xs))
 
 # With Jev on, the keep questions are asked about each message the
 # preflight fetched (`ms`) before anything is deleted; one that would keep
@@ -4215,11 +4252,36 @@ def delete_gated(
       delete_decided(Jev.Decision{Jev.JevOff{}, []}, uidplus, folder, uids, uids, confirm, uidv,
         dry)
 
+# Gmail may keep what an expunge in this folder removes (see
+# Ops.expunge_keeps), so the delete is refused before Jev is asked. The plan
+# would be empty anyway: `uidplus` is then False (a proven law).
+def delete_kept.if(
+  kept: Bool,
+  jev: Jev.Switch,
+  lines: List<&2, I.RLine>,
+  uidplus: Bool,
+  folder: String,
+  uids: List<&2, U32>,
+  confirm: String,
+  uidv: U32,
+  dry: Bool
+) -> IO(Policy.Out):
+  match kept:
+    case True{}:
+      pure_out(Policy.Err{
+        "on Gmail a permanent delete is certain only in Trash or Spam, and the server did not " ++
+          "confirm that this folder is either (by one selectable LIST row with the \\Trash or " ++
+          "\\Junk attribute); nothing was deleted. Elsewhere an expunge removes the folder's " ++
+          "label, and the account's IMAP settings decide whether the messages stay in All " ++
+          "Mail; " ++ delete_advice(lines)})
+    case False{}:
+      delete_gated(jev, lines, uidplus, folder, uids, confirm, uidv, dry)
+
 def delete_caps.if(
   problem: String,
   jev: Jev.Switch,
   +lines: List<&2, I.RLine>,
-  folder: String,
+  +folder: String,
   uids: List<&2, U32>,
   confirm: String,
   uidv: U32,
@@ -4229,7 +4291,9 @@ def delete_caps.if(
     case SCon{h, t}:
       pure_out(Policy.Err{SCon{h, t}})
     case SNil{}:
-      delete_gated(jev, lines, I.has_cap(I.caps(lines), "UIDPLUS"), folder, uids, confirm, uidv,
+      +caps = I.caps(lines)
+      +kept = Ops.expunge_keeps(caps, Policy.named_attrs(I.folders(lines), folder))
+      delete_kept.if(kept, jev, lines, Ops.delete_uidplus(kept, caps), folder, uids, confirm, uidv,
         dry)
 
 def delete_caps(
@@ -6999,8 +7063,14 @@ def decoded_addr.if(+a: String, angle: Bool) -> String:
     case False{}:
       a
 
+# An address with its encoded words decoded and every ASCII byte kept (see
+# M.labelled_text), so no charset label hides a character that an address
+# check looks for.
+def addr_text(raw: String) -> String:
+  M.decode_words(raw, True{})
+
 def decoded_addr(raw: String) -> String:
-  +a = M.decode_header(raw)
+  +a = addr_text(raw)
   decoded_addr.if(a, String.contains(a, "<"))
 
 # Keep decoded source text intact for identity checks such as sender_in:
@@ -7010,7 +7080,7 @@ def decoded(xs: List<&2, String>) -> List<&2, String>:
     case Nil{}:
       []
     case x <> t:
-      M.decode_header(x) <> decoded(t)
+      addr_text(x) <> decoded(t)
 
 # Only recipient presentation uses sanitized display names.
 def decoded_recipients(xs: List<&2, String>) -> List<&2, String>:
@@ -9366,46 +9436,11 @@ def projected.if(enabled: Bool, o: Policy.Out, +args: J.Json) -> Policy.Out:
       projected.out(o, Policy.str_arg(args, "projection", "full"),
         u32_arg(args, "max_response_bytes", 0))
 
-def nested_coverage.fields(xs: List<&2, J.Json>, +why: String) -> List<&2, J.Json>:
-  match xs:
-    case Nil{}:
-      []
-    case J.JKv{"reasons", J.JArr{items}} <> t:
-      J.kv("reasons", J.arr(List.append(&2, J.Json, J.unchain(items), [J.str(why)]))) <>
-        nested_coverage.fields(t, why)
-    case kv <> t:
-      kv <> nested_coverage.fields(t, why)
-
-# A scoped annotation: Jev saw less than the result shows, so it gains
-# coverage and a reason naming what the TypeSafe request left out.
-def nested_coverage.jev(j: J.Json, c: Jev.Content, +headers_why: String, +body_why: String)
-  -> J.Json:
-  match j c:
-    case J.JObj{fields} Jev.Headers{}:
-      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields), headers_why),
-        [J.kv("coverage", J.str("headers_only"))]))
-    case J.JObj{fields} Jev.Body{}:
-      J.obj(List.append(&2, J.Json, nested_coverage.fields(J.unchain(fields), body_why),
-        [J.kv("coverage", J.str("partial"))]))
-    case _ _:
-      j
-
-def nested_coverage.items(xs: List<&2, J.Json>, +c: Jev.Content, +headers_why: String,
-  +body_why: String) -> List<&2, J.Json>:
-  match xs:
-    case Nil{}:
-      []
-    case J.JKv{"jev", j} <> t:
-      J.kv("jev", nested_coverage.jev(j, c, headers_why, body_why)) <>
-        nested_coverage.items(t, c, headers_why, body_why)
-    case kv <> t:
-      kv <> nested_coverage.items(t, c, headers_why, body_why)
-
-def nested_coverage.scoped(j: J.Json, +c: Jev.Content, +headers_why: String, +body_why: String)
-  -> J.Json:
+# A read's result, its jev object with the reason `why` (see Jev.scoped).
+def scoped_result(j: J.Json, +c: Jev.Content, +why: String) -> J.Json:
   match j:
     case J.JObj{fields}:
-      J.obj(nested_coverage.items(J.unchain(fields), c, headers_why, body_why))
+      J.obj(Jev.scoped_fields(J.unchain(fields), c, why))
     case _:
       j
 
@@ -9431,18 +9466,17 @@ def summarized(j: J.Json) -> Bool:
 def summarized_coverage.if(summary: Bool, j: J.Json, +c: Jev.Content) -> J.Json:
   match summary:
     case True{}:
-      +why : String = "Attached-message summaries were not included in the Jev request."
-      nested_coverage.scoped(j, c, why, why)
+      scoped_result(j, c, "Attached-message summaries were not included in the Jev request.")
     case False{}:
       j
 
 def nested_coverage.if(nested: Bool, +j: J.Json, +c: Jev.Content) -> J.Json:
   match nested:
     case True{}:
-      nested_coverage.scoped(j, c,
+      scoped_result(j, c, Bool.pick(String, Jev.is_body(c),
+        "Nested message text was not included in the Jev request.",
         "Only parent header facts were eligible for checking; " ++
-          "nested headers and text were not included.",
-        "Nested message text was not included in the Jev request.")
+          "nested headers and text were not included."))
     case False{}:
       summarized_coverage.if(summarized(j), j, c)
 
@@ -9454,63 +9488,43 @@ def nested_coverage(o: Policy.Out, jev: Jev.Switch) -> Policy.Out:
     case _ _:
       o
 
+# Whether a result, once projected by `mode`, shows raw HTML: its html, or
+# the content of a selected text/html part.
+def raw_html(+j: J.Json, +mode: String) -> Bool:
+  +media = M.main_value(Response.text(j, "content_type"))
+  (Response.keep(mode, "html") && Bool.not(String.is_empty(Response.text(j, "html")))) ||
+    (Response.selected(j) && String.eq(media, "text/html") &&
+      Response.content_allowed(mode, media) &&
+      Bool.not(String.is_empty(Response.text(j, "content"))))
+
+def markup_coverage.if(raw: Bool, j: J.Json) -> J.Json:
+  match raw:
+    case True{}:
+      scoped_result(j, Jev.Body{}, Jev.markup_reason())
+    case False{}:
+      j
+
+# Whether Jev answered about the read `j`; only then does its jev object
+# describe a request.
+def jev_checked(j: J.Json) -> Bool:
+  String.eq(Response.text(Maybe.default(&2, J.Json, J.get(j, "jev"), J.JNull{}), "status"),
+    Jev.status_name(Jev.Checked{}))
+
+# In body mode Jev reads an HTML part only as converted text, so a checked
+# read that shows raw HTML says so.
+def markup_coverage(o: Policy.Out, jev: Jev.Switch, +mode: String) -> Policy.Out:
+  match o jev:
+    case Policy.Ok{+j} Jev.On{Jev.Body{}}:
+      Policy.Ok{markup_coverage.if(jev_checked(j) && raw_html(j, mode), j)}
+    case _ _:
+      o
+
 def projected(+args: J.Json, +jev: Jev.Switch, read: IO(Shown)) -> IO(Policy.Out):
   do IO<Policy.Out>:
     o : Policy.Out <- annotated(jev, read)
+    m : Policy.Out = markup_coverage(o, jev, Policy.str_arg(args, "projection", "full"))
     return projected.if(Maybe.is_some(&2, J.Json, J.get(args, "projection")) ||
-      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), nested_coverage(o, jev), args)
-
-def facts_result.within(fits: Bool, result: J.Json) -> Policy.Out:
-  match fits:
-    case True{}:
-      Policy.Ok{result}
-    case False{}:
-      Policy.Err{"max_response_bytes is too small for the projected result and facts; raise the budget"}
-
-def facts_source(shown: Shown) -> Facts.SourceEnd:
-  match shown:
-    case Whole{out, I.Msg{uid, flags, date, size, headers, body, structure}, max}:
-      +observed = C.byte_len(body)
-      Bool.pick(Facts.SourceEnd, U32.is_ge(observed, max) || U32.is_ne(size, observed),
-        Facts.Prefix{}, Facts.Complete{})
-    case _:
-      Facts.Prefix{}
-
-def facts_result(o: Policy.Out, ending: Facts.SourceEnd, +max: U32) -> Policy.Out:
-  match o:
-    case Policy.Ok{J.JObj{+items}}:
-      +j = J.obj(J.unchain(items))
-      source_end = Bool.pick(Facts.SourceEnd,
-        Policy.bool_arg(Maybe.default(&2, J.Json, J.get(j, "response"), J.JNull{}),
-          "output_truncated", False{}), Facts.Prefix{}, ending)
-      +result = J.obj(List.append(&2, J.Json, J.unchain(items),
-        Facts.fields(Policy.str_arg(j, "text", ""), source_end)))
-      facts_result.within(U32.is_zero(max) || U32.is_le(Response.bytes(result), max), result)
-    case _:
-      o
-
-def facts_get.run(enabled: Bool, +args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
-  match enabled:
-    case False{}:
-      projected(args, jev, t_get(args))
-    case True{}:
-      do IO<Policy.Out>:
-        +fetched : Shown <- t_get(args)
-        ending : Facts.SourceEnd = facts_source(fetched)
-        result : Policy.Out <- projected(args, jev, IO.pure(Shown, fetched))
-        return facts_result(result, ending, u32_arg(args, "max_response_bytes", 0))
-
-def facts_get.if(allowed: Bool, +args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
-  match allowed:
-    case False{}:
-      pure_out(Policy.Err{"facts=true requires a whole-message read with projection=full or text"})
-    case True{}:
-      facts_get.run(Policy.bool_arg(args, "facts", False{}), args, jev)
-
-def facts_get(+args: J.Json, jev: Jev.Switch) -> IO(Policy.Out):
-  facts_get.if(Bool.not(Policy.bool_arg(args, "facts", False{})) ||
-    (String.is_empty(Policy.str_arg(args, "section", "")) &&
-      C.is_in(Policy.str_arg(args, "projection", "full"), ["full", "text"])), args, jev)
+      Maybe.is_some(&2, J.Json, J.get(args, "max_response_bytes")), nested_coverage(m, jev), args)
 
 # Dispatch
 # ========
@@ -9527,7 +9541,7 @@ def run_op(op: Ops.Op, +args: J.Json, jev: Jev.Switch, images: Jev.ImageMode) ->
     case Ops.OSearch{}:
       projected(args, jev, t_search(args))
     case Ops.OGet{}:
-      facts_get(args, jev)
+      projected(args, jev, t_get(args))
     case Ops.OGetNew{}:
       projected(args, jev, t_get_new(args))
     case Ops.OBrief{}:

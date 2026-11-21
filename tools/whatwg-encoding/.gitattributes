@@ -1,0 +1,2 @@
+# source.json pins these files by sha256, so checkouts keep their bytes.
+* -text

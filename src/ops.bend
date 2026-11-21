@@ -697,9 +697,10 @@ def plan_delete.if(
       []
 
 # Permanent deletion needs the caller's confirmation, exactly the word
-# "permanently-delete", and UIDPLUS (to expunge only these UIDs), confirmed
-# again in the deleting session before anything is marked. Without both
-# there is no plan.
+# "permanently-delete", and `uidplus`: UIDPLUS (to expunge only these UIDs),
+# confirmed again in the deleting session before anything is marked, and an
+# expunge that destroys them (see delete_uidplus). Without both there is no
+# plan.
 def plan_delete(
   mbox: String,
   uids: List<&2, U32>,
@@ -708,6 +709,20 @@ def plan_delete(
   uidv: U32
 ) -> List<&2, I.Cmd>:
   plan_delete.if(String.eq(confirm, confirm_word()), mbox, uids, uidplus, uidv)
+
+# Gmail (X-GM-EXT-1) shows labels as folders, and its expunge surely
+# destroys a message only in Trash or Spam, the folders with the \Trash or
+# \Junk attribute. Anywhere else an expunge removes that folder's label, and
+# the account's IMAP settings decide whether the message stays in All Mail.
+def expunge_keeps(caps: List<&2, String>, +attrs: List<&2, String>) -> Bool:
+  I.has_cap(caps, "X-GM-EXT-1") &&
+    Bool.not(I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk"))
+
+# What plan_delete takes as `uidplus`: the server expunges exactly the given
+# UIDs (UIDPLUS), and the expunge destroys them, which it may not do in a
+# folder where expunge_keeps holds (`kept`).
+def delete_uidplus(kept: Bool, caps: List<&2, String>) -> Bool:
+  Bool.not(kept) && I.has_cap(caps, "UIDPLUS")
 
 # A label is an iCloud folder, so labelling is moving: every law about
 # plan_move holds for it unchanged.

@@ -135,63 +135,104 @@ account-specific limits rather than copying these values.
 
 ## Upgrade without mixing versions
 
-These steps describe [`scripts/install.sh`](../scripts/install.sh), not a
-future rollback command. The installer builds in the checkout's `bin/`
-and uses a lock on that directory to exclude another installer. It stages
-files and checks the helpers and safety proofs before publication. With
-Clang available, it builds the core before renaming the helpers and core
-into place. Those renames are sequential, not one atomic directory swap.
+A fresh compiled installation uses immutable generations. The installer locks the
+checkout root, validates the selected pair, builds and checks a new generation,
+then publishes the active and previous slots through one selector rename.
+Managed sessions keep their captured core and default helpers across upgrades.
+Historical installers must not run against this managed layout.
 
-1. Pause scheduled callers. Let in-flight calls finish. Stop MCP servers
-   that use the installation. Reconcile any uncertain writes before proceeding.
-2. Record the working Git commit and the MCP command's absolute path.
-   Keep the known-good checkout and its complete `bin/` directory intact.
-   Keep credentials and the send counter outside the replacement checkout.
-3. Prepare a separate checkout of the reviewed target revision. Verify its
-   source and pinned dependencies before building it. Do not build an
-   unreviewed revision in an environment with real credentials.
-4. Install the documented build prerequisites, including Clang. From that
-   checkout, run `scripts/install.sh --install-bend --install-rust`.
-   The flags install missing tools; they do not force an existing Bend
-   executable to match the pinned version. Follow
-   [contributor toolchain guidance](../CONTRIBUTING.md#checks) if versions differ.
-5. Require a successful build of all five binaries. Without Clang, updating
-   an existing executable core exits nonzero with "clang not found; refusing
-   to update an existing compiled installation." Install Clang and rerun.
-   Without Clang, a fresh checkout uses the slower interpreter fallback, not
-   a newly compiled core.
-6. Point the MCP client's command at the new checkout's `scripts/mailbend`
-   or your configured wrapper. Preserve its approved configuration and
-   the same state directory. Check custom helper overrides for old paths.
-7. Start a new MCP server. Run local `diagnose` first. If authorized, run
-   explicit network diagnostics. Do not send a test message as an upgrade check.
-8. Resume callers only after the checks pass. Restart every MCP client that
-   used the old installation, including clients that reconnect automatically.
+For a healthy managed checkout, record the working source revision and approved
+configuration before an upgrade. Keep the current send-state directory and its
+reservations. Use reviewed source and the documented toolchain, then run
+`scripts/install.sh --install-bend --install-rust` as the checkout owner.
+The flags install missing tools; they do not force an existing Bend executable
+to match the pin. See [toolchain guidance](../CONTRIBUTING.md#checks).
+Without Clang, a managed installation refuses the update rather than falling back
+to the interpreter.
 
-If you rebuild in place instead, stop all callers first. A running old core
-starts helpers by path and can otherwise use newly installed helpers.
-A failed build before publication leaves the old binaries. A crash during
-publication can leave a mixed set. Do not restart it until a complete
-successful rebuild restores matching binaries.
+Require a successful install and a credential-free
+`sh scripts/setup-cloud.sh --check`. Start new MCP sessions for the new generation.
+Existing managed sessions intentionally keep the old generation until stopped.
+Pause scheduled callers and reconcile uncertain writes before restarting clients.
+Do not use an SMTP send as an upgrade check.
+
+A post-activation flush failure names the selected generation and reports
+uncertain durability. Do not assume that activation failed or blindly reverse it.
+Process-kill and simulated filesystem failures do not prove power-loss behavior.
+
+A nonempty legacy `bin` cannot be converted automatically. A damaged selected
+pair also blocks install. Use the [clean-checkout procedure](#migrate-or-recover-in-a-clean-checkout)
+below for either refusal. Legacy interpreter updates retain their weaker mutable
+helper-path behavior and require restarting existing sessions.
 
 ## Return to a known-good installation
 
-There is no `install.sh --rollback` option and no retained release directory
-managed by this installer. Do not copy one old helper over a new core.
+For a healthy managed layout with a recorded previous generation, run
+`scripts/install.sh --rollback`. It validates both selected generations, restores
+the previous complete set without building or downloading, and consumes the slot.
+Repeating rollback with no intervening install revalidates and reflushes the same
+selected state. A later install creates a new slot, so a later bare rollback
+applies to that new slot. An initial installation has no previous generation.
 
-1. Pause callers and stop the affected MCP servers. Reconcile uncertain
-   writes. Rollback does not undo sent mail or mailbox changes.
-2. Restore the MCP command to the retained known-good checkout and matching
-   binaries. Restore its approved helper paths and compatible configuration.
-3. Keep the current send counter. Do not restore an older counter or reset
-   reservations to match the older software.
-4. Restart the clients and run local diagnostics. Run network checks only
-   if authorized. Resume callers after validation.
+Pause callers and reconcile uncertain writes before changing which version they
+use. Restart clients that must use the restored generation; running managed
+sessions keep their captured set. Rollback does not undo sent mail or mailbox
+changes. Keep the current send counter, not an older backup or reset reservations.
+An older revision may omit later safety fixes, so assess that risk before rollback.
 
-If no known-good binary set exists, rebuild the recorded revision in a
-separate checkout with its required toolchain. If that fails, keep callers
-stopped and investigate. An older revision may omit later safety fixes.
-Do not roll back a security fix without assessing that risk.
+A missing member or manifest mismatch in the active or recorded previous
+generation blocks rollback too. Do not copy one old helper over a new core,
+remove the previous slot, rewrite a manifest or point `current` at another
+directory. Stop affected clients and use the clean-checkout procedure.
+The launcher and readiness check validate structure, not all content hashes.
+A successful launch cannot establish that a suspect generation is sound.
+
+## Migrate or recover in a clean checkout
+
+Use this procedure for a nonempty legacy `bin` or damaged managed content.
+For a permissions-only refusal, first inspect the path, observed mode and local
+policy using [checkout permissions](../README.md#checkout-permissions).
+Do not change shared or system directories merely to pass the guard.
+
+1. Pause scheduled callers and automatic reconnects. Let healthy legacy calls
+   finish, then stop their servers. Stop clients of a damaged checkout before
+   further execution. Reconcile uncertain writes without automatically replaying
+   sends or destructive operations.
+2. Record the known reviewed source revision, the actual MCP command and approved
+   configuration. Preserve the original checkout at its canonical path, including
+   `bin`, `bin.prev`, `.mailbend-install`, all generation directories and all
+   activation records when present. Keep private backups of needed local source
+   and configuration with their links and modes. Do not publish credentials,
+   raw environments or the retained binaries as diagnostic reports.
+3. Preserve the actual current send-state directory and reservations. Keep the
+   same absolute `MAILBEND_STATE_DIR` and `MAILBEND_MAX_SENDS_PER_DAY` for the account.
+   If using the default state path, account for `HOME` and `XDG_STATE_HOME` when
+   configuring the replacement. Never restore an older counter or create an empty
+   one to get past a refusal. If state is damaged or unavailable, keep sending
+   disabled and resolve that problem separately.
+4. Create a clean checkout of reviewed source at its permanent new absolute path.
+   Use a trusted parent and check the new root's ownership and mode. Do not copy
+   `bin`, `.mailbend-install`, `native/target` or other build caches from the old
+   checkout. Do not rename a live managed checkout or replace its path with a
+   symlink. Retained sessions depend on that canonical path.
+5. Build in the new checkout with the documented prerequisites and installer,
+   without real mail credentials in the build environment. Require a complete
+   compiled installation and its credential-free `setup-cloud.sh --check`.
+   This validates the newly built set, not the suspect old bytes.
+6. Deliberately change the client's absolute launcher path and every scheduler,
+   personal routine and Team Setup/Check Script that names the old checkout.
+   Preserve approved secret references, safety switches and state-directory
+   settings. Review explicit helper overrides for stale paths; do not copy
+   damaged helpers or silently leave an override on the old installation.
+   [Cloud command examples](CLOUD_AGENT.md#move-a-legacy-or-damaged-cloud-checkout)
+   show the change from `/workspace/MailBend` to a distinct permanent path.
+7. Restart the affected clients on the new checkout. Run local diagnostics first.
+   Run network diagnostics only when authorized. Do not send a test message.
+   Resume callers only after the required checks pass.
+8. Keep the old checkout and retained objects intact for investigation.
+   This procedure does not provide in-place repair, automatic migration or
+   generation cleanup. If the replacement cannot be built or registered, keep
+   affected clients stopped and ask the environment owner to resolve the blocker.
 
 ## Share a diagnostic report without sharing mail
 

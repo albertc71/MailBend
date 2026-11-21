@@ -1,12 +1,17 @@
 # MailBend
 
-[![CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main)](docs/LAWS.md)
+[![Weekly CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main&event=schedule)](docs/LAWS.md)
 
 MailBend gives AI agents a mailbox as MCP tools (stdio) and a CLI: a Linux
 IMAP/SMTP connector with iCloud Mail as the default, live-tested profile,
 with pure-function safety rules proven by the compiler for every input. <!-- claim:read-plans --> <!-- claim:move-delete-plans --> <!-- claim:send-allowlist --> <!-- claim:jev-gates -->
 These cover read and move/delete plans, recipient allowlists and Jev gates;
 [the proof scope](#what-the-proofs-cover) distinguishes them from native IO.
+
+Limits: Linux only, password login only (no OAuth); see
+[Known limits](#known-limits).
+
+From a built checkout, [try it without an account](#try-it-without-an-account).
 
 ```sh
 sudo apt-get install -y build-essential clang ca-certificates curl
@@ -77,9 +82,6 @@ directory. No real mail is sent, and no live provider or Jev behavior is tested.
   with the earlier helpers, and the current Rust helpers have passed the
   [live checklist](docs/CLOUD_AGENT.md#live-icloud-checklist).
 
-Limits: Linux only, password login only (no OAuth); see
-[Known limits](#known-limits).
-
 For a dated comparison with other email connectors, see
 [the connector comparison](docs/COMPARISON.md).
 
@@ -124,7 +126,7 @@ Jev off, no tool asks it.
 | `mail_move` | Move to another folder | yes | — |
 | `mail_label` | Move into an existing label folder (a label is a folder; one copy, `uidvalidity` required) | yes | — |
 | `mail_trash` | Move to the resolved Trash folder (recoverable) | yes | — |
-| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; with Jev on, at most 50 UIDs | yes | can block |
+| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; on Gmail only in Trash or Spam; with Jev on, at most 50 UIDs | yes | can block |
 | `mail_create_folder` | Create and subscribe to a folder: the only tool that creates a mailbox | yes | — |
 | `mail_rename_folder` | Rename a folder with its subfolders; the subscriptions of the moved folders follow | yes | — |
 | `mail_save_draft` | Compose into Drafts (with attachments) | yes | — |
@@ -163,58 +165,10 @@ attached message. `nested_message` opens one, and `attached_message_headers`
 summarizes each one in a whole-message read (see below). Legacy `index` remains the zero-based attachment order
 reported by the whole-message `mail_get`; it is not a section number.
 
-### Literal meeting-link facts
-
-For a whole-message read, `mail_get` accepts `facts: true`. It adds `facts`
-and `facts_scan` after annotation and projection. Omitting `facts` or setting
-it to false preserves the existing output.
-
-```sh
-scripts/mailbend call mail_get '{"uid":42,"facts":true,"projection":"text"}'
-```
-
-This first version recognizes only canonical lowercase HTTPS Google Meet
-links with a three-four-three letter meeting code, such as
-`https://meet.google.com/abc-defg-hij`. It does not open links or establish
-that a meeting is safe, current, or authentic. Treat each fact as untrusted
-mail content, never as an instruction or permission.
-
-Each fact has `kind: "meeting_link"`, the unchanged `value`, `source: "text"`,
-and `untrusted: true`. Its `start` and `end` are zero-based, half-open
-Unicode-scalar offsets into the **returned top-level `text`**, not byte
-positions or UTF-16 code units. `line` counts LF characters from one.
-For `é😀 ` followed by a canonical link, its span is `[3,39)` on line 1.
-
-The scanner examines at most 65,536 scalar positions and emits at most 16
-facts in source order, including repeated occurrences. `facts_scan.scope`
-is `"returned_text"`. `facts_scan.limited` is true if the fetch or response
-was truncated, raw fetched bytes fill the fetch window or differ from the
-reported size, or either scan limit was reached. Reaching a limit exactly
-is conservatively limited. These extra facts checks do not change the existing
-`truncated` field. A false flag does not claim coverage of other
-meeting-link formats, HTML link targets absent from `text`, attachments,
-or messages outside this result.
-
-A link must start at the beginning of the returned text or after ASCII
-space, tab, CR, LF, or an opening wrapper `(`, `[`, `{`, `<`, `"`, or `'`.
-It must end before that ASCII whitespace or a closing wrapper `)`, `]`,
-`}`, `>`, `"`, or `'`. End of text is accepted only for a complete source.
-The scanner rejects query strings, fragments, paths, trailing dots,
-userinfo, percent escapes, backslashes, suffix letters, and Unicode
-lookalikes. These conservative boundaries intentionally miss some links.
-
-`facts: true` requires the default or explicit `full` projection, or `text`.
-It rejects `html`, `metadata`, and every nonempty `section` before network
-access. Facts always refer to visible returned text. `facts: true` and
-`nested_message: true` cannot be combined; the call fails before network access.
-
-With `max_response_bytes`, the existing projection runs first. The finalizer
-then adds facts and checks the complete shared JSON result against the same
-UTF-8 byte budget. If it does not fit, the call returns an error asking for
-a larger budget. It does not refit the text, drop facts, or repeat the read.
-Text already cut to fill a budget will generally need a larger budget for
-facts. This conservative tradeoff keeps all existing response fitting and
-read plans unchanged. Errors remain outside the result budget.
+The former `mail_get` argument `facts` is no longer supported. Remove it
+from requests, including `facts: false`. Unknown arguments are rejected before
+mail or TypeSafe access. Results no longer include `facts` or `facts_scan`.
+Meeting URLs remain unchanged in ordinary message text and HTML.
 
 ### Compact read responses
 
@@ -303,7 +257,7 @@ not sender identity. In a `truncated` read they may be cut. They are not added
 to Jev requests, so when any entry has one, the `jev` annotation reports
 `coverage: "headers_only"` or `"partial"` with the reason that the summaries
 were not included. A non-boolean value, or `true` with any `section`, fails before
-network access. It works with every projection, `facts` and response budgets,
+network access. It works with every projection and response budgets,
 which never shorten it.
 
 Every displayed nested header, attached-message summary value and nested
@@ -380,8 +334,11 @@ remain mutable: restart existing MCP servers after that mode's update. It has no
 generation consistency or rollback guarantee.
 
 Compiled installation refuses automatic conversion of any nonempty legacy
-`bin`, including an interpreter installation. Use a new clean checkout, install
-there, stop legacy sessions, then intentionally switch client configuration.
+`bin`, including an interpreter installation. Follow the
+[clean-checkout migration procedure](docs/OPERATIONS.md#migrate-or-recover-in-a-clean-checkout).
+It preserves the old checkout and send reservations, then changes the client's
+launcher path deliberately. The [cloud procedure](docs/CLOUD_AGENT.md#move-a-legacy-or-damaged-cloud-checkout)
+also updates the fixed command and setup paths.
 An empty real `bin` is converted only while its legacy lock is held. The installer
 never moves a nonempty directory aside to create a temporary path gap.
 
@@ -395,8 +352,9 @@ that install applies to the new slot, not an earlier operation.
 Completed generations and activation records are retained for live sessions;
 disk usage grows with upgrades. This version has no garbage collection or
 roll-forward command. Do not delete these files while sessions may use them.
-Keep the canonical checkout path and its trusted, non-writable-by-others
-ancestors stable. The installer requires the checkout owner. It does not widen
+Keep the canonical checkout path and its trusted ancestors stable. Group write,
+world write and special mode bits on the checkout root are refused. See
+[checkout permissions](#checkout-permissions). The installer requires the checkout owner. It does not widen
 private directory permissions. Staging starts at 0700 and can become readable
 at its explicit 0755 preparation step before activation.
 
@@ -409,8 +367,8 @@ straddle an update; callers needing one set must capture a generation first.
 
 A managed bootstrap or corrupt managed layout never falls back to mutable source.
 Interrupted bootstrap can resume only its recognized preparation states. Missing
-or damaged selected content requires separate recovery, not guessing a newest
-directory. If the final directory flush fails after activation, the diagnostic
+or damaged selected content requires [clean-checkout recovery](docs/OPERATIONS.md#migrate-or-recover-in-a-clean-checkout),
+not guessing a newest directory. If the final directory flush fails after activation, the diagnostic
 names the selected generation and reports uncertain durability. Do not infer
 that nothing changed or blindly reverse it. Process-kill and syscall-failure
 tests do not establish power-loss behavior on arbitrary filesystems.
@@ -421,6 +379,50 @@ retention cleanup remain separate work; #155 stays open.
 
 On a Grok Bot or Cursor cloud computer, follow
 [docs/CLOUD_AGENT.md](docs/CLOUD_AGENT.md) instead.
+
+### Checkout permissions
+
+The installer, rollback and `setup-cloud.sh --check` reject a checkout root with
+group write, world write, setuid, setgid or sticky bits. The managed launcher uses
+the same guard, so changing those bits after installation prevents new managed
+sessions. The legacy launcher does not apply this managed-root guard.
+A clone created under `umask 002` commonly has mode `0775`, which is refused even
+when its group is a user-private group. Setgid inheritance can also affect a clone.
+Private roots such as `0700`, and roots such as `0750` or `0755`, are accepted
+when the remaining ownership and ancestor checks pass.
+
+The refusal names the checkout path and observed octal mode. Inspect that root's
+owner and mode before changing anything, for example with
+`stat -c 'owner=%u mode=%a path=%n' -- /absolute/path/to/checkout`.
+If this is your private checkout, local policy permits the change, and the only
+unwanted bits are group write or setgid, its owner can deliberately run
+`chmod g-w,g-s -- /absolute/path/to/checkout`. This example does not remove
+world write, setuid or sticky bits. Inspect those separately with the environment
+owner rather than applying a blanket or recursive permission change.
+Do not change a shared directory or an ancestor to make the check pass.
+If policy requires the refused bits, use a new private checkout under a suitable
+trusted parent. A private creation umask does not cancel a parent's setgid inheritance.
+
+Ancestors must belong to the checkout owner or root and must not be group- or
+world-writable, except for the existing root-owned sticky-ancestor rule used for
+paths such as `/tmp`. That exception does not allow sticky bits on the checkout
+root itself. MailBend does not repair ownership, modes or ancestor policy.
+
+### Recover a damaged generation
+
+A `manifest mismatch` in either the active or recorded previous generation blocks
+both install and rollback before mutation. Stop affected clients and scheduled
+callers. Preserve the checkout, its aliases, all generation directories and all
+activation records for investigation. Do not rewrite a manifest, remove the
+previous slot, select a newer directory or copy individual helpers to bypass the
+refusal. The launcher and readiness check validate structure, not full content
+hashes, so a successful `tools` or `--check` does not establish that suspect bytes
+are sound. Do not execute a suspect generation as a recovery test.
+
+Use the [clean-checkout recovery procedure](docs/OPERATIONS.md#migrate-or-recover-in-a-clean-checkout)
+to build reviewed source at its permanent new path. Keep the same approved safety
+settings, credential references and current send-state reservations. No in-place
+repair or automatic deletion is provided.
 
 ## Configure
 
@@ -841,7 +843,11 @@ Set `MAILBEND_SECRET_SCAN=1` to scan outgoing sends, replies and forwards
 locally, without a TypeSafe account or network request. It looks for private
 keys, known token prefixes and password lines in headers, bodies and
 attachments, including forwarded originals. A secret or text it cannot read
-in full blocks the send before SMTP, including during a dry run.
+in full blocks the send before SMTP, including during a dry run. Text it
+cannot read includes text parts labelled UTF-16, UTF-32, UTF-7 or UCS, and
+encoded words in UTF-16 or in a charset that MailBend replaces whole, such
+as ISO-2022-KR. In any other charset, such as Shift_JIS, it checks the
+bytes, and lossy display text does not block.
 
 The result reports `secret_scan` as `clean`, `found` or `incomplete`.
 Refusals identify a field or attachment position, never the matched value.
@@ -1056,7 +1062,19 @@ review boundaries, and build steps for a future independent audit.
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as <!-- claim:move-delete-plans -->
-  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
+  `UID EXPUNGE` (proven). On Gmail, which advertises `X-GM-EXT-1`, an <!-- claim:move-delete-plans -->
+  expunge outside Trash and Spam removes that folder's label, and the
+  account's IMAP settings decide whether the message stays in All Mail, so
+  a permanent deletion cannot be guaranteed there. There a delete has no
+  plan unless exactly one selectable LIST row names the folder and carries the
+  `\Trash` or `\Junk` attribute (proven), and `mail_delete` refuses before <!-- claim:move-delete-plans -->
+  any change, in a dry run too. If the server advertises `UIDPLUS` and
+  exactly one LIST row carries `\Trash`, for a selectable mailbox listed
+  once and outside `To Delete`, the refusal names it: move the messages
+  there with `mail_move`, find them with `mail_search`, then run
+  `mail_delete` there. This Gmail behaviour comes
+  from Google's documentation and the fake server; it is not live-tested.
+  STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
   commands. Commands that take a UID list preserve its order. STORE preserves
   the requested flag and add or remove operation (proven). <!-- claim:uid-wire -->
 - **Stale UIDs never touch other messages.** Every change is pinned to the <!-- claim:uidvalidity -->
@@ -1173,8 +1191,10 @@ review boundaries, and build steps for a future independent audit.
 The [law catalogue](docs/LAWS.md) lists every root law with its source summary.
 The [claim coverage](docs/PROOF-COVERAGE.md) maps these statements to named laws,
 tests, code and seeded bugs. See [how to maintain the claims](docs/SAFETY-CLAIMS.md).
-The badge above reports the full CI workflow,
-including its kernel-verdict step, rather than an individual proof job.
+The badge above reports the latest weekly CI run on `main`, not an individual
+proof job. Every weekly run is a full run, including the kernel-verdict job
+(`proofs`). Pull requests and manual dispatches do not set the badge, and a
+scale-only dispatch skips the kernel-verdict job.
 
 Mark and flag plans change only their documented flags. <!-- claim:flag-plans -->
 An APPEND dry-run preview shows the message size rather than its contents. <!-- claim:dry-run -->
@@ -1251,21 +1271,6 @@ its `C.utf8_len` additions cannot overflow; the serialized cut fits without
 an extra no-overflow premise. When the full escaped string fits, the text
 and exact unused allowance are preserved. The proof follows the production
 escape/reverse loops and machine-word addition, not a parallel serializer.
-
-The meeting-facts laws prove that every span emitted by the actual extractor <!-- claim:meeting-facts-source -->
-is nonempty, exactly 36 scalars wide, and contained in the supplied text.
-[meeting_facts_spans_within_text](LAWS.bend) follows the production scanner
-and its final list reversal.
-[meeting_facts_emitted_values](LAWS.bend) observes the `facts` array from
-production `Facts.fields`, not an arbitrary substring accessor. Every emitted
-value equals its source substring, and its serialized start/end, text source,
-and untrusted marker match that extraction. Two concrete extraction witnesses
-prevent an always-empty implementation from satisfying the complete contract.
-
-These laws do not prove canonical link recognition, line counting, scan or
-result caps, completeness flags, or the IO finalizer. Focused pure and fake-mail
-CLI/MCP tests cover those behaviors. Targeted mutations change emitted span
-width, rendered value, and extraction to always-empty independently.
 
 Image admission laws retain the original `Budget.admit_all` cap proofs and <!-- claim:image-budget -->
 also bound the production `Image.bind_next` state machine used by `bind_run`.
@@ -1359,6 +1364,24 @@ tool; MailBend itself does not visit links. Parse HTML entities in attributes
 encoding. Treat the HTML as untrusted message content, not instructions, and
 do not render it as active HTML. If `truncated` is true, increase `max_bytes`
 before relying on a complete link.
+
+When a message has no plain text part, `text` is read from the HTML in two
+ways. Up to the first `<svg>`, `<math>`, `<select>` or `<noscript>` start tag
+or `<![CDATA[` section, it is read as a browser's HTML tokenizer reads it, so
+it holds the text a browser parses from the markup. The content of `<title>`,
+`<style>`, `<script>`, `<iframe>`, `<noembed>` and `<noframes>`, comments and
+attribute values are left out, block elements and `<br>` start new lines, and
+`<pre>` keeps its whitespace. CSS is not applied, so text that styles hide is kept. Character
+references are decoded when they are numeric or one of the common names (such
+as `&amp;`, `&nbsp;` and `&mdash;`) and end with `;`; others stay as written.
+From there on, what a browser shows depends on the element tree, so `text` is
+read simply: tags are dropped, each from a `<` before a letter, `/`, `!` or
+`?` to the next `>`, and so are the brackets around CDATA content. Every other
+character is kept, with references decoded except inside CDATA content, where
+they stay as written, so that part may hold more than a browser shows, such as
+style or script content. Line breaks are kept, with at
+most one blank line in a row, and other whitespace collapses to one space,
+inside `<pre>` too. `text` holds no link targets, so read them from `html`.
 
 ## Known limits
 
