@@ -137,6 +137,26 @@ def with_part(ctype: String, data: String) -> String:
 def eml(data: String) -> M.Attach:
   M.Attach{"forwarded-message.eml", "message/rfc822", data}
 
+# An encoded word: `bytes` in base64, labelled `cs`.
+def b_word(cs: String, bytes: String) -> String:
+  "=?" ++ cs ++ "?B?" ++ C.b64_encode(bytes, False{}) ++ "?="
+
+def subject(value: String) -> M.Attach:
+  eml("Subject: " ++ value ++ "\r\n\r\nsee the subject\r\n")
+
+def subject_in(cs: String, bytes: String) -> M.Attach:
+  subject(b_word(cs, bytes))
+
+# A forwarded subject with a password line behind 75 quote marks, whose
+# value is two encoded words: an emoji labelled iso-8859-1, then three
+# emoji and a digit labelled `cs`. With the first word read in Windows-1252
+# and the second as UTF-8, the value is 8 characters long and its digit is
+# the 94th character of the line, within the 96 that the rule reads.
+def quoted_password_in(cs: String) -> M.Attach:
+  +face = C.utf8_encode("\u{1F600}")
+  subject(String.repeat(">", 75n) ++ " Password: " ++ b_word("iso-8859-1", face) ++ " " ++
+    b_word(cs, String.repeat(face, 3n) ++ "2"))
+
 # `n` words of 5 characters each, built without deep recursion.
 def words(n: Nat, acc: String) -> String:
   match n:
@@ -144,6 +164,14 @@ def words(n: Nat, acc: String) -> String:
       acc
     case 1n+k:
       words(k, "word " ++ acc)
+
+def binary(data: String) -> M.Attach:
+  M.Attach{"blob.bin", "application/octet-stream", data}
+
+# 1,048,555 bytes of words, then `tail`: a tail of 21 bytes ends exactly at
+# the 1 MB the scan reads of the parts that are not text.
+def fill(tail: String) -> String:
+  words(209711n, tail)
 
 def scan_atts(atts: List<&2, M.Attach>) -> String:
   show_scan(Secrets.secret_scan([M.Hdr{"subject", "Hello"}], "See the attachment.", atts))
@@ -188,6 +216,8 @@ def check_attachments() -> IO(Unit):
     IO.print(scan_atts([M.Attach{"wide.txt", "text/plain",
       SCon{Char.from_u32(255), SCon{Char.from_u32(254), wide(secret)}}}]))
     IO.print(scan_atts([M.Attach{"wide.txt", "text/plain; charset=utf-16", "x"}]))
+    IO.print(scan_atts([M.Attach{"wide.txt", "text/plain; charset*=ISO-2022-KR''utf-16",
+      "hello"}]))
     IO.print(scan_atts([M.Attach{"wide.txt", "text/plain; charset=utf-16", "x"},
       M.Attach{"notes.txt", "text/plain", secret}]))
     IO.print(scan_atts([M.Attach{"notes.txt", "text/plain", secret},
@@ -199,6 +229,10 @@ def check_attachments() -> IO(Unit):
 
 def check_forwards() -> IO(Unit):
   +secret : String = "Password: hunter22"
+  +key : String = "AKIAIOSFODNN7EXAMPLE"
+  # A password line of 55 characters read as UTF-8, ending in the digit that
+  # makes its value a password; byte by byte it is 99 characters long.
+  +long : String = "Password: " ++ String.repeat("\u{C3}\u{A9}", 44n) ++ "2"
   +plain = forwarded("7bit", "nothing to see\r\n")
   do IO<Unit>:
     IO.print(scan_atts([eml(plain)]))
@@ -207,6 +241,9 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([eml(nested(2n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(nested(3n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(nested(3n, plain))]))
+    IO.print(scan_atts([eml(text_entity("Subject: fwd\r\n" ++
+      "Content-Type: multipart/mixed; boundary*=ISO-2022-KR''council\r\n",
+      "--council\r\nContent-Type: text/plain\r\n\r\n" ++ secret ++ "\r\n--council--\r\n"))]))
     IO.print(scan_atts([eml(forwarded("x-uuencode", "begin 644 x"))]))
     IO.print(scan_atts([eml(forwarded_in("unicode", "base64", C.b64_encode(wide(secret),
       False{})))]))
@@ -220,8 +257,20 @@ def check_forwards() -> IO(Unit):
     IO.print(scan_atts([eml(with_part("message/global", "Subject: inner\r\n\r\n" ++ secret))]))
     IO.print(scan_atts([eml("Subject: Deploy\r\nX-Deploy-Token: " ++ github_token() ++
       "\r\n\r\nsee the header\r\n")]))
-    IO.print(scan_atts([eml("Subject: =?utf-8?B?" ++ C.b64_encode("AKIAIOSFODNN7EXAMPLE",
-      False{}) ++ "?=\r\n\r\nsee the subject\r\n")]))
+    IO.print(scan_atts([subject_in("utf-8", key)]))
+    IO.print(scan_atts([subject_in("koi8-r", key)]))
+    IO.print(scan_atts([subject_in("shift_jis", key)]))
+    IO.print(scan_atts([subject_in("utf-7", key)]))
+    IO.print(scan_atts([subject_in("iso-2022-kr", key)]))
+    IO.print(scan_atts([subject_in("hz-gb-2312", key)]))
+    IO.print(scan_atts([subject_in("utf-16", key)]))
+    IO.print(scan_atts([subject_in("utf-16le", wide(key))]))
+    IO.print(scan_atts([subject_in("iso-2022-kr", "hello")]))
+    IO.print(scan_atts([subject_in("koi8-r", long)]))
+    IO.print(scan_atts([subject_in("shift_jis", long)]))
+    IO.print(scan_atts([quoted_password_in("koi8-r")]))
+    IO.print(scan_atts([quoted_password_in("shift_jis")]))
+    IO.print(scan_atts([subject_in("utf-8", C.utf8_encode("Password: 1月2日"))]))
     IO.print(scan_atts([M.Attach{"key.eml", "message/rfc822", pem()}]))
     IO.print(scan_atts([eml(multiparts(7n, forwarded("7bit", secret)))]))
     IO.print(scan_atts([eml(multiparts(8n, forwarded("7bit", secret)))]))
@@ -237,6 +286,19 @@ def check_limits() -> IO(Unit):
       [M.Attach{"creds.env", "application/octet-stream", secret}])))
     IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209710n, ""),
       [M.Attach{"creds.env", "application/octet-stream", secret}])))
+    IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209716n, ""),
+      [M.Attach{"creds.env", "application/octet-stream", secret}])))
+    IO.print(scan_atts([binary(fill("x\n" ++ secret ++ "\n" ++ words(10n, "")))]))
+    IO.print(scan_atts([binary(fill("xx\n" ++ secret ++ "\n" ++ words(10n, "")))]))
+    IO.print(scan_atts([binary(fill("xxx")), binary(secret)]))
+    IO.print(scan_atts([binary(fill("xxxx")), binary(secret)]))
+    IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(209520n, ""),
+      [M.Attach{"sample.eml", "message/rfc822", "Subject: " ++ words(80n, "") ++
+        "\r\n\r\nHello"}])))
+    IO.print(show_scan(Secrets.secret_scan([M.Hdr{"subject", "Lunch"}], words(207000n, ""),
+      [subject_in("koi8-r", String.repeat("\u{C1}", 3000n)),
+        M.Attach{"creds.env", "application/octet-stream", String.repeat("x", 5000n) ++ "\n" ++
+          secret}])))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -265,6 +327,7 @@ def main() -> IO(Unit):
 #|incomplete: attachment 1 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
 #|incomplete: attachment 1 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
 #|incomplete: the text part attachment 1 > text/plain cannot be decoded
+#|incomplete: the text part attachment 1 > text/plain cannot be decoded
 #|found in attachment 2 > text/plain
 #|found in attachment 1 > text/plain
 #|found in attachment 2 > text/plain
@@ -275,6 +338,7 @@ def main() -> IO(Unit):
 #|found in attachment 1 > message/rfc822 > message/rfc822 > message/rfc822 > text/plain
 #|incomplete: attachment 1 > message/rfc822 > message/rfc822 > message/rfc822 > message/rfc822 nests forwarded messages more than 3 levels deep
 #|incomplete: attachment 1 > message/rfc822 > message/rfc822 > message/rfc822 > message/rfc822 nests forwarded messages more than 3 levels deep
+#|found in attachment 1 > message/rfc822 > text/plain
 #|incomplete: the text part attachment 1 > message/rfc822 > text/plain cannot be decoded
 #|incomplete: attachment 1 > message/rfc822 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
 #|incomplete: attachment 1 > message/rfc822 > text/plain cannot be decoded: it holds a NUL character, as UTF-16 and UTF-32 text do
@@ -284,10 +348,30 @@ def main() -> IO(Unit):
 #|found in attachment 1 > message/rfc822 > message/global > text/plain
 #|found in the header of attachment 1 > message/rfc822
 #|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
+#|incomplete: an encoded word in the header of attachment 1 > message/rfc822 cannot be decoded
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|found in the decoded header of attachment 1 > message/rfc822
+#|clean
 #|found in the header of attachment 1 > message/rfc822
 #|found in attachment 1 > message/rfc822 > text/plain
 #|incomplete: attachment 1 > message/rfc822 nests its parts more than 8 levels deep
 #|found in attachment 1 > text/plain
 #|incomplete: it holds more than 1 MB of text
 #|found in attachment 1 > application/octet-stream
+#|found in attachment 1 > application/octet-stream
+#|found in attachment 1 > application/octet-stream
+#|found in attachment 1 > application/octet-stream
 #|clean
+#|found in attachment 2 > application/octet-stream
+#|clean
+#|clean
+#|found in attachment 2 > application/octet-stream

@@ -1012,14 +1012,15 @@ TOOLS = [
     tool("mail_trash", "Move messages to Trash",
          "Move messages to the resolved trash folder (configured override, "
          "advertised special use, or unique conventional name). Recoverable; "
-         "does not delete permanently. Refused for mail in \"To Delete\" "
-         "(use mail_move or mail_delete there). " + MOVE_CUT_OFF,
+         "does not delete permanently. Refused for mail in \"To Delete\". "
+         + MOVE_CUT_OFF,
          NON_ADDITIVE, MESSAGES, MESSAGES_REQUIRED),
     tool("mail_delete", "Permanently delete messages",
          "PERMANENTLY delete messages (\\Deleted + UID EXPUNGE of exactly "
          "these UIDs). Cannot be undone; prefer mail_trash. Requires confirm "
          "= \"permanently-delete\", the folder's uidvalidity and UIDPLUS on "
-         "the server. The confirm word guards against mistakes; it is not the "
+         "the server; on Gmail it runs only in a folder marked \\Trash or "
+         "\\Junk. The confirm word guards against mistakes; it is not the "
          "user's approval, so ask the user first. With MAILBEND_TYPESAFE on, "
          "it takes at most 50 UIDs, and Jev is first asked whether each "
          "message should be kept: any high answer, or TypeSafe failing, "

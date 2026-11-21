@@ -114,6 +114,7 @@ python3 tests/test-fuzz-lock.py                   # offline lock comparison fixt
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
+python3 tools/gen-charsets.py --check             # pinned WHATWG charset tables
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-cli-tools.py                   # credential-free filtered CLI discovery
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
