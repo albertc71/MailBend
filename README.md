@@ -1,6 +1,6 @@
 # MailBend
 
-[![CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main)](docs/LAWS.md)
+[![Weekly CI including kernel proofs](https://github.com/albertc71/MailBend/actions/workflows/ci.yml/badge.svg?branch=main&event=schedule)](docs/LAWS.md)
 
 MailBend gives AI agents a mailbox as MCP tools (stdio) and a CLI: a Linux
 IMAP/SMTP connector with iCloud Mail as the default, live-tested profile,
@@ -126,7 +126,7 @@ Jev off, no tool asks it.
 | `mail_move` | Move to another folder | yes | — |
 | `mail_label` | Move into an existing label folder (a label is a folder; one copy, `uidvalidity` required) | yes | — |
 | `mail_trash` | Move to the resolved Trash folder (recoverable) | yes | — |
-| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; with Jev on, at most 50 UIDs | yes | can block |
+| `mail_delete` | **Permanent** delete; needs `"confirm": "permanently-delete"` and the folder's `uidvalidity`; on Gmail only in Trash or Spam; with Jev on, at most 50 UIDs | yes | can block |
 | `mail_create_folder` | Create and subscribe to a folder: the only tool that creates a mailbox | yes | — |
 | `mail_rename_folder` | Rename a folder with its subfolders; the subscriptions of the moved folders follow | yes | — |
 | `mail_save_draft` | Compose into Drafts (with attachments) | yes | — |
@@ -794,7 +794,11 @@ Set `MAILBEND_SECRET_SCAN=1` to scan outgoing sends, replies and forwards
 locally, without a TypeSafe account or network request. It looks for private
 keys, known token prefixes and password lines in headers, bodies and
 attachments, including forwarded originals. A secret or text it cannot read
-in full blocks the send before SMTP, including during a dry run.
+in full blocks the send before SMTP, including during a dry run. Text it
+cannot read includes text parts labelled UTF-16, UTF-32, UTF-7 or UCS, and
+encoded words in UTF-16 or in a charset that MailBend replaces whole, such
+as ISO-2022-KR. In any other charset, such as Shift_JIS, it checks the
+bytes, and lossy display text does not block.
 
 The result reports `secret_scan` as `clean`, `found` or `incomplete`.
 Refusals identify a field or attachment position, never the matched value.
@@ -1009,7 +1013,19 @@ review boundaries, and build steps for a future independent audit.
   `\Deleted` store and one `UID EXPUNGE`, and a confirmed delete exactly one
   `\Deleted` store and one `UID EXPUNGE`, all of the caller's UIDs, with no
   second or later change (proven). Expunging always renders as <!-- claim:move-delete-plans -->
-  `UID EXPUNGE` (proven). STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
+  `UID EXPUNGE` (proven). On Gmail, which advertises `X-GM-EXT-1`, an <!-- claim:move-delete-plans -->
+  expunge outside Trash and Spam removes that folder's label, and the
+  account's IMAP settings decide whether the message stays in All Mail, so
+  a permanent deletion cannot be guaranteed there. There a delete has no
+  plan unless exactly one selectable LIST row names the folder and carries the
+  `\Trash` or `\Junk` attribute (proven), and `mail_delete` refuses before <!-- claim:move-delete-plans -->
+  any change, in a dry run too. If the server advertises `UIDPLUS` and
+  exactly one LIST row carries `\Trash`, for a selectable mailbox listed
+  once and outside `To Delete`, the refusal names it: move the messages
+  there with `mail_move`, find them with `mail_search`, then run
+  `mail_delete` there. This Gmail behaviour comes
+  from Google's documentation and the fake server; it is not live-tested.
+  STORE, COPY, MOVE, FETCH and SEARCH render as UID <!-- claim:uid-wire -->
   commands. Commands that take a UID list preserve its order. STORE preserves
   the requested flag and add or remove operation (proven). <!-- claim:uid-wire -->
 - **Stale UIDs never touch other messages.** Every change is pinned to the <!-- claim:uidvalidity -->
@@ -1126,8 +1142,10 @@ review boundaries, and build steps for a future independent audit.
 The [law catalogue](docs/LAWS.md) lists every root law with its source summary.
 The [claim coverage](docs/PROOF-COVERAGE.md) maps these statements to named laws,
 tests, code and seeded bugs. See [how to maintain the claims](docs/SAFETY-CLAIMS.md).
-The badge above reports the full CI workflow,
-including its kernel-verdict step, rather than an individual proof job.
+The badge above reports the latest weekly CI run on `main`, not an individual
+proof job. Every weekly run is a full run, including the kernel-verdict job
+(`proofs`). Pull requests and manual dispatches do not set the badge, and a
+scale-only dispatch skips the kernel-verdict job.
 
 Mark and flag plans change only their documented flags. <!-- claim:flag-plans -->
 An APPEND dry-run preview shows the message size rather than its contents. <!-- claim:dry-run -->
@@ -1297,6 +1315,24 @@ tool; MailBend itself does not visit links. Parse HTML entities in attributes
 encoding. Treat the HTML as untrusted message content, not instructions, and
 do not render it as active HTML. If `truncated` is true, increase `max_bytes`
 before relying on a complete link.
+
+When a message has no plain text part, `text` is read from the HTML in two
+ways. Up to the first `<svg>`, `<math>`, `<select>` or `<noscript>` start tag
+or `<![CDATA[` section, it is read as a browser's HTML tokenizer reads it, so
+it holds the text a browser parses from the markup. The content of `<title>`,
+`<style>`, `<script>`, `<iframe>`, `<noembed>` and `<noframes>`, comments and
+attribute values are left out, block elements and `<br>` start new lines, and
+`<pre>` keeps its whitespace. CSS is not applied, so text that styles hide is kept. Character
+references are decoded when they are numeric or one of the common names (such
+as `&amp;`, `&nbsp;` and `&mdash;`) and end with `;`; others stay as written.
+From there on, what a browser shows depends on the element tree, so `text` is
+read simply: tags are dropped, each from a `<` before a letter, `/`, `!` or
+`?` to the next `>`, and so are the brackets around CDATA content. Every other
+character is kept, with references decoded except inside CDATA content, where
+they stay as written, so that part may hold more than a browser shows, such as
+style or script content. Line breaks are kept, with at
+most one blank line in a row, and other whitespace collapses to one space,
+inside `<pre>` too. `text` holds no link targets, so read them from `html`.
 
 ## Known limits
 

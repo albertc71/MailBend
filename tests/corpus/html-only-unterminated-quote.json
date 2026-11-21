@@ -1,0 +1,32 @@
+{
+  "status": "conformant",
+  "wire": "valid",
+  "source": {
+    "kind": "synthetic",
+    "license": "MIT",
+    "description": "Synthetic HTML-only message with an attribute quote that never closes. The text after it is still shown: each tag then ends at its first '>'. The MIME wire is valid; the HTML is deliberately malformed."
+  },
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc2045",
+    "https://www.rfc-editor.org/rfc/rfc2046",
+    "https://html.spec.whatwg.org/multipage/parsing.html"
+  ],
+  "issues": [
+    "https://github.com/albertc71/MailBend/issues/68"
+  ],
+  "expected": {
+    "from": "Synthetic Sender <sender@example.invalid>",
+    "to": "reader@example.invalid",
+    "cc": "",
+    "reply_to": "",
+    "subject": "html-only-unterminated-quote",
+    "date": "Sat, 31 Oct 2026 12:00:00 +0000",
+    "message_id": "<html-only-unterminated-quote@corpus.invalid>",
+    "in_reply_to": "",
+    "references": "",
+    "text": "Before\n\nAfter the quote\n\nLast line",
+    "html": "<p>Before</p>\n<p title=\"never closed>After the quote</p>\n<p>Last line</p>",
+    "html_available": true,
+    "attachments": []
+  }
+}

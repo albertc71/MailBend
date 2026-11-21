@@ -700,6 +700,76 @@ def Laws.delete_checks_uidplus(mbox, uids, confirm, uidplus, uidv):
   delete_checks_uidplus.if(
     String.eq(confirm, Ops.confirm_word()), mbox, uids, uidplus, uidv)
 
+def gmail_deletes_only_in_trash_or_junk.if(
+  confirm: Bool, -mbox: String, -uids: List<&2, U32>, -uidv: U32)
+  -> {Ops.plan_delete.if(confirm, mbox, uids, False{}, uidv) == [] : List<&2, I.Cmd>}:
+  match confirm:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+# the premises rewrite the Gmail capability to True{} and the attribute
+# check to False{}, so the plan's uidplus computes to False{}
+def Laws.gmail_deletes_only_in_trash_or_junk(mbox, uids, confirm, caps, gmail, attrs, unmarked,
+  uidv):
+  %Equal.sym(Bool, I.has_cap(caps, "X-GM-EXT-1"), True{}, gmail) :
+    {Ops.plan_delete(mbox, uids, confirm,
+      Bool.not(_ && Bool.not(I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk"))) &&
+        I.has_cap(caps, "UIDPLUS"), uidv) == [] : List<&2, I.Cmd>}
+  %Equal.sym(Bool, I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk"), False{},
+    unmarked) :
+    {Ops.plan_delete(mbox, uids, confirm,
+      Bool.not(True{} && Bool.not(_)) && I.has_cap(caps, "UIDPLUS"), uidv) == [] :
+        List<&2, I.Cmd>}
+  gmail_deletes_only_in_trash_or_junk.if(String.eq(confirm, Ops.confirm_word()), mbox, uids, uidv)
+
+def maybe_motive(m: Maybe<&2, String>) -> Type:
+  match m:
+    case Some{x}:
+      Unit
+    case None{}:
+      Empty
+
+def some_is_not_none(-name: String, e: {Some{name} == None{} : Maybe<&2, String>}) -> Empty:
+  %e : maybe_motive(_)
+  Unit{}
+
+def unlisted_attrs.if(
+  sel: Bool,
+  -name: String,
+  -attrs: List<&2, String>,
+  none: {Bool.pick(Maybe<&2, String>, sel, Some{name}, None{}) == None{} : Maybe<&2, String>}
+) -> {Bool.pick(List<&2, String>, sel, attrs, []) == [] : List<&2, String>}:
+  match sel:
+    case True{}:
+      Empty.absurd({attrs == [] : List<&2, String>}, some_is_not_none(name, none))
+    case False{}:
+      {==}
+
+# Where unique_folder finds no folder, unique_attrs finds no attributes.
+def unlisted_attrs(
+  fs: List<&2, I.Folder>,
+  none: {Policy.unique_folder(fs) == None{} : Maybe<&2, String>}
+) -> {Policy.unique_attrs(fs) == [] : List<&2, String>}:
+  match fs:
+    case Nil{}:
+      {==}
+    case I.Folder{n, d, attrs} <> Nil{}:
+      unlisted_attrs.if(Policy.selectable(attrs), n, attrs, none)
+    case h <> j <> rest:
+      {==}
+
+# With no attributes the folder is unmarked, so the law above applies.
+def Laws.gmail_deletes_need_one_listed_folder(mbox, uids, confirm, caps, gmail, fs, unlisted,
+  uidv):
+  +m = mbox
+  %Equal.sym(List<&2, String>, Policy.named_attrs(fs, m), [],
+    unlisted_attrs(Policy.override_candidates(fs, m), unlisted)) :
+    {Ops.plan_delete(m, uids, confirm, Ops.delete_uidplus(Ops.expunge_keeps(caps, _), caps),
+      uidv) == [] : List<&2, I.Cmd>}
+  Laws.gmail_deletes_only_in_trash_or_junk(m, uids, confirm, caps, gmail, [], {==}, uidv)
+
 def Laws.copy_move_checks_uidplus(mbox, uids, dest, uidv):
   {==}
 
@@ -1709,38 +1779,63 @@ def completeness_motive(c: Jev.Completeness) -> Type:
       Unit
     case Jev.Complete{}:
       Empty
+    case Jev.Unconfirmed{}:
+      Unit
 
 def partial_is_not_complete(e: {Jev.Partial{} == Jev.Complete{} : Jev.Completeness}) -> Empty:
   %e : completeness_motive(_)
   Unit{}
 
-# text_of.put's verdict is Complete only when nothing was cut, the text
-# decoded and the cap kept it whole (`same`).
+def unconfirmed_is_not_complete(e: {Jev.Unconfirmed{} == Jev.Complete{} : Jev.Completeness})
+  -> Empty:
+  %e : completeness_motive(_)
+  Unit{}
+
+# text_of.put's verdict is Complete only when nothing was cut, the cap kept
+# the text whole (`same`) and no U+FFFD was found (`replaced`).
 def complete_text_is_whole.if(
-  cut: Bool, undecodable: Bool, same: Bool,
-  e: {Bool.pick(Jev.Completeness, cut || undecodable || Bool.not(same), Jev.Partial{},
-    Jev.Complete{}) == Jev.Complete{} : Jev.Completeness}
-) -> {cut == False{} : Bool} & {same == True{} : Bool}:
+  cut: Bool, same: Bool, replaced: Bool,
+  e: {Bool.pick(Jev.Completeness, cut || Bool.not(same), Jev.Partial{},
+    Bool.pick(Jev.Completeness, replaced, Jev.Unconfirmed{}, Jev.Complete{})) == Jev.Complete{}
+    : Jev.Completeness}
+) -> {cut == False{} : Bool} & {same == True{} : Bool} & {replaced == False{} : Bool}:
   match cut:
     case True{}:
-      Empty.absurd({True{} == False{} : Bool} & {same == True{} : Bool}, partial_is_not_complete(e))
+      Empty.absurd({True{} == False{} : Bool} & {same == True{} : Bool} &
+        {replaced == False{} : Bool}, partial_is_not_complete(e))
     case False{}:
-      match undecodable:
-        case True{}:
-          Empty.absurd({False{} == False{} : Bool} & {same == True{} : Bool},
-            partial_is_not_complete(e))
+      match same:
         case False{}:
-          match same:
+          Empty.absurd({False{} == False{} : Bool} & {False{} == True{} : Bool} &
+            {replaced == False{} : Bool}, partial_is_not_complete(e))
+        case True{}:
+          match replaced:
             case True{}:
-              ({==}, {==})
+              Empty.absurd({False{} == False{} : Bool} & {True{} == True{} : Bool} &
+                {True{} == False{} : Bool}, unconfirmed_is_not_complete(e))
             case False{}:
-              Empty.absurd({False{} == False{} : Bool} & {False{} == True{} : Bool},
-                partial_is_not_complete(e))
+              ({==}, {==}, {==})
+
+# No U+FFFD was found only when the HTML part, markup included, held none
+# (`marked`).
+def complete_text_is_whole.fin(lost: Bool, same: Bool, +marked: Bool, -found: Bool,
+  e: {lost == False{} : Bool} & {same == True{} : Bool} & {Bool.or(marked, found) == False{} : Bool}
+) -> {lost == False{} : Bool} & {marked == False{} : Bool} & {same == True{} : Bool}:
+  (whole, fits, clean) = e
+  (whole, or_false_left(marked, found, clean), fits)
 
 def Laws.complete_text_is_whole(text, html, atts, left_out, cut, complete):
-  +shown = Jev.seen_text(M.Parts{text, html, atts})
-  complete_text_is_whole.if(cut || left_out, String.contains(shown, SCon{C.repl(), SNil{}}),
-    String.eq(M.utf8_prefix(shown, Jev.max_text()), shown), complete)
+  +parts : M.Parts = M.Parts{text, html, atts}
+  +shown = Jev.seen_text(parts)
+  +lost = cut || left_out
+  +marked = Jev.html_replaced(parts)
+  +same = String.eq(M.utf8_prefix(shown, Jev.max_text()), shown)
+  +found = String.contains(shown, SCon{C.repl(), SNil{}})
+  complete_text_is_whole.fin(lost, same, marked, found,
+    complete_text_is_whole.if(lost, same, marked || found, complete))
+
+def Laws.partial_text_annotation_says_so(uid, fields, flags, date, size, atts, a, none):
+  ({==}, {==})
 
 def Laws.state_images_on_headers_is_state(uid, fields, flags, date, size, atts, body, text, refs):
   {==}

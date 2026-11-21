@@ -1,8 +1,8 @@
 name: CI
+# No push trigger: main accepts only up-to-date squash merges, so a pull
+# request's run already tested the tree that lands. The weekly schedule runs
+# the whole workflow on main.
 on:
-  push:
-    branches:
-      - main
   pull_request:
   schedule:
     - cron: "17 4 * * 1"
@@ -27,20 +27,24 @@ on:
 
 permissions:
   contents: read
+# The weekly run is the only full run on main, so no dispatch shares its group.
 concurrency:
-  group: ci-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.scale) && 'scale' || 'ci' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'schedule' && 'schedule' || inputs.scale && 'scale' || 'ci' }}
   cancel-in-progress: true
 env:
   BEND_NO_TELEMETRY: '1'
 jobs:
+  # Pull requests run source checks and proofs on x86_64 only. The aarch64
+  # runtime jobs still build and run the core, and other events run these
+  # two lanes on aarch64 as well.
   source-checks:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-24.04"]') || fromJSON('["ubuntu-24.04", "ubuntu-24.04-arm"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -101,6 +105,7 @@ jobs:
       - name: Generated schema is up to date
         run: |
           python3 tools/gen-unicode-tags.py --check
+          python3 tools/gen-charsets.py --check
           python3 tests/test-output-schema.py
           python3 tools/gen-schema.py
           git diff --exit-code -- src/schema.bend
@@ -153,29 +158,21 @@ jobs:
         run: |
           sh tests/run-unit.sh
           python3 tests/test-meet-removal.py --controls-only
-      - name: Accepted-reply marking transition mutations
-        run: python3 tests/formal/check-reply-marking.py
-      - name: Client-side prompt proof mutations
-        run: python3 tests/formal/check-hook.py
       - name: Image request cap and the fake TypeSafe's image rules
         run: |
           python3 tests/test-image-budget.py
           python3 tests/test-image-assets.py
           python3 tests/test-image-replies-probe.py
-      - name: Bounded exhaustive search-pagination model
-        run: |
-          python3 tests/formal/search-pagination-model.py
-          python3 tests/formal/check-search-contract-mutations.py
   # The kernel-rechecked proofs (the only steps that need Lean) and the
   # mutation checks (Bend only) run beside source-checks, not after it.
   proofs:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-24.04"]') || fromJSON('["ubuntu-24.04", "ubuntu-24.04-arm"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -208,7 +205,7 @@ jobs:
           python3 tests/test-writing-laws.py
           python3 tests/formal/check-writing-laws.py
   mutations:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -218,7 +215,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq
+          sudo apt-get install -y --no-install-recommends build-essential clang openssl jq time
       - name: Install Python with the adjacent encoded-word parser fix
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -227,14 +224,31 @@ jobs:
         run: |
           sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
-      - name: Policy proof boundaries and mutation checks
-        run: python3 tests/formal/check-policy.py
-      - name: Response and image budget proof mutation checks
-        run: python3 tests/formal/check-response-image-budgets.py
-      - name: Change-plan and UID wire mutation checks
-        run: python3 tests/formal/check-plan-wire-mutations.py
+      # Each script checks its own temporary copy with one Bend process at a
+      # time, so three run at once on the 4-CPU, 16 GiB runner. Longest first,
+      # so the three slots finish close together. Each log title shows the
+      # script's time, CPU use and its largest process's peak memory.
+      - name: Policy, budget, plan, wire, reply-marking, hook and search mutation checks
+        run: |
+          scripts="check-policy check-plan-wire-mutations check-reply-marking
+            check-search-contract-mutations check-response-image-budgets check-hook
+            search-pagination-model"
+          logs="$RUNNER_TEMP/mutation-logs"
+          mkdir "$logs"
+          printf '%s\n' $scripts | xargs -P 3 -n 1 sh -c '
+            /usr/bin/time -q -f "%e %P %M" -o "$0/$1.time" python3 "tests/formal/$1.py" > "$0/$1.log" 2>&1
+            echo "$? $(cat "$0/$1.time")" > "$0/$1.status"' "$logs"
+          failed=0
+          for name in $scripts; do
+            read -r code seconds cpu kib < "$logs/$name.status"
+            echo "::group::$name: exit $code after $seconds s, CPU $cpu, peak $((kib / 1024)) MiB"
+            cat "$logs/$name.log"
+            echo "::endgroup::"
+            [ "$code" = 0 ] || failed=1
+          done
+          exit "$failed"
   claim-mutations:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -255,20 +269,46 @@ jobs:
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
       - name: Public safety claim mutations against the root proofs
         run: python3 tests/formal/check-law-mutations.py
+  # Tests that build their own helpers or use synthetic toolchains, so they
+  # need no compiled core and do not wait for the runtime build.
+  installer-transport:
+    if: ${{ !inputs.scale }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Python with the adjacent encoded-word parser fix
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13.18'
+      - name: Install Rust 1.99 (native/rust-toolchain.toml)
+        run: |
+          sh scripts/install-rust.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Transport tests
+        run: bash tests/test-transport.sh
+      - name: Installer staging, locking, signals and fallback warnings
+        run: python3 tests/test-install.py
+      - name: Installer swap fault injection
+        run: python3 tests/formal/check-install-swap.py
   runtime:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 8
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
         suite:
           - cli
           - mcp
           - support
-          - soak
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -291,9 +331,6 @@ jobs:
         run: |
           sh scripts/install-bend.sh
           echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
-      - name: Transport tests
-        run: bash tests/test-transport.sh
-        if: matrix.suite == 'support'
       - name: Build
         run: scripts/install.sh
       - name: Installed native ELF hardening and negative controls
@@ -307,20 +344,11 @@ jobs:
       - name: Compromised-agent incident matrix
         run: python3 tests/test-incidents.py
         if: matrix.suite == 'support'
-      - name: Installer staging, locking, signals and fallback warnings
-        run: python3 tests/test-install.py
-        if: matrix.suite == 'support'
-      - name: Installer swap fault injection
-        run: python3 tests/formal/check-install-swap.py
-        if: matrix.suite == 'support'
       - name: Cloud DNS and TLS tests
         run: python3 tests/test-cloud-network.py
         if: matrix.suite == 'support'
       - name: Outgoing clock failure boundaries
         run: python3 tests/test-clock.py
-        if: matrix.suite == 'support'
-      - name: Offline posture boundary and redaction
-        run: python3 tests/test-posture.py
         if: matrix.suite == 'support'
       - name: MCP inherited-descriptor and lifecycle tests
         run: python3 tests/test-stdio.py
@@ -336,8 +364,10 @@ jobs:
           python3 tests/test-meet-removal.py
           python3 tests/test-search-flags.py
           python3 tests/test-e2e.py
+      # Straight after the build, as in its former job, so its latency and
+      # memory bounds see the same fresh runner.
       - name: Short synthetic MCP soak
-        if: matrix.suite == 'soak'
+        if: matrix.suite == 'mcp'
         timeout-minutes: 6
         run: python3 tests/test-soak.py --profile short
       - name: Structured MCP tool scenarios
@@ -353,7 +383,7 @@ jobs:
           python3 tests/test-integrated-results.py
           python3 tests/test-scheduled-recipes.py
   rust:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     defaults:
@@ -403,12 +433,23 @@ jobs:
             echo "mailbend-stdio must only use inherited descriptors" >&2
             exit 1
           fi
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --version 0.20.2 --locked
+      # native/deny.toml checks the x86_64 and aarch64 dependency graphs in one run.
+      - name: Install cargo-deny (sha256-pinned release binary)
+        if: matrix.runner == 'ubuntu-24.04'
+        env:
+          CARGO_DENY_VERSION: 0.20.2
+          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+        run: |
+          name="cargo-deny-$CARGO_DENY_VERSION-x86_64-unknown-linux-musl"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$CARGO_DENY_VERSION/$name.tar.gz"
+          echo "$CARGO_DENY_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 "$name/cargo-deny"
       - name: Dependency policy (cargo-deny)
+        if: matrix.runner == 'ubuntu-24.04'
         run: cargo deny --log-level warn --all-features check
   fuzz:
-    if: ${{ github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ !inputs.scale }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -435,10 +476,11 @@ jobs:
       - proofs
       - mutations
       - claim-mutations
+      - installer-transport
       - runtime
       - rust
       - fuzz
-    if: ${{ always() && github.event_name != 'schedule' && !inputs.scale }}
+    if: ${{ always() && !inputs.scale }}
     steps:
       - name: Every required lane passed
         env:
@@ -446,6 +488,7 @@ jobs:
           PROOFS_RESULT: ${{ needs.proofs.result }}
           MUTATIONS_RESULT: ${{ needs.mutations.result }}
           CLAIM_MUTATIONS_RESULT: ${{ needs.claim-mutations.result }}
+          INSTALLER_TRANSPORT_RESULT: ${{ needs.installer-transport.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           FUZZ_RESULT: ${{ needs.fuzz.result }}
@@ -455,6 +498,7 @@ jobs:
           test "$PROOFS_RESULT" = success
           test "$MUTATIONS_RESULT" = success
           test "$CLAIM_MUTATIONS_RESULT" = success
+          test "$INSTALLER_TRANSPORT_RESULT" = success
           test "$RUNTIME_RESULT" = success
           test "$RUST_RESULT" = success
           test "$FUZZ_RESULT" = success

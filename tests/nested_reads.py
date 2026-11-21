@@ -11,6 +11,7 @@ CORPUS = ROOT / "tests/corpus/nested"
 HEADER_REASON = "Only parent header facts were eligible for checking; nested headers and text were not included."
 BODY_REASON = "Nested message text was not included in the Jev request."
 SUMMARY_REASON = "Attached-message summaries were not included in the Jev request."
+TEXT_REASON = "Not all of the message text was included in the Jev request."
 
 
 def cases():
@@ -334,7 +335,8 @@ def annotations(test, work):
                 if scenario == "ok":
                     literal = result(expected)
                     literal["jev"] = {"status": "checked", "model": "jev-1.14.0", "content": mode,
-                        "derived_from_untrusted_content": True, "decision": "proceeded", "reasons": [reason],
+                        "derived_from_untrusted_content": True, "decision": "proceeded",
+                        "reasons": [reason] if mode == "headers" else [TEXT_REASON, reason],
                         "signals": {"reply_needed": "low", "action_required": "mid", "priority": "mid",
                                     "category": None, "needs_new_category": True,
                                     "suggested_action": "read_later"},

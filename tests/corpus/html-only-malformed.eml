@@ -1,0 +1,22 @@
+From: Synthetic Sender <sender@example.invalid>
+To: reader@example.invalid
+Subject: html-only-malformed
+Date: Sat, 31 Oct 2026 12:00:00 +0000
+Message-ID: <html-only-malformed@corpus.invalid>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<HTML><HEAD><TITLE>Hidden title</TITLE>
+<STYLE>p { color: red; }</STYLE>
+<BODY>
+<P CLASS="a>b" title='x > y'>Uppercase tags &amp; quoted &gt; signs.</P>
+<p>1 < 2 and 3 > 2.</p>
+<p>Unknown &bogus; entity, bare & sign, &#0; null, &#x110000; too big, &#150; dash.</p>
+<p>Line<br/>break<BR>again</p>
+<!-- comment with <script>alert(1)</script> inside -->
+<p>After comment.</p>
+<script type="text/javascript">if (a < b) { document.write("</p>"); }</script>
+<p>After script.<p>Unclosed paragraph
+<div><b>Unclosed bold
+<style>.never { display: none }

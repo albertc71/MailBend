@@ -773,6 +773,37 @@ law delete_checks_uidplus:
   {Ops.checks_uidplus_or_empty(Ops.plan_delete(mbox, uids, confirm, uidplus, uidv)) ==
     True{} : Bool}
 
+# LAW: on Gmail (X-GM-EXT-1) a delete has no plan unless the folder carries
+# the \Trash or \Junk attribute: anywhere else its expunge may only remove a
+# label
+law gmail_deletes_only_in_trash_or_junk:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for caps: List<&2, String>
+  for gmail: {I.has_cap(caps, "X-GM-EXT-1") == True{} : Bool}
+  for attrs: List<&2, String>
+  for unmarked: {(I.has_attr(attrs, "\\Trash") || I.has_attr(attrs, "\\Junk")) == False{} : Bool}
+  for uidv: U32
+  {Ops.plan_delete(mbox, uids, confirm, Ops.delete_uidplus(Ops.expunge_keeps(caps, attrs), caps),
+    uidv) == [] : List<&2, I.Cmd>}
+
+# LAW: on Gmail a delete has no plan unless exactly one selectable LIST row
+# names its folder, whatever attributes the rows carry: a folder listed
+# twice, unselectable or not at all is never Trash or Spam
+law gmail_deletes_need_one_listed_folder:
+  for mbox: String
+  for uids: List<&2, U32>
+  for confirm: String
+  for caps: List<&2, String>
+  for gmail: {I.has_cap(caps, "X-GM-EXT-1") == True{} : Bool}
+  for fs: List<&2, I.Folder>
+  for unlisted: {Policy.named_folder(fs, mbox) == None{} : Maybe<&2, String>}
+  for uidv: U32
+  {Ops.plan_delete(mbox, uids, confirm,
+    Ops.delete_uidplus(Ops.expunge_keeps(caps, Policy.named_attrs(fs, mbox)), caps), uidv) == [] :
+    List<&2, I.Cmd>}
+
 # LAW: a move by copy confirms UIDPLUS in its own session first
 law copy_move_checks_uidplus:
   for mbox: String
@@ -1442,9 +1473,9 @@ law headers_state_has_no_body:
     : J.Json}
 
 # LAW: for every message content, Jev's text is Complete only when no part
-# was left out and the fetch was whole, and then it is the whole text/plain
-# part, quoted and post-signature lines included, followed by the whole
-# HTML part as text
+# was left out, the fetch was whole and the HTML part, markup included,
+# holds no U+FFFD, and then it is the whole text/plain part, quoted and
+# post-signature lines included, followed by the whole HTML part as text
 law complete_text_is_whole:
   for text: String
   for html: String
@@ -1454,8 +1485,28 @@ law complete_text_is_whole:
   for complete: {Jev.text_whole(Jev.text_of.fin((M.Parts{text, html, atts}, left_out), cut)) ==
     Jev.Complete{} : Jev.Completeness}
   ({cut || left_out == False{} : Bool} &
+   {String.contains(html, SCon{C.repl(), SNil{}}) == False{} : Bool} &
    {String.eq(Jev.text_shown(Jev.text_of.fin((M.Parts{text, html, atts}, left_out), cut)),
       text ++ Jev.html_heading(text, html) ++ M.html_text(html)) == True{} : Bool})
+
+# LAW: for every message whose text Jev saw only in part and every answer,
+# its body-mode read annotation says coverage is partial, with the text
+# reason as its only reason
+law partial_text_annotation_says_so:
+  for uid: U32
+  for fields: List<&2, M.Hdr>
+  for flags: List<&2, String>
+  for date: String
+  for size: U32
+  for atts: Jev.Attachments
+  for a: Jev.Answers
+  for none: String
+  ({J.get(Jev.annotation_json(Jev.Answered{Jev.Facts{uid, fields, flags, date, size, atts,
+      Jev.Partial{}}, a}, Jev.Body{}, none), "coverage") == Some{J.str("partial")}
+    : Maybe<&2, J.Json>} &
+   {J.get(Jev.annotation_json(Jev.Answered{Jev.Facts{uid, fields, flags, date, size, atts,
+      Jev.Partial{}}, a}, Jev.Body{}, none), "reasons") == Some{J.arr([J.str(Jev.text_reason())])}
+    : Maybe<&2, J.Json>})
 
 # LAW: for every ref list, adding images to a headers-mode state leaves it
 # equal to state_of on headers

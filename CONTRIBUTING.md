@@ -48,12 +48,15 @@ it; its diagnostic/report workflow is described in
 
 ## Checks
 
-Run these before opening a pull request. CI runs proofs, unit tests, runtime suites and Rust checks on Linux x86_64
-and aarch64. MailBend needs Linux 5.6+ and glibc 2.34+ on either architecture.
-Fuzzing, the dedicated mutations job and the
-secret scan stay on x86_64. Both architectures run `cargo deny check` and
-the source checks in
-[.github/workflows/ci.yml](.github/workflows/ci.yml). The native helpers
+Run these before opening a pull request. MailBend needs Linux 5.6+ and glibc
+2.34+ on x86_64 or aarch64. On a pull request,
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs the runtime suites,
+the installer and transport tests and the Rust checks on both architectures,
+and the source checks, unit tests and kernel-rechecked proofs on x86_64. The
+weekly run on `main` and a manual run of the workflow also run the source
+checks, unit tests and proofs on aarch64. Fuzzing, the mutation jobs, the
+secret scan and `cargo deny check` stay on x86_64; `native/deny.toml` checks
+the dependency graphs of both targets. The native helpers
 need the Rust release pinned in `native/rust-toolchain.toml`. The end-to-end
 schema checks need Python `jsonschema` (`python3 -m pip install jsonschema==4.26.0`).
 Use Python 3.13.18 (the CI pin), or a runtime containing the
@@ -111,6 +114,7 @@ python3 tests/test-fuzz-lock.py                   # offline lock comparison fixt
 python3 tests/test-posture.py                     # offline capability report and redaction
 python3 tests/test-clock.py                       # outgoing clock failures, no counter or mail effects
 python3 tools/gen-unicode-tags.py --check         # pinned Unicode flag identifiers
+python3 tools/gen-charsets.py --check             # pinned WHATWG charset tables
 python3 tests/test-output-schema.py               # strict result contract variants
 python3 tests/test-cli-tools.py                   # credential-free filtered CLI discovery
 python3 tests/test-hook.py                        # offline Claude hook input and prompt contract
@@ -177,7 +181,7 @@ itself or descendants that deliberately escape their process group. Ordinary
 compiler failures produce the final pass/fail count; infrastructure errors and
 interruptions exit without that summary.
 
-CI exercises the synthetic scheduling and cleanup contracts on both architectures.
+CI exercises the synthetic scheduling and cleanup contracts with the source checks.
 Its actual Bend unit invocation remains serial until separate x86-64 and ARM64
 resource measurements support changing it. This option makes no speedup claim.
 
@@ -216,14 +220,20 @@ checks. The second repeats the tool scenarios through structured MCP without
 repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
 complete run, including when `MAILBEND_TEST_MCP=1` is set.
 
-CI runs source checks and unit tests, kernel-rechecked proofs, proof mutation
-checks, CLI, structured MCP and support suites on isolated standard Ubuntu
-runners. Each runtime runner builds its own binaries
-from the checked-out revision. This repeats build work to avoid shared-state
-races and artifact storage. Rust and fuzz checks remain separate. Source,
-proof and mutation lanes each install their own toolchain. The final
-`checks` job requires every lane to succeed, including Rust and fuzz; skipped
-or cancelled lanes do not count as a pass.
+CI runs on pull requests, weekly on `main` and on manual dispatch, but not on
+pushes: `main` accepts only up-to-date squash merges, so a pull request's run
+has already tested the tree that lands. CI runs source checks and unit tests,
+kernel-rechecked proofs, proof mutation checks, installer and transport tests,
+and the CLI, structured MCP and support suites on isolated standard Ubuntu
+runners. The installer and transport tests build their own helpers or use
+synthetic toolchains, so they need no compiled core. Each runtime runner
+builds its own binaries from the checked-out revision. This repeats build work
+to avoid shared-state races and artifact storage. Rust and fuzz checks remain
+separate. Source, proof and mutation lanes each install their own toolchain;
+the mutation lane runs three scripts at a time. The final `checks` job
+requires every ordinary lane to succeed, including Rust and fuzz; skipped or
+cancelled lanes do not count as a pass. The `scale` job is outside `checks`
+and reports its own result.
 
 The goal is at most ten minutes of CI execution. This is a measurement target,
 not a timeout or permission to omit tests. Record queue time separately.
@@ -488,6 +498,9 @@ Update the corresponding expected URLs and checksums in
 `tests/test-toolchain-installers.py`, keeping those expectations independent
 of the installer source. Run that test and the [contributor checks](#checks),
 then require exact-head native x86_64 and aarch64 CI before review completion.
+Pull-request CI runs the source checks, unit tests and proofs on x86_64 only,
+so also run the CI workflow manually on the pull request's branch for their
+aarch64 copies.
 A passing mock test checks selection and refusal paths, not upstream provenance.
 
 Changing elan or rustup does not by itself change the installed Lean or Rust
@@ -642,11 +655,9 @@ selection, the
 completed the same 50 warm-up plus 500 measured requests in 7.623 seconds on
 x86-64 and 10.591 seconds on ARM64. The workload and every bound were unchanged.
 These are observations from one short-run campaign, not a universal flake rate
-or a guarantee for other runners; both architectures must pass their own lane.
-CI runs four separate required runtime lanes per architecture, allowing all
-eight matrix entries in parallel rather than serializing soak after MCP
-scenarios. Runner availability can still cause queueing. This adds a build per
-architecture but does not guarantee a particular overall CI duration. JSON
+or a guarantee for other runners; both architectures must pass their own soak.
+CI runs the short soak in the structured MCP lane of each architecture, straight
+after that lane's build and before its tool scenarios. JSON
 output records the RSS curve, p50/p95,
 drift ratio and elapsed time. Both success and failure output include counts
 and reply-gap summaries by fixed synthetic operation. Gaps span consecutive
