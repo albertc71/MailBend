@@ -10073,4 +10073,3 @@ def call_problem(+name: String, +args: J.Json) -> String:
 # Runs the named tool with its JSON arguments, once they match its schema.
 def call(+name: String, +args: J.Json) -> IO(Policy.Out):
   call.if(call_problem(name, args), name, args)
-

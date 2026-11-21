@@ -2909,4 +2909,3 @@ def hook_pretool_read_is_quiet()
     J.obj([J.kv("tool_name", J.str("mail_get")), J.kv("tool_input", J.obj([]))]))) ==
       None{} : Maybe<&2, String>}:
   {==}
-

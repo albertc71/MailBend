@@ -2382,4 +2382,3 @@ law hook_nonobject_input_asks:
   for +args: Maybe<&2, J.Json>
   for nonobject: hook_nonobject_input(args)
   {hook_printed_decision(Hook.event.fields(Some{name}, args)) == Some{"ask"} : Maybe<&2, String>}
-

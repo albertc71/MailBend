@@ -2235,4 +2235,3 @@ def storage_level(s: Storage) -> String:
 def overquota(lines: List<&2, RLine>) -> Bool:
   +text = String.to_upper(after_space(after_space(first_failure(lines))))
   String.eq(text, "[OVERQUOTA]") || String.starts_with(text, "[OVERQUOTA] ")
-

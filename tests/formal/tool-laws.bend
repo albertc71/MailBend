@@ -611,4 +611,3 @@ law folder_incomplete_result_is_partial:
 
 def folder_incomplete_result_is_partial(json):
   {==}
-

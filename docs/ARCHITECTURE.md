@@ -573,4 +573,3 @@ explicit stacks. The MCP read loop and its supporting loop helpers use
 session length. Running `bend main.bend`
 checks and compiles on every start (~9 s); `scripts/install.sh` compiles a
 native binary once (~1 min) that starts in milliseconds.
-

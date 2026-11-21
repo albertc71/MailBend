@@ -1265,4 +1265,3 @@ def plans_copied(ps: List<&2, List<&2, I.Cmd>>) -> List<&2, List<&2, List<&2, U3
       []
     case p <> t:
       copied_uids(p) <> plans_copied(t)
-

@@ -924,4 +924,3 @@
     "partial_text_annotation_says_so": "A body-mode read annotation of an answered message whose Jev text is Partial reports partial coverage with the text reason alone; this annotation-coverage contract has no public README claim, and it covers neither the replacement-character reason, the HTML markup reason, the delete report nor what the native helper sends."
   }
 }
-

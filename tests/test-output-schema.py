@@ -449,4 +449,3 @@ check("mail_get", {**nested, "content": {**nested_node, "facts": [],
                    "facts_scan": {"scope": "returned_text", "limited": False}}}, False)
 
 print(f'output schemas: {checks} checks passed')
-

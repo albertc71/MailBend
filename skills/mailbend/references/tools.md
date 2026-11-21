@@ -43,4 +43,3 @@ For a permanent-delete request, consult the advertised confirmation requirement
 only after the user approves that operation. This reference intentionally does
 not provide the confirmation word.
 [Deletion safety](https://github.com/albertc71/MailBend/blob/main/README.md#safety).
-

@@ -607,4 +607,3 @@ jobs:
             fi
           done
           exit "$log_error"
-
