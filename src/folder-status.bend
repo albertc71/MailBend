@@ -425,11 +425,11 @@ def vendor_rest(s: String, first: Bool, +clean: Bool, armed: Bool, filled: Bool)
       vendor_rest(t, False{}, clean && name_char(c), live || (Char.is_eq(c, '-') && clean && Bool.not(first)),
         live)
 
-# RFC 5258 section 6: a tag's decoded text is an eitem-vendor-tag when it
-# starts with the reserved "vendor." prefix, and otherwise an atom.
+# RFC 5258 section 6: a tag's decoded text is an eitem-standard-tag (any
+# nonempty atom) or an eitem-vendor-tag ("vendor." name-component "-" atom).
 def tag_text(+s: String) -> Bool:
-  Bool.pick(Bool, I.upper_starts(s, "VENDOR."), vendor_rest(String.drop(s, 7n), True{}, True{}, False{}, False{}),
-    atom_word(s))
+  atom_word(s) ||
+    (I.upper_starts(s, "VENDOR.") && vendor_rest(String.drop(s, 7n), True{}, True{}, False{}, False{}))
 
 def ext_tag(v: Value) -> Bool:
   match v:
