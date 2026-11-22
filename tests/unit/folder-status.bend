@@ -47,6 +47,22 @@ def discovery(reply: String) -> String:
 def discovered(reply: String) -> String:
   Bool.show(String.eq(discovery(reply), "True"))
 
+# Discovery of one LIST row per entry: INBOX with each extended-data suffix.
+def ext_rows(ss: List<&2, String>) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case s <> t:
+      discovered("* LIST () \"/\" INBOX " ++ s ++ "\r\n") ++ ";" ++ ext_rows(t)
+
+# Discovery of one LIST row per entry: each wire mailbox name.
+def name_rows(ss: List<&2, String>) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case s <> t:
+      discovered("* LIST () \"/\" " ++ s ++ "\r\n") ++ ";" ++ name_rows(t)
+
 def list_rows(n: Nat, +i: U32) -> String:
   match n:
     case 0n:
@@ -95,6 +111,14 @@ def main() -> IO(Unit):
     IO.print(discovered("* LIST () \"/\" INBOX (\"CHILDINFO\" (\"SUBSCRIBED\") X-NEW 7 OLDNAME (\"Old\"))\r\n"))
     IO.print(discovered("* LIST () \"/\" INBOX (CHILDINFO)\r\n"))
     IO.print(discovered("* LIST () \"/\" INBOX () ()\r\n"))
+    IO.print(ext_rows(["(EX 1:*)", "(X 1:*)", "(X *:3)", "(X *)", "(X 1:*,5,7:9)", "(X-RANGE 1:*,5)",
+      "(EX (\"a\tb\"))", "(EX 0)", "(EX 4294967295)"]))
+    IO.print(ext_rows(["(EX 0:2)", "(EX 01:2)", "(EX 4294967296)", "(X-RANGE 0:2)", "(X-DATA 4294967296)"]))
+    IO.print(ext_rows(["(\"\" 1)", "(\"two words\" 3)", "(\"\\\"\" (value))"]))
+    IO.print(ext_rows(["(EX 1 )", "(EX  1)", "() "]))
+    IO.print(ext_rows(["(X 1:2:3)", "(X *5)", "(X 1,)", "(X ,1)", "(X :1)", "(X \"quoted\")", "(X atom)",
+      "(X NIL)"]))
+    IO.print(name_rows(["X%", "X{Y", "X\\Y", "X*", "\"A\tB\""]))
     IO.print(discovery(list_rows(100n, 1)))
     IO.print(discovery(list_rows(101n, 1)))
     IO.print(discovery("* LIST (Noselect) \"/\" \"INBOX\"\r\n"))
@@ -131,6 +155,12 @@ def main() -> IO(Unit):
 #|True
 #|False
 #|False
+#|True;True;True;True;True;True;True;True;True;
+#|False;False;False;False;False;
+#|False;False;False;
+#|False;False;False;
+#|False;False;False;False;False;False;False;False;
+#|False;False;False;False;False;
 #|True
 #|folder overview admits at most 100 folders
 #|folder overview requires complete, valid capability and folder discovery
