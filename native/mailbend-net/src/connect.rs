@@ -136,31 +136,47 @@ const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 /// none does, the error is the last address's, as when the addresses were
 /// tried in turn.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
-    connect_with(addrs, deadline, Arc::new(TcpStream::connect_timeout))
+    connect_with(
+        addrs,
+        deadline,
+        Arc::new(TcpStream::connect_timeout),
+        spawn_thread,
+    )
 }
 
 /// Opens a TCP connection to an address within a timeout.
 type Connector = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Send + Sync>;
 
+/// Runs a job on a thread of its own, or fails when no thread can start.
+type Spawn = fn(Box<dyn FnOnce() + Send>) -> io::Result<()>;
+
+fn spawn_thread(job: Box<dyn FnOnce() + Send>) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("connect".to_string())
+        .spawn(job)
+        .map(drop)
+}
+
 /// An address's position in the caller's list, and how its attempt ended.
 type Outcome<T> = (usize, Result<T, NetError>);
 
-/// `connect_any` with the connecting step given, so tests can stand in for
-/// peers that answer late or never. It starts the attempts `Race` chooses,
-/// each on its own thread, and waits for their outcomes as long as it says.
+/// `connect_any` with the connecting and thread-starting steps given, so
+/// tests can stand in for peers that answer late or never, and for a
+/// process that cannot start a thread. It starts the attempts `Race`
+/// chooses and waits for their outcomes as long as it says.
 fn connect_with(
     addrs: &[SocketAddr],
     deadline: &Deadline,
     connect: Connector,
+    spawn: Spawn,
 ) -> Result<TcpStream, NetError> {
     let mut race = Race::new(addrs);
     let (report, outcomes) = mpsc::channel();
     loop {
         match race.next(deadline.remaining().ok()) {
             Step::Start(index, addr) => {
-                let started =
-                    start_attempt(index, addr, *deadline, Arc::clone(&connect), report.clone());
-                if started.is_err() {
+                let job = attempt_job(index, addr, *deadline, &connect, &report);
+                if spawn(Box::new(job)).is_err() {
                     // No thread to spare: make this attempt here instead.
                     race.heard(Some((index, attempt(&addr, deadline, &*connect))));
                 }
@@ -301,22 +317,20 @@ fn alternate_families(addrs: &[SocketAddr]) -> Vec<(usize, SocketAddr)> {
     order
 }
 
-/// Runs `attempt` on its own thread and sends the outcome to `report`.
-/// Once `connect_any` has returned nobody receives, so a socket that
-/// connects then is dropped, which closes it.
-fn start_attempt(
+/// An attempt on `addr` within `deadline` that sends its outcome to
+/// `report`. Once `connect_any` has returned nobody receives, so a socket
+/// that connects then is dropped, which closes it.
+fn attempt_job(
     index: usize,
     addr: SocketAddr,
     deadline: Deadline,
-    connect: Connector,
-    report: mpsc::Sender<Outcome<TcpStream>>,
-) -> io::Result<()> {
-    std::thread::Builder::new()
-        .name("connect".to_string())
-        .spawn(move || {
-            let _too_late = report.send((index, attempt(&addr, &deadline, &*connect)));
-        })
-        .map(drop)
+    connect: &Connector,
+    report: &mpsc::Sender<Outcome<TcpStream>>,
+) -> impl FnOnce() + Send + 'static {
+    let (connect, report) = (Arc::clone(connect), report.clone());
+    move || {
+        let _too_late = report.send((index, attempt(&addr, &deadline, &*connect)));
+    }
 }
 
 /// Connects to `addr` within the time left when the attempt begins, which
@@ -398,7 +412,8 @@ mod tests {
         });
         let started = Instant::now();
         let addrs = [black_holed_addr, listening_addr];
-        let sock = connect_with(&addrs, &Deadline::after(budget), connect).expect("connect");
+        let sock =
+            connect_with(&addrs, &Deadline::after(budget), connect, spawn_thread).expect("connect");
         let took = started.elapsed();
         assert_eq!(sock.peer_addr().expect("peer"), listening_addr);
         assert!(
@@ -429,7 +444,7 @@ mod tests {
         let budget = Duration::from_millis(100);
         let addrs = [([192, 0, 2, 1], 993).into(), ([192, 0, 2, 2], 993).into()];
         let started = Instant::now();
-        let result = connect_with(&addrs, &Deadline::after(budget), silent);
+        let result = connect_with(&addrs, &Deadline::after(budget), silent, spawn_thread);
         let took = started.elapsed();
         drop(release);
         assert!(result.is_err(), "{result:?}");
