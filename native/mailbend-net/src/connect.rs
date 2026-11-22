@@ -366,6 +366,7 @@ mod tests {
     use std::cell::Cell;
     use std::net::TcpListener;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn falls_back_to_the_address_that_listens() {
@@ -473,6 +474,63 @@ mod tests {
         let took = started.elapsed();
         assert_eq!(sock.peer_addr().expect("peer"), listening_addr);
         assert!(took >= budget / 4, "the black-holed address had {took:?}");
+    }
+
+    /// Starts the first thread it is asked for and no other, as in a
+    /// process one thread short of its limit.
+    fn one_thread_only() -> impl FnMut(Job, mpsc::Sender<Outcome<TcpStream>>) -> io::Result<()> {
+        let mut started = false;
+        move |job, report| {
+            if std::mem::replace(&mut started, true) {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            spawn_thread(job, report)
+        }
+    }
+
+    #[test]
+    fn a_thread_short_an_address_that_connects_is_not_held_up() {
+        let first = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let first_addr = first.local_addr().expect("addr");
+        let black_holed = SocketAddr::from(([192, 0, 2, 1], 993));
+        let dials = Arc::new(AtomicUsize::new(0));
+        let dialled = Arc::clone(&dials);
+        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+            if *addr == black_holed {
+                return never_answers(addr, timeout);
+            }
+            dialled.fetch_add(1, Ordering::SeqCst);
+            // Still connecting when the next attempt is due.
+            std::thread::sleep(ATTEMPT_DELAY * 2);
+            TcpStream::connect_timeout(addr, timeout)
+        });
+        let budget = Duration::from_secs(2);
+        let started = Instant::now();
+        let addrs = [first_addr, black_holed];
+        let sock = connect_with(&addrs, &Deadline::after(budget), connect, one_thread_only())
+            .expect("the first address is reached");
+        let took = started.elapsed();
+        assert_eq!(sock.peer_addr().expect("peer"), first_addr);
+        assert!(took < budget / 2, "connected after {took:?}");
+        assert_eq!(dials.load(Ordering::SeqCst), 1, "dialled twice");
+    }
+
+    #[test]
+    fn a_thread_short_every_address_still_gets_its_turn() {
+        let black_holed = SocketAddr::from(([192, 0, 2, 1], 993));
+        let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let listening_addr = listening.local_addr().expect("addr");
+        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+            if *addr == black_holed {
+                return never_answers(addr, timeout);
+            }
+            TcpStream::connect_timeout(addr, timeout)
+        });
+        let budget = Duration::from_millis(400);
+        let addrs = [black_holed, listening_addr];
+        let sock = connect_with(&addrs, &Deadline::after(budget), connect, one_thread_only())
+            .expect("the listening address is reached");
+        assert_eq!(sock.peer_addr().expect("peer"), listening_addr);
     }
 
     #[test]
