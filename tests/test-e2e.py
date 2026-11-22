@@ -1079,7 +1079,7 @@ def run_halves(work):
             code = child.wait()
             log.seek(0)
             sys.stdout.write(log.read())
-    check("second half of the scenario groups passed", code == 0, f"exit status {code}")
+            check("second half of the scenario groups passed", code == 0, f"exit status {code}")
 
 
 def offline_posture():
