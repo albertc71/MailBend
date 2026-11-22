@@ -72,7 +72,6 @@ def main():
     assert ceilings and caps
     maximum_round_parts = int(caps.group(1)) * (max(map(int, ceilings.groups())) + 1)
     assert maximum_round_parts < 60 * 1024 * 1024
-    assert 2 * 60 * 1024 * 1024 < 134217728
     runpy.run_path(str(ROOT / "tests/formal/check-image-rounds.py"), run_name="__main__")
     print(f"image budget {printed} matches MAX_REQUEST")
 
