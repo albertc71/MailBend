@@ -308,11 +308,28 @@ def attributes(vs: List<&2, Value>) -> Maybe<&2, List<&2, String>>:
     case _:
       None{}
 
+# How many of RFC 3501's \Noselect, \Marked and \Unmarked `attrs` holds.
+def selectability_flags(attrs: List<&2, String>) -> U32:
+  match attrs:
+    case Nil{}:
+      0
+    case a <> t:
+      +n = selectability_flags(t)
+      +u = String.to_upper(a)
+      sflag = String.eq(u, "\\NOSELECT") || String.eq(u, "\\MARKED") || String.eq(u, "\\UNMARKED")
+      Bool.pick(U32, sflag, (n + 1 : U32), n)
+
+# RFC 3501 mbx-list-flags hold at most one of \Noselect, \Marked and
+# \Unmarked, and RFC 5258 forbids \HasChildren with \HasNoChildren.
+def flags_consistent(+attrs: List<&2, String>) -> Bool:
+  U32.is_le(selectability_flags(attrs), 1) &&
+    Bool.not(I.has_attr(attrs, "\\HasChildren") && I.has_attr(attrs, "\\HasNoChildren"))
+
 def folder_parts(attrs: Maybe<&2, List<&2, String>>, delim: Maybe<&2, String>,
   name: Maybe<&2, String>) -> Maybe<&2, I.Folder>:
   match attrs delim name:
-    case Some{attrs} Some{delim} Some{name}:
-      Some{I.Folder{name, delim, attrs}}
+    case Some{+attrs} Some{delim} Some{name}:
+      Bool.pick(Maybe<&2, I.Folder>, flags_consistent(attrs), Some{I.Folder{name, delim, attrs}}, None{})
     case _ _ _:
       None{}
 
@@ -389,17 +406,39 @@ def ext_comp(vs: List<&2, Value>) -> Bool:
     case VLiteral{s} <> t:
       char8_text(s) && ext_comp(t)
 
-# RFC 5258 section 6: an extended-data tag is an astring whose decoded text
-# is an atom, either a registered tag or a vendor tag such as
-# "vendor.example-COUNT".
-def tag_atom(v: Value) -> Bool:
+# RFC 2244 name-component characters: anything but ".", "/", "%" and "*".
+def name_char(+c: Char) -> Bool:
+  Bool.not(String.contains("./%*", SCon{c, SNil{}}))
+
+# RFC 5258 eitem-vendor-tag after "vendor.": a nonempty name-component, "-"
+# and a nonempty atom. A name-component may hold "-" and spaces, so any "-"
+# can split the two. `first` says no character came yet, `clean` that the
+# text so far is a name-component, `armed` that some "-" after a nonempty
+# name-component has been followed only by atom characters, and `filled`
+# that at least one did.
+def vendor_rest(s: String, first: Bool, +clean: Bool, armed: Bool, filled: Bool) -> Bool:
+  match s:
+    case SNil{}:
+      armed && filled
+    case SCon{+c, t}:
+      +live = armed && atom_char(c)
+      vendor_rest(t, False{}, clean && name_char(c), live || (Char.is_eq(c, '-') && clean && Bool.not(first)),
+        live)
+
+# RFC 5258 section 6: a tag's decoded text is an eitem-vendor-tag when it
+# starts with the reserved "vendor." prefix, and otherwise an atom.
+def tag_text(+s: String) -> Bool:
+  Bool.pick(Bool, I.upper_starts(s, "VENDOR."), vendor_rest(String.drop(s, 7n), True{}, True{}, False{}, False{}),
+    atom_word(s))
+
+def ext_tag(v: Value) -> Bool:
   match v:
     case VAtom{s}:
-      atom_word(s)
+      tag_text(s)
     case VQuoted{s}:
-      atom_word(s)
+      tag_text(s)
     case VLiteral{s}:
-      atom_word(s)
+      tag_text(s)
     case VList{_}:
       False{}
 
@@ -410,9 +449,9 @@ def ext_items(vs: List<&2, Value>) -> Bool:
     case Nil{}:
       True{}
     case tag <> VList{comp} <> t:
-      tag_atom(tag) && ext_comp(comp) && ext_items(t)
+      ext_tag(tag) && ext_comp(comp) && ext_items(t)
     case tag <> VAtom{s} <> t:
-      tag_atom(tag) && ext_simple(s) && ext_items(t)
+      ext_tag(tag) && ext_simple(s) && ext_items(t)
     case _:
       False{}
 
@@ -528,7 +567,7 @@ def cap_words(vs: List<&2, String>) -> Maybe<&2, List<&2, String>>:
     case Nil{}:
       Some{[]}
     case +s <> t:
-      attribute_put(Bool.not(String.is_empty(s)) && atom_text(s), String.to_upper(s), cap_words(t))
+      attribute_put(atom_word(s), String.to_upper(s), cap_words(t))
 
 def cap_line(+text: String, lits: List<&2, String>) -> Maybe<&2, List<&2, String>>:
   match lits:
@@ -638,9 +677,13 @@ def zero_led(s: String) -> Bool:
 
 # RFC 4466 section 2 makes UIDNEXT and UIDVALIDITY nz-numbers, so their
 # token may not start with "0"; MESSAGES and UNSEEN are RFC 3501 numbers.
+# RFC 7162 section 7 makes HIGHESTMODSEQ a mod-sequence-valzer: exactly "0",
+# or a positive value such as "001", so "00" and "000" are refused.
 def field_value(+key: String, +value: String) -> Maybe<&2, String>:
   nz = String.eq(key, "UIDNEXT") || String.eq(key, "UIDVALIDITY")
-  Bool.pick(Maybe<&2, String>, nz && zero_led(value), None{}, decimal(value))
+  modseq = String.eq(key, "HIGHESTMODSEQ") && Bool.not(String.eq(value, "0"))
+  refused = (nz && zero_led(value)) || (modseq && String.eq(trim_zero(value), "0"))
+  Bool.pick(Maybe<&2, String>, refused, None{}, decimal(value))
 
 def fields(vs: List<&2, Value>, +modseq: Bool) -> Maybe<&2, List<&2, Field>>:
   match vs:
