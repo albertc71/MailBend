@@ -454,6 +454,35 @@ mod tests {
         );
     }
 
+    /// Stands in for a peer that never answers: the connect call waits out
+    /// its timeout, as `TcpStream::connect_timeout` does.
+    fn never_answers(_: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
+        std::thread::sleep(timeout);
+        Err(io::ErrorKind::TimedOut.into())
+    }
+
+    #[test]
+    fn without_threads_each_address_is_tried_in_turn_for_its_share_of_the_time() {
+        let black_holed = SocketAddr::from(([192, 0, 2, 1], 993));
+        let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let listening_addr = listening.local_addr().expect("addr");
+        let connect: Connector = Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+            if *addr == black_holed {
+                return never_answers(addr, timeout);
+            }
+            TcpStream::connect_timeout(addr, timeout)
+        });
+        let no_thread: Spawn = |_| Err(io::ErrorKind::WouldBlock.into());
+        let budget = Duration::from_millis(400);
+        let started = Instant::now();
+        let addrs = [black_holed, listening_addr];
+        let sock = connect_with(&addrs, &Deadline::after(budget), connect, no_thread)
+            .expect("the listening address is reached");
+        let took = started.elapsed();
+        assert_eq!(sock.peer_addr().expect("peer"), listening_addr);
+        assert!(took >= budget / 4, "the black-holed address had {took:?}");
+    }
+
     #[test]
     fn an_attempt_neither_dials_nor_succeeds_after_the_deadline() {
         let addr = SocketAddr::from(([192, 0, 2, 1], 993));
