@@ -181,9 +181,17 @@ itself or descendants that deliberately escape their process group. Ordinary
 compiler failures produce the final pass/fail count; infrastructure errors and
 interruptions exit without that summary.
 
-CI exercises the synthetic scheduling and cleanup contracts with the source checks.
-Its actual Bend unit invocation remains serial until separate x86-64 and ARM64
-resource measurements support changing it. This option makes no speedup claim.
+CI exercises the synthetic scheduling and cleanup contracts with the source checks,
+and runs the Bend unit files with `--jobs 2`. Two manual runs per architecture
+([first](https://github.com/albertc71/MailBend/actions/runs/44310831155),
+[second](https://github.com/albertc71/MailBend/actions/runs/44315343460)) measured
+66 unit files with two jobs on the 16 GiB hosted runners. All four passed. Peak
+memory in use on the runner (total less available, sampled every 0.2 s) was 9,255
+and 8,674 MiB on x86-64 and 8,893 and 8,306 MiB on ARM64. The runner took 282.5 and
+405.0 s on x86-64 and 308.6 and 298.6 s on ARM64. Serial runs that day, of 66 or
+70 files, took 342 to 493 s on x86-64 and 413 s on ARM64; hosted runner speed
+varies more than the gap between two single runs. These are four observations,
+not a bound for other machines; recheck memory before raising the job count.
 
 When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
 the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).
@@ -218,14 +226,20 @@ before relying on a particular client version.
 The first end-to-end run includes the fixed CLI, diagnostic and MCP protocol
 checks. The second repeats the tool scenarios through structured MCP without
 repeating those fixed routes. Omit `--tool-scenarios-only` for a standalone
-complete run, including when `MAILBEND_TEST_MCP=1` is set.
+complete run, including when `MAILBEND_TEST_MCP=1` is set. Each run first
+runs its fixed checks and shared-server block on their own, then runs the
+remaining scenario groups in two halves at once. A child process runs the
+second half with its own work directory, fake servers and end-of-run checks,
+and prints its own count; its failure fails the run. Each scenario group
+prints its time.
 
 CI runs on pull requests, weekly on `main` and on manual dispatch, but not on
 pushes: `main` accepts only up-to-date squash merges, so a pull request's run
 has already tested the tree that lands. CI runs source checks and unit tests,
 kernel-rechecked proofs, proof mutation checks, installer and transport tests,
 and the CLI, structured MCP and support suites on isolated standard Ubuntu
-runners. The installer and transport tests build their own helpers or use
+runners. Each runtime test script has its own workflow step, so that step's
+time is the script's time. The installer and transport tests build their own helpers or use
 synthetic toolchains, so they need no compiled core. Each runtime runner
 builds its own binaries from the checked-out revision. This repeats build work
 to avoid shared-state races and artifact storage. Rust and fuzz checks remain
