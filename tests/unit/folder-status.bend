@@ -63,6 +63,22 @@ def name_rows(ss: List<&2, String>) -> String:
     case s <> t:
       discovered("* LIST () \"/\" " ++ s ++ "\r\n") ++ ";" ++ name_rows(t)
 
+# Discovery of each whole LIST line.
+def line_rows(ss: List<&2, String>) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case s <> t:
+      discovered(s ++ "\r\n") ++ ";" ++ line_rows(t)
+
+# INBOX's count from each STATUS line, which starts after "* STATUS ".
+def status_rows(ss: List<&2, String>) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case s <> t:
+      status("* STATUS " ++ s ++ "\r\n", False{}) ++ ";" ++ status_rows(t)
+
 def list_rows(n: Nat, +i: U32) -> String:
   match n:
     case 0n:
@@ -119,6 +135,17 @@ def main() -> IO(Unit):
     IO.print(ext_rows(["(X 1:2:3)", "(X *5)", "(X 1,)", "(X ,1)", "(X :1)", "(X \"quoted\")", "(X atom)",
       "(X NIL)"]))
     IO.print(name_rows(["X%", "X{Y", "X\\Y", "X*", "\"A\tB\""]))
+    IO.print(ext_rows(["(X+Y 1)", "(1X 1)", "(123 1)", "(X! 1)", "(X# 1)", "(X' 1)",
+      "(vendor.example-COUNT+FLAGS 2)", "(\"X+TEST\" 7)", "(EX ({3}\r\nabc))"]))
+    IO.print(ext_rows(["(X* 1)", "(X] 1)", "(\"X%\" 1)", "(\"X(\" 1)"]))
+    IO.print(ext_rows(["( EX 1)", "( )", "( R 42)", "( X 1)", "(X ( a))", "(EX ({3}\r\na\u{0}b))"]))
+    IO.print(line_rows(["* LIST ( \\Noselect) \"/\" INBOX", "* LIST  () \"/\" INBOX"]))
+    IO.print(status_rows(["INBOX ( MESSAGES 17 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)",
+      " INBOX (MESSAGES 17 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)",
+      "INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 031 UIDVALIDITY 09)",
+      "INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 031 UIDVALIDITY 7)",
+      "INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 09)",
+      "INBOX (MESSAGES 017 UNSEEN 00 UIDNEXT 18 UIDVALIDITY 7)"]))
     IO.print(discovery(list_rows(100n, 1)))
     IO.print(discovery(list_rows(101n, 1)))
     IO.print(discovery("* LIST (Noselect) \"/\" \"INBOX\"\r\n"))
@@ -161,6 +188,11 @@ def main() -> IO(Unit):
 #|False;False;False;
 #|False;False;False;False;False;False;False;False;
 #|False;False;False;False;False;
+#|True;True;True;True;True;True;True;True;True;
+#|False;False;False;False;
+#|False;False;False;False;False;False;
+#|False;False;
+#|invalid_response;invalid_response;invalid_response;invalid_response;invalid_response;17,0,18,7,unsupported;
 #|True
 #|folder overview admits at most 100 folders
 #|folder overview requires complete, valid capability and folder discovery
