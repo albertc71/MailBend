@@ -189,9 +189,9 @@ and runs the Bend unit files with `--jobs 2`. Two manual runs per architecture
 memory in use on the runner (total less available, sampled every 0.2 s) was 9,255
 and 8,674 MiB on x86-64 and 8,893 and 8,306 MiB on ARM64. The runner took 282.5 and
 405.0 s on x86-64 and 308.6 and 298.6 s on ARM64. Serial runs that day, of 66 or
-70 files, took 342 to 494 s on x86-64 and 413 s on ARM64; hosted runner speed varies more than the gap
-between two single runs. These are four observations, not a bound for other
-machines; recheck memory before raising the job count.
+70 files, took 342 to 493 s on x86-64 and 413 s on ARM64; hosted runner speed
+varies more than the gap between two single runs. These are four observations,
+not a bound for other machines; recheck memory before raising the job count.
 
 When changing `skills/mailbend/`, run `skills-ref validate skills/mailbend` with
 the [Agent Skills reference validator](https://github.com/agentskills/agentskills/tree/main/skills-ref).
@@ -238,8 +238,8 @@ pushes: `main` accepts only up-to-date squash merges, so a pull request's run
 has already tested the tree that lands. CI runs source checks and unit tests,
 kernel-rechecked proofs, proof mutation checks, installer and transport tests,
 and the CLI, structured MCP and support suites on isolated standard Ubuntu
-runners. Each runtime step runs one test script, so a step's time is that
-script's time. The installer and transport tests build their own helpers or use
+runners. Each runtime test script has its own workflow step, so that step's
+time is the script's time. The installer and transport tests build their own helpers or use
 synthetic toolchains, so they need no compiled core. Each runtime runner
 builds its own binaries from the checked-out revision. This repeats build work
 to avoid shared-state races and artifact storage. Rust and fuzz checks remain
