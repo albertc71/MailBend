@@ -408,11 +408,15 @@ helper invocation resolves again, including later calls in an MCP process
 that has stayed running through sleep/wake. The lookup succeeds when either
 the A or the AAAA question returns addresses; the helper then staggers
 connection attempts to them while time remains, IPv4 first and alternating
-with IPv6, in a design inspired by RFC 8305 section 5. Each attempt starts
-250 ms after the previous one, sooner when little time is left, or at once
-when one fails; with many addresses and little time, the last ones may not
-be tried. The helper returns the first socket reported as connected in
-time. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
+with IPv6, in a design inspired by RFC 8305 section 5. On its connection
+threads, each attempt starts 250 ms after the previous one, sooner when
+little time is left, or at once when one fails. At most 8 attempts run at
+once, each cut short so that the addresses after it can still start before
+the deadline; with many addresses and little time, the last ones may not
+be tried. If any connection thread cannot start, the helper tries the
+addresses serially instead, in the same alternating-family order, giving
+each an equal share of the remaining time. The helper returns the first
+socket reported as connected in time. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
 default). A connected endpoint that fails TLS/protocol checks stops the call;
 MailBend does not replay mail operations on another address.
 
