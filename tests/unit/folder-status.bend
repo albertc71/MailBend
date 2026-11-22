@@ -34,9 +34,25 @@ def status(reply: String, use_modseq: Bool) -> String:
   +rs = F.records(I.frame(reply), use_modseq)
   count(F.evidence_count(True{}, F.assigned(rs, [I.Folder{"INBOX", "/", []}]), rs, "INBOX"))
 
+def discovery_text(found: Result<&2, &2, String, F.Discovery>) -> String:
+  match found:
+    case Done{_}:
+      "True"
+    case Fail{m}:
+      m
+
+def discovery(reply: String) -> String:
+  discovery_text(F.discovery(I.frame("* CAPABILITY IMAP4rev1\r\na1 OK done\r\n" ++ reply ++ "a2 OK done\r\n")))
+
 def discovered(reply: String) -> String:
-  Bool.show(Maybe.is_some(&2, F.Discovery, F.discovery(I.frame(
-    "* CAPABILITY IMAP4rev1\r\na1 OK done\r\n" ++ reply ++ "a2 OK done\r\n"))))
+  Bool.show(String.eq(discovery(reply), "True"))
+
+def list_rows(n: Nat, +i: U32) -> String:
+  match n:
+    case 0n:
+      ""
+    case 1n+p:
+      "* LIST () \"/\" \"F" ++ U32.show(i) ++ "\"\r\n" ++ list_rows(p, (i + 1 : U32))
 
 def capability(reply: String) -> String:
   Bool.show(Maybe.is_some(&2, List<&2, String>, F.caps(I.frame(reply ++ "a1 OK done\r\n"))))
@@ -79,6 +95,9 @@ def main() -> IO(Unit):
     IO.print(discovered("* LIST () \"/\" INBOX (\"CHILDINFO\" (\"SUBSCRIBED\") X-NEW 7 OLDNAME (\"Old\"))\r\n"))
     IO.print(discovered("* LIST () \"/\" INBOX (CHILDINFO)\r\n"))
     IO.print(discovered("* LIST () \"/\" INBOX () ()\r\n"))
+    IO.print(discovery(list_rows(100n, 1)))
+    IO.print(discovery(list_rows(101n, 1)))
+    IO.print(discovery("* LIST (Noselect) \"/\" \"INBOX\"\r\n"))
     IO.print(capability("* CAPABILITY \r\n"))
     IO.print(capability("* CAPABILITY IMAP4rev1\r\n*\tCAPABILITY CONDSTORE\r\n"))
     IO.print(capability("* CAPABILITY IMAP4rev1 X[TEST}\r\n"))
@@ -112,6 +131,9 @@ def main() -> IO(Unit):
 #|True
 #|False
 #|False
+#|True
+#|folder overview admits at most 100 folders
+#|folder overview requires complete, valid capability and folder discovery
 #|False
 #|False
 #|True

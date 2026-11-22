@@ -1056,12 +1056,15 @@ def t_folders_legacy(args: J.Json) -> IO(Policy.Out):
     r : Run() <- imap_run(Ops.plan_folders())
     folders_out(r)
 
-def folder_status_helper_at(path: String, input: String) -> IO(Policy.Proc):
+# Runs an IMAP plan through the mailbend-tls helper at `path`. Process.run
+# enforces the 262144-byte output cap and the `deadline` in milliseconds
+# before the core frames any response; the helper only executes the plan.
+def imap_proc.at(path: String, plan: List<&2, I.Cmd>, deadline: U32) -> IO(Policy.Proc):
   match path:
     case SCon{'/', t}:
       do IO<Policy.Proc>:
         r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
-          Process.run(SCon{'/', t}, ["imap"], input, 262144, 10000)
+          Process.run(SCon{'/', t}, ["imap"], I.script(plan), 262144, deadline)
         return Policy.proc_of(r)
     case _:
       IO.pure(Policy.Proc, Policy.ProcRefused{helper_refusal("MAILBEND_TLS_HELPER", "mailbend-tls")})
@@ -1069,7 +1072,7 @@ def folder_status_helper_at(path: String, input: String) -> IO(Policy.Proc):
 def folder_status_run(cmds: List<&2, I.Cmd>) -> IO(Policy.Proc):
   do IO<Policy.Proc>:
     path : String <- env_or("MAILBEND_TLS_HELPER", "")
-    folder_status_helper_at(path, I.script(cmds))
+    imap_proc.at(path, cmds, 10000)
 
 def folder_status_modseq(modseq: FolderStatus.Modseq) -> List<&2, J.Json>:
   match modseq:
@@ -1136,12 +1139,11 @@ def folder_status_out(+result: FolderStatus.Overview) -> Policy.Out:
 def FolderDiscovery() -> Data:
   Result<&2, &2, String, FolderStatus.Discovery>
 
-def folder_status_discovery.checked(found: Maybe<&2, FolderStatus.Discovery>, roles: Bool)
-  -> FolderDiscovery():
+def folder_status_discovery.checked(found: FolderDiscovery(), roles: Bool) -> FolderDiscovery():
   match found:
-    case None{}:
-      Fail{"folder overview requires complete, valid capability and folder discovery"}
-    case Some{FolderStatus.Discovery{+caps, fs}}:
+    case Fail{m}:
+      Fail{m}
+    case Done{FolderStatus.Discovery{+caps, fs}}:
       Bool.pick(FolderDiscovery(), Bool.not(roles) || I.has_cap(caps, "SPECIAL-USE"),
         Done{FolderStatus.Discovery{caps, fs}}, Fail{"folder overview special-use capability changed"})
 
@@ -1152,31 +1154,16 @@ def folder_status_discovery(p: Policy.Proc, roles: Bool) -> FolderDiscovery():
     case _:
       Fail{"folder overview could not complete folder discovery"}
 
-def folder_status_merge_one(fs: List<&2, I.Folder>, +entry: I.Folder) -> List<&2, I.Folder>:
-  match fs:
-    case Nil{}:
-      [entry]
-    case +f <> +t:
-      Bool.pick(List<&2, I.Folder>, String.eq(FolderStatus.folder_name(f), FolderStatus.folder_name(entry)),
-        merge_folder.into(f, entry) <> t, f <> folder_status_merge_one(t, entry))
-
-def folder_status_merge(extra: List<&2, I.Folder>, fs: List<&2, I.Folder>) -> List<&2, I.Folder>:
-  match extra:
-    case Nil{}:
-      fs
-    case entry <> t:
-      folder_status_merge(t, folder_status_merge_one(fs, entry))
-
 def folder_status_merged(extra: FolderDiscovery(), caps: List<&2, String>, fs: List<&2, I.Folder>)
   -> FolderDiscovery():
   match extra:
     case Fail{m}:
       Fail{m}
     case Done{FolderStatus.Discovery{_, roles}}:
-      +merged = folder_status_merge(roles, fs)
+      +merged = merge_folders(roles, fs)
       Bool.pick(FolderDiscovery(), U32.is_le(U32.from_nat(List.length(&2, I.Folder, merged)), 100),
         Done{FolderStatus.Discovery{caps, FolderStatus.sorted(merged)}},
-        Fail{"folder overview admits at most 100 folders"})
+        Fail{FolderStatus.too_many()})
 
 def folder_status_roles(ask: Bool, caps: List<&2, String>, fs: List<&2, I.Folder>)
   -> IO(FolderDiscovery()):
@@ -3528,19 +3515,6 @@ def refresh_bounded(out: Policy.Out, us: List<&2, U32>, folder: String, uidv: U3
     case _:
       out
 
-# Process.run enforces this 256 KiB output and 30 second bound before the
-# core frames any response. The native helper still only executes the plan.
-def refresh_run.at(path: String, plan: List<&2, I.Cmd>) -> IO(Policy.Proc):
-  match path:
-    case SCon{'/', t}:
-      do IO<Policy.Proc>:
-        r : Result<&1, &1, U32 & String, U32 & (String & String)> <-
-          Process.run(SCon{'/', t}, ["imap"], I.script(plan), 262144, 30000)
-        return Policy.proc_of(r)
-    case _:
-      IO.pure(Policy.Proc, Policy.ProcRefused{helper_refusal("MAILBEND_TLS_HELPER",
-        "mailbend-tls")})
-
 def t_refresh.put(req: Uids(), +folder: String, +uidv: U32) -> IO(Policy.Out):
   match req:
     case Fail{m}:
@@ -3548,7 +3522,7 @@ def t_refresh.put(req: Uids(), +folder: String, +uidv: U32) -> IO(Policy.Out):
     case Done{+us}:
       do IO<Policy.Out>:
         path : String <- env_or("MAILBEND_TLS_HELPER", "")
-        p : Policy.Proc <- refresh_run.at(path, Ops.plan_refresh(folder, us, uidv))
+        p : Policy.Proc <- imap_proc.at(path, Ops.plan_refresh(folder, us, uidv), 30000)
         return refresh_bounded(refresh_proc(p, us, folder, uidv), us, folder, uidv)
 
 def t_refresh(+args: J.Json) -> IO(Policy.Out):
@@ -5265,7 +5239,7 @@ def await_session(r: Run(), +plan: List<&2, I.Cmd>, before: List<&2, Found>)
 def await_raw(plan: List<&2, I.Cmd>) -> IO(Run()):
   do IO<Run()>:
     path : String <- env_or("MAILBEND_TLS_HELPER", "")
-    p : Policy.Proc <- refresh_run.at(path, plan)
+    p : Policy.Proc <- imap_proc.at(path, plan, 30000)
     return imap_result(p)
 
 def await_run(p: Result<&2, &2, String, List<&2, I.Cmd>>, before: List<&2, Found>)
@@ -5656,7 +5630,7 @@ def contacts_candidates.proc_reply(no: Maybe<&2, U32>, p: Policy.Proc,
 def contacts_candidates(+folder: String, address: String, now: U32) -> IO(ContactScan):
   do IO<ContactScan>:
     path : String <- env_or("MAILBEND_TLS_HELPER", "")
-    +p : Policy.Proc <- refresh_run.at(path, Ops.plan_contact_candidates(folder, address))
+    +p : Policy.Proc <- imap_proc.at(path, Ops.plan_contact_candidates(folder, address), 30000)
     contacts_candidates.proc_reply(contacts_candidates.no_uidv(p), p, folder, now)
 
 def contacts_received(folders: List<&2, String>, +since: String, +limit: U32, +now: U32)

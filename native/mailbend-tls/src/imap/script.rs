@@ -56,6 +56,10 @@ pub fn is_capability_response(line: &[u8]) -> bool {
         .is_some_and(|word| word.eq_ignore_ascii_case(b"CAPABILITY"))
 }
 
+/// RFC 3501 section 9 atom-specials among the visible ASCII characters: an
+/// atom (and so a capability) may hold `[` and `}` but none of these.
+const ATOM_SPECIALS: &[u8] = b"(){%*\"\\]";
+
 fn capability_matches(line: &[u8], required: &[u8]) -> bool {
     let Some(body) = line.strip_suffix(b"\r\n") else {
         return false;
@@ -70,7 +74,7 @@ fn capability_matches(line: &[u8], required: &[u8]) -> bool {
         !token.is_empty()
             && token
                 .iter()
-                .all(|b| (0x21..=0x7e).contains(b) && !b"(){}%*\"\\[]".contains(b))
+                .all(|b| (0x21..=0x7e).contains(b) && !ATOM_SPECIALS.contains(b))
     }) && required.split(|&b| b == b' ').all(|want| {
         body[13..]
             .split(|&b| b == b' ')
@@ -275,7 +279,12 @@ mod tests {
             "'[' and '}}' are ATOM-CHARs"
         );
         for special in [b"]", b"{", b"%", b"*", b"(", b")", b"\"", b"\\"] {
-            let line = [b"* CAPABILITY IMAP4rev1 X".as_slice(), special.as_slice(), b" LIST-STATUS\r\n".as_slice()].concat();
+            let line = [
+                b"* CAPABILITY IMAP4rev1 X".as_slice(),
+                special.as_slice(),
+                b" LIST-STATUS\r\n".as_slice(),
+            ]
+            .concat();
             assert!(!expect.met_by(&line), "{line:?}");
         }
     }

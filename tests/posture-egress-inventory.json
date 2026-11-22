@@ -239,7 +239,7 @@
     },
     {
       "path": "native/mailbend-tls/src/imap/script.rs",
-      "sha256": "2b9b01f3c8ca7ac9b6821314509e3ce85ff884057ce74316791525d4e7bb0f59"
+      "sha256": "5b3e4d8e78f38dd5248e92a8b67fc88fafd3ab5e0dda0d51ca70b102cba7f31d"
     },
     {
       "path": "native/mailbend-tls/src/imap/session.rs",

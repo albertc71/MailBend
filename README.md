@@ -660,10 +660,11 @@ phase. LIST-STATUS scope or selectability changes also invalidate its counts.
 
 The opt-in path admits at most 100 folders, each with a nonempty name of at
 most 1024 decoded UTF-8 bytes. It requires a canonical modified UTF-7
-round trip before comparing identities. Some valid alternative wire
-spellings, such as encoding printable ASCII inside a shifted sequence,
-are deliberately refused. Only ASCII INBOX casing is normalized. Other
-names keep their exact Unicode scalars and sort in that order.
+round trip before comparing identities. Discovery rejects printable ASCII
+encoded inside a modified UTF-7 shifted sequence. Only ASCII INBOX casing
+is normalized. Other names keep their exact Unicode scalars and sort in
+that order. Well-formed RFC 5258 extended data after a LIST row, such as
+CHILDINFO, is checked and ignored.
 
 At most three helpers run, each with a 10000ms subprocess deadline and a
 262144-byte combined captured-output limit. The aggregate helper allowances

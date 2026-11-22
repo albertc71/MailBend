@@ -48,8 +48,10 @@ type Overview is Data:
 type Discovery is Data:
   Discovery{caps: List<&2, String>, folders: List<&2, I.Folder>}
 
-# Only one parenthesized list is legal in LIST and STATUS responses.
-# Atoms remain atoms, including NIL when it is a mailbox name.
+# LIST and STATUS responses hold atoms, quoted strings, literals and
+# parenthesized lists. Atoms remain atoms, including NIL when it is a
+# mailbox name. Lists nest only in RFC 5258 extended data, which sets no
+# depth; eight levels hold every defined extended-data item.
 type Mode is Data:
   Space{}
   Atom{}
@@ -63,117 +65,133 @@ type Value is Data:
   VLiteral{text: String}
   VList{items: List<&2, Value>}
 
+# `open` holds the reversed items of each unclosed list, innermost first.
 type Lexer is Data:
   Lexer{mode: Mode, word: String, root: List<&2, Value>,
-    nested: List<&2, Value>, inside: Bool, literals: List<&2, String>}
+    open: List<&2, List<&2, Value>>, literals: List<&2, String>}
 
+def max_depth() -> Nat:
+  8n
+
+# RFC 3501 section 9: an ATOM-CHAR is any CHAR except atom-specials, and an
+# ASTRING-CHAR may also be resp-specials ("]").
 def atom_char(+c: Char) -> Bool:
-  I.quota_atom(c) || Char.is_eq(c, '\\')
+  C.between(C.u(c), 33, 126) && Bool.not(String.contains("(){%*\"\\]", SCon{c, SNil{}}))
+
+def astring_char(+c: Char) -> Bool:
+  atom_char(c) || Char.is_eq(c, ']')
+
+# A bare token is an astring or a flag, which starts with "\".
+def token_char(+c: Char) -> Bool:
+  astring_char(c) || Char.is_eq(c, '\\')
 
 def atom_text(s: String) -> Bool:
   match s:
     case SNil{}:
       True{}
     case SCon{c, t}:
-      I.quota_atom(c) && atom_text(t)
+      atom_char(c) && atom_text(t)
 
-def lexer_push(inside: Bool, mode: Mode, v: Value, root: List<&2, Value>,
-  nested: List<&2, Value>, literals: List<&2, String>) -> Lexer:
-  match inside:
-    case True{}:
-      Lexer{mode, "", root, v <> nested, True{}, literals}
-    case False{}:
-      Lexer{mode, "", v <> root, nested, False{}, literals}
+def astring_text(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      astring_char(c) && astring_text(t)
+
+def lexer_push(mode: Mode, v: Value, root: List<&2, Value>,
+  open: List<&2, List<&2, Value>>, literals: List<&2, String>) -> Lexer:
+  match open:
+    case Nil{}:
+      Lexer{mode, "", v <> root, [], literals}
+    case items <> outer:
+      Lexer{mode, "", root, (v <> items) <> outer, literals}
 
 def lexer_close(q: Lexer) -> Maybe<&2, Lexer>:
   match q:
-    case Lexer{mode, word, root, nested, True{}, literals}:
-      Some{Lexer{End{}, "", VList{List.reverse(&2, Value, nested)} <> root,
-        [], False{}, literals}}
+    case Lexer{_, _, root, items <> outer, literals}:
+      Some{lexer_push(End{}, VList{List.reverse(&2, Value, items)}, root, outer, literals)}
     case _:
       None{}
 
-def lexer_open(inside: Bool, root: List<&2, Value>, literals: List<&2, String>)
-  -> Maybe<&2, Lexer>:
-  match inside:
-    case True{}:
-      None{}
-    case False{}:
-      Some{Lexer{Space{}, "", root, [], True{}, literals}}
+def lexer_open(root: List<&2, Value>, +open: List<&2, List<&2, Value>>,
+  literals: List<&2, String>) -> Maybe<&2, Lexer>:
+  Bool.pick(Maybe<&2, Lexer>, Nat.is_lt(List.length(&2, List<&2, Value>, open), max_depth()),
+    Some{Lexer{Space{}, "", root, Nil{} <> open, literals}}, None{})
 
-def lexer_literal(literals: List<&2, String>, inside: Bool,
-  root: List<&2, Value>, nested: List<&2, Value>) -> Maybe<&2, Lexer>:
+def lexer_literal(literals: List<&2, String>, root: List<&2, Value>,
+  open: List<&2, List<&2, Value>>) -> Maybe<&2, Lexer>:
   match literals:
     case h <> t:
-      Some{lexer_push(inside, End{}, VLiteral{h}, root, nested, t)}
+      Some{lexer_push(End{}, VLiteral{h}, root, open, t)}
     case Nil{}:
       None{}
 
 def lexer_other(literal: Bool, +c: Char, root: List<&2, Value>,
-  nested: List<&2, Value>, inside: Bool, literals: List<&2, String>) -> Maybe<&2, Lexer>:
+  open: List<&2, List<&2, Value>>, literals: List<&2, String>) -> Maybe<&2, Lexer>:
   match literal:
     case True{}:
-      lexer_literal(literals, inside, root, nested)
+      lexer_literal(literals, root, open)
     case False{}:
-      Bool.pick(Maybe<&2, Lexer>, atom_char(c),
-        Some{Lexer{Atom{}, SCon{c, SNil{}}, root, nested, inside, literals}}, None{})
+      Bool.pick(Maybe<&2, Lexer>, token_char(c),
+        Some{Lexer{Atom{}, SCon{c, SNil{}}, root, open, literals}}, None{})
 
 def lexer_plain(q: Lexer, c: Char) -> Maybe<&2, Lexer>:
   match q:
-    case Lexer{mode, word, root, nested, inside, literals}:
+    case Lexer{mode, word, root, open, literals}:
       match c:
         case ' ':
-          Some{Lexer{Space{}, "", root, nested, inside, literals}}
+          Some{Lexer{Space{}, "", root, open, literals}}
         case ')':
-          lexer_close(Lexer{mode, word, root, nested, inside, literals})
+          lexer_close(Lexer{mode, word, root, open, literals})
         case '(':
-          lexer_open(inside, root, literals)
+          lexer_open(root, open, literals)
         case '"':
-          Some{Lexer{Quoted{}, "", root, nested, inside, literals}}
+          Some{Lexer{Quoted{}, "", root, open, literals}}
         case +c:
-          lexer_other(Char.is_eq(c, I.lit_mark()), c, root, nested, inside, literals)
+          lexer_other(Char.is_eq(c, I.lit_mark()), c, root, open, literals)
 
 def lexer_step(q: Lexer, +c: Char) -> Maybe<&2, Lexer>:
   match q:
-    case Lexer{Space{}, word, root, nested, inside, literals}:
-      lexer_plain(Lexer{Space{}, word, root, nested, inside, literals}, c)
-    case Lexer{End{}, word, root, nested, inside, literals}:
+    case Lexer{Space{}, word, root, open, literals}:
+      lexer_plain(Lexer{Space{}, word, root, open, literals}, c)
+    case Lexer{End{}, word, root, open, literals}:
       match c:
         case ' ':
-          Some{Lexer{Space{}, "", root, nested, inside, literals}}
+          Some{Lexer{Space{}, "", root, open, literals}}
         case ')':
-          lexer_close(Lexer{End{}, word, root, nested, inside, literals})
+          lexer_close(Lexer{End{}, word, root, open, literals})
         case _:
           None{}
-    case Lexer{Atom{}, word, root, nested, inside, literals}:
+    case Lexer{Atom{}, word, root, open, literals}:
       match c:
         case ' ':
-          Some{lexer_push(inside, Space{}, VAtom{String.reverse(word)}, root, nested, literals)}
+          Some{lexer_push(Space{}, VAtom{String.reverse(word)}, root, open, literals)}
         case ')':
-          lexer_close(lexer_push(inside, End{}, VAtom{String.reverse(word)}, root, nested, literals))
+          lexer_close(lexer_push(End{}, VAtom{String.reverse(word)}, root, open, literals))
         case +c:
-          Bool.pick(Maybe<&2, Lexer>, atom_char(c),
-            Some{Lexer{Atom{}, SCon{c, word}, root, nested, inside, literals}}, None{})
-    case Lexer{Quoted{}, word, root, nested, inside, literals}:
+          Bool.pick(Maybe<&2, Lexer>, token_char(c),
+            Some{Lexer{Atom{}, SCon{c, word}, root, open, literals}}, None{})
+    case Lexer{Quoted{}, word, root, open, literals}:
       match c:
         case '"':
-          Some{lexer_push(inside, End{}, VQuoted{String.reverse(word)}, root, nested, literals)}
+          Some{lexer_push(End{}, VQuoted{String.reverse(word)}, root, open, literals)}
         case '\\':
-          Some{Lexer{Escaped{}, word, root, nested, inside, literals}}
+          Some{Lexer{Escaped{}, word, root, open, literals}}
         case +c:
           Bool.pick(Maybe<&2, Lexer>, C.between(C.u(c), 32, 126),
-            Some{Lexer{Quoted{}, SCon{c, word}, root, nested, inside, literals}}, None{})
-    case Lexer{Escaped{}, word, root, nested, inside, literals}:
+            Some{Lexer{Quoted{}, SCon{c, word}, root, open, literals}}, None{})
+    case Lexer{Escaped{}, word, root, open, literals}:
       Bool.pick(Maybe<&2, Lexer>, Char.is_eq(c, '"') || Char.is_eq(c, '\\'),
-        Some{Lexer{Quoted{}, SCon{c, word}, root, nested, inside, literals}}, None{})
+        Some{Lexer{Quoted{}, SCon{c, word}, root, open, literals}}, None{})
 
 def lexer_finish(q: Lexer) -> Maybe<&2, List<&2, Value>>:
   match q:
-    case Lexer{Atom{}, word, root, _, False{}, Nil{}}:
+    case Lexer{Atom{}, word, root, Nil{}, Nil{}}:
       Some{List.reverse(&2, Value, VAtom{String.reverse(word)} <> root)}
-    case Lexer{Space{}, _, root, _, False{}, Nil{}}:
+    case Lexer{Space{}, _, root, Nil{}, Nil{}}:
       Some{List.reverse(&2, Value, root)}
-    case Lexer{End{}, _, root, _, False{}, Nil{}}:
+    case Lexer{End{}, _, root, Nil{}, Nil{}}:
       Some{List.reverse(&2, Value, root)}
     case _:
       None{}
@@ -187,8 +205,11 @@ def lexer_go(s: String, q: Maybe<&2, Lexer>) -> Maybe<&2, List<&2, Value>>:
     case _ None{}:
       None{}
 
+def lexer_start(literals: List<&2, String>) -> Maybe<&2, Lexer>:
+  Some{Lexer{Space{}, "", [], [], literals}}
+
 def tokens(text: String, literals: List<&2, String>) -> Maybe<&2, List<&2, Value>>:
-  lexer_go(text, Some{Lexer{Space{}, "", [], [], False{}, literals}})
+  lexer_go(text, lexer_start(literals))
 
 def scalars_valid(s: String) -> Bool:
   match s:
@@ -231,7 +252,7 @@ def name_value(v: Value) -> Maybe<&2, String>:
     case VLiteral{s}:
       canonical_name(s)
     case VAtom{+s}:
-      atom_name(atom_text(s), s)
+      atom_name(astring_text(s), s)
     case _:
       None{}
 
@@ -276,10 +297,75 @@ def folder_parts(attrs: Maybe<&2, List<&2, String>>, delim: Maybe<&2, String>,
     case _ _ _:
       None{}
 
+# RFC 4466 tagged-ext-simple: a number, or a sequence set of numbers, "*"
+# and ranges. `start` says a number or "*" comes next, `star` that "*" was
+# last, and `ranged` that this element already has its ":".
+def ext_simple(s: String, start: Bool, star: Bool, ranged: Bool) -> Bool:
+  match s:
+    case SNil{}:
+      Bool.not(start)
+    case SCon{'*', t}:
+      start && ext_simple(t, False{}, True{}, ranged)
+    case SCon{':', t}:
+      Bool.not(start) && Bool.not(ranged) && ext_simple(t, True{}, False{}, True{})
+    case SCon{',', t}:
+      Bool.not(start) && ext_simple(t, True{}, False{}, False{})
+    case SCon{c, t}:
+      Char.is_digit(c) && Bool.not(star) && ext_simple(t, False{}, False{}, ranged)
+
+# RFC 4466 tagged-ext-comp: astrings and nonempty nested lists of them.
+def ext_comp(vs: List<&2, Value>) -> Bool:
+  match vs:
+    case Nil{}:
+      True{}
+    case VList{+items} <> t:
+      Bool.not(List.is_empty(&2, Value, items)) && ext_comp(items) && ext_comp(t)
+    case VAtom{+s} <> t:
+      Bool.not(String.is_empty(s)) && astring_text(s) && ext_comp(t)
+    case VQuoted{s} <> t:
+      ext_comp(t)
+    case VLiteral{s} <> t:
+      ext_comp(t)
+
+def astring_value(v: Value) -> Bool:
+  match v:
+    case VAtom{+s}:
+      Bool.not(String.is_empty(s)) && astring_text(s)
+    case VQuoted{_}:
+      True{}
+    case VLiteral{_}:
+      True{}
+    case VList{_}:
+      False{}
+
+# RFC 5258 section 6: each extended-data item is a tag astring and a value.
+# Every item is checked, and none changes the folder.
+def ext_items(vs: List<&2, Value>) -> Bool:
+  match vs:
+    case Nil{}:
+      True{}
+    case tag <> VList{comp} <> t:
+      astring_value(tag) && ext_comp(comp) && ext_items(t)
+    case tag <> VAtom{s} <> t:
+      astring_value(tag) && ext_simple(s, True{}, False{}, False{}) && ext_items(t)
+    case _:
+      False{}
+
+# RFC 5258 section 3: a LIST response may end with one extended-data list.
+def extension(rest: List<&2, Value>) -> Bool:
+  match rest:
+    case Nil{}:
+      True{}
+    case VList{items} <> Nil{}:
+      ext_items(items)
+    case _:
+      False{}
+
 def folder(vs: Maybe<&2, List<&2, Value>>) -> Maybe<&2, I.Folder>:
   match vs:
-    case Some{VList{attrs} <> d <> n <> Nil{}}:
-      folder_parts(attributes(attrs), delimiter(d), name_value(n))
+    case Some{VList{attrs} <> d <> n <> rest}:
+      Bool.pick(Maybe<&2, I.Folder>, extension(rest),
+        folder_parts(attributes(attrs), delimiter(d), name_value(n)), None{})
     case _:
       None{}
 
@@ -326,55 +412,51 @@ def has_name(fs: List<&2, I.Folder>, +name: String) -> Bool:
     case I.Folder{other, _, _} <> t:
       String.eq(other, name) || has_name(t, name)
 
-def listed_put(found: Maybe<&2, I.Folder>, +fs: List<&2, I.Folder>, left: U32)
-  -> Maybe<&2, List<&2, I.Folder>>:
+# A LIST reply's folders, or why they cannot be used.
+type Listing is Data:
+  Listed{folders: List<&2, I.Folder>}
+  TooMany{}
+  Unlisted{}
+
+def too_many() -> String:
+  "folder overview admits at most 100 folders"
+
+def listed_put(found: Maybe<&2, I.Folder>, +fs: List<&2, I.Folder>) -> Listing:
   match found:
     case Some{+f}:
       I.Folder{+name, _, _} = f
-      Bool.pick(Maybe<&2, List<&2, I.Folder>>, U32.is_gt(left, 0) && Bool.not(has_name(fs, name)),
-        Some{f <> fs}, None{})
+      Bool.pick(Listing, has_name(fs, name), Unlisted{}, Listed{f <> fs})
     case None{}:
-      None{}
-
-type ListStep is Data:
-  ListStep{folders: Maybe<&2, List<&2, I.Folder>>, left: U32}
-
-def list_step_folders(step: ListStep) -> Maybe<&2, List<&2, I.Folder>>:
-  match step:
-    case ListStep{folders, _}:
-      folders
-
-def list_step_left(step: ListStep) -> U32:
-  match step:
-    case ListStep{_, left}:
-      left
+      Unlisted{}
 
 def list_line(+text: String, lits: List<&2, String>) -> Maybe<&2, I.Folder>:
   Bool.pick(Maybe<&2, I.Folder>, I.upper_starts(text, "* LIST "),
     folder(tokens(String.drop(text, 7n), lits)), None{})
 
+# `left` counts the LIST rows still admitted; one more is TooMany, whatever it says.
 def listed_step(hit: Bool, text: String, lits: List<&2, String>,
-  fs: List<&2, I.Folder>, +left: U32) -> ListStep:
+  fs: List<&2, I.Folder>, +left: U32) -> Listing:
   match hit:
     case True{}:
-      ListStep{listed_put(list_line(text, lits), fs, left),
-        (left - 1 : U32)}
+      Bool.pick(Listing, U32.is_eq(left, 0), TooMany{}, listed_put(list_line(text, lits), fs))
     case False{}:
-      ListStep{Some{fs}, left}
+      Listed{fs}
 
-def listed_go(lines: List<&2, I.RLine>, fs: Maybe<&2, List<&2, I.Folder>>, left: U32)
-  -> Maybe<&2, List<&2, I.Folder>>:
-  match lines fs:
-    case Nil{} Some{fs}:
-      Some{List.reverse(&2, I.Folder, fs)}
-    case I.RLine{+text, lits} <> t Some{fs}:
-      +step = listed_step(String.eq(kind(text), "LIST"), text, lits, fs, left)
-      listed_go(t, list_step_folders(step), list_step_left(step))
-    case _ None{}:
-      None{}
+def listed_go(lines: List<&2, I.RLine>, found: Listing, +left: U32) -> Listing:
+  match lines found:
+    case Nil{} Listed{fs}:
+      Listed{List.reverse(&2, I.Folder, fs)}
+    case I.RLine{+text, lits} <> t Listed{fs}:
+      +hit = String.eq(kind(text), "LIST")
+      listed_go(t, listed_step(hit, text, lits, fs, left),
+        Bool.pick(U32, hit, (left - 1 : U32), left))
+    case _ TooMany{}:
+      TooMany{}
+    case _ Unlisted{}:
+      Unlisted{}
 
-def listed(lines: List<&2, I.RLine>) -> Maybe<&2, List<&2, I.Folder>>:
-  listed_go(lines, Some{[]}, 100)
+def listed(lines: List<&2, I.RLine>) -> Listing:
+  listed_go(lines, Listed{[]}, 100)
 
 def cap_words(vs: List<&2, String>) -> Maybe<&2, List<&2, String>>:
   match vs:
@@ -415,15 +497,17 @@ def caps(+lines: List<&2, I.RLine>) -> Maybe<&2, List<&2, String>>:
   Bool.pick(Maybe<&2, List<&2, String>>, String.eq(I.status(lines, 1), "OK"),
     caps_go(replies(lines, 1), None{}, False{}), None{})
 
-def discovery_parts(caps: Maybe<&2, List<&2, String>>, ok: Bool,
-  fs: Maybe<&2, List<&2, I.Folder>>) -> Maybe<&2, Discovery>:
-  match caps ok fs:
-    case Some{caps} True{} Some{fs}:
-      Some{Discovery{caps, fs}}
+def discovery_parts(caps: Maybe<&2, List<&2, String>>, ok: Bool, found: Listing)
+  -> Result<&2, &2, String, Discovery>:
+  match caps ok found:
+    case _ _ TooMany{}:
+      Fail{too_many()}
+    case Some{caps} True{} Listed{fs}:
+      Done{Discovery{caps, fs}}
     case _ _ _:
-      None{}
+      Fail{"folder overview requires complete, valid capability and folder discovery"}
 
-def discovery(+lines: List<&2, I.RLine>) -> Maybe<&2, Discovery>:
+def discovery(+lines: List<&2, I.RLine>) -> Result<&2, &2, String, Discovery>:
   discovery_parts(caps(lines), String.eq(I.status(lines, 2), "OK"), listed(replies(lines, 2)))
 
 def folder_name(f: I.Folder) -> String:
@@ -444,11 +528,11 @@ def selectable_names(fs: List<&2, I.Folder>) -> List<&2, String>:
 # its own mailbox without discarding another mailbox's valid evidence.
 def name_prefix(s: String, q: Maybe<&2, Lexer>) -> Maybe<&2, String>:
   match s q:
-    case _ Some{Lexer{End{}, _, v <> Nil{}, _, False{}, _}}:
+    case _ Some{Lexer{End{}, _, v <> Nil{}, Nil{}, _}}:
       name_value(v)
-    case SNil{} Some{Lexer{Atom{}, word, Nil{}, _, False{}, _}}:
+    case SNil{} Some{Lexer{Atom{}, word, Nil{}, Nil{}, _}}:
       name_value(VAtom{String.reverse(word)})
-    case SCon{' ', t} Some{Lexer{Atom{}, word, Nil{}, _, False{}, _}}:
+    case SCon{' ', t} Some{Lexer{Atom{}, word, Nil{}, Nil{}, _}}:
       name_value(VAtom{String.reverse(word)})
     case SCon{c, t} Some{q}:
       name_prefix(t, lexer_step(q, c))
@@ -558,7 +642,7 @@ type Record is Data:
 def status_record(valid: Bool, +text: String, +lits: List<&2, String>, modseq: Bool) -> Record:
   match valid:
     case True{}:
-      Record{name_prefix(text, Some{Lexer{Space{}, "", [], [], False{}, lits}}),
+      Record{name_prefix(text, lexer_start(lits)),
         count_values(tokens(text, lits), modseq)}
     case False{}:
       Record{None{}, None{}}
@@ -667,11 +751,11 @@ def same_scope(a: List<&2, I.Folder>, b: List<&2, I.Folder>) -> Bool:
     case _ _:
       False{}
 
-def scope_matches(fs: List<&2, I.Folder>, other: Maybe<&2, List<&2, I.Folder>>) -> Bool:
+def scope_matches(fs: List<&2, I.Folder>, other: Listing) -> Bool:
   match other:
-    case Some{other}:
+    case Listed{other}:
       same_scope(fs, sorted(other))
-    case None{}:
+    case _:
       False{}
 
 def overview(+es: List<&2, Entry>, method: Method) -> Overview:

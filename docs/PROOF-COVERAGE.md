@@ -25,7 +25,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`plan_quota_writes_nothing`](../LAWS.bend#L126), [`probe_writes_nothing`](../LAWS.bend#L130), [`folders_write_nothing`](../LAWS.bend#L134), [`roles_write_nothing`](../LAWS.bend#L138), [`folder_scan_writes_nothing`](../LAWS.bend#L220), [`search_writes_nothing`](../LAWS.bend#L224), [`parts_write_nothing`](../LAWS.bend#L230), [`part_writes_nothing`](../LAWS.bend#L235), [`part_guarded`](../LAWS.bend#L245), [`search_page_writes_nothing`](../LAWS.bend#L300), [`search_page_examines`](../LAWS.bend#L307), [`search_continuation_pins_identity`](../LAWS.bend#L315), [`get_writes_nothing`](../LAWS.bend#L324), [`get_checked_writes_nothing`](../LAWS.bend#L331), [`get_checked_pins_identity`](../LAWS.bend#L340), [`get_checked_without_identity_unchanged`](../LAWS.bend#L350), [`headers_write_nothing`](../LAWS.bend#L358), [`preflight_writes_nothing`](../LAWS.bend#L364), [`get_new_writes_nothing`](../LAWS.bend#L370), [`get_new_now_examines_only`](../LAWS.bend#L377), [`refresh_plan`](../LAWS.bend#L383), [`thread_start_writes_nothing`](../LAWS.bend#L394), [`thread_start_checked_exact`](../LAWS.bend#L401), [`thread_start_unchecked_exact`](../LAWS.bend#L411), [`thread_plans_write_nothing`](../LAWS.bend#L421), [`awaiting_sent_writes_nothing`](../LAWS.bend#L430), [`reread_flags_writes_nothing`](../LAWS.bend#L436), [`classify_writes_nothing`](../LAWS.bend#L443), [`checked_headers_pin_identity`](../LAWS.bend#L452), [`checked_classify_pin_identity`](../LAWS.bend#L461), [`checked_reads_without_identity_unchanged`](../LAWS.bend#L471), [`checked_read_expectation`](../LAWS.bend#L481), [`checked_read_session_order`](../LAWS.bend#L485), [`checked_read_preserves_writes`](../LAWS.bend#L495), [`checked_read_without_identities_unchanged`](../LAWS.bend#L500), [`checked_headers_write_nothing`](../LAWS.bend#L504), [`checked_classify_writes_nothing`](../LAWS.bend#L510), [`brief_plans_write_nothing`](../LAWS.bend#L2214), [`brief_range_writes_nothing`](../LAWS.bend#L2250), [`contact_plans`](../LAWS.bend#L2143), [`image_round_guarded`](../LAWS.bend#L257), [`image_round_fetch_empty`](../LAWS.bend#L265), [`image_round_fetch_exact`](../LAWS.bend#L268), [`image_round_section_empty`](../LAWS.bend#L277), [`image_round_section_exact`](../LAWS.bend#L280), [`image_round_writes_nothing`](../LAWS.bend#L293)
-- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1608), [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L7728), [`tests/test-e2e.py#refresh_known`](../tests/test-e2e.py#L1276), [`tests/test-e2e.py#threads`](../tests/test-e2e.py#L4905), [`tests/test-e2e.py#thread_discovery`](../tests/test-e2e.py#L4963), [`tests/test-e2e.py#thread_discovery_failures`](../tests/test-e2e.py#L5005), [`tests/test-e2e.py#thread_discovery_literals`](../tests/test-e2e.py#L5049), [`tests/brief-cases.py#run`](../tests/brief-cases.py#L13), [`tests/brief-continuation-cases.py#run`](../tests/brief-continuation-cases.py#L6), [`tests/test-e2e.py#live_contacts`](../tests/test-e2e.py#L4629), [`tests/test-e2e.py#jev_image_rounds`](../tests/test-e2e.py#L5982), [`tests/formal/check-plan-wire-mutations.py#main`](../tests/formal/check-plan-wire-mutations.py#L119)
+- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1608), [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L7747), [`tests/test-e2e.py#refresh_known`](../tests/test-e2e.py#L1276), [`tests/test-e2e.py#threads`](../tests/test-e2e.py#L4924), [`tests/test-e2e.py#thread_discovery`](../tests/test-e2e.py#L4982), [`tests/test-e2e.py#thread_discovery_failures`](../tests/test-e2e.py#L5024), [`tests/test-e2e.py#thread_discovery_literals`](../tests/test-e2e.py#L5068), [`tests/brief-cases.py#run`](../tests/brief-cases.py#L13), [`tests/brief-continuation-cases.py#run`](../tests/brief-continuation-cases.py#L6), [`tests/test-e2e.py#live_contacts`](../tests/test-e2e.py#L4648), [`tests/test-e2e.py#jev_image_rounds`](../tests/test-e2e.py#L6001), [`tests/formal/check-plan-wire-mutations.py#main`](../tests/formal/check-plan-wire-mutations.py#L119)
 - Code: [`src/ops.bend#plan_get`](../src/ops.bend#L396), [`src/ops.bend#plan_thread_start`](../src/ops.bend#L460), [`src/ops.bend#plan_brief`](../src/ops.bend#L348), [`src/ops.bend#plan_brief_range`](../src/ops.bend#L366), [`src/ops.bend#plan_contacts_search`](../src/ops.bend#L533), [`src/ops.bend#plan_contact_candidates`](../src/ops.bend#L537), [`src/ops.bend#plan_contacts_headers`](../src/ops.bend#L541), [`src/ops.bend#plan_image_round`](../src/ops.bend#L506), [`src/ops.bend#image_reads`](../src/ops.bend#L497), [`src/ops.bend#image_read_items`](../src/ops.bend#L490)
 - Seeded bug: `read-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.plan_quota_writes_nothing`.
 - Observer relationship to [`plan_quota_writes_nothing`](../LAWS.bend#L126): The observer is the root implementation of this cited law.
@@ -37,7 +37,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`examine_renders_examine`](../LAWS.bend#L525), [`search_script_examines`](../LAWS.bend#L530), [`get_script_examines`](../LAWS.bend#L537), [`fetch_items_never_set_seen`](../LAWS.bend#L545), [`search_headers_render_exactly`](../LAWS.bend#L550), [`full_fetch_renders_exactly`](../LAWS.bend#L557)
-- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1608), [`tests/test-e2e.py#search_pagination`](../tests/test-e2e.py#L1470), [`tests/test-e2e.py#jev_image_rounds`](../tests/test-e2e.py#L5982)
+- Tests: [`tests/test-e2e.py#reads`](../tests/test-e2e.py#L1608), [`tests/test-e2e.py#search_pagination`](../tests/test-e2e.py#L1470), [`tests/test-e2e.py#jev_image_rounds`](../tests/test-e2e.py#L6001)
 - Code: [`src/imap.bend#item_str`](../src/imap.bend#L659)
 - Seeded bug: `read-wire-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#Laws.fetch_items_never_set_seen`.
 - Observer relationship to [`fetch_items_never_set_seen`](../LAWS.bend#L545): The observer is the root implementation of this cited law.
@@ -49,7 +49,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`mark_never_deletes`](../LAWS.bend#L586), [`flag_never_deletes`](../LAWS.bend#L596), [`mark_changes_only_seen`](../LAWS.bend#L628), [`flag_changes_only_flag_and_colour`](../LAWS.bend#L638), [`flag_changes_exactly`](../LAWS.bend#L652), [`unflag_clears_flag_and_colour`](../LAWS.bend#L671)
-- Tests: [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L3697)
+- Tests: [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L3716)
 - Code: [`src/ops.bend#plan_mark`](../src/ops.bend#L598)
 - Seeded bug: `flag-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.mark_never_deletes`.
 - Observer relationship to [`mark_never_deletes`](../LAWS.bend#L586): The observer is the root implementation of this cited law.
@@ -73,7 +73,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`move_never_loses_mail`](../LAWS.bend#L707), [`trash_never_loses_mail`](../LAWS.bend#L718), [`move_expunges_only_copied`](../LAWS.bend#L729), [`trash_expunges_only_copied`](../LAWS.bend#L741), [`delete_expunges_only_marked`](../LAWS.bend#L754), [`delete_expunges_given_uids`](../LAWS.bend#L765), [`move_changes_exactly`](../LAWS.bend#L773), [`copy_move_changes_exactly`](../LAWS.bend#L784), [`trash_changes_exactly`](../LAWS.bend#L794), [`copy_trash_changes_exactly`](../LAWS.bend#L805), [`delete_changes_exactly`](../LAWS.bend#L816), [`expunge_renders_uid_expunge`](../LAWS.bend#L824), [`expunge_renders_exact_uid_set`](../LAWS.bend#L829), [`delete_needs_confirmation`](../LAWS.bend#L835), [`delete_checks_uidplus`](../LAWS.bend#L845), [`copy_move_checks_uidplus`](../LAWS.bend#L886), [`gmail_deletes_only_in_trash_or_junk`](../LAWS.bend#L857), [`gmail_deletes_need_one_listed_folder`](../LAWS.bend#L872)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1681), [`tests/test-e2e.py#fallback`](../tests/test-e2e.py#L3120), [`tests/gmail-delete-cases.py#refusals`](../tests/gmail-delete-cases.py#L144), [`tests/gmail-delete-cases.py#conflicting_rows`](../tests/gmail-delete-cases.py#L156)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1681), [`tests/test-e2e.py#fallback`](../tests/test-e2e.py#L3139), [`tests/gmail-delete-cases.py#refusals`](../tests/gmail-delete-cases.py#L144), [`tests/gmail-delete-cases.py#conflicting_rows`](../tests/gmail-delete-cases.py#L156)
 - Code: [`src/ops.bend#plan_move`](../src/ops.bend#L655), [`src/ops.bend#plan_delete`](../src/ops.bend#L704), [`src/ops.bend#delete_uidplus`](../src/ops.bend#L724), [`src/policy.bend#named_attrs`](../src/policy.bend#L565)
 - Seeded bug: `move-delete-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.delete_expunges_only_marked`.
 - Observer relationship to [`delete_expunges_only_marked`](../LAWS.bend#L754): The observer is the root implementation of this cited law.
@@ -85,7 +85,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`uid_set_is_comma_joined`](../LAWS.bend#L905), [`select_renders_callers_folder`](../LAWS.bend#L909), [`copy_renders_exactly`](../LAWS.bend#L913), [`move_renders_exactly`](../LAWS.bend#L919), [`fetch_renders_exactly`](../LAWS.bend#L925), [`search_renders_uid_search`](../LAWS.bend#L931), [`guard_search_renders_exact_uids`](../LAWS.bend#L935), [`store_renders_exactly`](../LAWS.bend#L940), [`expunge_renders_uid_expunge`](../LAWS.bend#L824), [`expunge_renders_exact_uid_set`](../LAWS.bend#L829)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1681), [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L3697)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1681), [`tests/test-e2e.py#flag_basics`](../tests/test-e2e.py#L3716)
 - Code: [`src/imap.bend#cmd_str`](../src/imap.bend#L719)
 - Seeded bug: `uid-wire-negative-control` in `src/imap.bend`. Expected rejection at `PROOF.bend#Laws.store_renders_exactly`.
 - Observer relationship to [`store_renders_exactly`](../LAWS.bend#L940): The observer is the root implementation of this cited law.
@@ -97,7 +97,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`mark_is_pinned`](../LAWS.bend#L984), [`flag_is_pinned`](../LAWS.bend#L992), [`move_is_pinned`](../LAWS.bend#L1001), [`trash_is_pinned`](../LAWS.bend#L1012), [`delete_is_pinned`](../LAWS.bend#L1023), [`mark_pins_callers_uidvalidity`](../LAWS.bend#L1033), [`flag_pins_callers_uidvalidity`](../LAWS.bend#L1042), [`move_pins_callers_uidvalidity`](../LAWS.bend#L1053), [`trash_pins_callers_uidvalidity`](../LAWS.bend#L1065), [`delete_pins_callers_uidvalidity`](../LAWS.bend#L1077), [`mark_opens_callers_folder`](../LAWS.bend#L1088), [`flag_opens_callers_folder`](../LAWS.bend#L1100), [`unflag_opens_callers_folder`](../LAWS.bend#L1127), [`move_opens_callers_folder`](../LAWS.bend#L1142), [`trash_opens_callers_folder`](../LAWS.bend#L1166), [`label_opens_callers_folder`](../LAWS.bend#L1190), [`delete_opens_callers_folder`](../LAWS.bend#L1214)
-- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1681), [`tests/test-e2e.py#flag_session_only`](../tests/test-e2e.py#L3765)
+- Tests: [`tests/test-e2e.py#mutations`](../tests/test-e2e.py#L1681), [`tests/test-e2e.py#flag_session_only`](../tests/test-e2e.py#L3784)
 - Code: [`src/ops.bend#guarded`](../src/ops.bend#L576)
 - Seeded bug: `uidvalidity-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.mark_opens_callers_folder`.
 - Observer relationship to [`mark_opens_callers_folder`](../LAWS.bend#L1088): The observer is the root implementation of this cited law.
@@ -109,7 +109,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`draft_never_removes`](../LAWS.bend#L1233), [`draft_is_exact_append`](../LAWS.bend#L1973)
-- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1784), [`tests/test-e2e.py#draft_paths`](../tests/test-e2e.py#L3183)
+- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1784), [`tests/test-e2e.py#draft_paths`](../tests/test-e2e.py#L3202)
 - Code: [`src/ops.bend#plan_draft`](../src/ops.bend#L939)
 - Seeded bug: `draft-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.draft_is_exact_append`.
 - Observer relationship to [`draft_is_exact_append`](../LAWS.bend#L1973): The observer is the root implementation of this cited law.
@@ -121,7 +121,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`allowlist_refuses_unlisted`](../LAWS.bend#L1250), [`no_allowlist_is_unchanged`](../LAWS.bend#L1263)
-- Tests: [`tests/test-e2e.py#allowlist`](../tests/test-e2e.py#L3956), [`tests/test-e2e.py#allowlist_reply_all`](../tests/test-e2e.py#L3984)
+- Tests: [`tests/test-e2e.py#allowlist`](../tests/test-e2e.py#L3975), [`tests/test-e2e.py#allowlist_reply_all`](../tests/test-e2e.py#L4003)
 - Code: [`src/smtp.bend#outbound`](../src/smtp.bend#L116)
 - Seeded bug: `send-allowlist-negative-control` in `src/smtp.bend`. Expected rejection at `PROOF.bend#Laws.allowlist_refuses_unlisted`.
 - Observer relationship to [`allowlist_refuses_unlisted`](../LAWS.bend#L1250): The observer is the root implementation of this cited law.
@@ -133,7 +133,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`sent_copy_only_appends`](../LAWS.bend#L1272)
-- Tests: [`tests/test-e2e.py#sent_copies`](../tests/test-e2e.py#L4154)
+- Tests: [`tests/test-e2e.py#sent_copies`](../tests/test-e2e.py#L4173)
 - Code: [`src/ops.bend#plan_sent_copy`](../src/ops.bend#L944)
 - Seeded bug: `sent-copy-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.sent_copy_only_appends`.
 - Observer relationship to [`sent_copy_only_appends`](../LAWS.bend#L1272): The observer is the root implementation of this cited law.
@@ -145,7 +145,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`create_changes_exactly`](../LAWS.bend#L1289), [`create_changes_no_mail`](../LAWS.bend#L1295), [`rename_changes_exactly`](../LAWS.bend#L1300), [`rename_subscribes_each_moved_folder`](../LAWS.bend#L1310), [`rename_unsubscribes_each_moved_folder`](../LAWS.bend#L1322), [`rename_subscribes_before_unsubscribing`](../LAWS.bend#L1330), [`rename_changes_no_mail`](../LAWS.bend#L1340), [`folder_plans_destroy_nothing`](../LAWS.bend#L1347)
-- Tests: [`tests/test-e2e.py#folder_create`](../tests/test-e2e.py#L3392), [`tests/test-e2e.py#folder_rename`](../tests/test-e2e.py#L3432)
+- Tests: [`tests/test-e2e.py#folder_create`](../tests/test-e2e.py#L3411), [`tests/test-e2e.py#folder_rename`](../tests/test-e2e.py#L3451)
 - Code: [`src/ops.bend#plan_create`](../src/ops.bend#L958), [`src/ops.bend#plan_rename`](../src/ops.bend#L990)
 - Seeded bug: `folder-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.create_changes_exactly`.
 - Observer relationship to [`create_changes_exactly`](../LAWS.bend#L1289): The observer is the root implementation of this cited law.
@@ -157,7 +157,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`label_is_move`](../LAWS.bend#L1364), [`label_creates_no_folder`](../LAWS.bend#L1375), [`label_opens_callers_folder`](../LAWS.bend#L1190)
-- Tests: [`tests/test-e2e.py#folder_label`](../tests/test-e2e.py#L3494)
+- Tests: [`tests/test-e2e.py#folder_label`](../tests/test-e2e.py#L3513)
 - Code: [`src/ops.bend#plan_label`](../src/ops.bend#L729)
 - Seeded bug: `label-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.label_opens_callers_folder`.
 - Observer relationship to [`label_opens_callers_folder`](../LAWS.bend#L1190): The observer is the root implementation of this cited law.
@@ -169,7 +169,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`triage_moves_only_to_known_folders`](../LAWS.bend#L1400), [`triage_creates_no_mailbox`](../LAWS.bend#L1420), [`triage_one_move_per_message`](../LAWS.bend#L1432), [`triage_expunges_only_moved`](../LAWS.bend#L1447), [`filing_matches_table`](../LAWS.bend#L1464), [`uncertain_changes_nothing`](../LAWS.bend#L1479)
-- Tests: [`tests/test-e2e.py#triage_body`](../tests/test-e2e.py#L6748), [`tests/test-e2e.py#triage_protections`](../tests/test-e2e.py#L7011)
+- Tests: [`tests/test-e2e.py#triage_body`](../tests/test-e2e.py#L6767), [`tests/test-e2e.py#triage_protections`](../tests/test-e2e.py#L7030)
 - Code: [`src/ops.bend#plan_triage`](../src/ops.bend#L926), [`src/jev.bend#filing`](../src/jev.bend#L1457)
 - Seeded bug: `triage-plans-negative-control` in `src/ops.bend`. Expected rejection at `PROOF.bend#Laws.triage_moves_only_to_known_folders`.
 - Observer relationship to [`triage_moves_only_to_known_folders`](../LAWS.bend#L1400): The observer is the root implementation of this cited law.
@@ -181,7 +181,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`append_preview_hides_message`](../LAWS.bend#L1518)
-- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1784), [`tests/test-e2e.py#triage_dry_run`](../tests/test-e2e.py#L6850)
+- Tests: [`tests/test-e2e.py#compose`](../tests/test-e2e.py#L1784), [`tests/test-e2e.py#triage_dry_run`](../tests/test-e2e.py#L6869)
 - Code: [`src/imap.bend#preview`](../src/imap.bend#L829)
 
 ## jev-privacy
@@ -191,7 +191,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`headers_state_has_no_body`](../LAWS.bend#L1538), [`state_images_on_headers_is_state`](../LAWS.bend#L1591), [`state_images_body_without_refs_is_state`](../LAWS.bend#L1608), [`cargo_of_without_images`](../LAWS.bend#L1625), [`entry_at_sends_no_images`](../LAWS.bend#L1633), [`outgoing_headers_state_has_no_body`](../LAWS.bend#L1757)
-- Tests: [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L6306), [`tests/test-e2e.py#triage_headers`](../tests/test-e2e.py#L6826)
+- Tests: [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L6325), [`tests/test-e2e.py#triage_headers`](../tests/test-e2e.py#L6845)
 - Code: [`src/jev.bend#state_of`](../src/jev.bend#L295)
 - Seeded bug: `jev-privacy-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.headers_state_has_no_body`.
 - Observer relationship to [`headers_state_has_no_body`](../LAWS.bend#L1538): The observer is the root implementation of this cited law.
@@ -203,7 +203,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`missing_answer_is_cautious`](../LAWS.bend#L1644), [`only_the_pinned_model_answers`](../LAWS.bend#L1659), [`unpinned_reply_is_no_answer`](../LAWS.bend#L1678)
-- Tests: [`tests/test-e2e.py#gates_unpinned`](../tests/test-e2e.py#L7641), [`tests/test-e2e.py#gates_failure`](../tests/test-e2e.py#L7611)
+- Tests: [`tests/test-e2e.py#gates_unpinned`](../tests/test-e2e.py#L7660), [`tests/test-e2e.py#gates_failure`](../tests/test-e2e.py#L7630)
 - Code: [`src/jev.bend#answered_by_pin`](../src/jev.bend#L1153)
 
 ## jev-gates
@@ -213,7 +213,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`send_veto_only_subtracts`](../LAWS.bend#L1700), [`delete_veto_only_subtracts`](../LAWS.bend#L1715), [`failure_blocks_outbound`](../LAWS.bend#L1725), [`secret_scan_blocks`](../LAWS.bend#L1741)
-- Tests: [`tests/test-e2e.py#gates_vetoes`](../tests/test-e2e.py#L7463), [`tests/test-e2e.py#gates_delete_vetoes`](../tests/test-e2e.py#L7538), [`tests/test-e2e.py#gates_secret_scan`](../tests/test-e2e.py#L7382), [`tests/test-e2e.py#gates_local_scan`](../tests/test-e2e.py#L7300), [`tests/unit/local-secret-scan.bend#main`](../tests/unit/local-secret-scan.bend#L43)
+- Tests: [`tests/test-e2e.py#gates_vetoes`](../tests/test-e2e.py#L7482), [`tests/test-e2e.py#gates_delete_vetoes`](../tests/test-e2e.py#L7557), [`tests/test-e2e.py#gates_secret_scan`](../tests/test-e2e.py#L7401), [`tests/test-e2e.py#gates_local_scan`](../tests/test-e2e.py#L7319), [`tests/unit/local-secret-scan.bend#main`](../tests/unit/local-secret-scan.bend#L43)
 - Code: [`src/jev.bend#outbound_checked`](../src/jev.bend#L2076), [`src/jev.bend#delete_checked`](../src/jev.bend#L2094)
 - Seeded bug: `jev-gates-negative-control` in `src/jev.bend`. Expected rejection at `PROOF.bend#Laws.delete_veto_only_subtracts`.
 - Observer relationship to [`delete_veto_only_subtracts`](../LAWS.bend#L1715): The observer is the root implementation of this cited law.
@@ -225,7 +225,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`smtp_unconfirmed_is_unknown`](../LAWS.bend#L1782), [`smtp_acceptance_survives_exit`](../LAWS.bend#L1791)
-- Tests: [`tests/test-e2e.py#smtp_outcomes`](../tests/test-e2e.py#L4086)
+- Tests: [`tests/test-e2e.py#smtp_outcomes`](../tests/test-e2e.py#L4105)
 - Code: [`src/smtp.bend`](../src/smtp.bend)
 
 ## response-budget
@@ -235,7 +235,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`projection_keeps_nonbody`](../LAWS.bend#L1802), [`response_body_fields_are_exact`](../LAWS.bend#L1811), [`response_preserves_nonbody`](../LAWS.bend#L1818), [`prefix_is_prefix`](../LAWS.bend#L1827), [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1835), [`prefix_whole_when_scalar_room`](../LAWS.bend#L1844), [`prefix_fits_allowance`](../LAWS.bend#L2160), [`prefix_whole_when_room`](../LAWS.bend#L2188)
-- Tests: [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L7728)
+- Tests: [`tests/test-e2e.py#selected_parts`](../tests/test-e2e.py#L7747)
 - Code: [`src/response.bend#keep`](../src/response.bend#L39), [`src/response.bend#prefix`](../src/response.bend#L142)
 - Seeded bug: `response-budget-negative-control` in `src/response.bend`. Expected rejection at `tests/formal/budget-proofs.bend#prefix_conserves.put`.
 - Observer relationship to [`prefix_conserves_scalar_allowance`](../LAWS.bend#L1835): The root proof calls BudgetProof.prefix_conserves, whose recursive helper uses prefix_conserves.put to prove the preserved scalar allowance.
@@ -247,7 +247,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`image_used_only_with_clear_ref`](../LAWS.bend#L1857), [`image_admission_count_cap`](../LAWS.bend#L1872), [`image_admission_byte_cap`](../LAWS.bend#L1879), [`image_bind_count_cap`](../LAWS.bend#L2167), [`image_bind_byte_cap`](../LAWS.bend#L2175)
-- Tests: [`tests/test-e2e.py#jev_image_quota`](../tests/test-e2e.py#L5926), [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L6306)
+- Tests: [`tests/test-e2e.py#jev_image_quota`](../tests/test-e2e.py#L5945), [`tests/test-e2e.py#jev_images`](../tests/test-e2e.py#L6325)
 - Code: [`src/image.bend#bind_next`](../src/image.bend#L987)
 - Seeded bug: `image-budget-negative-control` in `src/image.bend`. Expected rejection at `tests/formal/budget-bind-proofs.bend#bind_admit_conserved`.
 - Observer relationship to [`image_bind_count_cap`](../LAWS.bend#L2167): The root proof calls BindProof.returned_cap; its trace conservation proof uses bind_admit_conserved to preserve the image count and byte allowances.
@@ -271,7 +271,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#what-the-proofs-cover).
 
 - Laws: [`read_is_read_only`](../LAWS.bend#L47), [`search_is_read_only`](../LAWS.bend#L51), [`delete_is_not_read_only`](../LAWS.bend#L55), [`download_is_not_read_only`](../LAWS.bend#L59), [`trash_is_not_destructive`](../LAWS.bend#L63), [`read_only_tools_are_exactly_twelve`](../LAWS.bend#L67), [`tools_listed_per_config`](../LAWS.bend#L77), [`from_name_inverts_name`](../LAWS.bend#L115), [`sending_calls_are_exact`](../LAWS.bend#L1996), [`read_only_refuses_writes`](../LAWS.bend#L2002), [`drafts_only_refuses_sends`](../LAWS.bend#L2011), [`jev_off_refuses_jev_calls`](../LAWS.bend#L2020), [`malformed_switch_is_bad`](../LAWS.bend#L2029), [`bad_read_only_rejects_config`](../LAWS.bend#L2041), [`bad_drafts_only_rejects_config`](../LAWS.bend#L2055), [`bad_typesafe_rejects_config`](../LAWS.bend#L2069), [`bad_zero_retention_rejects_config`](../LAWS.bend#L2083), [`bad_images_rejects_config`](../LAWS.bend#L2097), [`resolved_role_names_selectable_folder`](../LAWS.bend#L2128)
-- Tests: [`tests/test-e2e.py#read_only`](../tests/test-e2e.py#L3024), [`tests/test-e2e.py#gates_tool_list`](../tests/test-e2e.py#L7273), [`tests/test-e2e.py#gates_jev_off`](../tests/test-e2e.py#L7290)
+- Tests: [`tests/test-e2e.py#read_only`](../tests/test-e2e.py#L3043), [`tests/test-e2e.py#gates_tool_list`](../tests/test-e2e.py#L7292), [`tests/test-e2e.py#gates_jev_off`](../tests/test-e2e.py#L7309)
 - Code: [`src/policy.bend#refusal`](../src/policy.bend#L668)
 - Seeded bug: `policy-gates-negative-control` in `src/policy.bend`. Expected rejection at `PROOF.bend#Laws.read_only_refuses_writes`.
 - Observer relationship to [`read_only_refuses_writes`](../LAWS.bend#L2002): The observer is the root implementation of this cited law.
@@ -295,7 +295,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`resolved_role_names_selectable_folder`](../LAWS.bend#L2128), [`tests/formal/role-folders.bend#override_decides_the_role`](../tests/formal/role-folders.bend#L48), [`tests/formal/role-folders.bend#override_takes_its_listed_folder`](../tests/formal/role-folders.bend#L60), [`tests/formal/role-folders.bend#override_naming_two_folders_takes_no_role`](../tests/formal/role-folders.bend#L80), [`tests/formal/role-folders.bend#override_naming_unselectable_folder_takes_no_role`](../tests/formal/role-folders.bend#L104), [`tests/formal/role-folders.bend#override_naming_no_folder_takes_no_role`](../tests/formal/role-folders.bend#L122), [`tests/formal/role-folders.bend#two_advertised_folders_take_no_role`](../tests/formal/role-folders.bend#L133), [`tests/formal/role-folders.bend#unselectable_advertised_folder_takes_no_role`](../tests/formal/role-folders.bend#L155), [`tests/formal/role-folders.bend#sole_advertised_folder_takes_the_role`](../tests/formal/role-folders.bend#L171), [`tests/formal/role-folders.bend#two_conventional_folders_take_no_role`](../tests/formal/role-folders.bend#L189), [`tests/formal/role-folders.bend#other_role_folder_never_takes_the_role`](../tests/formal/role-folders.bend#L220), [`tests/formal/role-folders.bend#each_role_has_its_own_attribute_and_names`](../tests/formal/role-folders.bend#L240), [`tests/formal/role-folders.bend#selectable_is_neither_noselect_nor_nonexistent`](../tests/formal/role-folders.bend#L262), [`tests/formal/role-folders.bend#recognized_roles_are_the_special_use_attributes`](../tests/formal/role-folders.bend#L269)
-- Tests: [`tests/test-e2e.py#generic_folders`](../tests/test-e2e.py#L3211)
+- Tests: [`tests/test-e2e.py#generic_folders`](../tests/test-e2e.py#L3230)
 - Code: [`src/policy.bend#resolved_role`](../src/policy.bend#L583)
 - Seeded bug: `role-resolution-negative-control` in `src/policy.bend`. Expected rejection at `tests/formal/role-folders.bend#override_example`.
 - Observer relationship to [`tests/formal/role-folders.bend#override_takes_its_listed_folder`](../tests/formal/role-folders.bend#L60): The concrete override_example checks the listed selectable Bin override against competing advertised and conventional folders. It instantiates the listed-folder override behavior before the universal proofs.
@@ -307,7 +307,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: None.
-- Tests: [`tests/test-e2e.py#attach_dir_guards`](../tests/test-e2e.py#L1752), [`tests/test-e2e.py#downloads`](../tests/test-e2e.py#L4258)
+- Tests: [`tests/test-e2e.py#attach_dir_guards`](../tests/test-e2e.py#L1752), [`tests/test-e2e.py#downloads`](../tests/test-e2e.py#L4277)
 - Code: [`native/mailbend-attach/src/main.rs`](../native/mailbend-attach/src/main.rs)
 
 ## native-boundaries
@@ -317,7 +317,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: None.
-- Tests: [`tests/test-e2e.py#implicit_smtp`](../tests/test-e2e.py#L3891), [`tests/test-e2e.py#password_file`](../tests/test-e2e.py#L3093), [`tests/test-e2e.py#failures`](../tests/test-e2e.py#L3075)
+- Tests: [`tests/test-e2e.py#implicit_smtp`](../tests/test-e2e.py#L3910), [`tests/test-e2e.py#password_file`](../tests/test-e2e.py#L3112), [`tests/test-e2e.py#failures`](../tests/test-e2e.py#L3094)
 - Code: [`native/mailbend-tls/src/main.rs`](../native/mailbend-tls/src/main.rs)
 
 ## interrupted-changes
@@ -327,7 +327,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 [README statement](../README.md#safety).
 
 - Laws: [`refused_helper_is_not_lost`](../LAWS.bend#L1980)
-- Tests: [`tests/test-e2e.py#folder_cut_off`](../tests/test-e2e.py#L3584), [`tests/test-e2e.py#flag_cut_off`](../tests/test-e2e.py#L3840), [`tests/test-e2e.py#flag_helper_failures`](../tests/test-e2e.py#L3866)
+- Tests: [`tests/test-e2e.py#folder_cut_off`](../tests/test-e2e.py#L3603), [`tests/test-e2e.py#flag_cut_off`](../tests/test-e2e.py#L3859), [`tests/test-e2e.py#flag_helper_failures`](../tests/test-e2e.py#L3885)
 - Code: [`src/policy.bend`](../src/policy.bend)
 
 ## client-prompts
@@ -350,7 +350,7 @@ the root proof's local import closure; Bend's diagnostic contains no source path
 
 - Laws: [`brief_preserves_selected_uids`](../LAWS.bend#L2198), [`brief_partitions_selected_uids`](../LAWS.bend#L2205), [`brief_complete_unseen_highwater`](../LAWS.bend#L2225), [`brief_partial_unseen_prefix`](../LAWS.bend#L2231), [`brief_arrivals_keep_prefix`](../LAWS.bend#L2237), [`brief_range_wire`](../LAWS.bend#L2257), [`brief_completed_has_no_continuation`](../LAWS.bend#L2262), [`brief_unseen_filter_interval`](../LAWS.bend#L2269)
 - Tests: [`tests/brief-cases.py#run`](../tests/brief-cases.py#L13), [`tests/brief-continuation-cases.py#run`](../tests/brief-continuation-cases.py#L6)
-- Code: [`src/brief.bend#items`](../src/brief.bend#L338), [`src/brief.bend#checkpoint`](../src/brief.bend#L56), [`src/brief.bend#next_cursor`](../src/brief.bend#L142), [`src/brief.bend#window_uids`](../src/brief.bend#L49), [`src/brief.bend#window_contains`](../src/brief.bend#L42), [`src/imap.bend#key_str`](../src/imap.bend#L551), [`src/tools.bend#brief_selected`](../src/tools.bend#L5991), [`src/tools.bend#unseen`](../src/tools.bend#L930), [`src/tools.bend#brief_headers.complete`](../src/tools.bend#L5960), [`src/tools.bend#brief_output`](../src/tools.bend#L5891), [`src/response.bend#bounded`](../src/response.bend#L254)
+- Code: [`src/brief.bend#items`](../src/brief.bend#L338), [`src/brief.bend#checkpoint`](../src/brief.bend#L56), [`src/brief.bend#next_cursor`](../src/brief.bend#L142), [`src/brief.bend#window_uids`](../src/brief.bend#L49), [`src/brief.bend#window_contains`](../src/brief.bend#L42), [`src/imap.bend#key_str`](../src/imap.bend#L551), [`src/tools.bend#brief_selected`](../src/tools.bend#L5965), [`src/tools.bend#unseen`](../src/tools.bend#L930), [`src/tools.bend#brief_headers.complete`](../src/tools.bend#L5934), [`src/tools.bend#brief_output`](../src/tools.bend#L5865), [`src/response.bend#bounded`](../src/response.bend#L254)
 
 ## Laws without a public claim
 

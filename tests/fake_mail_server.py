@@ -809,7 +809,10 @@ class IMAPSession:
             self.logger.composition('append', tokens[-1].decode('latin-1'))
         self.state.seen[verb] = self.state.seen.get(verb, 0) + 1
         names = {verb, f'{verb}#{self.state.seen[verb]}'}
-        scripted = getattr(self.state, 'folder_status_script', {}).get(f'{verb}#{self.state.seen[verb]}')
+        script = getattr(self.state, 'folder_status_script', {})
+        if not isinstance(script, dict):
+            raise ValueError('folder_status_script must be a map')
+        scripted = script.get(f'{verb}#{self.state.seen[verb]}')
         if scripted is not None:
             delay = scripted.get('delay_ms', 0)
             if not isinstance(delay, int) or not 0 <= delay <= 11000:
@@ -1064,7 +1067,8 @@ class IMAPSession:
                 attrs = ['\\HasChildren' if has_children else '\\HasNoChildren']
                 attrs.extend(list_attributes(row, self.state, roles_available, requested))
                 self.send(f'* LIST ({" ".join(attrs)}) {shown} {imap_quote(mutf7_encode(name))}\r\n')
-                selectable = selectable and not {'\\Noselect', '\\NonExistent'}.intersection(attrs)
+                selectable = selectable and not {'\\NOSELECT', '\\NONEXISTENT'}.intersection(
+                    attr.upper() for attr in attrs)
             if status_items is not None and selectable:
                 self.send_status(name, status_items)
         self.send(f'{tag} OK LIST completed\r\n')
