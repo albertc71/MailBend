@@ -79,6 +79,15 @@ def status_rows(ss: List<&2, String>) -> String:
     case s <> t:
       status("* STATUS " ++ s ++ "\r\n", False{}) ++ ";" ++ status_rows(t)
 
+# INBOX's count from a STATUS reply with each HIGHESTMODSEQ spelling.
+def modseq_rows(ss: List<&2, String>) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case s <> t:
+      status("* STATUS INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7 HIGHESTMODSEQ " ++ s ++ ")\r\n",
+        True{}) ++ ";" ++ modseq_rows(t)
+
 def list_rows(n: Nat, +i: U32) -> String:
   match n:
     case 0n:
@@ -105,6 +114,13 @@ def fast_extended_evidence() -> String:
   overview_evidence(F.count_result(Policy.ProcOk{0,
     "* CAPABILITY IMAP4rev1 LIST-STATUS\r\na1 OK done\r\n* LIST () \"/\" \"INBOX\" (\"CHILDINFO\" (\"SUBSCRIBED\"))\r\n* STATUS \"INBOX\" (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\na2 OK done\r\n", ""},
     [I.Folder{"INBOX", "/", []}], True{}, False{}))
+
+# A LIST-STATUS reply whose INBOX row carries the attributes `wire`, after
+# discovery listed them as `attrs`.
+def fast_flags(wire: String, attrs: List<&2, String>) -> String:
+  overview_evidence(F.count_result(Policy.ProcOk{0,
+    "* CAPABILITY IMAP4rev1 LIST-STATUS\r\na1 OK done\r\n* LIST (" ++ wire ++ ") \"/\" \"INBOX\"\r\n* STATUS \"INBOX\" (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\na2 OK done\r\n", ""},
+    [I.Folder{"INBOX", "/", attrs}], True{}, False{}))
 
 def lost_evidence() -> String:
   overview_evidence(F.count_result(Policy.ProcOk{6,
@@ -146,6 +162,18 @@ def main() -> IO(Unit):
       "INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 031 UIDVALIDITY 7)",
       "INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 09)",
       "INBOX (MESSAGES 017 UNSEEN 00 UIDNEXT 18 UIDVALIDITY 7)"]))
+    IO.print(modseq_rows(["0", "00", "001"]))
+    IO.print(line_rows(["* LIST (\\Marked \\Unmarked) \"/\" INBOX", "* LIST (\\Noselect \\Marked) \"/\" INBOX",
+      "* LIST (\\noselect \\UNMARKED) \"/\" INBOX", "* LIST (\\HasChildren \\HasNoChildren) \"/\" INBOX",
+      "* LIST (\\hasnochildren \\HASCHILDREN) \"/\" INBOX", "* LIST (\\Marked \\Marked) \"/\" INBOX"]))
+    IO.print(line_rows(["* LIST (\\Noselect \\HasChildren) \"/\" INBOX", "* LIST (\\Marked \\HasNoChildren) \"/\" INBOX",
+      "* LIST (\\Noinferiors \\Unmarked) \"/\" INBOX", "* LIST (\\X-One \\X-Two) \"/\" INBOX"]))
+    IO.print("flags " ++ fast_flags("\\Marked \\Unmarked", ["\\Marked", "\\Unmarked"]))
+    IO.print("flags " ++ fast_flags("\\HasChildren \\HasNoChildren", ["\\HasChildren", "\\HasNoChildren"]))
+    IO.print("flags " ++ fast_flags("\\Marked \\HasNoChildren", ["\\Marked", "\\HasNoChildren"]))
+    IO.print(ext_rows(["(\"vendor.Acme Mail-SIZE\" 2)", "(\"vendor.A-B C-D\" 2)"]))
+    IO.print(ext_rows(["(\"vendor.Acme Mail\" 2)", "(\"vendor.-X\" 2)", "(\"vendor.A/B-X\" 2)", "(\"vendor.A*B-X\" 2)",
+      "(\"vendor.Acme Mail-X Y\" 2)"]))
     IO.print(discovery(list_rows(100n, 1)))
     IO.print(discovery(list_rows(101n, 1)))
     IO.print(discovery("* LIST (Noselect) \"/\" \"INBOX\"\r\n"))
@@ -193,6 +221,14 @@ def main() -> IO(Unit):
 #|False;False;False;False;False;False;
 #|False;False;
 #|invalid_response;invalid_response;invalid_response;invalid_response;invalid_response;17,0,18,7,unsupported;
+#|0,0,1,7,not_persistent;invalid_response;0,0,1,7,1;
+#|False;False;False;False;False;False;
+#|True;True;True;True;
+#|flags scope_changed INBOX:scope_changed;
+#|flags scope_changed INBOX:scope_changed;
+#|flags  INBOX:0,0,1,7,unsupported;
+#|True;True;
+#|False;False;False;False;False;
 #|True
 #|folder overview admits at most 100 folders
 #|folder overview requires complete, valid capability and folder discovery
@@ -202,7 +238,7 @@ def main() -> IO(Unit):
 #|False
 #|0,0,1,7,unsupported
 #|4294967295,4294967295,4294967295,4294967295,9223372036854775807
-#|0,0,1,7,not_persistent
+#|invalid_response
 #|invalid_response
 #|invalid_response
 #|invalid_response
