@@ -556,6 +556,22 @@ mod tests {
     }
 
     #[test]
+    fn starting_threads_slowly_cannot_outlast_the_deadline() {
+        let addrs: Vec<SocketAddr> = (1..=20).map(|n| ([192, 0, 2, n], 993).into()).collect();
+        let slow_start = |job: Job, report: mpsc::Sender<Outcome<TcpStream>>| {
+            std::thread::sleep(Duration::from_millis(10));
+            spawn_thread(job, report)
+        };
+        let budget = Duration::from_millis(50);
+        let deadline = Deadline::after(budget);
+        let started = Instant::now();
+        let result = connect_with(&addrs, &deadline, Arc::new(never_answers), slow_start);
+        let took = started.elapsed();
+        assert!(result.is_err(), "{result:?}");
+        assert!(took < budget * 3, "a {budget:?} budget returned after {took:?}");
+    }
+
+    #[test]
     fn a_thread_short_every_address_still_gets_its_turn() {
         let black_holed = SocketAddr::from(([192, 0, 2, 1], 993));
         let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
