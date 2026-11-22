@@ -53,7 +53,8 @@ type Discovery is Data:
 # mailbox name. Lists nest only in RFC 5258 extended data, which sets no
 # depth; eight levels hold every defined extended-data item. `Space` is
 # the start of the text or of a list, and `Gap` follows a separating space,
-# so another item must come next.
+# so another item must come next. Neither admits a space, and only `Space`
+# admits the ")" that closes an empty list.
 type Mode is Data:
   Space{}
   Gap{}
@@ -100,6 +101,9 @@ def atom_text(s: String) -> Bool:
       True{}
     case SCon{c, t}:
       atom_char(c) && atom_text(t)
+
+def atom_word(+s: String) -> Bool:
+  Bool.not(String.is_empty(s)) && atom_text(s)
 
 def astring_text(s: String) -> Bool:
   match s:
@@ -150,7 +154,7 @@ def lexer_plain(q: Lexer, c: Char) -> Maybe<&2, Lexer>:
     case Lexer{mode, word, root, open, literals}:
       match c:
         case ' ':
-          Some{Lexer{Space{}, "", root, open, literals}}
+          None{}
         case ')':
           lexer_close(Lexer{mode, word, root, open, literals})
         case '(':
@@ -166,8 +170,6 @@ def lexer_step(q: Lexer, +c: Char) -> Maybe<&2, Lexer>:
       lexer_plain(Lexer{Space{}, word, root, open, literals}, c)
     case Lexer{Gap{}, word, root, open, literals}:
       match c:
-        case ' ':
-          None{}
         case ')':
           None{}
         case +c:
@@ -284,8 +286,8 @@ def delimiter(v: Value) -> Maybe<&2, String>:
 
 def attribute(+s: String) -> Bool:
   match s:
-    case SCon{'\\', +t}:
-      Bool.not(String.is_empty(t)) && atom_text(t)
+    case SCon{'\\', t}:
+      atom_word(t)
     case _:
       False{}
 
@@ -365,6 +367,14 @@ def seq_set(s: String, word: String, ranged: Bool) -> Bool:
 def ext_simple(+s: String) -> Bool:
   number(s) || seq_set(s, "", False{})
 
+# RFC 3501 literal: CHAR8 octets, so no NUL.
+def char8_text(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{c, t}:
+      Bool.not(U32.is_eq(C.u(c), 0)) && char8_text(t)
+
 # RFC 4466 tagged-ext-comp: astrings and nonempty nested lists of them.
 def ext_comp(vs: List<&2, Value>) -> Bool:
   match vs:
@@ -377,36 +387,19 @@ def ext_comp(vs: List<&2, Value>) -> Bool:
     case VQuoted{s} <> t:
       ext_comp(t)
     case VLiteral{s} <> t:
-      ext_comp(t)
+      char8_text(s) && ext_comp(t)
 
-# RFC 4466 tagged-ext-label: a letter, "-", "_" or "." first, then those,
-# digits and ":".
-def label_first(+c: Char) -> Bool:
-  Char.is_alpha(c) || Char.is_eq(c, '-') || Char.is_eq(c, '_') || Char.is_eq(c, '.')
-
-def label_rest(s: String) -> Bool:
-  match s:
-    case SNil{}:
-      True{}
-    case SCon{+c, t}:
-      (label_first(c) || Char.is_digit(c) || Char.is_eq(c, ':')) && label_rest(t)
-
-def label(s: String) -> Bool:
-  match s:
-    case SCon{+c, t}:
-      label_first(c) && label_rest(t)
-    case SNil{}:
-      False{}
-
-# An extended-data tag is an astring whose decoded text is a label.
-def tag_label(v: Value) -> Bool:
+# RFC 5258 section 6: an extended-data tag is an astring whose decoded text
+# is an atom, either a registered tag or a vendor tag such as
+# "vendor.example-COUNT".
+def tag_atom(v: Value) -> Bool:
   match v:
     case VAtom{s}:
-      label(s)
+      atom_word(s)
     case VQuoted{s}:
-      label(s)
+      atom_word(s)
     case VLiteral{s}:
-      label(s)
+      atom_word(s)
     case VList{_}:
       False{}
 
@@ -417,9 +410,9 @@ def ext_items(vs: List<&2, Value>) -> Bool:
     case Nil{}:
       True{}
     case tag <> VList{comp} <> t:
-      tag_label(tag) && ext_comp(comp) && ext_items(t)
+      tag_atom(tag) && ext_comp(comp) && ext_items(t)
     case tag <> VAtom{s} <> t:
-      tag_label(tag) && ext_simple(s) && ext_items(t)
+      tag_atom(tag) && ext_simple(s) && ext_items(t)
     case _:
       False{}
 
@@ -636,12 +629,26 @@ def fields_put(+key: String, value: Maybe<&2, String>, rest: Maybe<&2, List<&2, 
     case _ _:
       None{}
 
+def zero_led(s: String) -> Bool:
+  match s:
+    case SCon{'0', _}:
+      True{}
+    case _:
+      False{}
+
+# RFC 4466 section 2 makes UIDNEXT and UIDVALIDITY nz-numbers, so their
+# token may not start with "0"; MESSAGES and UNSEEN are RFC 3501 numbers.
+def field_value(+key: String, +value: String) -> Maybe<&2, String>:
+  nz = String.eq(key, "UIDNEXT") || String.eq(key, "UIDVALIDITY")
+  Bool.pick(Maybe<&2, String>, nz && zero_led(value), None{}, decimal(value))
+
 def fields(vs: List<&2, Value>, +modseq: Bool) -> Maybe<&2, List<&2, Field>>:
   match vs:
     case Nil{}:
       Some{[]}
     case VAtom{key} <> VAtom{value} <> t:
-      fields_put(String.to_upper(key), decimal(value), fields(t, modseq), modseq)
+      +name = String.to_upper(key)
+      fields_put(name, field_value(name, value), fields(t, modseq), modseq)
     case _:
       None{}
 
