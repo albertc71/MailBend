@@ -134,13 +134,17 @@ pub fn resolve(
 /// RFC 8305's recommended Connection Attempt Delay.
 const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
-/// Races connections to `addrs` as RFC 8305 describes: the address families
-/// alternate, and the next attempt starts as soon as one fails or after
-/// `ATTEMPT_DELAY`, sooner when the time left would otherwise not reach
-/// every address. Every attempt ends by the deadline, so once none is left
-/// to start, the race waits for those still running. The first socket an
-/// attempt reports wins. When none does, the error is the last address's,
-/// as when the addresses were tried in turn.
+/// Staggers connection attempts to `addrs` while time remains, in a design
+/// inspired by RFC 8305 section 5 rather than an implementation of it. The
+/// address families alternate, and the next attempt starts as soon as one
+/// fails or after `ATTEMPT_DELAY`, sooner when little time is left; with
+/// many addresses and little time, the last ones may not start. Each
+/// attempt dials within the time left, so once none is left to start, the
+/// race waits for those still running, which end by the deadline unless
+/// their threads are held up. It returns the first eligible socket
+/// reported: one whose attempt connected before the deadline. When none
+/// does, the error is the last address's, as when the addresses were tried
+/// in turn.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
     connect_with(
         addrs,
@@ -275,7 +279,7 @@ impl Race {
     /// once it has passed), or `None` when no attempt starts again. After
     /// an attempt starts, the next one waits `ATTEMPT_DELAY`, or the
     /// attempt's equal share of the time left when that is shorter, so
-    /// every address starts before the deadline.
+    /// that, time permitting, every address starts before the deadline.
     fn next(&mut self, left: Option<Duration>) -> Option<Step> {
         let left = left?;
         if self.waiting.as_slice().is_empty() {
@@ -308,8 +312,8 @@ impl Race {
         }
     }
 
-    /// Waits out the attempts still running: the first to connect wins,
-    /// else the race fails with the last address's error.
+    /// Waits out the attempts still running: the first to report a socket
+    /// wins, else the race fails with the last address's error.
     fn settle<T>(mut self, outcomes: impl IntoIterator<Item = Outcome<T>>) -> Result<T, NetError> {
         let mut outcomes = outcomes.into_iter();
         while self.running > 0
@@ -347,11 +351,13 @@ fn alternate_families(addrs: &[SocketAddr]) -> Vec<(usize, SocketAddr)> {
     order
 }
 
-/// Connects to `addr` within the time left when the attempt begins, which
-/// can be later than it was started. It does not dial once the deadline
-/// has passed, and what it hears after the deadline, a socket or a
-/// refusal, counts as a timeout: the address did not answer in time. A
-/// socket that connects late is dropped, which closes it.
+/// Connects to `addr` within the time left. The attempt samples the
+/// remaining budget before it calls connect and skips the call when none is
+/// left, though a thread held up between the two can still dial after the
+/// deadline. It accepts a result only if its deadline check after the call
+/// passes: what it hears later, a socket or a refusal, counts as a timeout,
+/// because the address did not answer in time. A late socket is dropped,
+/// which closes it.
 fn attempt<T>(
     addr: &SocketAddr,
     deadline: &Deadline,
@@ -592,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn an_attempt_neither_dials_nor_succeeds_after_the_deadline() {
+    fn an_attempt_skips_the_dial_without_time_left_and_rejects_a_late_success() {
         let addr = SocketAddr::from(([192, 0, 2, 1], 993));
         let dialled = Cell::new(false);
         let dial = |_: &SocketAddr, _: Duration| -> io::Result<()> {

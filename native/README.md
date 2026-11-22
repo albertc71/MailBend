@@ -204,10 +204,12 @@ mailbend-typesafe --check  # credential-free local runtime check; no network
 - **Resolution**: system DNS by default; a nonempty `MAILBEND_DOH_URL`
   selects an HTTPS DNS resolver without fallback to system DNS for the mail
   hostname. The helper asks for A and AAAA records (RFC 8484 POST) and uses
-  whichever answers; it then races connections to the addresses within the
-  time budget, alternating address families and starting each attempt
-  250 ms after the previous one (sooner when little time is left, so that
-  every address is tried) or as soon as one fails. The default cloud
+  whichever answers; it then staggers connection attempts to the addresses
+  while time remains, in a design inspired by RFC 8305 section 5: address
+  families alternate, and each attempt starts 250 ms after the previous one
+  (sooner when little time is left) or as soon as one fails. It returns the
+  first socket reported as connected in time; with many addresses and
+  little time, the last ones may not be tried. The default cloud
   resolver, `cloudflare-dns.com:443`, is bootstrapped with Cloudflare's
   `1.1.1.1` and `1.0.0.1` anycast addresses.
   Other resolver hostnames use system DNS for bootstrap. DoH verifies both
