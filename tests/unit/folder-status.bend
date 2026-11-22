@@ -174,6 +174,8 @@ def main() -> IO(Unit):
     IO.print(ext_rows(["(\"vendor.Acme Mail-SIZE\" 2)", "(\"vendor.A-B C-D\" 2)", "(\"vendor.-X\" 2)",
       "(vendor.A/B-X 2)", "(vendor. 2)", "(\"VENDOR.\" 2)"]))
     IO.print(ext_rows(["(\"vendor.Acme Mail\" 2)", "(\"vendor.A*B-X\" 2)", "(\"vendor.Acme Mail-X Y\" 2)"]))
+    IO.print(ext_rows(["(vendor.A\\B-X 2)", "({12}\r\nvendor.A\u{0}B-X 2)", "(\"vendor.Acme Mail-SIZE\" 2)",
+      "({21}\r\nvendor.Acme Mail-SIZE 2)"]))
     IO.print(discovery(list_rows(100n, 1)))
     IO.print(discovery(list_rows(101n, 1)))
     IO.print(discovery("* LIST (Noselect) \"/\" \"INBOX\"\r\n"))
@@ -229,6 +231,7 @@ def main() -> IO(Unit):
 #|flags  INBOX:0,0,1,7,unsupported;
 #|True;True;True;True;True;True;
 #|False;False;False;
+#|False;False;True;True;
 #|True
 #|folder overview admits at most 100 folders
 #|folder overview requires complete, valid capability and folder discovery
