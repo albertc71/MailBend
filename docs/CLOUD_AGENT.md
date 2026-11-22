@@ -411,12 +411,13 @@ connection attempts to them while time remains, IPv4 first and alternating
 with IPv6, in a design inspired by RFC 8305 section 5. On its connection
 threads, each attempt starts 250 ms after the previous one, sooner when
 little time is left, or at once when one fails. At most 8 attempts run at
-once, each cut short so that the addresses after it can still start before
-the deadline; with many addresses and little time, the last ones may not
-be tried. If any connection thread cannot start, the helper tries the
-addresses serially instead, in the same alternating-family order, giving
-each an equal share of the remaining time. The helper returns the first
-socket reported as connected in time. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
+once: while 8 are running, the next waits for one to end, and an attempt
+with 8 or more addresses still to start after it is cut short so that they
+can still start before the deadline. With many addresses and little time,
+the last ones may not be tried. If any connection thread cannot start, the
+helper tries the addresses serially instead, in the same alternating-family
+order, giving each an equal share of the remaining time. The helper returns
+the first socket reported as connected in time. No TTL cache or refresh daemon is maintained by MailBend. DNS and TCP share `MAILBEND_TIMEOUT_MS` (30 seconds by
 default). A connected endpoint that fails TLS/protocol checks stops the call;
 MailBend does not replay mail operations on another address.
 

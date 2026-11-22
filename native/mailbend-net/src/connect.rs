@@ -141,11 +141,13 @@ const MAX_RUNNING: usize = 8;
 
 /// Staggers connection attempts to `addrs` while time remains, in a design
 /// inspired by RFC 8305 section 5 rather than an implementation of it. The
-/// address families alternate, and the next attempt starts as soon as one
-/// fails or after `ATTEMPT_DELAY`, sooner when little time is left. At most
-/// `MAX_RUNNING` attempts run at once, each on a thread of its own and cut
-/// short so that the addresses after it can still start before the
-/// deadline; with many addresses and little time, the last ones may not
+/// address families alternate. On the connection threads, the next attempt
+/// starts as soon as one fails or after `ATTEMPT_DELAY`, sooner when little
+/// time is left. At most `MAX_RUNNING` attempts run at once, each on a
+/// thread of its own: while that many are running, the next waits for one
+/// to end, and an attempt with `MAX_RUNNING` or more addresses still to
+/// start after it is cut short so that they can still start before the
+/// deadline. With many addresses and little time, the last ones may not
 /// start. When a thread cannot start, the calling thread tries the
 /// addresses one at a time instead, in the same alternating order, each
 /// within its equal share of the time left. Each attempt samples the
