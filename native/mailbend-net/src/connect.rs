@@ -540,8 +540,9 @@ mod tests {
         assert_eq!(race.next(None), Step::Done(Ok(addr)));
     }
 
-    /// How a scripted peer answers, this many milliseconds after its attempt
-    /// starts.
+    /// How a scripted peer's attempt reports, this many milliseconds after
+    /// it starts. A report can come after the deadline when the attempt's
+    /// thread is held up after its connection is made.
     #[derive(Clone, Copy, Debug)]
     enum Answer {
         Connects(u64),
@@ -620,6 +621,11 @@ mod tests {
             (1_000, vec![(v4(1), Fails(1)), (v4(2), Silent)], vec![Some(0), Some(1)], Err(attempt_timed_out())),
             // An address never started ran out of time.
             (0, vec![(v4(1), Connects(0))], vec![None], Err(NetError::TimedOut)),
+            // A success reported after the deadline still wins, as its
+            // attempt saw it connected in time, even after another attempt
+            // fails: the race waits for every attempt it started.
+            (100, vec![(v4(1), Connects(150))], vec![Some(0)], Ok(v4(1))),
+            (100, vec![(v4(1), Silent), (v4(2), Connects(60))], vec![Some(0), Some(50)], Ok(v4(2))),
         ];
         for (budget, peers, starts, result) in cases {
             let expected = (result, starts);
