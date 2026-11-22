@@ -209,6 +209,8 @@ fn connect_with(
             });
             spawn(job, report.clone()).ok().map(|()| turn)
         })
+        // Stops at the first thread that cannot start. Dropping the turns
+        // gathered so far lets those threads end without dialling.
         .collect();
     while let Some(step) = race.next(deadline.remaining().ok()) {
         let heard = match (step, &turns) {
