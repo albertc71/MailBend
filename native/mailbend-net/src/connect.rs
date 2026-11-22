@@ -224,9 +224,11 @@ enum Pace {
 struct Race<T> {
     /// Attempts not yet started, in the order they start.
     waiting: std::vec::IntoIter<(usize, SocketAddr)>,
-    /// Each address's error should none connect. An address never started
-    /// ran out of time, as with attempts in turn.
-    errors: Vec<NetError>,
+    /// The position of the last address in the caller's list.
+    last: usize,
+    /// The last address's error, should none connect. An address never
+    /// started ran out of time, as with attempts in turn.
+    error: NetError,
     /// Attempts started that have not ended.
     running: usize,
     connected: Option<T>,
@@ -237,7 +239,12 @@ impl<T> Race<T> {
     fn new(addrs: &[SocketAddr]) -> Self {
         Race {
             waiting: alternate_families(addrs).into_iter(),
-            errors: vec![NetError::TimedOut; addrs.len()],
+            last: addrs.len().saturating_sub(1),
+            error: if addrs.is_empty() {
+                NetError::Connect("no addresses".to_string())
+            } else {
+                NetError::TimedOut
+            },
             running: 0,
             connected: None,
             pace: Pace::Due,
@@ -261,7 +268,9 @@ impl<T> Race<T> {
         if self.pace == Pace::Due
             && let Some((index, addr)) = self.waiting.next()
         {
-            self.errors[index] = attempt_timed_out();
+            if index == self.last {
+                self.error = attempt_timed_out();
+            }
             self.running += 1;
             self.pace = Pace::Delayed;
             return Step::Start(index, addr, share(left, self.waiting.len()));
@@ -277,7 +286,9 @@ impl<T> Race<T> {
         match outcome {
             Some((_, Ok(connected))) => self.connected = Some(connected),
             Some((index, Err(e))) => {
-                self.errors[index] = e;
+                if index == self.last {
+                    self.error = e;
+                }
                 self.running -= 1;
                 self.pace = Pace::Due;
             }
@@ -288,11 +299,8 @@ impl<T> Race<T> {
 
     /// Ends the race unconnected, with the last address's error in the
     /// caller's order.
-    fn failed(&mut self) -> Step<T> {
-        Step::Done(Err(self
-            .errors
-            .pop()
-            .unwrap_or_else(|| NetError::Connect("no addresses".to_string()))))
+    fn failed(&self) -> Step<T> {
+        Step::Done(Err(self.error.clone()))
     }
 }
 
