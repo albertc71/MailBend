@@ -3,7 +3,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use rustls::ClientConfig;
@@ -134,17 +134,27 @@ pub fn resolve(
 /// RFC 8305's recommended Connection Attempt Delay.
 const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
+/// The most attempts that run at once. Each runs on a thread of its own and
+/// holds a socket while it dials, so a long list of addresses cannot use up
+/// the process's threads or file descriptors.
+const MAX_RUNNING: usize = 8;
+
 /// Staggers connection attempts to `addrs` while time remains, in a design
 /// inspired by RFC 8305 section 5 rather than an implementation of it. The
 /// address families alternate, and the next attempt starts as soon as one
-/// fails or after `ATTEMPT_DELAY`, sooner when little time is left; with
-/// many addresses and little time, the last ones may not start. Each
-/// attempt dials within the time left, so once none is left to start, the
-/// race waits for those still running, which end by the deadline unless
-/// their threads are held up. It returns the first eligible socket
-/// reported: one whose attempt connected before the deadline. When none
-/// does, the error is the last address's, as when the addresses were tried
-/// in turn.
+/// fails or after `ATTEMPT_DELAY`, sooner when little time is left. At most
+/// `MAX_RUNNING` attempts run at once, each on a thread of its own and cut
+/// short so that the addresses after it can still start before the
+/// deadline; with many addresses and little time, the last ones may not
+/// start. When a thread cannot start, the calling thread tries the
+/// addresses one at a time instead, in the same alternating order, each
+/// within its equal share of the time left. Each attempt samples the
+/// remaining time before dialling and checks its deadline again before
+/// accepting the result. Once no attempt is left to start, the race waits
+/// for those still running, which end by the deadline unless their threads
+/// are held up. It returns the first eligible socket reported: one whose
+/// attempt connected before its deadline. When none does, the error is the
+/// last address's, as when the addresses were tried in turn.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
     connect_with(
         addrs,
@@ -160,68 +170,88 @@ type Connector = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Se
 /// An address's position in the caller's list, and how its attempt ended.
 type Outcome<T> = (usize, Result<T, NetError>);
 
-/// An attempt on one address that waits for its turn and then yields how
-/// it ended, or yields nothing when its turn never comes.
-type Job = Box<dyn FnOnce() -> Option<Outcome<TcpStream>> + Send>;
+/// An attempt to make: the address's position in the caller's list, the
+/// address, and the deadline the attempt keeps.
+type Task = (usize, SocketAddr, Deadline);
 
-/// Runs `job` on a thread of its own and sends how it ended to `report`,
-/// or fails when no thread can start.
+/// A thread's work: attempts made one at a time, each outcome sent to the
+/// sender it is given.
+type Job = Box<dyn FnOnce(mpsc::Sender<Outcome<TcpStream>>) + Send>;
+
+/// Runs `job` on a thread of its own, reporting to `report`, or fails when
+/// no thread can start.
 fn spawn_thread(job: Job, report: mpsc::Sender<Outcome<TcpStream>>) -> io::Result<()> {
     std::thread::Builder::new()
         .name("connect".to_string())
-        .spawn(move || {
-            if let Some(outcome) = job() {
-                // Once connect_any has returned nobody receives, so a
-                // socket that connects then is dropped, which closes it.
-                let _too_late = report.send(outcome);
-            }
-        })
+        .spawn(move || job(report))
         .map(drop)
+}
+
+/// Makes the attempts sent to `queue`, one at a time, and reports how each
+/// ended, until the queue closes or nobody receives.
+fn work(
+    queue: &Mutex<mpsc::Receiver<Task>>,
+    connect: &Connector,
+    report: &mpsc::Sender<Outcome<TcpStream>>,
+) {
+    loop {
+        let task = match queue.lock() {
+            Ok(tasks) => tasks.recv(),
+            Err(_) => return,
+        };
+        let Ok((index, addr, deadline)) = task else {
+            return;
+        };
+        // Once connect_any has returned nobody receives, so a socket that
+        // connects then is dropped, which closes it.
+        if report
+            .send((index, attempt(&addr, &deadline, &**connect)))
+            .is_err()
+        {
+            return;
+        }
+    }
 }
 
 /// `connect_any` with the connecting and thread-starting steps given, so
 /// tests can stand in for peers that answer late or never, for reports
-/// held up, and for a process that cannot start every thread. Every
-/// address gets a thread that waits for its turn, or none does and the
-/// calling thread tries the addresses in turn: it never dials while an
-/// attempt it must hear from is running. It starts the attempts `Race`
-/// chooses and waits as long as it says, then waits for the attempts still
-/// running.
+/// held up, and for a process that cannot start every thread. It starts one
+/// thread for each attempt that may run at once, all of them or none; with
+/// none, the calling thread tries the addresses in turn, so it never dials
+/// while an attempt it must hear from is running. It starts the attempts
+/// `Race` chooses and waits as long as it says, then waits for the attempts
+/// still running.
 fn connect_with(
     addrs: &[SocketAddr],
     deadline: &Deadline,
     connect: Connector,
     mut spawn: impl FnMut(Job, mpsc::Sender<Outcome<TcpStream>>) -> io::Result<()>,
 ) -> Result<TcpStream, NetError> {
-    let mut race = Race::new(addrs);
     let (report, outcomes) = mpsc::channel();
-    let turns: Option<Vec<mpsc::Sender<()>>> = addrs
-        .iter()
-        .enumerate()
-        .map(|(index, &addr)| {
-            // Past the deadline no attempt starts, so no thread is needed.
-            deadline.remaining().ok()?;
-            let (turn, my_turn) = mpsc::channel();
-            let (connect, deadline) = (Arc::clone(&connect), *deadline);
-            let job: Job = Box::new(move || {
-                my_turn.recv().ok()?;
-                Some((index, attempt(&addr, &deadline, &*connect)))
-            });
-            spawn(job, report.clone()).ok().map(|()| turn)
-        })
-        // Stops at the first thread that cannot start. Dropping the turns
-        // gathered so far lets those threads end without dialling.
-        .collect();
+    let (tasks, queue) = mpsc::channel();
+    let queue = Arc::new(Mutex::new(queue));
+    let threads = addrs.len().min(MAX_RUNNING);
+    // Stops at the first thread that cannot start, or once the deadline has
+    // passed: then no attempt starts, so no thread is needed.
+    let all_started = (0..threads).all(|_| {
+        let (queue, connect) = (Arc::clone(&queue), Arc::clone(&connect));
+        let job: Job = Box::new(move |report| work(&queue, &connect, &report));
+        deadline.remaining().is_ok() && spawn(job, report.clone()).is_ok()
+    });
+    // Without every thread, dropping the queue lets those that started end
+    // without dialling.
+    let tasks = all_started.then_some(tasks);
+    let mut race = Race::new(addrs, if tasks.is_some() { threads } else { 1 });
     while let Some(step) = race.next(deadline.remaining().ok()) {
-        let heard = match (step, &turns) {
-            (Step::Start(index, ..), Some(turns)) => {
-                let _gone = turns[index].send(());
+        let heard = match (step, &tasks) {
+            (Step::Start(index, addr, limit), Some(tasks)) => {
+                let _queued = tasks.send((index, addr, deadline.sooner(limit)));
                 continue;
             }
-            // Not every address has a thread: try this one here, within its
-            // share of the time left, as when trying the addresses in turn.
-            (Step::Start(index, addr, share), None) => {
-                Some((index, attempt(&addr, &deadline.sooner(share), &*connect)))
+            // Not every thread started: try this address here, within its
+            // equal share of the time left, as when trying them in turn.
+            (Step::Start(index, addr, limit), None) => {
+                Some((index, attempt(&addr, &deadline.sooner(limit), &*connect)))
             }
             (Step::Wait(wait), _) => outcomes.recv_timeout(wait).ok(),
         };
@@ -229,7 +259,7 @@ fn connect_with(
             return Ok(connected);
         }
     }
-    drop(turns);
+    drop(tasks);
     drop(report);
     race.settle(outcomes)
 }
@@ -237,8 +267,8 @@ fn connect_with(
 /// What the race does next.
 enum Step {
     /// Start the attempt on the address at this position in the caller's
-    /// list. The duration is the attempt's equal share of the time left,
-    /// which bounds it when it cannot run beside the others.
+    /// list, giving it at most this long: as much of the time left as lets
+    /// the attempts after it still start before the deadline.
     Start(usize, SocketAddr, Duration),
     /// Wait up to this long for an attempt to end.
     Wait(Duration),
@@ -252,8 +282,11 @@ struct Race {
     waiting: std::vec::IntoIter<(usize, SocketAddr)>,
     /// Attempts started that have not ended.
     running: usize,
-    /// Whether the next attempt may start now: none has started yet, or
-    /// one failed, or the last wait passed.
+    /// The most attempts that may run at once.
+    cap: usize,
+    /// Whether the next attempt is due: none has started yet, or one
+    /// failed, or the last wait passed. It starts once fewer than `cap`
+    /// attempts are running.
     due: bool,
     /// The position of the last address in the caller's list.
     last: usize,
@@ -263,10 +296,12 @@ struct Race {
 }
 
 impl Race {
-    fn new(addrs: &[SocketAddr]) -> Self {
+    /// A race over `addrs` with at most `cap` attempts running at once.
+    fn new(addrs: &[SocketAddr], cap: usize) -> Self {
         Race {
             waiting: alternate_families(addrs).into_iter(),
             running: 0,
+            cap,
             due: true,
             last: addrs.len().saturating_sub(1),
             error: if addrs.is_empty() {
@@ -280,8 +315,10 @@ impl Race {
     /// The next step, given the time `left` before the deadline (`None`
     /// once it has passed), or `None` when no attempt starts again. After
     /// an attempt starts, the next one waits `ATTEMPT_DELAY`, or the
-    /// attempt's equal share of the time left when that is shorter, so
-    /// that, time permitting, every address starts before the deadline.
+    /// attempt's equal share of the time left when that is shorter, and
+    /// then, while `cap` attempts are running, for one of them to end. Each
+    /// attempt may run for `cap` equal shares of the time left, so that,
+    /// time permitting, every address starts before the deadline.
     fn next(&mut self, left: Option<Duration>) -> Option<Step> {
         let left = left?;
         if self.waiting.as_slice().is_empty() {
@@ -291,10 +328,14 @@ impl Race {
             let wait = share(left, self.waiting.len()).min(ATTEMPT_DELAY);
             return Some(Step::Wait(wait));
         }
+        if self.running >= self.cap {
+            return Some(Step::Wait(left));
+        }
         let (index, addr) = self.waiting.next()?;
         self.running += 1;
         self.due = false;
-        Some(Step::Start(index, addr, share(left, self.waiting.len())))
+        let limit = slot(left, self.waiting.len(), self.cap);
+        Some(Step::Start(index, addr, limit))
     }
 
     /// Takes in what a wait brought: an attempt's outcome, or nothing when
@@ -333,6 +374,15 @@ impl Race {
 /// attempts to start after it.
 fn share(left: Duration, waiting: usize) -> Duration {
     left / u32::try_from(waiting).map_or(u32::MAX, |n| n.saturating_add(1))
+}
+
+/// How long an attempt may run: `cap` equal shares of the time `left` for
+/// it and the `waiting` attempts after it, or all of that time. While `cap`
+/// attempts run at once, one of them then ends in time for each attempt
+/// after it to start before the deadline.
+fn slot(left: Duration, waiting: usize, cap: usize) -> Duration {
+    let cap = u32::try_from(cap).unwrap_or(u32::MAX);
+    share(left, waiting).saturating_mul(cap).min(left)
 }
 
 /// `addrs` with their positions, the address families alternating and
@@ -388,7 +438,6 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::net::TcpListener;
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
@@ -483,17 +532,17 @@ mod tests {
         let listening_addr = listening.local_addr().expect("addr");
         let budget = Duration::from_millis(100);
         let hold = Duration::from_millis(150);
-        // Holds each report back after the attempt has ended, as when its
+        // Holds each report back after its attempt has ended, as when the
         // thread is held up between connecting and reporting.
         let report_late = move |job: Job, report: mpsc::Sender<Outcome<TcpStream>>| {
-            std::thread::Builder::new()
-                .spawn(move || {
-                    if let Some(outcome) = job() {
-                        std::thread::sleep(hold);
-                        let _too_late = report.send(outcome);
-                    }
-                })
-                .map(drop)
+            let (held, reports) = mpsc::channel();
+            std::thread::Builder::new().spawn(move || {
+                for outcome in reports {
+                    std::thread::sleep(hold);
+                    let _too_late = report.send(outcome);
+                }
+            })?;
+            spawn_thread(job, held)
         };
         let connect: Connector = Arc::new(TcpStream::connect_timeout);
         let deadline = Deadline::after(budget);
@@ -569,7 +618,7 @@ mod tests {
     fn starting_threads_slowly_cannot_outlast_the_deadline() {
         let addrs: Vec<SocketAddr> = (1..=20).map(|n| ([192, 0, 2, n], 993).into()).collect();
         let slow_start = |job: Job, report: mpsc::Sender<Outcome<TcpStream>>| {
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(40));
             spawn_thread(job, report)
         };
         let budget = Duration::from_millis(50);
@@ -681,7 +730,7 @@ mod tests {
     /// How a scripted peer's attempt reports, this many milliseconds after
     /// it starts. A report can come after the deadline when the attempt's
     /// thread is held up after its connection is made. A silent peer's
-    /// attempt times out at the deadline.
+    /// attempt times out when its time is up.
     #[derive(Clone, Copy, Debug)]
     enum Answer {
         Connects(u64),
@@ -695,25 +744,27 @@ mod tests {
     }
 
     /// Runs `Race` against scripted peers on a simulated clock with `budget`
-    /// milliseconds to spend. Returns what it returned and when each
-    /// address's attempt started, if it did, in whole milliseconds.
+    /// milliseconds to spend and at most `cap` attempts running at once.
+    /// Returns what it returned and when each address's attempt started, if
+    /// it did, in whole milliseconds.
     fn simulate(
         budget: u64,
+        cap: usize,
         peers: &[(SocketAddr, Answer)],
     ) -> (Result<SocketAddr, NetError>, Vec<Option<u128>>) {
         let addrs: Vec<_> = peers.iter().map(|&(addr, _)| addr).collect();
-        let mut race = Race::new(&addrs);
+        let mut race = Race::new(&addrs, cap);
         let budget = Duration::from_millis(budget);
         let (mut now, mut starts, mut due) = (Duration::ZERO, vec![None; peers.len()], Vec::new());
         while let Some(step) = race.next(budget.checked_sub(now).filter(|left| !left.is_zero())) {
             match step {
-                Step::Start(index, addr, _) => {
+                Step::Start(index, addr, limit) => {
                     starts[index] = Some(now.as_millis());
                     let after = |ms| now + Duration::from_millis(ms);
                     let (at, outcome) = match peers[index].1 {
                         Answer::Connects(ms) => (after(ms), Ok(addr)),
                         Answer::Fails(ms) => (after(ms), Err(failure(addr))),
-                        Answer::Silent => (budget, Err(attempt_timed_out())),
+                        Answer::Silent => (now + limit, Err(attempt_timed_out())),
                     };
                     due.push((at, (index, outcome)));
                     due.sort_by_key(|&(at, _)| std::cmp::Reverse(at));
@@ -775,7 +826,33 @@ mod tests {
         ];
         for (budget, peers, starts, result) in cases {
             let expected = (result, starts);
-            assert_eq!(simulate(budget, &peers), expected, "{budget} ms: {peers:?}");
+            let simulated = simulate(budget, MAX_RUNNING, &peers);
+            assert_eq!(simulated, expected, "{budget} ms: {peers:?}");
+        }
+    }
+
+    #[test]
+    fn with_every_attempt_running_the_next_waits_for_one_cut_short_in_time() {
+        let v4 = |n| SocketAddr::from(([192, 0, 2, n], 993));
+        use Answer::{Connects, Silent};
+        // The budget in milliseconds, how many attempts may run at once, the
+        // peers, when each one's attempt should start, and what the race
+        // should return.
+        #[rustfmt::skip]
+        let cases = [
+            // The third attempt waits for one of two to end; the first ends
+            // after two equal shares of the time left, so the third starts.
+            (1_000, 2, vec![(v4(1), Silent), (v4(2), Silent), (v4(3), Connects(5))],
+             vec![Some(0), Some(250), Some(666)], Ok(v4(3))),
+            // One at a time, each address has an equal share of the time
+            // left, as when the addresses are tried in turn.
+            (300, 1, vec![(v4(1), Silent), (v4(2), Silent), (v4(3), Connects(5))],
+             vec![Some(0), Some(100), Some(200)], Ok(v4(3))),
+        ];
+        for (budget, cap, peers, starts, result) in cases {
+            let expected = (result, starts);
+            let simulated = simulate(budget, cap, &peers);
+            assert_eq!(simulated, expected, "{budget} ms, {cap} at once: {peers:?}");
         }
     }
 
