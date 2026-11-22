@@ -51,9 +51,12 @@ type Discovery is Data:
 # LIST and STATUS responses hold atoms, quoted strings, literals and
 # parenthesized lists. Atoms remain atoms, including NIL when it is a
 # mailbox name. Lists nest only in RFC 5258 extended data, which sets no
-# depth; eight levels hold every defined extended-data item.
+# depth; eight levels hold every defined extended-data item. `Space` is
+# the start of the text or of a list, and `Gap` follows a separating space,
+# so another item must come next.
 type Mode is Data:
   Space{}
+  Gap{}
   Atom{}
   Quoted{}
   Escaped{}
@@ -81,9 +84,15 @@ def atom_char(+c: Char) -> Bool:
 def astring_char(+c: Char) -> Bool:
   atom_char(c) || Char.is_eq(c, ']')
 
-# A bare token is an astring or a flag, which starts with "\".
+# A bare token is an astring, a flag, which starts with "\", or a sequence
+# set, which may hold "*". Each reader checks its own characters, so names,
+# attributes and counters still refuse "\" and "*".
 def token_char(+c: Char) -> Bool:
-  astring_char(c) || Char.is_eq(c, '\\')
+  astring_char(c) || Char.is_eq(c, '\\') || Char.is_eq(c, '*')
+
+# RFC 3501 QUOTED-CHAR: any CHAR but CR and LF; "\" and DQUOTE are escaped.
+def quoted_char(+c: Char) -> Bool:
+  C.between(C.u(c), 1, 127) && Bool.not(Char.is_eq(c, '\r')) && Bool.not(Char.is_eq(c, '\n'))
 
 def atom_text(s: String) -> Bool:
   match s:
@@ -155,10 +164,18 @@ def lexer_step(q: Lexer, +c: Char) -> Maybe<&2, Lexer>:
   match q:
     case Lexer{Space{}, word, root, open, literals}:
       lexer_plain(Lexer{Space{}, word, root, open, literals}, c)
+    case Lexer{Gap{}, word, root, open, literals}:
+      match c:
+        case ' ':
+          None{}
+        case ')':
+          None{}
+        case +c:
+          lexer_plain(Lexer{Gap{}, word, root, open, literals}, c)
     case Lexer{End{}, word, root, open, literals}:
       match c:
         case ' ':
-          Some{Lexer{Space{}, "", root, open, literals}}
+          Some{Lexer{Gap{}, "", root, open, literals}}
         case ')':
           lexer_close(Lexer{End{}, word, root, open, literals})
         case _:
@@ -166,7 +183,7 @@ def lexer_step(q: Lexer, +c: Char) -> Maybe<&2, Lexer>:
     case Lexer{Atom{}, word, root, open, literals}:
       match c:
         case ' ':
-          Some{lexer_push(Space{}, VAtom{String.reverse(word)}, root, open, literals)}
+          Some{lexer_push(Gap{}, VAtom{String.reverse(word)}, root, open, literals)}
         case ')':
           lexer_close(lexer_push(End{}, VAtom{String.reverse(word)}, root, open, literals))
         case +c:
@@ -179,7 +196,7 @@ def lexer_step(q: Lexer, +c: Char) -> Maybe<&2, Lexer>:
         case '\\':
           Some{Lexer{Escaped{}, word, root, open, literals}}
         case +c:
-          Bool.pick(Maybe<&2, Lexer>, C.between(C.u(c), 32, 126),
+          Bool.pick(Maybe<&2, Lexer>, quoted_char(c),
             Some{Lexer{Quoted{}, SCon{c, word}, root, open, literals}}, None{})
     case Lexer{Escaped{}, word, root, open, literals}:
       Bool.pick(Maybe<&2, Lexer>, Char.is_eq(c, '"') || Char.is_eq(c, '\\'),
@@ -297,21 +314,56 @@ def folder_parts(attrs: Maybe<&2, List<&2, String>>, delim: Maybe<&2, String>,
     case _ _ _:
       None{}
 
-# RFC 4466 tagged-ext-simple: a number, or a sequence set of numbers, "*"
-# and ranges. `start` says a number or "*" comes next, `star` that "*" was
-# last, and `ranged` that this element already has its ":".
-def ext_simple(s: String, start: Bool, star: Bool, ranged: Bool) -> Bool:
+def digits(s: String) -> Bool:
   match s:
     case SNil{}:
-      Bool.not(start)
-    case SCon{'*', t}:
-      start && ext_simple(t, False{}, True{}, ranged)
-    case SCon{':', t}:
-      Bool.not(start) && Bool.not(ranged) && ext_simple(t, True{}, False{}, True{})
-    case SCon{',', t}:
-      Bool.not(start) && ext_simple(t, True{}, False{}, False{})
+      True{}
     case SCon{c, t}:
-      Char.is_digit(c) && Bool.not(star) && ext_simple(t, False{}, False{}, ranged)
+      C.between(C.u(c), 48, 57) && digits(t)
+
+def trim_zero(s: String) -> String:
+  match s:
+    case SNil{}:
+      "0"
+    case SCon{'0', t}:
+      trim_zero(t)
+    case _:
+      s
+
+def decimal_le(+value: String, +limit: String) -> Bool:
+  +n = U32.from_nat(String.length(value))
+  +bound = U32.from_nat(String.length(limit))
+  U32.is_lt(n, bound) || (U32.is_eq(n, bound) && String.is_le(value, limit))
+
+# RFC 3501 number: decimal digits for an unsigned 32-bit value.
+def number(+s: String) -> Bool:
+  Bool.not(String.is_empty(s)) && digits(s) && decimal_le(trim_zero(s), "4294967295")
+
+# RFC 3501 seq-number: "*", or a number with a nonzero first digit.
+def seq_number(+s: String) -> Bool:
+  match s:
+    case SCon{'0', _}:
+      False{}
+    case _:
+      String.eq(s, "*") || number(s)
+
+# RFC 3501 sequence-set: comma-separated seq-numbers and ranges of two.
+# `word` holds the current seq-number reversed, and `ranged` says its
+# element already has a ":".
+def seq_set(s: String, word: String, ranged: Bool) -> Bool:
+  match s:
+    case SNil{}:
+      seq_number(String.reverse(word))
+    case SCon{':', t}:
+      Bool.not(ranged) && seq_number(String.reverse(word)) && seq_set(t, "", True{})
+    case SCon{',', t}:
+      seq_number(String.reverse(word)) && seq_set(t, "", False{})
+    case SCon{c, t}:
+      seq_set(t, SCon{c, word}, ranged)
+
+# RFC 4466 tagged-ext-simple: a sequence set, or a number, which may be 0.
+def ext_simple(+s: String) -> Bool:
+  number(s) || seq_set(s, "", False{})
 
 # RFC 4466 tagged-ext-comp: astrings and nonempty nested lists of them.
 def ext_comp(vs: List<&2, Value>) -> Bool:
@@ -327,27 +379,47 @@ def ext_comp(vs: List<&2, Value>) -> Bool:
     case VLiteral{s} <> t:
       ext_comp(t)
 
-def astring_value(v: Value) -> Bool:
+# RFC 4466 tagged-ext-label: a letter, "-", "_" or "." first, then those,
+# digits and ":".
+def label_first(+c: Char) -> Bool:
+  Char.is_alpha(c) || Char.is_eq(c, '-') || Char.is_eq(c, '_') || Char.is_eq(c, '.')
+
+def label_rest(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{+c, t}:
+      (label_first(c) || Char.is_digit(c) || Char.is_eq(c, ':')) && label_rest(t)
+
+def label(s: String) -> Bool:
+  match s:
+    case SCon{+c, t}:
+      label_first(c) && label_rest(t)
+    case SNil{}:
+      False{}
+
+# An extended-data tag is an astring whose decoded text is a label.
+def tag_label(v: Value) -> Bool:
   match v:
-    case VAtom{+s}:
-      Bool.not(String.is_empty(s)) && astring_text(s)
-    case VQuoted{_}:
-      True{}
-    case VLiteral{_}:
-      True{}
+    case VAtom{s}:
+      label(s)
+    case VQuoted{s}:
+      label(s)
+    case VLiteral{s}:
+      label(s)
     case VList{_}:
       False{}
 
-# RFC 5258 section 6: each extended-data item is a tag astring and a value.
+# RFC 5258 section 6: each extended-data item is a tag and a value.
 # Every item is checked, and none changes the folder.
 def ext_items(vs: List<&2, Value>) -> Bool:
   match vs:
     case Nil{}:
       True{}
     case tag <> VList{comp} <> t:
-      astring_value(tag) && ext_comp(comp) && ext_items(t)
+      tag_label(tag) && ext_comp(comp) && ext_items(t)
     case tag <> VAtom{s} <> t:
-      astring_value(tag) && ext_simple(s, True{}, False{}, False{}) && ext_items(t)
+      tag_label(tag) && ext_simple(s) && ext_items(t)
     case _:
       False{}
 
@@ -539,29 +611,8 @@ def name_prefix(s: String, q: Maybe<&2, Lexer>) -> Maybe<&2, String>:
     case _ _:
       None{}
 
-def digits(s: String) -> Bool:
-  match s:
-    case SNil{}:
-      True{}
-    case SCon{c, t}:
-      C.between(C.u(c), 48, 57) && digits(t)
-
-def trim_zero(s: String) -> String:
-  match s:
-    case SNil{}:
-      "0"
-    case SCon{'0', t}:
-      trim_zero(t)
-    case _:
-      s
-
 def decimal(+s: String) -> Maybe<&2, String>:
   Bool.pick(Maybe<&2, String>, Bool.not(String.is_empty(s)) && digits(s), Some{trim_zero(s)}, None{})
-
-def decimal_le(+value: String, +limit: String) -> Bool:
-  +n = U32.from_nat(String.length(value))
-  +bound = U32.from_nat(String.length(limit))
-  U32.is_lt(n, bound) || (U32.is_eq(n, bound) && String.is_le(value, limit))
 
 type Field is Data:
   Field{key: String, value: String}
