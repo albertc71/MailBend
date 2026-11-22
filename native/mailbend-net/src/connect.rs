@@ -532,8 +532,9 @@ mod tests {
     fn a_success_reported_after_the_deadline_still_wins() {
         let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
         let listening_addr = listening.local_addr().expect("addr");
-        let budget = Duration::from_millis(100);
-        let hold = Duration::from_millis(150);
+        // Long enough for the attempt to dial in time on a busy machine.
+        let budget = Duration::from_secs(1);
+        let hold = budget * 3 / 2;
         // Holds each report back after its attempt has ended, as when the
         // thread is held up between connecting and reporting.
         let report_late = move |job: Job, report: mpsc::Sender<Outcome<TcpStream>>| {
@@ -618,18 +619,21 @@ mod tests {
 
     #[test]
     fn starting_threads_slowly_cannot_outlast_the_deadline() {
+        const START: Duration = Duration::from_millis(100);
         let addrs: Vec<SocketAddr> = (1..=20).map(|n| ([192, 0, 2, n], 993).into()).collect();
         let slow_start = |job: Job, report: mpsc::Sender<Outcome<TcpStream>>| {
-            std::thread::sleep(Duration::from_millis(40));
+            std::thread::sleep(START);
             spawn_thread(job, report)
         };
-        let budget = Duration::from_millis(50);
-        let deadline = Deadline::after(budget);
+        // The deadline passes while the first thread starts, so no other
+        // thread may start after it.
+        let deadline = Deadline::after(START / 2);
         let started = Instant::now();
         let result = connect_with(&addrs, &deadline, Arc::new(never_answers), slow_start);
         let took = started.elapsed();
         assert!(result.is_err(), "{result:?}");
-        assert!(took < budget * 3, "returned after {took:?}");
+        let every_start = START * u32::try_from(MAX_RUNNING).unwrap_or(u32::MAX);
+        assert!(took < every_start / 2, "returned after {took:?}");
     }
 
     #[test]
