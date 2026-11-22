@@ -156,8 +156,9 @@ type Connector = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Se
 /// An address's position in the caller's list, and how its attempt ended.
 type Outcome<T> = (usize, Result<T, NetError>);
 
-/// An attempt on one address, which yields how it ended.
-type Job = Box<dyn FnOnce() -> Outcome<TcpStream> + Send>;
+/// An attempt on one address that waits for its turn and then yields how
+/// it ended, or yields nothing when its turn never comes.
+type Job = Box<dyn FnOnce() -> Option<Outcome<TcpStream>> + Send>;
 
 /// Runs `job` on a thread of its own and sends how it ended to `report`,
 /// or fails when no thread can start.
@@ -165,16 +166,21 @@ fn spawn_thread(job: Job, report: mpsc::Sender<Outcome<TcpStream>>) -> io::Resul
     std::thread::Builder::new()
         .name("connect".to_string())
         .spawn(move || {
-            // Once connect_any has returned nobody receives, so a socket
-            // that connects then is dropped, which closes it.
-            let _too_late = report.send(job());
+            if let Some(outcome) = job() {
+                // Once connect_any has returned nobody receives, so a
+                // socket that connects then is dropped, which closes it.
+                let _too_late = report.send(outcome);
+            }
         })
         .map(drop)
 }
 
 /// `connect_any` with the connecting and thread-starting steps given, so
-/// tests can stand in for peers that answer late or never, and for a
-/// process that cannot start every thread. It starts the attempts `Race`
+/// tests can stand in for peers that answer late or never, for reports
+/// held up, and for a process that cannot start every thread. Every
+/// address gets a thread that waits for its turn, or none does and the
+/// calling thread tries the addresses in turn: it never dials while an
+/// attempt it must hear from is running. It starts the attempts `Race`
 /// chooses and waits as long as it says, then waits for the attempts still
 /// running.
 fn connect_with(
@@ -185,24 +191,37 @@ fn connect_with(
 ) -> Result<TcpStream, NetError> {
     let mut race = Race::new(addrs);
     let (report, outcomes) = mpsc::channel();
+    let turns: Option<Vec<mpsc::Sender<()>>> = addrs
+        .iter()
+        .enumerate()
+        .map(|(index, &addr)| {
+            let (turn, my_turn) = mpsc::channel();
+            let (connect, deadline) = (Arc::clone(&connect), *deadline);
+            let job: Job = Box::new(move || {
+                my_turn.recv().ok()?;
+                Some((index, attempt(&addr, &deadline, &*connect)))
+            });
+            spawn(job, report.clone()).ok().map(|()| turn)
+        })
+        .collect();
     while let Some(step) = race.next(deadline.remaining().ok()) {
-        match step {
-            Step::Start(index, addr, share) => {
-                let job = attempt_job(index, addr, *deadline, &connect);
-                if spawn(job, report.clone()).is_err() {
-                    // No thread to spare: make this attempt here, within its
-                    // share of the time left, as when trying the addresses in turn.
-                    let job = attempt_job(index, addr, deadline.sooner(share), &connect);
-                    let _ours = report.send(job());
-                }
+        let heard = match (step, &turns) {
+            (Step::Start(index, ..), Some(turns)) => {
+                let _gone = turns[index].send(());
+                continue;
             }
-            Step::Wait(wait) => {
-                if let Some(connected) = race.heard(outcomes.recv_timeout(wait).ok()) {
-                    return Ok(connected);
-                }
+            // Not every address has a thread: try this one here, within its
+            // share of the time left, as when trying the addresses in turn.
+            (Step::Start(index, addr, share), None) => {
+                Some((index, attempt(&addr, &deadline.sooner(share), &*connect)))
             }
+            (Step::Wait(wait), _) => outcomes.recv_timeout(wait).ok(),
+        };
+        if let Some(connected) = race.heard(heard) {
+            return Ok(connected);
         }
     }
+    drop(turns);
     drop(report);
     race.settle(outcomes)
 }
@@ -324,12 +343,6 @@ fn alternate_families(addrs: &[SocketAddr]) -> Vec<(usize, SocketAddr)> {
         .collect();
     order.extend(other);
     order
-}
-
-/// An attempt on `addr`, at `index` in the caller's list, within `deadline`.
-fn attempt_job(index: usize, addr: SocketAddr, deadline: Deadline, connect: &Connector) -> Job {
-    let connect = Arc::clone(connect);
-    Box::new(move || (index, attempt(&addr, &deadline, &*connect)))
 }
 
 /// Connects to `addr` within the time left when the attempt begins, which
