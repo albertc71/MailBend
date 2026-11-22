@@ -502,6 +502,20 @@ mod tests {
         assert!(attempt(&addr, &deadline, outlasts_its_timeout).is_err());
     }
 
+    #[test]
+    fn a_refusal_heard_after_the_deadline_counts_as_a_timeout() {
+        let addr = SocketAddr::from(([192, 0, 2, 1], 993));
+        let refuses_late = |_: &SocketAddr, timeout: Duration| -> io::Result<()> {
+            std::thread::sleep(timeout);
+            Err(io::ErrorKind::ConnectionRefused.into())
+        };
+        let deadline = Deadline::after(Duration::from_millis(20));
+        assert_eq!(
+            attempt(&addr, &deadline, refuses_late),
+            Err(attempt_timed_out())
+        );
+    }
+
     /// How a scripted peer's attempt reports, this many milliseconds after
     /// it starts. A report can come after the deadline when the attempt's
     /// thread is held up after its connection is made. A silent peer's
