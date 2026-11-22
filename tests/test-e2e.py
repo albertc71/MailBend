@@ -2209,7 +2209,8 @@ def folder_status_overview(work):
             tuple(f"F{n:03}" for n in range(count))))
         check(f"folder status: {count} admission boundary", (code == 0) == (count == 100)
               and (len(value.get("folders", [])) == 100 if count == 100 else
-                   "error" in value and not any(" STATUS " in c for c in commands)), value)
+                   value.get("error") == "folder overview admits at most 100 folders"
+                   and not any(" STATUS " in c for c in commands)), value)
     for size in (1024, 1025):
         code, value, commands = folder_status_case(work, f"name {size}", folder_status_fixture(("x" * size,)))
         check(f"folder status: {size} name byte boundary", (code == 0) == (size == 1024)
@@ -2235,7 +2236,8 @@ def folder_status_overview(work):
     fixture = folder_status_fixture(tuple(f"B{n:03}" for n in range(100)),
                                    {"LIST#1": {"responses": ordinary}})
     code, value, commands = folder_status_case(work, "role merge admission", fixture, "SPECIAL-USE")
-    check("folder status: A/B union cannot exceed 100", code != 0 and "error" in value
+    check("folder status: A/B union cannot exceed 100", code != 0
+          and value.get("error") == "folder overview admits at most 100 folders"
           and not any(" STATUS " in c for c in commands), value)
 
     for reply in ('* LIST (Noselect) "/" "INBOX"\r\n', '* LIST () {1}\r\n/ "INBOX"\r\n',
@@ -2246,6 +2248,23 @@ def folder_status_overview(work):
             script={"LIST#1": {"responses": reply}}))
         check("folder status: malformed discovery never becomes empty complete scope", code != 0
               and "error" in value and not any(" STATUS " in c for c in commands), value)
+    fixture = folder_status_fixture(("INBOX", "Reports[2026]"), {"LIST#1": {
+        "responses": '* LIST () "/" "INBOX"\r\n* LIST () "/" Reports[2026]\r\n'}})
+    code, value, _ = folder_status_case(work, "unquoted bracket name", fixture)
+    check("folder status: an unquoted name with brackets is a valid astring", code == 0
+          and states(value) == {"INBOX": known, "Reports[2026]": known}, value)
+    code, value, _ = folder_status_case(work, "bracket capability atom", folder_status_fixture(),
+                                        "LIST-STATUS,X[TEST}")
+    check("folder status: a capability atom with brackets keeps the fast plan", code == 0
+          and value.get("method") == "list_status" and states(value) == {"INBOX": known}, value)
+    for command, reply, caps in (
+            ("LIST#1", '* LIST () "/" INBOX ()\r\n', ""),
+            ("LIST#2", '* LIST () "/" "INBOX" ("CHILDINFO" ("SUBSCRIBED") X-NEW 7)\r\n' + status(),
+             "LIST-STATUS")):
+        code, value, _ = folder_status_case(work, "extended LIST data", folder_status_fixture(
+            script={command: {"responses": reply}}), caps)
+        check(f"folder status: {command} extended LIST data is ignored", code == 0
+              and value.get("complete") is True and states(value) == {"INBOX": known}, value)
 
     invalid = ("MESSAGES 0 UNSEEN 1 UIDNEXT 1 UIDVALIDITY 7",
                "MESSAGES 4294967296 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7",

@@ -137,8 +137,8 @@ def folder_script_controls(raw):
             imap.state = SimpleNamespace(seen={}, reject={'APPEND'}, folder_status_script=malformed)
             try:
                 imap.run_command([b'i1', b'APPEND', b'Drafts', raw.encode('latin-1')])
-            except AttributeError as error:
-                assert error.name == 'get' and error.obj is malformed, 'unrelated fixture error'
+            except ValueError as error:
+                assert str(error) == 'folder_status_script must be a map', 'unrelated fixture error'
             else:
                 raise AssertionError('malformed configured folder script was treated as absent')
             assert replies == [], 'malformed configured folder script reached legacy rejection'
@@ -147,6 +147,24 @@ def folder_script_controls(raw):
         assert records == [{'protocol': 'append', 'raw': raw}] * 5
     print('Folder script controls: empty map, configured precedence and occurrence, '
           'invalid configured maps checked')
+
+
+def list_status_skips_nonselectable():
+    """LIST-STATUS answers no STATUS for a \\Noselect or \\NonExistent row, in any case."""
+    with tempfile.TemporaryDirectory(prefix='fake-list-status-') as directory:
+        fixture = {'user': 'synthetic', 'password': 'synthetic', 'mailboxes': {
+            name: {'uidvalidity': 7, 'special': special, 'messages': []}
+            for name, special in (('INBOX', []), ('Parent', ['\\NOSELECT']), ('Gone', ['\\nonexistent']))}}
+        imap = fake.IMAPSession.__new__(fake.IMAPSession)
+        imap.state = fake.State(fixture, str(Path(directory) / 'state.json'))
+        imap.caps = {'LIST-STATUS'}
+        replies = []
+        imap.send = replies.append
+        items = [b'MESSAGES', b'UNSEEN', b'UIDNEXT', b'UIDVALIDITY']
+        imap.cmd_list('l1', [b'', b'*', b'RETURN', [b'STATUS', items]])
+        statuses = [line for line in replies if line.startswith('* STATUS ')]
+        assert statuses == ['* STATUS "INBOX" (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\n'], replies
+    print('Fake LIST-STATUS: nonselectable rows get no STATUS, whatever the attribute case')
 
 
 def main():
@@ -179,6 +197,7 @@ def main():
         plain.composition('smtp', raw)
         assert {p.name: p.read_bytes() for p in root.iterdir()} == before
     folder_script_controls(raw)
+    list_status_skips_nonselectable()
     untransmitted_classification(interrupted_run_audit())
     print('MIME capture: rejected wires, dot unstuffing, optional audit, interrupted-run and '
           'untransmitted-composition classification controls checked')

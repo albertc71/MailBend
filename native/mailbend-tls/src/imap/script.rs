@@ -266,6 +266,21 @@ mod tests {
     }
 
     #[test]
+    fn capability_tokens_are_rfc3501_atoms() {
+        let commands = parse(b"a1 CAPABILITY\r\n=EXPECT-CAPABILITIES LIST-STATUS\r\n")
+            .expect("valid capability gate");
+        let expect = commands[0].expect.as_ref().expect("gate");
+        assert!(
+            expect.met_by(b"* CAPABILITY IMAP4rev1 X[TEST} LIST-STATUS\r\n"),
+            "'[' and '}}' are ATOM-CHARs"
+        );
+        for special in [b"]", b"{", b"%", b"*", b"(", b")", b"\"", b"\\"] {
+            let line = [b"* CAPABILITY IMAP4rev1 X".as_slice(), special.as_slice(), b" LIST-STATUS\r\n".as_slice()].concat();
+            assert!(!expect.met_by(&line), "{line:?}");
+        }
+    }
+
+    #[test]
     fn commands_split_at_literals_and_carry_their_directives() {
         let script = b"a1 SELECT INBOX\r\n=EXPECT * OK [UIDVALIDITY 1]\r\n\
                        a2 APPEND D {3}\r\nabc FLAGS {1}\r\nx\r\n\

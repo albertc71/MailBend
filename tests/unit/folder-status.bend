@@ -53,6 +53,11 @@ def overview_evidence(result: F.Overview) -> String:
     case F.Overview{es, _, reason}:
       F.reason_name(reason) ++ " " ++ entries(es)
 
+def fast_extended_evidence() -> String:
+  overview_evidence(F.count_result(Policy.ProcOk{0,
+    "* CAPABILITY IMAP4rev1 LIST-STATUS\r\na1 OK done\r\n* LIST () \"/\" \"INBOX\" (\"CHILDINFO\" (\"SUBSCRIBED\"))\r\n* STATUS \"INBOX\" (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\na2 OK done\r\n", ""},
+    [I.Folder{"INBOX", "/", []}], True{}, False{}))
+
 def lost_evidence() -> String:
   overview_evidence(F.count_result(Policy.ProcOk{6,
     "* CAPABILITY IMAP4rev1\r\na1 OK done\r\n* STATUS A (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\na2 OK done\r\n", ""},
@@ -69,8 +74,15 @@ def main() -> IO(Unit):
     IO.print(discovered("*\tLIST () \"/\" \"INBOX\"\r\n"))
     IO.print(discovered("* LIST () \"/\" {5}\r\nINBOX\r\n"))
     IO.print(discovered("* LIST () \"/\" \"INBOX\"\r\n* LIST () \"/\" \"inbox\"\r\n"))
+    IO.print(discovered("* LIST () \"/\" Reports[2026]\r\n"))
+    IO.print(discovered("* LIST () \"/\" INBOX ()\r\n"))
+    IO.print(discovered("* LIST () \"/\" INBOX (\"CHILDINFO\" (\"SUBSCRIBED\") X-NEW 7 OLDNAME (\"Old\"))\r\n"))
+    IO.print(discovered("* LIST () \"/\" INBOX (CHILDINFO)\r\n"))
+    IO.print(discovered("* LIST () \"/\" INBOX () ()\r\n"))
     IO.print(capability("* CAPABILITY \r\n"))
     IO.print(capability("* CAPABILITY IMAP4rev1\r\n*\tCAPABILITY CONDSTORE\r\n"))
+    IO.print(capability("* CAPABILITY IMAP4rev1 X[TEST}\r\n"))
+    IO.print(capability("* CAPABILITY IMAP4rev1 X]TEST\r\n"))
     IO.print(status("* STATUS INBOX (MESSAGES 000 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\n", False{}))
     IO.print(status("* STATUS {5}\r\nINBOX (MESSAGES 4294967295 UNSEEN 4294967295 UIDNEXT 4294967295 UIDVALIDITY 4294967295 HIGHESTMODSEQ 9223372036854775807)\r\n", True{}))
     IO.print(status("* STATUS INBOX (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7 HIGHESTMODSEQ 000)\r\n", True{}))
@@ -84,6 +96,7 @@ def main() -> IO(Unit):
     IO.print(U32.show(I.tag_count(Ops.plan_folder_status(["A", "INBOX"], False{}, True{}))))
     IO.print(Bool.show(I.any_writes(Ops.plan_folder_status(["A", "INBOX"], True{}, True{}))))
     IO.print("lost " ++ lost_evidence())
+    IO.print("extended " ++ fast_extended_evidence())
 
 #|INBOX;INBOX;&;日本;😀;NIL;
 #|invalid;invalid;invalid;invalid;invalid;invalid;invalid;invalid;invalid;invalid;invalid;
@@ -94,7 +107,14 @@ def main() -> IO(Unit):
 #|False
 #|True
 #|False
+#|True
+#|True
+#|True
 #|False
+#|False
+#|False
+#|False
+#|True
 #|False
 #|0,0,1,7,unsupported
 #|4294967295,4294967295,4294967295,4294967295,9223372036854775807
@@ -109,3 +129,4 @@ def main() -> IO(Unit):
 #|3
 #|False
 #|lost helper_failure A:helper_failure;B:helper_failure;
+#|extended  INBOX:0,0,1,7,unsupported;
