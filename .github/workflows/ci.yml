@@ -228,11 +228,11 @@ jobs:
       # time, so three run at once on the 4-CPU, 16 GiB runner. Longest first,
       # so the three slots finish close together. Each log title shows the
       # script's time, CPU use and its largest process's peak memory.
-      - name: Policy, budget, plan, wire, reply-marking, hook and search mutation checks
+      - name: Policy, budget, plan, wire, reply-marking, hook, search and folder-status mutation checks
         run: |
           scripts="check-policy check-plan-wire-mutations check-reply-marking
             check-search-contract-mutations check-response-image-budgets check-hook
-            search-pagination-model"
+            search-pagination-model check-folder-status"
           logs="$RUNNER_TEMP/mutation-logs"
           mkdir "$logs"
           printf '%s\n' $scripts | xargs -P 3 -n 1 sh -c '
@@ -422,6 +422,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Tests
         run: cargo test --locked
+      - name: Folder-status capability conjunction mutation
+        run: python3 ../tests/formal/check-folder-status.py --native
       - name: No way around TLS verification
         run: |
           if grep -rnE 'dangerous\(|client::danger|ServerCertVerifier' --include='*.rs' .; then

@@ -121,6 +121,7 @@ python3 tests/test-hook.py                        # offline Claude hook input an
 python3 tests/test-plugin.py --runtime             # real plugin-resolved hook and synthetic MCP after build
 python3 tests/formal/check-hook.py                # hook laws reject allow and missed prompts
 python3 tests/formal/check-reply-marking.py        # post-acceptance marking transition laws
+python3 tests/formal/check-folder-status.py       # fixed read plans, identity and failure-evidence mutations
 python3 tests/test-mime-corpus.py                  # synthetic MIME/i18n and independent composition oracle
 python3 tests/test-mime-corpus.py --nested-resources  # also the 16 MiB nested parse and view limits
 python3 tests/test-harness-output.py               # test-harness transport diagnostics and redaction
@@ -132,6 +133,7 @@ python3 tests/test-e2e.py
 MAILBEND_TEST_MCP=1 python3 tests/test-e2e.py --tool-scenarios-only  # tools through structured MCP
 python3 tests/test-scheduled-recipes.py            # fake-only one-shot recipes; no timers installed
 (cd native && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
+python3 tests/formal/check-folder-status.py --native  # capability conjunction mutation, after cargo test
 ```
 
 The offline fuzz-lock guard compares dependencies reachable from the local

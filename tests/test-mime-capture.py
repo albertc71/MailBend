@@ -109,6 +109,64 @@ def untransmitted_classification(e2e):
     e2e.composition_outcomes.clear()
 
 
+def folder_script_controls(raw):
+    """Configured scripts keep their precedence; malformed maps are not absent."""
+    with tempfile.TemporaryDirectory(prefix='mime-folder-script-') as directory:
+        root = Path(directory)
+        logger = fake.Logger(str(root / 'commands.jsonl'), str(root / 'composed.jsonl'))
+        imap = fake.IMAPSession.__new__(fake.IMAPSession)
+        imap.logger = logger
+        replies = []
+        imap.send = replies.append
+
+        imap.state = SimpleNamespace(seen={}, reject={'APPEND'}, folder_status_script={})
+        imap.run_command([b'e1', b'APPEND', b'Drafts', raw.encode('latin-1')])
+        assert replies == ['e1 NO refused by the test server\r\n']
+
+        replies.clear()
+        imap.state = SimpleNamespace(seen={}, reject={'APPEND'}, folder_status_script={
+            'APPEND#1': {'responses': '* OK scripted response\r\n', 'completion': 'BAD'},
+        })
+        imap.run_command([b's1', b'APPEND', b'Drafts', raw.encode('latin-1')])
+        imap.run_command([b's2', b'APPEND', b'Drafts', raw.encode('latin-1')])
+        assert replies == ['* OK scripted response\r\n', 's1 BAD fixture completed\r\n',
+                           's2 NO refused by the test server\r\n']
+
+        for malformed in (None, []):
+            replies.clear()
+            imap.state = SimpleNamespace(seen={}, reject={'APPEND'}, folder_status_script=malformed)
+            try:
+                imap.run_command([b'i1', b'APPEND', b'Drafts', raw.encode('latin-1')])
+            except ValueError as error:
+                assert str(error) == 'folder_status_script must be a map', 'unrelated fixture error'
+            else:
+                raise AssertionError('malformed configured folder script was treated as absent')
+            assert replies == [], 'malformed configured folder script reached legacy rejection'
+
+        records = [json.loads(line) for line in (root / 'composed.jsonl').read_text().splitlines()]
+        assert records == [{'protocol': 'append', 'raw': raw}] * 5
+    print('Folder script controls: empty map, configured precedence and occurrence, '
+          'invalid configured maps checked')
+
+
+def list_status_skips_nonselectable():
+    """LIST-STATUS answers no STATUS for a \\Noselect or \\NonExistent row, in any case."""
+    with tempfile.TemporaryDirectory(prefix='fake-list-status-') as directory:
+        fixture = {'user': 'synthetic', 'password': 'synthetic', 'mailboxes': {
+            name: {'uidvalidity': 7, 'special': special, 'messages': []}
+            for name, special in (('INBOX', []), ('Parent', ['\\NOSELECT']), ('Gone', ['\\nonexistent']))}}
+        imap = fake.IMAPSession.__new__(fake.IMAPSession)
+        imap.state = fake.State(fixture, str(Path(directory) / 'state.json'))
+        imap.caps = {'LIST-STATUS'}
+        replies = []
+        imap.send = replies.append
+        items = [b'MESSAGES', b'UNSEEN', b'UIDNEXT', b'UIDVALIDITY']
+        imap.cmd_list('l1', [b'', b'*', b'RETURN', [b'STATUS', items]])
+        statuses = [line for line in replies if line.startswith('* STATUS ')]
+        assert statuses == ['* STATUS "INBOX" (MESSAGES 0 UNSEEN 0 UIDNEXT 1 UIDVALIDITY 7)\r\n'], replies
+    print('Fake LIST-STATUS: nonselectable rows get no STATUS, whatever the attribute case')
+
+
 def main():
     raw = 'Subject: synthetic\r\n\r\n..dot\r\n'
     with tempfile.TemporaryDirectory(prefix='mime-capture-') as directory:
@@ -138,6 +196,8 @@ def main():
         assert plain.composed is None
         plain.composition('smtp', raw)
         assert {p.name: p.read_bytes() for p in root.iterdir()} == before
+    folder_script_controls(raw)
+    list_status_skips_nonselectable()
     untransmitted_classification(interrupted_run_audit())
     print('MIME capture: rejected wires, dot unstuffing, optional audit, interrupted-run and '
           'untransmitted-composition classification controls checked')

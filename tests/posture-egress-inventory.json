@@ -239,11 +239,11 @@
     },
     {
       "path": "native/mailbend-tls/src/imap/script.rs",
-      "sha256": "8dee95612308f2dfd832fe311abaac4021be807bf79d4e2bfb99c87cc26c65f0"
+      "sha256": "5b3e4d8e78f38dd5248e92a8b67fc88fafd3ab5e0dda0d51ca70b102cba7f31d"
     },
     {
       "path": "native/mailbend-tls/src/imap/session.rs",
-      "sha256": "0e78a10242a6d986c7d3b1c33342cf4aaace0f737d16e40942b03f5a945f7f2a"
+      "sha256": "a074ce15cc365678d10f7dcf5cfc2caaea02ab759ce1f3480e7ee9515cc0a048"
     },
     {
       "path": "native/mailbend-tls/src/imap.rs",
