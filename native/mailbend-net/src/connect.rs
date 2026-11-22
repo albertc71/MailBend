@@ -195,6 +195,8 @@ fn connect_with(
         .iter()
         .enumerate()
         .map(|(index, &addr)| {
+            // Past the deadline no attempt starts, so no thread is needed.
+            deadline.remaining().ok()?;
             let (turn, my_turn) = mpsc::channel();
             let (connect, deadline) = (Arc::clone(&connect), *deadline);
             let job: Job = Box::new(move || {
@@ -568,7 +570,7 @@ mod tests {
         let result = connect_with(&addrs, &deadline, Arc::new(never_answers), slow_start);
         let took = started.elapsed();
         assert!(result.is_err(), "{result:?}");
-        assert!(took < budget * 3, "a {budget:?} budget returned after {took:?}");
+        assert!(took < budget * 3, "returned after {took:?}");
     }
 
     #[test]
