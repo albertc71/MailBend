@@ -163,7 +163,7 @@
     },
     {
       "path": "native/mailbend-net/src/connect.rs",
-      "sha256": "6305f0489f16c4f3cb7fbb120f445c4332a1c956092cad2eb9fe41289c204010"
+      "sha256": "e65af598dc597d7d22b4fafd9bb774f082bb439eebb68cb5f7e8b0b72b3f326e"
     },
     {
       "path": "native/mailbend-net/src/dns.rs",

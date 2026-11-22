@@ -468,6 +468,33 @@ mod tests {
     }
 
     #[test]
+    fn a_success_reported_after_the_deadline_still_wins() {
+        let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let listening_addr = listening.local_addr().expect("addr");
+        let budget = Duration::from_millis(100);
+        let hold = Duration::from_millis(150);
+        // Holds each report back after the attempt has ended, as when its
+        // thread is held up between connecting and reporting.
+        let report_late = move |job: Job, report: mpsc::Sender<Outcome<TcpStream>>| {
+            std::thread::Builder::new()
+                .spawn(move || {
+                    if let Some(outcome) = job() {
+                        std::thread::sleep(hold);
+                        let _too_late = report.send(outcome);
+                    }
+                })
+                .map(drop)
+        };
+        let connect: Connector = Arc::new(TcpStream::connect_timeout);
+        let deadline = Deadline::after(budget);
+        let started = Instant::now();
+        let sock = connect_with(&[listening_addr], &deadline, connect, report_late)
+            .expect("connected in time, reported late");
+        assert_eq!(sock.peer_addr().expect("peer"), listening_addr);
+        assert!(started.elapsed() >= hold, "the report was not held back");
+    }
+
+    #[test]
     fn without_threads_each_address_is_tried_in_turn_for_its_share_of_the_time() {
         let black_holed = SocketAddr::from(([192, 0, 2, 1], 993));
         let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
