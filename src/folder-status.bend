@@ -431,14 +431,16 @@ def tag_text(+s: String) -> Bool:
   atom_word(s) ||
     (I.upper_starts(s, "VENDOR.") && vendor_rest(String.drop(s, 7n), True{}, True{}, False{}, False{}))
 
+# An unquoted tag must also be an astring on the wire, and a literal tag may
+# not hold NUL; a quoted tag's characters were checked by the lexer.
 def ext_tag(v: Value) -> Bool:
   match v:
-    case VAtom{s}:
-      tag_text(s)
+    case VAtom{+s}:
+      astring_text(s) && tag_text(s)
     case VQuoted{s}:
       tag_text(s)
-    case VLiteral{s}:
-      tag_text(s)
+    case VLiteral{+s}:
+      char8_text(s) && tag_text(s)
     case VList{_}:
       False{}
 
