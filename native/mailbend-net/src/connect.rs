@@ -153,40 +153,47 @@ pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStrea
 /// Opens a TCP connection to an address within a timeout.
 type Connector = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Send + Sync>;
 
-/// Runs a job on a thread of its own, or fails when no thread can start.
-type Spawn = fn(Box<dyn FnOnce() + Send>) -> io::Result<()>;
-
-fn spawn_thread(job: Box<dyn FnOnce() + Send>) -> io::Result<()> {
-    std::thread::Builder::new()
-        .name("connect".to_string())
-        .spawn(job)
-        .map(drop)
-}
-
 /// An address's position in the caller's list, and how its attempt ended.
 type Outcome<T> = (usize, Result<T, NetError>);
 
+/// An attempt on one address, which yields how it ended.
+type Job = Box<dyn FnOnce() -> Outcome<TcpStream> + Send>;
+
+/// Runs `job` on a thread of its own and sends how it ended to `report`,
+/// or fails when no thread can start.
+fn spawn_thread(job: Job, report: mpsc::Sender<Outcome<TcpStream>>) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("connect".to_string())
+        .spawn(move || {
+            // Once connect_any has returned nobody receives, so a socket
+            // that connects then is dropped, which closes it.
+            let _too_late = report.send(job());
+        })
+        .map(drop)
+}
+
 /// `connect_any` with the connecting and thread-starting steps given, so
 /// tests can stand in for peers that answer late or never, and for a
-/// process that cannot start a thread. It starts the attempts `Race`
+/// process that cannot start every thread. It starts the attempts `Race`
 /// chooses and waits as long as it says, then waits for the attempts still
 /// running.
 fn connect_with(
     addrs: &[SocketAddr],
     deadline: &Deadline,
     connect: Connector,
-    spawn: Spawn,
+    mut spawn: impl FnMut(Job, mpsc::Sender<Outcome<TcpStream>>) -> io::Result<()>,
 ) -> Result<TcpStream, NetError> {
     let mut race = Race::new(addrs);
     let (report, outcomes) = mpsc::channel();
     while let Some(step) = race.next(deadline.remaining().ok()) {
         match step {
             Step::Start(index, addr, share) => {
-                let job = attempt_job(index, addr, *deadline, &connect, &report);
-                if spawn(Box::new(job)).is_err() {
+                let job = attempt_job(index, addr, *deadline, &connect);
+                if spawn(job, report.clone()).is_err() {
                     // No thread to spare: make this attempt here, within its
                     // share of the time left, as when trying the addresses in turn.
-                    attempt_job(index, addr, deadline.sooner(share), &connect, &report)();
+                    let job = attempt_job(index, addr, deadline.sooner(share), &connect);
+                    let _ours = report.send(job());
                 }
             }
             Step::Wait(wait) => {
@@ -319,20 +326,10 @@ fn alternate_families(addrs: &[SocketAddr]) -> Vec<(usize, SocketAddr)> {
     order
 }
 
-/// An attempt on `addr` within `deadline` that sends its outcome to
-/// `report`. Once `connect_any` has returned nobody receives, so a socket
-/// that connects then is dropped, which closes it.
-fn attempt_job(
-    index: usize,
-    addr: SocketAddr,
-    deadline: Deadline,
-    connect: &Connector,
-    report: &mpsc::Sender<Outcome<TcpStream>>,
-) -> impl FnOnce() + Send + 'static {
-    let (connect, report) = (Arc::clone(connect), report.clone());
-    move || {
-        let _too_late = report.send((index, attempt(&addr, &deadline, &*connect)));
-    }
+/// An attempt on `addr`, at `index` in the caller's list, within `deadline`.
+fn attempt_job(index: usize, addr: SocketAddr, deadline: Deadline, connect: &Connector) -> Job {
+    let connect = Arc::clone(connect);
+    Box::new(move || (index, attempt(&addr, &deadline, &*connect)))
 }
 
 /// Connects to `addr` within the time left when the attempt begins, which
@@ -467,7 +464,7 @@ mod tests {
             }
             TcpStream::connect_timeout(addr, timeout)
         });
-        let no_thread: Spawn = |_| Err(io::ErrorKind::WouldBlock.into());
+        let no_thread = |_: Job, _: mpsc::Sender<_>| Err(io::ErrorKind::WouldBlock.into());
         let budget = Duration::from_millis(400);
         let started = Instant::now();
         let addrs = [black_holed, listening_addr];
