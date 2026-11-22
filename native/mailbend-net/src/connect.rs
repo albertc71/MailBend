@@ -600,6 +600,51 @@ mod tests {
     }
 
     #[test]
+    fn a_long_list_reaches_its_listener_with_few_descriptors_free() {
+        // The sockets a process near its descriptor limit can still open: a
+        // dial beyond them fails at once, as socket() does with EMFILE.
+        const FREE_DESCRIPTORS: usize = 8;
+        let listening = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let listening_addr = listening.local_addr().expect("addr");
+        let silent: Vec<SocketAddr> = (1..=20).map(|n| ([192, 0, 2, n], 993).into()).collect();
+        let refusing = (1..=43).map(|n| SocketAddr::from(([198, 51, 100, n], 993)));
+        let addrs: Vec<_> = silent
+            .iter()
+            .copied()
+            .chain([listening_addr])
+            .chain(refusing)
+            .collect();
+        let (open, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let connect: Connector = {
+            let (open, most) = (Arc::clone(&open), Arc::clone(&most));
+            Arc::new(move |addr: &SocketAddr, timeout: Duration| {
+                let held = open.fetch_add(1, Ordering::SeqCst) + 1;
+                most.fetch_max(held, Ordering::SeqCst);
+                let dialled = if held > FREE_DESCRIPTORS {
+                    Err(io::Error::other("too many open files"))
+                } else if *addr == listening_addr {
+                    TcpStream::connect_timeout(addr, timeout)
+                } else if silent.contains(addr) {
+                    never_answers(addr, timeout)
+                } else {
+                    Err(io::ErrorKind::ConnectionRefused.into())
+                };
+                open.fetch_sub(1, Ordering::SeqCst);
+                dialled
+            })
+        };
+        let budget = Duration::from_secs(1);
+        let started = Instant::now();
+        let sock = connect_with(&addrs, &Deadline::after(budget), connect, spawn_thread)
+            .expect("the listening address is reached");
+        let took = started.elapsed();
+        assert_eq!(sock.peer_addr().expect("peer"), listening_addr);
+        assert!(took < budget * 3 / 4, "connected after {took:?}");
+        let most = most.load(Ordering::SeqCst);
+        assert!(most <= FREE_DESCRIPTORS, "{most} dials at once");
+    }
+
+    #[test]
     fn an_attempt_skips_the_dial_without_time_left_and_rejects_a_late_success() {
         let addr = SocketAddr::from(([192, 0, 2, 1], 993));
         let dialled = Cell::new(false);
