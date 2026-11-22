@@ -137,9 +137,10 @@ const ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 /// Races connections to `addrs` as RFC 8305 describes: the address families
 /// alternate, and the next attempt starts as soon as one fails or after
 /// `ATTEMPT_DELAY`, sooner when the time left would otherwise not reach
-/// every address. The first socket to connect by the deadline wins. When
-/// none does, the error is the last address's, as when the addresses were
-/// tried in turn.
+/// every address. Every attempt ends by the deadline, so once none is left
+/// to start, the race waits for those still running. The first socket an
+/// attempt reports wins. When none does, the error is the last address's,
+/// as when the addresses were tried in turn.
 pub fn connect_any(addrs: &[SocketAddr], deadline: &Deadline) -> Result<TcpStream, NetError> {
     connect_with(
         addrs,
@@ -168,7 +169,8 @@ type Outcome<T> = (usize, Result<T, NetError>);
 /// `connect_any` with the connecting and thread-starting steps given, so
 /// tests can stand in for peers that answer late or never, and for a
 /// process that cannot start a thread. It starts the attempts `Race`
-/// chooses and waits for their outcomes as long as it says.
+/// chooses and waits as long as it says, then waits for the attempts still
+/// running.
 fn connect_with(
     addrs: &[SocketAddr],
     deadline: &Deadline,
@@ -177,142 +179,122 @@ fn connect_with(
 ) -> Result<TcpStream, NetError> {
     let mut race = Race::new(addrs);
     let (report, outcomes) = mpsc::channel();
-    loop {
-        match race.next(deadline.remaining().ok()) {
+    while let Some(step) = race.next(deadline.remaining().ok()) {
+        match step {
             Step::Start(index, addr, share) => {
-                let job = attempt_job(index, addr, *deadline, &connect, &report);
-                if spawn(Box::new(job)).is_err() {
+                let job =
+                    |deadline: Deadline| attempt_job(index, addr, deadline, &connect, &report);
+                if spawn(Box::new(job(*deadline))).is_err() {
                     // No thread to spare: make this attempt here, within its
                     // share of the time left, as when trying the addresses in turn.
-                    let outcome = attempt(&addr, &deadline.sooner(share), &*connect);
-                    race.heard(Some((index, outcome)));
+                    job(deadline.sooner(share))();
                 }
             }
-            Step::Wait(wait) => race.heard(outcomes.recv_timeout(wait).ok()),
-            Step::Done(result) => return result,
+            Step::Wait(wait) => {
+                if let Some(connected) = race.heard(outcomes.recv_timeout(wait).ok()) {
+                    return Ok(connected);
+                }
+            }
         }
     }
+    drop(report);
+    race.settle(outcomes)
 }
 
 /// What the race does next.
 #[derive(Debug, PartialEq)]
-enum Step<T> {
+enum Step {
     /// Start the attempt on the address at this position in the caller's
     /// list. The duration is the attempt's equal share of the time left,
     /// which bounds it when it cannot run beside the others.
     Start(usize, SocketAddr, Duration),
     /// Wait up to this long for an attempt to end.
     Wait(Duration),
-    Done(Result<T, NetError>),
-}
-
-/// When the next attempt may start.
-#[derive(Clone, Copy, PartialEq)]
-enum Pace {
-    /// Now: none has started yet, or one failed, or the last wait passed.
-    Due,
-    /// After a wait: an attempt has just started.
-    Delayed,
-    /// Never: the deadline has passed, and the race takes the outcomes
-    /// already queued until a wait brings none.
-    Draining,
 }
 
 /// The race's decisions, free of threads, sockets and the clock: which
 /// attempt starts next and when, how outcomes count, and what the race
-/// returns. `T` is what an attempt that connects yields.
-struct Race<T> {
+/// returns.
+struct Race {
     /// Attempts not yet started, in the order they start.
     waiting: std::vec::IntoIter<(usize, SocketAddr)>,
+    /// Attempts started that have not ended.
+    running: usize,
+    /// Whether the next attempt may start now: none has started yet, or
+    /// one failed, or the last wait passed.
+    due: bool,
     /// The position of the last address in the caller's list.
     last: usize,
     /// The last address's error, should none connect. An address never
     /// started ran out of time, as with attempts in turn.
     error: NetError,
-    /// Attempts started that have not ended.
-    running: usize,
-    connected: Option<T>,
-    pace: Pace,
 }
 
-impl<T> Race<T> {
+impl Race {
     fn new(addrs: &[SocketAddr]) -> Self {
         Race {
             waiting: alternate_families(addrs).into_iter(),
+            running: 0,
+            due: true,
             last: addrs.len().saturating_sub(1),
             error: if addrs.is_empty() {
                 NetError::Connect("no addresses".to_string())
             } else {
                 NetError::TimedOut
             },
-            running: 0,
-            connected: None,
-            pace: Pace::Due,
         }
     }
 
     /// The next step, given the time `left` before the deadline, or `None`
-    /// once it has passed. A success counts however late it is heard: its
-    /// attempt connected by the deadline, or it would have failed.
-    fn next(&mut self, left: Option<Duration>) -> Step<T> {
-        if let Some(connected) = self.connected.take() {
-            return Step::Done(Ok(connected));
+    /// once it has passed; `None` when no attempt starts again. After an
+    /// attempt starts, the next one waits `ATTEMPT_DELAY`, or the attempt's
+    /// equal share of the time left when that is shorter, so every address
+    /// starts before the deadline.
+    fn next(&mut self, left: Option<Duration>) -> Option<Step> {
+        let left = left?;
+        if self.waiting.as_slice().is_empty() {
+            return None;
         }
-        let Some(left) = left else {
-            if self.running == 0 || self.pace == Pace::Draining {
-                return self.failed();
-            }
-            self.pace = Pace::Draining;
-            return Step::Wait(Duration::ZERO);
-        };
-        if self.pace == Pace::Due
-            && let Some((index, addr)) = self.waiting.next()
-        {
-            if index == self.last {
-                self.error = attempt_timed_out();
-            }
-            self.running += 1;
-            self.pace = Pace::Delayed;
-            return Step::Start(index, addr, share(left, self.waiting.len()));
+        if !self.due {
+            let wait = share(left, self.waiting.len()).min(ATTEMPT_DELAY);
+            return Some(Step::Wait(wait));
         }
-        if self.running == 0 {
-            return self.failed();
-        }
-        Step::Wait(wait_for_outcome(left, self.waiting.len()))
+        let (index, addr) = self.waiting.next()?;
+        self.running += 1;
+        self.due = false;
+        Some(Step::Start(index, addr, share(left, self.waiting.len())))
     }
 
-    /// Takes in what a wait brought: an attempt's outcome, or nothing.
-    fn heard(&mut self, outcome: Option<Outcome<T>>) {
-        match outcome {
-            Some((_, Ok(connected))) => self.connected = Some(connected),
-            Some((index, Err(e))) => {
+    /// Takes in what a wait brought: an attempt's outcome, or nothing when
+    /// the wait passed. Returns what an attempt that connected yields.
+    fn heard<T>(&mut self, outcome: Option<Outcome<T>>) -> Option<T> {
+        self.due = true;
+        let (index, result) = outcome?;
+        self.running -= 1;
+        match result {
+            Ok(connected) => Some(connected),
+            Err(e) => {
                 if index == self.last {
                     self.error = e;
                 }
-                self.running -= 1;
-                self.pace = Pace::Due;
+                None
             }
-            None if self.pace == Pace::Delayed => self.pace = Pace::Due,
-            None => {}
         }
     }
 
-    /// Ends the race unconnected, with the last address's error in the
-    /// caller's order.
-    fn failed(&self) -> Step<T> {
-        Step::Done(Err(self.error.clone()))
+    /// Waits out the attempts still running: the first to connect wins,
+    /// else the race fails with the last address's error.
+    fn settle<T>(mut self, outcomes: impl IntoIterator<Item = Outcome<T>>) -> Result<T, NetError> {
+        let mut outcomes = outcomes.into_iter();
+        while self.running > 0
+            && let Some(outcome) = outcomes.next()
+        {
+            if let Some(connected) = self.heard(Some(outcome)) {
+                return Ok(connected);
+            }
+        }
+        Err(self.error)
     }
-}
-
-/// How long to wait for an outcome after starting an attempt while
-/// `waiting` addresses are still to start: `ATTEMPT_DELAY`, or the attempt's
-/// equal share of the time `left` when that is shorter, so every address
-/// starts before the deadline. With none waiting, all the time left.
-fn wait_for_outcome(left: Duration, waiting: usize) -> Duration {
-    if waiting == 0 {
-        return left;
-    }
-    share(left, waiting).min(ATTEMPT_DELAY)
 }
 
 /// An equal share of the time `left` for an attempt and the `waiting`
@@ -456,31 +438,26 @@ mod tests {
         assert_eq!(loser.read(&mut [0; 1]).expect("closed, not kept open"), 0);
     }
 
-    #[test]
-    fn attempts_that_never_answer_fail_at_the_deadline() {
-        let (release, stall) = held_until_released(Duration::from_secs(30));
-        let silent: Connector = Arc::new(move |_: &SocketAddr, _: Duration| {
-            stall();
-            Err(io::ErrorKind::TimedOut.into())
-        });
-        let budget = Duration::from_millis(100);
-        let addrs = [([192, 0, 2, 1], 993).into(), ([192, 0, 2, 2], 993).into()];
-        let started = Instant::now();
-        let result = connect_with(&addrs, &Deadline::after(budget), silent, spawn_thread);
-        let took = started.elapsed();
-        drop(release);
-        assert!(result.is_err(), "{result:?}");
-        assert!(
-            (budget..Duration::from_secs(10)).contains(&took),
-            "a {budget:?} budget returned after {took:?}"
-        );
-    }
-
     /// Stands in for a peer that never answers: the connect call waits out
     /// its timeout, as `TcpStream::connect_timeout` does.
     fn never_answers(_: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
         std::thread::sleep(timeout);
         Err(io::ErrorKind::TimedOut.into())
+    }
+
+    #[test]
+    fn attempts_that_never_answer_fail_at_the_deadline() {
+        let budget = Duration::from_millis(100);
+        let addrs = [([192, 0, 2, 1], 993).into(), ([192, 0, 2, 2], 993).into()];
+        let started = Instant::now();
+        let deadline = Deadline::after(budget);
+        let result = connect_with(&addrs, &deadline, Arc::new(never_answers), spawn_thread);
+        let took = started.elapsed();
+        assert!(result.is_err(), "{result:?}");
+        assert!(
+            (budget..Duration::from_secs(10)).contains(&took),
+            "a {budget:?} budget returned after {took:?}"
+        );
     }
 
     #[test]
@@ -525,24 +502,10 @@ mod tests {
         assert!(attempt(&addr, &deadline, outlasts_its_timeout).is_err());
     }
 
-    #[test]
-    fn a_success_heard_after_the_deadline_still_wins() {
-        let addr = SocketAddr::from(([192, 0, 2, 1], 993));
-        let mut race = Race::new(&[addr]);
-        let left = Some(Duration::from_millis(100));
-        assert_eq!(
-            race.next(left),
-            Step::Start(0, addr, Duration::from_millis(100))
-        );
-        // The connection is made in time; the race next looks after the deadline.
-        assert_eq!(race.next(None), Step::Wait(Duration::ZERO));
-        race.heard(Some((0, Ok(addr))));
-        assert_eq!(race.next(None), Step::Done(Ok(addr)));
-    }
-
     /// How a scripted peer's attempt reports, this many milliseconds after
     /// it starts. A report can come after the deadline when the attempt's
-    /// thread is held up after its connection is made.
+    /// thread is held up after its connection is made. A silent peer's
+    /// attempt times out at the deadline.
     #[derive(Clone, Copy, Debug)]
     enum Answer {
         Connects(u64),
@@ -566,31 +529,38 @@ mod tests {
         let mut race = Race::new(&addrs);
         let budget = Duration::from_millis(budget);
         let (mut now, mut starts, mut due) = (Duration::ZERO, vec![None; peers.len()], Vec::new());
-        loop {
-            match race.next(budget.checked_sub(now).filter(|left| !left.is_zero())) {
+        while let Some(step) = race.next(budget.checked_sub(now).filter(|left| !left.is_zero())) {
+            match step {
                 Step::Start(index, addr, _) => {
                     starts[index] = Some(now.as_millis());
-                    let (after, outcome) = match peers[index].1 {
-                        Answer::Connects(after) => (after, Ok(addr)),
-                        Answer::Fails(after) => (after, Err(failure(addr))),
-                        Answer::Silent => continue,
+                    let after = |ms| now + Duration::from_millis(ms);
+                    let (at, outcome) = match peers[index].1 {
+                        Answer::Connects(ms) => (after(ms), Ok(addr)),
+                        Answer::Fails(ms) => (after(ms), Err(failure(addr))),
+                        Answer::Silent => (budget, Err(attempt_timed_out())),
                     };
-                    due.push((now + Duration::from_millis(after), (index, outcome)));
+                    due.push((at, (index, outcome)));
                     due.sort_by_key(|&(at, _)| std::cmp::Reverse(at));
                 }
-                Step::Wait(wait) => match due.pop_if(|(at, _)| *at <= now + wait) {
-                    Some((at, outcome)) => {
-                        now = at;
-                        race.heard(Some(outcome));
+                Step::Wait(wait) => {
+                    let heard = match due.pop_if(|(at, _)| *at <= now + wait) {
+                        Some((at, outcome)) => {
+                            now = at;
+                            Some(outcome)
+                        }
+                        None => {
+                            now += wait;
+                            None
+                        }
+                    };
+                    if let Some(connected) = race.heard(heard) {
+                        return (Ok(connected), starts);
                     }
-                    None => {
-                        now += wait;
-                        race.heard(None);
-                    }
-                },
-                Step::Done(result) => return (result, starts),
+                }
             }
         }
+        let in_time_order = due.into_iter().rev().map(|(_, outcome)| outcome);
+        (race.settle(in_time_order), starts)
     }
 
     #[test]
