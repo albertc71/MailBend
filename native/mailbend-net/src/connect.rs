@@ -339,19 +339,17 @@ fn attempt_job(
 
 /// Connects to `addr` within the time left when the attempt begins, which
 /// can be later than it was started. It does not dial once the deadline
-/// has passed, and it drops a socket that connects after it, which closes
-/// it, so every success it reports connected in time.
+/// has passed, and what it hears after the deadline, a socket or a
+/// refusal, counts as a timeout: the address did not answer in time. A
+/// socket that connects late is dropped, which closes it.
 fn attempt<T>(
     addr: &SocketAddr,
     deadline: &Deadline,
     connect: impl Fn(&SocketAddr, Duration) -> io::Result<T>,
 ) -> Result<T, NetError> {
-    let connected =
-        connect(addr, deadline.remaining()?).map_err(|e| NetError::Connect(e.to_string()))?;
-    deadline
-        .remaining()
-        .map(|_| connected)
-        .map_err(|_| attempt_timed_out())
+    let outcome = connect(addr, deadline.remaining()?);
+    deadline.remaining().map_err(|_| attempt_timed_out())?;
+    outcome.map_err(|e| NetError::Connect(e.to_string()))
 }
 
 /// How an attempt still unanswered at the deadline fails, in the words
