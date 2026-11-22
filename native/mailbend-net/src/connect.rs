@@ -182,12 +182,11 @@ fn connect_with(
     while let Some(step) = race.next(deadline.remaining().ok()) {
         match step {
             Step::Start(index, addr, share) => {
-                let job =
-                    |deadline: Deadline| attempt_job(index, addr, deadline, &connect, &report);
-                if spawn(Box::new(job(*deadline))).is_err() {
+                let job = attempt_job(index, addr, *deadline, &connect, &report);
+                if spawn(Box::new(job)).is_err() {
                     // No thread to spare: make this attempt here, within its
                     // share of the time left, as when trying the addresses in turn.
-                    job(deadline.sooner(share))();
+                    attempt_job(index, addr, deadline.sooner(share), &connect, &report)();
                 }
             }
             Step::Wait(wait) => {
@@ -202,7 +201,6 @@ fn connect_with(
 }
 
 /// What the race does next.
-#[derive(Debug, PartialEq)]
 enum Step {
     /// Start the attempt on the address at this position in the caller's
     /// list. The duration is the attempt's equal share of the time left,
@@ -245,11 +243,11 @@ impl Race {
         }
     }
 
-    /// The next step, given the time `left` before the deadline, or `None`
-    /// once it has passed; `None` when no attempt starts again. After an
-    /// attempt starts, the next one waits `ATTEMPT_DELAY`, or the attempt's
-    /// equal share of the time left when that is shorter, so every address
-    /// starts before the deadline.
+    /// The next step, given the time `left` before the deadline (`None`
+    /// once it has passed), or `None` when no attempt starts again. After
+    /// an attempt starts, the next one waits `ATTEMPT_DELAY`, or the
+    /// attempt's equal share of the time left when that is shorter, so
+    /// every address starts before the deadline.
     fn next(&mut self, left: Option<Duration>) -> Option<Step> {
         let left = left?;
         if self.waiting.as_slice().is_empty() {
