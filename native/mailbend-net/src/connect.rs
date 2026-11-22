@@ -29,6 +29,11 @@ impl Deadline {
             Ok(left)
         }
     }
+
+    /// This deadline, or `share` from now when that comes first.
+    fn sooner(&self, share: Duration) -> Deadline {
+        Deadline(self.0.min(Instant::now() + share))
+    }
 }
 
 /// A socket whose every read and write is bounded by the time left, so no
@@ -174,11 +179,13 @@ fn connect_with(
     let (report, outcomes) = mpsc::channel();
     loop {
         match race.next(deadline.remaining().ok()) {
-            Step::Start(index, addr) => {
+            Step::Start(index, addr, share) => {
                 let job = attempt_job(index, addr, *deadline, &connect, &report);
                 if spawn(Box::new(job)).is_err() {
-                    // No thread to spare: make this attempt here instead.
-                    race.heard(Some((index, attempt(&addr, deadline, &*connect))));
+                    // No thread to spare: make this attempt here, within its
+                    // share of the time left, as when trying the addresses in turn.
+                    let outcome = attempt(&addr, &deadline.sooner(share), &*connect);
+                    race.heard(Some((index, outcome)));
                 }
             }
             Step::Wait(wait) => race.heard(outcomes.recv_timeout(wait).ok()),
@@ -190,8 +197,10 @@ fn connect_with(
 /// What the race does next.
 #[derive(Debug, PartialEq)]
 enum Step<T> {
-    /// Start the attempt on the address at this position in the caller's list.
-    Start(usize, SocketAddr),
+    /// Start the attempt on the address at this position in the caller's
+    /// list. The duration is the attempt's equal share of the time left,
+    /// which bounds it when it cannot run beside the others.
+    Start(usize, SocketAddr, Duration),
     /// Wait up to this long for an attempt to end.
     Wait(Duration),
     Done(Result<T, NetError>),
@@ -255,7 +264,7 @@ impl<T> Race<T> {
             self.errors[index] = attempt_timed_out();
             self.running += 1;
             self.pace = Pace::Delayed;
-            return Step::Start(index, addr);
+            return Step::Start(index, addr, share(left, self.waiting.len()));
         }
         if self.running == 0 {
             return self.failed();
@@ -295,8 +304,13 @@ fn wait_for_outcome(left: Duration, waiting: usize) -> Duration {
     if waiting == 0 {
         return left;
     }
-    let shares = u32::try_from(waiting).map_or(u32::MAX, |n| n.saturating_add(1));
-    (left / shares).min(ATTEMPT_DELAY)
+    share(left, waiting).min(ATTEMPT_DELAY)
+}
+
+/// An equal share of the time `left` for an attempt and the `waiting`
+/// attempts to start after it.
+fn share(left: Duration, waiting: usize) -> Duration {
+    left / u32::try_from(waiting).map_or(u32::MAX, |n| n.saturating_add(1))
 }
 
 /// `addrs` with their positions, the address families alternating and
@@ -508,7 +522,10 @@ mod tests {
         let addr = SocketAddr::from(([192, 0, 2, 1], 993));
         let mut race = Race::new(&[addr]);
         let left = Some(Duration::from_millis(100));
-        assert_eq!(race.next(left), Step::Start(0, addr));
+        assert_eq!(
+            race.next(left),
+            Step::Start(0, addr, Duration::from_millis(100))
+        );
         // The connection is made in time; the race next looks after the deadline.
         assert_eq!(race.next(None), Step::Wait(Duration::ZERO));
         race.heard(Some((0, Ok(addr))));
@@ -542,7 +559,7 @@ mod tests {
         let (mut now, mut starts, mut due) = (Duration::ZERO, vec![None; peers.len()], Vec::new());
         loop {
             match race.next(budget.checked_sub(now).filter(|left| !left.is_zero())) {
-                Step::Start(index, addr) => {
+                Step::Start(index, addr, _) => {
                     starts[index] = Some(now.as_millis());
                     let (after, outcome) = match peers[index].1 {
                         Answer::Connects(after) => (after, Ok(addr)),
